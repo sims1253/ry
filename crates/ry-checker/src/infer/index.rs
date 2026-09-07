@@ -573,17 +573,11 @@ pub(crate) fn extract_literal_int(e: &Expr) -> Option<i64> {
 ///   * base: `makeActiveBinding` has no stub.
 ///   * rlang: `defuse` and `tidyeval_data` are unexported and ship no
 ///     stub.
-///   * ggplot2 and data.table ship no stubs.
+///   * data.table ships no stubs.
 ///   * tidyselect's stub does not declare `peek_vars`. `all_vars` is
 ///     not here: dplyr — the package it is called through — declares
 ///     `expr: data_mask` for it.
 pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
-    // ggplot2 NSE
-    "from_theme",
-    "aes",
-    "aes_",
-    "aes_string",
-    "aes_q",
     // rlang NSE
     "defuse",
     "tidyeval_data",

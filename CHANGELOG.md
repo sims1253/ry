@@ -6,6 +6,13 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Embed verified ggplot2 signatures for 498 functions, 145 exported values, and
+  11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;
+  ordinary helpers such as `aes_string` no longer suppress unbound arguments.
+  Complete base matrix/array construction and row/column summary formals.
+  Preserve unknown result shapes for polymorphic `regmatches` and `sort.int`
+  calls instead of assuming character or double vectors.
+
 - Export reference identities across ordinary literal/copy reassignments and
   retain proven reads before opaque statements. The schema-2 reference
   capability is now `same_file_ordered_prefix`; coverage remains partial.

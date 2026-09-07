@@ -309,6 +309,7 @@ const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
 const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
 const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
 const GRID_JSON: &str = include_str!("../vendor/grid/grid.json");
+const GGPLOT2_JSON: &str = include_str!("../vendor/ggplot2/ggplot2.json");
 
 /// Single source of truth for embedded non-base packages, in signature
 /// resolution order. Every package maps one-to-one to its vendored file.
@@ -346,6 +347,7 @@ const PACKAGE_SPECS: &[(&str, &str)] = &[
     ("cli", CLI_JSON),
     ("vctrs", VCTRS_JSON),
     ("grid", GRID_JSON),
+    ("ggplot2", GGPLOT2_JSON),
 ];
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
@@ -1905,7 +1907,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.7");
+        assert_eq!(t.version, "0.0.9");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.7",
+  "version": "0.0.9",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -2799,7 +2799,8 @@
     "array": {
       "params": [
         "data",
-        "dim"
+        "dim",
+        "dimnames"
       ],
       "return": {
         "mode": "opaque",
@@ -3227,7 +3228,9 @@
     },
     "colMeans": {
       "params": [
-        "x"
+        "x",
+        "na.rm",
+        "dims"
       ],
       "return": {
         "mode": "double",
@@ -3237,7 +3240,9 @@
     },
     "colSums": {
       "params": [
-        "x"
+        "x",
+        "na.rm",
+        "dims"
       ],
       "return": {
         "mode": "double_or_int",
@@ -5097,7 +5102,9 @@
       "params": [
         "data",
         "nrow",
-        "ncol"
+        "ncol",
+        "byrow",
+        "dimnames"
       ],
       "return": {
         "mode": "opaque",
@@ -6242,12 +6249,13 @@
     "regmatches": {
       "params": [
         "x",
-        "m"
+        "m",
+        "invert"
       ],
       "return": {
-        "mode": "character",
+        "mode": "opaque",
         "length": "unknown",
-        "na": false
+        "na": true
       }
     },
     "remove": {
@@ -6399,7 +6407,9 @@
     },
     "rowMeans": {
       "params": [
-        "x"
+        "x",
+        "na.rm",
+        "dims"
       ],
       "return": {
         "mode": "double",
@@ -6409,7 +6419,9 @@
     },
     "rowSums": {
       "params": [
-        "x"
+        "x",
+        "na.rm",
+        "dims"
       ],
       "return": {
         "mode": "double_or_int",
@@ -6726,9 +6738,18 @@
     },
     "sort.int": {
       "params": [
-        "x"
+        "x",
+        "partial",
+        "na.last",
+        "decreasing",
+        "method",
+        "index.return"
       ],
-      "return": "arg0"
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
     },
     "source": {
       "params": [

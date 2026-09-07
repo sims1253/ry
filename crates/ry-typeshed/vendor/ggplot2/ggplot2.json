@@ -1,0 +1,8545 @@
+{
+  "schema_version": "2",
+  "package": "ggplot2",
+  "version": "0.0.2",
+  "functions": {
+    ".expose_data": {
+      "params": [
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".ignore_data": {
+      "params": [
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%+%": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%+replace%": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "add_gg": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aes": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "x": "data_mask",
+        "y": "data_mask",
+        "...": "data_mask"
+      }
+    },
+    "aes_": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aes_all": {
+      "params": [
+        "vars"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aes_auto": {
+      "params": [
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aes_q": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aes_string": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "after_scale": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "after_stat": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "alpha": {
+      "params": [
+        "colour",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotate": {
+      "params": [
+        "geom",
+        "x",
+        "y",
+        "xmin",
+        "xmax",
+        "ymin",
+        "ymax",
+        "xend",
+        "yend",
+        "...",
+        "na.rm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotation_borders": {
+      "params": [
+        "database",
+        "regions",
+        "fill",
+        "colour",
+        "xlim",
+        "ylim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotation_custom": {
+      "params": [
+        "grob",
+        "xmin",
+        "xmax",
+        "ymin",
+        "ymax"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotation_logticks": {
+      "params": [
+        "base",
+        "sides",
+        "outside",
+        "scaled",
+        "short",
+        "mid",
+        "long",
+        "colour",
+        "linewidth",
+        "linetype",
+        "alpha",
+        "color",
+        "...",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotation_map": {
+      "params": [
+        "map",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "annotation_raster": {
+      "params": [
+        "raster",
+        "xmin",
+        "xmax",
+        "ymin",
+        "ymax",
+        "interpolate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "arrow": {
+      "params": [
+        "angle",
+        "length",
+        "ends",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_label": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_labeller": {
+      "params": [
+        "x",
+        "default",
+        "multi_line"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "autolayer": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "autoplot": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "benchplot": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "x": "captures_promise"
+      }
+    },
+    "binned_scale": {
+      "params": [
+        "aesthetics",
+        "scale_name",
+        "palette",
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "rescaler",
+        "oob",
+        "expand",
+        "na.value",
+        "n.breaks",
+        "nice.breaks",
+        "right",
+        "transform",
+        "trans",
+        "show.limits",
+        "guide",
+        "position",
+        "fallback.palette",
+        "call",
+        "super"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "borders": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "calc_element": {
+      "params": [
+        "element",
+        "theme",
+        "verbose",
+        "skip_blank",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_device": {
+      "params": [
+        "feature",
+        "action",
+        "op",
+        "maybe",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_gg": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_ggplot": {
+      "params": [
+        "data",
+        "...",
+        "layers",
+        "scales",
+        "guides",
+        "mapping",
+        "theme",
+        "coordinates",
+        "facet",
+        "layout",
+        "labels",
+        "meta",
+        "plot_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_ggplot_built": {
+      "params": [
+        "...",
+        "data",
+        "layout",
+        "plot"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_labels": {
+      "params": [
+        "labels",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_mapping": {
+      "params": [
+        "x",
+        "...",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "class_theme": {
+      "params": [
+        "elements",
+        "...",
+        "complete",
+        "validate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "combine_vars": {
+      "params": [
+        "data",
+        "env",
+        "vars",
+        "drop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "complete_theme": {
+      "params": [
+        "theme",
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "continuous_scale": {
+      "params": [
+        "aesthetics",
+        "scale_name",
+        "palette",
+        "name",
+        "breaks",
+        "minor_breaks",
+        "n.breaks",
+        "labels",
+        "limits",
+        "rescaler",
+        "oob",
+        "expand",
+        "na.value",
+        "transform",
+        "trans",
+        "guide",
+        "position",
+        "fallback.palette",
+        "call",
+        "super"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_cartesian": {
+      "params": [
+        "xlim",
+        "ylim",
+        "expand",
+        "default",
+        "clip",
+        "reverse",
+        "ratio"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_equal": {
+      "params": [
+        "ratio",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_fixed": {
+      "params": [
+        "ratio",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_flip": {
+      "params": [
+        "xlim",
+        "ylim",
+        "expand",
+        "clip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_map": {
+      "params": [
+        "projection",
+        "...",
+        "parameters",
+        "orientation",
+        "xlim",
+        "ylim",
+        "clip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_munch": {
+      "params": [
+        "coord",
+        "data",
+        "range",
+        "segment_length",
+        "is_closed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_polar": {
+      "params": [
+        "theta",
+        "start",
+        "direction",
+        "clip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_quickmap": {
+      "params": [
+        "xlim",
+        "ylim",
+        "expand",
+        "clip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_radial": {
+      "params": [
+        "theta",
+        "start",
+        "end",
+        "thetalim",
+        "rlim",
+        "expand",
+        "direction",
+        "clip",
+        "r.axis.inside",
+        "rotate.angle",
+        "inner.radius",
+        "reverse",
+        "r_axis_inside",
+        "rotate_angle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_sf": {
+      "params": [
+        "xlim",
+        "ylim",
+        "expand",
+        "crs",
+        "default_crs",
+        "datum",
+        "label_graticule",
+        "label_axes",
+        "lims_method",
+        "ndiscr",
+        "default",
+        "clip",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_trans": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coord_transform": {
+      "params": [
+        "x",
+        "y",
+        "xlim",
+        "ylim",
+        "limx",
+        "limy",
+        "clip",
+        "expand",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_interval": {
+      "params": [
+        "x",
+        "n",
+        "length",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_number": {
+      "params": [
+        "x",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_width": {
+      "params": [
+        "x",
+        "width",
+        "center",
+        "boundary",
+        "closed",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "datetime_scale": {
+      "params": [
+        "aesthetics",
+        "transform",
+        "trans",
+        "palette",
+        "breaks",
+        "minor_breaks",
+        "labels",
+        "date_breaks",
+        "date_labels",
+        "date_minor_breaks",
+        "timezone",
+        "guide",
+        "call",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "derive": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "discrete_scale": {
+      "params": [
+        "aesthetics",
+        "scale_name",
+        "palette",
+        "name",
+        "breaks",
+        "minor_breaks",
+        "labels",
+        "limits",
+        "expand",
+        "na.translate",
+        "na.value",
+        "drop",
+        "guide",
+        "position",
+        "fallback.palette",
+        "call",
+        "super"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_abline": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_blank": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_boxplot": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_crossbar": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_dotplot": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_label": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_linerange": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_path": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_point": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_pointrange": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_polygon": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_rect": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_smooth": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_text": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_timeseries": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_vline": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "draw_key_vpath": {
+      "params": [
+        "data",
+        "params",
+        "size"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dup_axis": {
+      "params": [
+        "transform",
+        "name",
+        "breaks",
+        "labels",
+        "guide",
+        "trans"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "el_def": {
+      "params": [
+        "class",
+        "inherit",
+        "description"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_blank": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_geom": {
+      "params": [
+        "ink",
+        "paper",
+        "accent",
+        "linewidth",
+        "borderwidth",
+        "linetype",
+        "bordertype",
+        "family",
+        "fontsize",
+        "pointsize",
+        "pointshape",
+        "colour",
+        "color",
+        "fill",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_grob": {
+      "params": [
+        "element",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_line": {
+      "params": [
+        "colour",
+        "linewidth",
+        "linetype",
+        "lineend",
+        "color",
+        "linejoin",
+        "arrow",
+        "arrow.fill",
+        "inherit.blank",
+        "size",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_point": {
+      "params": [
+        "colour",
+        "shape",
+        "size",
+        "fill",
+        "stroke",
+        "color",
+        "inherit.blank",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_polygon": {
+      "params": [
+        "fill",
+        "colour",
+        "linewidth",
+        "linetype",
+        "color",
+        "linejoin",
+        "inherit.blank",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_rect": {
+      "params": [
+        "fill",
+        "colour",
+        "linewidth",
+        "linetype",
+        "color",
+        "linejoin",
+        "inherit.blank",
+        "size",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_render": {
+      "params": [
+        "theme",
+        "element",
+        "...",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "element_text": {
+      "params": [
+        "family",
+        "face",
+        "colour",
+        "size",
+        "hjust",
+        "vjust",
+        "angle",
+        "lineheight",
+        "color",
+        "margin",
+        "debug",
+        "inherit.blank",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "enexpr": {
+      "params": [
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "arg": "captures_promise"
+      }
+    },
+    "enexprs": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "...": "captures_promise"
+      }
+    },
+    "enquo": {
+      "params": [
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "arg": "captures_promise"
+      }
+    },
+    "enquos": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "...": "captures_promise"
+      }
+    },
+    "ensym": {
+      "params": [
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "arg": "captures_promise"
+      }
+    },
+    "ensyms": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".ignore_null",
+        ".unquote_names",
+        ".homonyms",
+        ".check_assign"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "...": "captures_promise"
+      }
+    },
+    "expand_limits": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expand_scale": {
+      "params": [
+        "mult",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expansion": {
+      "params": [
+        "mult",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expr": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "facet_grid": {
+      "params": [
+        "rows",
+        "cols",
+        "scales",
+        "space",
+        "shrink",
+        "labeller",
+        "as.table",
+        "switch",
+        "drop",
+        "margins",
+        "axes",
+        "axis.labels",
+        "facets"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "facet_null": {
+      "params": [
+        "shrink"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "facet_wrap": {
+      "params": [
+        "facets",
+        "nrow",
+        "ncol",
+        "scales",
+        "space",
+        "shrink",
+        "labeller",
+        "as.table",
+        "switch",
+        "drop",
+        "dir",
+        "strip.position",
+        "axes",
+        "axis.labels"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fill_alpha": {
+      "params": [
+        "fill",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "find_panel": {
+      "params": [
+        "table"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "flip_data": {
+      "params": [
+        "data",
+        "flip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "flipped_names": {
+      "params": [
+        "flip"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fortify": {
+      "params": [
+        "model",
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "from_theme": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_abline": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "...",
+        "slope",
+        "intercept",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_area": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "outline.type",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_bar": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "just",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_bin_2d": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_bin2d": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_blank": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_boxplot": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "outliers",
+        "outlier.colour",
+        "outlier.color",
+        "outlier.fill",
+        "outlier.shape",
+        "outlier.size",
+        "outlier.stroke",
+        "outlier.alpha",
+        "whisker.colour",
+        "whisker.color",
+        "whisker.linetype",
+        "whisker.linewidth",
+        "staple.colour",
+        "staple.color",
+        "staple.linetype",
+        "staple.linewidth",
+        "median.colour",
+        "median.color",
+        "median.linetype",
+        "median.linewidth",
+        "box.colour",
+        "box.color",
+        "box.linetype",
+        "box.linewidth",
+        "notch",
+        "notchwidth",
+        "staplewidth",
+        "varwidth",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_col": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "just",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_contour": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "bins",
+        "binwidth",
+        "breaks",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_contour_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "bins",
+        "binwidth",
+        "breaks",
+        "rule",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_count": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_crossbar": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "middle.colour",
+        "middle.color",
+        "middle.linetype",
+        "middle.linewidth",
+        "box.colour",
+        "box.color",
+        "box.linetype",
+        "box.linewidth",
+        "fatten",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_curve": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "curvature",
+        "angle",
+        "ncp",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_density": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "outline.type",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_density_2d": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "contour_var",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_density_2d_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "contour_var",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_density2d": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "contour_var",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_density2d_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "contour_var",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_dotplot": {
+      "params": [
+        "mapping",
+        "data",
+        "position",
+        "...",
+        "binwidth",
+        "binaxis",
+        "method",
+        "binpositions",
+        "stackdir",
+        "stackratio",
+        "dotsize",
+        "stackgroups",
+        "origin",
+        "right",
+        "width",
+        "drop",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_errorbar": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "lineend",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_errorbarh": {
+      "params": [
+        "...",
+        "orientation"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_freqpoly": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_function": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_hex": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_histogram": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "orientation",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_hline": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "yintercept",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_jitter": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "width",
+        "height",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_label": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "parse",
+        "label.padding",
+        "label.r",
+        "label.size",
+        "border.colour",
+        "border.color",
+        "text.colour",
+        "text.color",
+        "size.unit",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_line": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_linerange": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "lineend",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_map": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "...",
+        "map",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_path": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_point": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_pointrange": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "fatten",
+        "lineend",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_polygon": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "rule",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_qq": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "distribution",
+        "dparams",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_qq_line": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "distribution",
+        "dparams",
+        "line.p",
+        "fullrange",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_quantile": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_raster": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "interpolate",
+        "hjust",
+        "vjust",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_rect": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_ribbon": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "outline.type",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_rug": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "sides",
+        "outside",
+        "length",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_segment": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_sf": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "na.rm",
+        "show.legend",
+        "inherit.aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_sf_label": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "parse",
+        "label.padding",
+        "label.r",
+        "label.size",
+        "border.colour",
+        "border.color",
+        "text.colour",
+        "text.color",
+        "na.rm",
+        "show.legend",
+        "inherit.aes",
+        "fun.geometry"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_sf_text": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "parse",
+        "check_overlap",
+        "na.rm",
+        "show.legend",
+        "inherit.aes",
+        "fun.geometry"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_smooth": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "method",
+        "formula",
+        "se",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_spoke": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "arrow",
+        "arrow.fill",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_step": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "orientation",
+        "lineend",
+        "linejoin",
+        "linemitre",
+        "arrow",
+        "arrow.fill",
+        "direction",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_text": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "parse",
+        "check_overlap",
+        "size.unit",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_tile": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "lineend",
+        "linejoin",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_violin": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "trim",
+        "bounds",
+        "quantile.colour",
+        "quantile.color",
+        "quantile.linetype",
+        "quantile.linewidth",
+        "draw_quantiles",
+        "scale",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "geom_vline": {
+      "params": [
+        "mapping",
+        "data",
+        "stat",
+        "position",
+        "...",
+        "xintercept",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_alt_text": {
+      "params": [
+        "p",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_element_tree": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_geom_defaults": {
+      "params": [
+        "geom",
+        "theme"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_guide_data": {
+      "params": [
+        "plot",
+        "aesthetic",
+        "panel"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_labs": {
+      "params": [
+        "plot"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_last_plot": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_layer_data": {
+      "params": [
+        "plot",
+        "i"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_layer_grob": {
+      "params": [
+        "plot",
+        "i"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_panel_scales": {
+      "params": [
+        "plot",
+        "i",
+        "j"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_strip_labels": {
+      "params": [
+        "plot"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_theme": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gg_dep": {
+      "params": [
+        "version",
+        "msg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gg_par": {
+      "params": [
+        "...",
+        "stroke",
+        "pointsize"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggplot": {
+      "params": [
+        "data",
+        "mapping",
+        "...",
+        "environment"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggplot_add": {
+      "params": [
+        "object",
+        "plot",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggplot_build": {
+      "params": [
+        "plot",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggplot_gtable": {
+      "params": [
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggplotGrob": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggproto": {
+      "params": [
+        "_class",
+        "_inherit",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggproto_parent": {
+      "params": [
+        "parent",
+        "self"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggsave": {
+      "params": [
+        "filename",
+        "plot",
+        "device",
+        "path",
+        "scale",
+        "width",
+        "height",
+        "units",
+        "dpi",
+        "limitsize",
+        "bg",
+        "create.dir",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ggtitle": {
+      "params": [
+        "label",
+        "subtitle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_axis": {
+      "params": [
+        "title",
+        "theme",
+        "check.overlap",
+        "angle",
+        "n.dodge",
+        "minor.ticks",
+        "cap",
+        "order",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_axis_logticks": {
+      "params": [
+        "long",
+        "mid",
+        "short",
+        "prescale.base",
+        "negative.small",
+        "short.theme",
+        "expanded",
+        "cap",
+        "theme",
+        "prescale_base",
+        "negative_small",
+        "short_theme",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_axis_stack": {
+      "params": [
+        "first",
+        "...",
+        "title",
+        "theme",
+        "spacing",
+        "order",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_axis_theta": {
+      "params": [
+        "title",
+        "theme",
+        "angle",
+        "minor.ticks",
+        "cap",
+        "order",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_bins": {
+      "params": [
+        "title",
+        "theme",
+        "angle",
+        "position",
+        "direction",
+        "override.aes",
+        "reverse",
+        "order",
+        "show.limits",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_colorbar": {
+      "params": [
+        "title",
+        "theme",
+        "nbin",
+        "display",
+        "raster",
+        "alpha",
+        "draw.ulim",
+        "draw.llim",
+        "angle",
+        "position",
+        "direction",
+        "reverse",
+        "order",
+        "available_aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_colorsteps": {
+      "params": [
+        "title",
+        "theme",
+        "alpha",
+        "angle",
+        "even.steps",
+        "show.limits",
+        "direction",
+        "position",
+        "reverse",
+        "order",
+        "available_aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_colourbar": {
+      "params": [
+        "title",
+        "theme",
+        "nbin",
+        "display",
+        "raster",
+        "alpha",
+        "draw.ulim",
+        "draw.llim",
+        "angle",
+        "position",
+        "direction",
+        "reverse",
+        "order",
+        "available_aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_coloursteps": {
+      "params": [
+        "title",
+        "theme",
+        "alpha",
+        "angle",
+        "even.steps",
+        "show.limits",
+        "direction",
+        "position",
+        "reverse",
+        "order",
+        "available_aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_custom": {
+      "params": [
+        "grob",
+        "width",
+        "height",
+        "title",
+        "theme",
+        "position",
+        "order"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_gengrob": {
+      "params": [
+        "guide",
+        "theme"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_geom": {
+      "params": [
+        "guide",
+        "layers",
+        "default_mapping"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_legend": {
+      "params": [
+        "title",
+        "theme",
+        "position",
+        "direction",
+        "override.aes",
+        "nrow",
+        "ncol",
+        "reverse",
+        "order",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_merge": {
+      "params": [
+        "guide",
+        "new_guide"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_none": {
+      "params": [
+        "title",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_train": {
+      "params": [
+        "guide",
+        "scale",
+        "aesthetic"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guide_transform": {
+      "params": [
+        "guide",
+        "coord",
+        "panel_params"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guides": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_flipped_aes": {
+      "params": [
+        "data",
+        "params",
+        "main_is_orthogonal",
+        "range_is_orthogonal",
+        "group_has_equal",
+        "ambiguous",
+        "main_is_continuous",
+        "main_is_optional",
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_coord": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_facet": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_geom": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_ggplot": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_ggproto": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_guide": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_guides": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_layer": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_mapping": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_margin": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_position": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_scale": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_stat": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_theme": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_theme_element": {
+      "params": [
+        "x",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_waiver": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.Coord": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.facet": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.ggplot": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.ggproto": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.theme": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_both": {
+      "params": [
+        "labels",
+        "multi_line",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_bquote": {
+      "params": [
+        "rows",
+        "cols",
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "rows": "quoted_expression",
+        "cols": "quoted_expression"
+      }
+    },
+    "label_context": {
+      "params": [
+        "labels",
+        "multi_line",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_parsed": {
+      "params": [
+        "labels",
+        "multi_line"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_value": {
+      "params": [
+        "labels",
+        "multi_line"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_wrap_gen": {
+      "params": [
+        "width",
+        "multi_line"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "labeller": {
+      "params": [
+        "...",
+        ".rows",
+        ".cols",
+        "keep.as.numeric",
+        ".multi_line",
+        ".default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "labs": {
+      "params": [
+        "...",
+        "title",
+        "subtitle",
+        "caption",
+        "tag",
+        "dictionary",
+        "alt",
+        "alt_insight"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "last_plot": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layer": {
+      "params": [
+        "geom",
+        "stat",
+        "data",
+        "mapping",
+        "position",
+        "params",
+        "inherit.aes",
+        "check.aes",
+        "check.param",
+        "show.legend",
+        "key_glyph",
+        "layout",
+        "layer_class"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layer_data": {
+      "params": [
+        "plot",
+        "i"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layer_grob": {
+      "params": [
+        "plot",
+        "i"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layer_scales": {
+      "params": [
+        "plot",
+        "i",
+        "j"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "layer_sf": {
+      "params": [
+        "geom",
+        "stat",
+        "data",
+        "mapping",
+        "position",
+        "params",
+        "inherit.aes",
+        "check.aes",
+        "check.param",
+        "show.legend"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lims": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make_constructor": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "map_data": {
+      "params": [
+        "map",
+        "region",
+        "exact",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "margin": {
+      "params": [
+        "t",
+        "r",
+        "b",
+        "l",
+        "unit",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "margin_auto": {
+      "params": [
+        "t",
+        "r",
+        "b",
+        "l",
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "margin_part": {
+      "params": [
+        "t",
+        "r",
+        "b",
+        "l",
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "max_height": {
+      "params": [
+        "grobs",
+        "value_only"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "max_width": {
+      "params": [
+        "grobs",
+        "value_only"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mean_cl_boot": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mean_cl_normal": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mean_sdl": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mean_se": {
+      "params": [
+        "x",
+        "mult"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "median_hilow": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "merge_element": {
+      "params": [
+        "new",
+        "old",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_guide": {
+      "params": [
+        "...",
+        "available_aes",
+        "super"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "old_guide": {
+      "params": [
+        "guide"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel_cols": {
+      "params": [
+        "table"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel_rows": {
+      "params": [
+        "table"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pattern_alpha": {
+      "params": [
+        "x",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_dodge": {
+      "params": [
+        "width",
+        "preserve",
+        "orientation",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_dodge2": {
+      "params": [
+        "width",
+        "preserve",
+        "padding",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_fill": {
+      "params": [
+        "vjust",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_identity": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_jitter": {
+      "params": [
+        "width",
+        "height",
+        "seed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_jitterdodge": {
+      "params": [
+        "jitter.width",
+        "jitter.height",
+        "dodge.width",
+        "reverse",
+        "seed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_nudge": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "position_stack": {
+      "params": [
+        "vjust",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qplot": {
+      "params": [
+        "x",
+        "y",
+        "...",
+        "data",
+        "facets",
+        "margins",
+        "geom",
+        "xlim",
+        "ylim",
+        "log",
+        "main",
+        "xlab",
+        "ylab",
+        "asp",
+        "stat",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "x": "data_mask",
+        "y": "data_mask",
+        "...": "data_mask"
+      }
+    },
+    "quickplot": {
+      "params": [
+        "x",
+        "y",
+        "...",
+        "data",
+        "facets",
+        "margins",
+        "geom",
+        "xlim",
+        "ylim",
+        "log",
+        "main",
+        "xlab",
+        "ylab",
+        "asp",
+        "stat",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "x": "data_mask",
+        "y": "data_mask",
+        "...": "data_mask"
+      }
+    },
+    "quo": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "expr": "quoted_expression"
+      }
+    },
+    "quo_name": {
+      "params": [
+        "quo"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "quos": {
+      "params": [
+        "...",
+        ".named",
+        ".ignore_empty",
+        ".unquote_names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "...": "captures_promise"
+      }
+    },
+    "register_theme_elements": {
+      "params": [
+        "...",
+        "element_tree",
+        "complete"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rel": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "remove_missing": {
+      "params": [
+        "df",
+        "na.rm",
+        "vars",
+        "name",
+        "finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_axes": {
+      "params": [
+        "x",
+        "y",
+        "coord",
+        "theme",
+        "transpose"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "render_strips": {
+      "params": [
+        "x",
+        "y",
+        "labeller",
+        "theme"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "replace_theme": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reset_geom_defaults": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reset_stat_defaults": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reset_theme_settings": {
+      "params": [
+        "reset_current"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "resolution": {
+      "params": [
+        "x",
+        "zero",
+        "discrete"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_binned": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_continuous": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_date": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_datetime": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_discrete": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_manual": {
+      "params": [
+        "...",
+        "values",
+        "breaks",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_alpha_ordinal": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_binned": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_brewer": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_continuous": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_date": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_datetime": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_discrete": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_distiller": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_fermenter": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_gradient": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_gradient2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_gradientn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_grey": {
+      "params": [
+        "name",
+        "...",
+        "start",
+        "end",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_hue": {
+      "params": [
+        "name",
+        "...",
+        "h",
+        "c",
+        "l",
+        "h.start",
+        "direction",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_manual": {
+      "params": [
+        "...",
+        "values",
+        "aesthetics",
+        "breaks",
+        "na.value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_ordinal": {
+      "params": [
+        "...",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_steps": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_steps2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_stepsn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_viridis_b": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_viridis_c": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_color_viridis_d": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_binned": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_brewer": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_continuous": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_date": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_datetime": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_discrete": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_distiller": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_fermenter": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_gradient": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_gradient2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_gradientn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_grey": {
+      "params": [
+        "name",
+        "...",
+        "start",
+        "end",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_hue": {
+      "params": [
+        "name",
+        "...",
+        "h",
+        "c",
+        "l",
+        "h.start",
+        "direction",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_manual": {
+      "params": [
+        "...",
+        "values",
+        "aesthetics",
+        "breaks",
+        "na.value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_ordinal": {
+      "params": [
+        "...",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_steps": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_steps2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_stepsn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_viridis_b": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_viridis_c": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_colour_viridis_d": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_continuous_identity": {
+      "params": [
+        "aesthetics",
+        "name",
+        "...",
+        "guide"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_discrete_identity": {
+      "params": [
+        "aesthetics",
+        "name",
+        "...",
+        "guide"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_discrete_manual": {
+      "params": [
+        "aesthetics",
+        "...",
+        "values",
+        "breaks"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_binned": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_brewer": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_continuous": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "guide",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_date": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_datetime": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_discrete": {
+      "params": [
+        "...",
+        "palette",
+        "aesthetics",
+        "na.value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_distiller": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_fermenter": {
+      "params": [
+        "name",
+        "...",
+        "type",
+        "palette",
+        "direction",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_gradient": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_gradient2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_gradientn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_grey": {
+      "params": [
+        "name",
+        "...",
+        "start",
+        "end",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_hue": {
+      "params": [
+        "name",
+        "...",
+        "h",
+        "c",
+        "l",
+        "h.start",
+        "direction",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_manual": {
+      "params": [
+        "...",
+        "values",
+        "aesthetics",
+        "breaks",
+        "na.value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_ordinal": {
+      "params": [
+        "...",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_steps": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "high",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_steps2": {
+      "params": [
+        "name",
+        "...",
+        "low",
+        "mid",
+        "high",
+        "midpoint",
+        "space",
+        "na.value",
+        "transform",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_stepsn": {
+      "params": [
+        "name",
+        "...",
+        "colours",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics",
+        "colors"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_viridis_b": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_viridis_c": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "values",
+        "space",
+        "na.value",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_fill_viridis_d": {
+      "params": [
+        "name",
+        "...",
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype": {
+      "params": [
+        "name",
+        "...",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype_binned": {
+      "params": [
+        "name",
+        "...",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype_continuous": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype_discrete": {
+      "params": [
+        "name",
+        "...",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linetype_manual": {
+      "params": [
+        "...",
+        "values",
+        "breaks",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_binned": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "n.breaks",
+        "nice.breaks",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_continuous": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_date": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_datetime": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_discrete": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_manual": {
+      "params": [
+        "...",
+        "values",
+        "breaks",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_linewidth_ordinal": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_radius": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape": {
+      "params": [
+        "name",
+        "...",
+        "solid",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_binned": {
+      "params": [
+        "name",
+        "...",
+        "solid",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_continuous": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_discrete": {
+      "params": [
+        "name",
+        "...",
+        "solid",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_manual": {
+      "params": [
+        "...",
+        "values",
+        "breaks",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_shape_ordinal": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_area": {
+      "params": [
+        "name",
+        "...",
+        "max_size",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_binned": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "n.breaks",
+        "nice.breaks",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_binned_area": {
+      "params": [
+        "name",
+        "...",
+        "max_size",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_continuous": {
+      "params": [
+        "name",
+        "breaks",
+        "labels",
+        "limits",
+        "range",
+        "transform",
+        "trans",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_date": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_datetime": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_discrete": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_identity": {
+      "params": [
+        "name",
+        "...",
+        "guide",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_manual": {
+      "params": [
+        "...",
+        "values",
+        "breaks",
+        "na.value",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_size_ordinal": {
+      "params": [
+        "name",
+        "...",
+        "range",
+        "aesthetics"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_type": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_binned": {
+      "params": [
+        "name",
+        "n.breaks",
+        "nice.breaks",
+        "breaks",
+        "labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "right",
+        "show.limits",
+        "transform",
+        "trans",
+        "guide",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_continuous": {
+      "params": [
+        "name",
+        "breaks",
+        "minor_breaks",
+        "n.breaks",
+        "labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "transform",
+        "trans",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_date": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "labels",
+        "date_labels",
+        "minor_breaks",
+        "date_minor_breaks",
+        "limits",
+        "expand",
+        "oob",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_datetime": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "labels",
+        "date_labels",
+        "minor_breaks",
+        "date_minor_breaks",
+        "timezone",
+        "limits",
+        "expand",
+        "oob",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_discrete": {
+      "params": [
+        "name",
+        "...",
+        "palette",
+        "expand",
+        "guide",
+        "position",
+        "sec.axis",
+        "continuous.limits"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_log10": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_reverse": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_sqrt": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_time": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "minor_breaks",
+        "date_minor_breaks",
+        "labels",
+        "date_labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_binned": {
+      "params": [
+        "name",
+        "n.breaks",
+        "nice.breaks",
+        "breaks",
+        "labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "right",
+        "show.limits",
+        "transform",
+        "trans",
+        "guide",
+        "position"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_continuous": {
+      "params": [
+        "name",
+        "breaks",
+        "minor_breaks",
+        "n.breaks",
+        "labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "transform",
+        "trans",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_date": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "labels",
+        "date_labels",
+        "minor_breaks",
+        "date_minor_breaks",
+        "limits",
+        "expand",
+        "oob",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_datetime": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "labels",
+        "date_labels",
+        "minor_breaks",
+        "date_minor_breaks",
+        "timezone",
+        "limits",
+        "expand",
+        "oob",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_discrete": {
+      "params": [
+        "name",
+        "...",
+        "palette",
+        "expand",
+        "guide",
+        "position",
+        "sec.axis",
+        "continuous.limits"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_log10": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_reverse": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_sqrt": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_time": {
+      "params": [
+        "name",
+        "breaks",
+        "date_breaks",
+        "minor_breaks",
+        "date_minor_breaks",
+        "labels",
+        "date_labels",
+        "limits",
+        "expand",
+        "oob",
+        "na.value",
+        "guide",
+        "position",
+        "sec.axis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sec_axis": {
+      "params": [
+        "transform",
+        "name",
+        "breaks",
+        "labels",
+        "guide",
+        "trans"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_last_plot": {
+      "params": [
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_theme": {
+      "params": [
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sf_transform_xy": {
+      "params": [
+        "data",
+        "target_crs",
+        "source_crs",
+        "authority_compliant"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "should_stop": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stage": {
+      "params": [
+        "start",
+        "after_stat",
+        "after_scale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "standardise_aes_names": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_align": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_bin": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "binwidth",
+        "bins",
+        "center",
+        "boundary",
+        "closed",
+        "pad",
+        "breaks",
+        "drop",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_bin_2d": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "breaks",
+        "drop",
+        "boundary",
+        "closed",
+        "center",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_bin_hex": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_bin2d": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "breaks",
+        "drop",
+        "boundary",
+        "closed",
+        "center",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_binhex": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_boxplot": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "coef",
+        "quantile.type",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_connect": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "connection",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_contour": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "bins",
+        "binwidth",
+        "breaks",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_contour_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "bins",
+        "binwidth",
+        "breaks",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_count": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_density": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "bw",
+        "adjust",
+        "kernel",
+        "n",
+        "trim",
+        "bounds",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_density_2d": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "contour",
+        "contour_var",
+        "h",
+        "adjust",
+        "n",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_density_2d_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "contour",
+        "contour_var",
+        "h",
+        "adjust",
+        "n",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_density2d": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "contour",
+        "contour_var",
+        "h",
+        "adjust",
+        "n",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_density2d_filled": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "contour",
+        "contour_var",
+        "h",
+        "adjust",
+        "n",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_ecdf": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "n",
+        "pad",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_ellipse": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "type",
+        "level",
+        "segments",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_function": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "fun",
+        "xlim",
+        "n",
+        "args",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_identity": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_manual": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "fun",
+        "args",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_qq": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "distribution",
+        "dparams",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_qq_line": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "distribution",
+        "dparams",
+        "line.p",
+        "fullrange",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_quantile": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "quantiles",
+        "formula",
+        "method",
+        "method.args",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_sf": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "na.rm",
+        "show.legend",
+        "inherit.aes",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_sf_coordinates": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "na.rm",
+        "show.legend",
+        "inherit.aes",
+        "fun.geometry",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_smooth": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "method",
+        "formula",
+        "se",
+        "n",
+        "span",
+        "fullrange",
+        "xseq",
+        "level",
+        "method.args",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_spoke": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_sum": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_summary": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "fun.data",
+        "fun",
+        "fun.max",
+        "fun.min",
+        "fun.args",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes",
+        "fun.y",
+        "fun.ymin",
+        "fun.ymax"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_summary_2d": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "breaks",
+        "drop",
+        "fun",
+        "fun.args",
+        "boundary",
+        "closed",
+        "center",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_summary_bin": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "fun.data",
+        "fun",
+        "fun.max",
+        "fun.min",
+        "fun.args",
+        "bins",
+        "binwidth",
+        "breaks",
+        "na.rm",
+        "orientation",
+        "show.legend",
+        "inherit.aes",
+        "fun.y",
+        "fun.ymin",
+        "fun.ymax"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_summary_hex": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "binwidth",
+        "bins",
+        "drop",
+        "fun",
+        "fun.args",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_summary2d": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_unique": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stat_ydensity": {
+      "params": [
+        "mapping",
+        "data",
+        "geom",
+        "position",
+        "...",
+        "orientation",
+        "bw",
+        "adjust",
+        "kernel",
+        "trim",
+        "scale",
+        "drop",
+        "bounds",
+        "quantiles",
+        "na.rm",
+        "show.legend",
+        "inherit.aes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "summarise_coord": {
+      "params": [
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "summarise_layers": {
+      "params": [
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "summarise_layout": {
+      "params": [
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sym": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "syms": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme": {
+      "params": [
+        "...",
+        "line",
+        "rect",
+        "text",
+        "title",
+        "point",
+        "polygon",
+        "geom",
+        "spacing",
+        "margins",
+        "aspect.ratio",
+        "axis.title",
+        "axis.title.x",
+        "axis.title.x.top",
+        "axis.title.x.bottom",
+        "axis.title.y",
+        "axis.title.y.left",
+        "axis.title.y.right",
+        "axis.text",
+        "axis.text.x",
+        "axis.text.x.top",
+        "axis.text.x.bottom",
+        "axis.text.y",
+        "axis.text.y.left",
+        "axis.text.y.right",
+        "axis.text.theta",
+        "axis.text.r",
+        "axis.ticks",
+        "axis.ticks.x",
+        "axis.ticks.x.top",
+        "axis.ticks.x.bottom",
+        "axis.ticks.y",
+        "axis.ticks.y.left",
+        "axis.ticks.y.right",
+        "axis.ticks.theta",
+        "axis.ticks.r",
+        "axis.minor.ticks.x.top",
+        "axis.minor.ticks.x.bottom",
+        "axis.minor.ticks.y.left",
+        "axis.minor.ticks.y.right",
+        "axis.minor.ticks.theta",
+        "axis.minor.ticks.r",
+        "axis.ticks.length",
+        "axis.ticks.length.x",
+        "axis.ticks.length.x.top",
+        "axis.ticks.length.x.bottom",
+        "axis.ticks.length.y",
+        "axis.ticks.length.y.left",
+        "axis.ticks.length.y.right",
+        "axis.ticks.length.theta",
+        "axis.ticks.length.r",
+        "axis.minor.ticks.length",
+        "axis.minor.ticks.length.x",
+        "axis.minor.ticks.length.x.top",
+        "axis.minor.ticks.length.x.bottom",
+        "axis.minor.ticks.length.y",
+        "axis.minor.ticks.length.y.left",
+        "axis.minor.ticks.length.y.right",
+        "axis.minor.ticks.length.theta",
+        "axis.minor.ticks.length.r",
+        "axis.line",
+        "axis.line.x",
+        "axis.line.x.top",
+        "axis.line.x.bottom",
+        "axis.line.y",
+        "axis.line.y.left",
+        "axis.line.y.right",
+        "axis.line.theta",
+        "axis.line.r",
+        "legend.background",
+        "legend.margin",
+        "legend.spacing",
+        "legend.spacing.x",
+        "legend.spacing.y",
+        "legend.key",
+        "legend.key.size",
+        "legend.key.height",
+        "legend.key.width",
+        "legend.key.spacing",
+        "legend.key.spacing.x",
+        "legend.key.spacing.y",
+        "legend.key.justification",
+        "legend.frame",
+        "legend.ticks",
+        "legend.ticks.length",
+        "legend.axis.line",
+        "legend.text",
+        "legend.text.position",
+        "legend.title",
+        "legend.title.position",
+        "legend.position",
+        "legend.position.inside",
+        "legend.direction",
+        "legend.byrow",
+        "legend.justification",
+        "legend.justification.top",
+        "legend.justification.bottom",
+        "legend.justification.left",
+        "legend.justification.right",
+        "legend.justification.inside",
+        "legend.location",
+        "legend.box",
+        "legend.box.just",
+        "legend.box.margin",
+        "legend.box.background",
+        "legend.box.spacing",
+        "panel.background",
+        "panel.border",
+        "panel.spacing",
+        "panel.spacing.x",
+        "panel.spacing.y",
+        "panel.grid",
+        "panel.grid.major",
+        "panel.grid.minor",
+        "panel.grid.major.x",
+        "panel.grid.major.y",
+        "panel.grid.minor.x",
+        "panel.grid.minor.y",
+        "panel.ontop",
+        "panel.widths",
+        "panel.heights",
+        "plot.background",
+        "plot.title",
+        "plot.title.position",
+        "plot.subtitle",
+        "plot.caption",
+        "plot.caption.position",
+        "plot.tag",
+        "plot.tag.position",
+        "plot.tag.location",
+        "plot.margin",
+        "strip.background",
+        "strip.background.x",
+        "strip.background.y",
+        "strip.clip",
+        "strip.placement",
+        "strip.text",
+        "strip.text.x",
+        "strip.text.x.bottom",
+        "strip.text.x.top",
+        "strip.text.y",
+        "strip.text.y.left",
+        "strip.text.y.right",
+        "strip.switch.pad.grid",
+        "strip.switch.pad.wrap",
+        "complete",
+        "validate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_bw": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_classic": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_dark": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_get": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_gray": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_grey": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_light": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_linedraw": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_minimal": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_replace": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_set": {
+      "params": [
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_bottom": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_left": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_right": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_top": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_x": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_axis_y": {
+      "params": [
+        "...",
+        "title",
+        "text",
+        "ticks",
+        "ticks.length",
+        "line",
+        "minor.ticks.length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_legend": {
+      "params": [
+        "...",
+        "text",
+        "text.position",
+        "title",
+        "title.position",
+        "background",
+        "frame",
+        "ticks",
+        "ticks.length",
+        "axis.line",
+        "spacing",
+        "spacing.x",
+        "spacing.y",
+        "margin",
+        "key",
+        "key.size",
+        "key.height",
+        "key.width",
+        "key.spacing",
+        "key.spacing.x",
+        "key.spacing.y",
+        "key.justification",
+        "byrow",
+        "position",
+        "direction",
+        "location",
+        "position.inside",
+        "justification",
+        "justification.top",
+        "justification.bottom",
+        "justification.left",
+        "justification.right",
+        "justification.inside",
+        "box",
+        "box.just",
+        "box.margin",
+        "box.background",
+        "box.spacing"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_panel": {
+      "params": [
+        "...",
+        "background",
+        "border",
+        "widths",
+        "heights",
+        "spacing",
+        "spacing.x",
+        "spacing.y",
+        "grid",
+        "grid.major",
+        "grid.minor",
+        "grid.major.x",
+        "grid.major.y",
+        "grid.minor.x",
+        "grid.minor.y",
+        "ontop"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_plot": {
+      "params": [
+        "...",
+        "background",
+        "title",
+        "title.position",
+        "subtitle",
+        "caption",
+        "caption.position",
+        "tag",
+        "tag.position",
+        "tag.location",
+        "margin"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_sub_strip": {
+      "params": [
+        "...",
+        "background",
+        "background.x",
+        "background.y",
+        "clip",
+        "placement",
+        "text",
+        "text.x",
+        "text.x.bottom",
+        "text.x.top",
+        "text.y",
+        "text.y.left",
+        "text.y.right",
+        "switch.pad.grid",
+        "switch.pad.wrap"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_test": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_update": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theme_void": {
+      "params": [
+        "base_size",
+        "base_family",
+        "header_family",
+        "base_line_size",
+        "base_rect_size",
+        "ink",
+        "paper",
+        "accent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_position": {
+      "params": [
+        "df",
+        "trans_x",
+        "trans_y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "translate_shape_string": {
+      "params": [
+        "shape_string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit": {
+      "params": [
+        "x",
+        "units",
+        "data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_geom_defaults": {
+      "params": [
+        "geom",
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_ggplot": {
+      "params": [
+        "object",
+        "plot",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_labels": {
+      "params": [
+        "p",
+        "labels"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_stat_defaults": {
+      "params": [
+        "stat",
+        "new"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update_theme": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vars": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "...": "data_mask"
+      }
+    },
+    "waiver": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wrap_dims": {
+      "params": [
+        "n",
+        "nrow",
+        "ncol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xlab": {
+      "params": [
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xlim": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ylab": {
+      "params": [
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ylim": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zeroGrob": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".pt": {
+      "mode": "double",
+      "length": "1",
+      "na": false
+    },
+    "Geom": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".data": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".stroke": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "AxisSecondary": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_coord": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_derive": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_facet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_ggproto": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_guide": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_guides": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_layer": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_layout": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_rel": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_S3_gg": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_scale": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_scales_list": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_waiver": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "class_zero_grob": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Coord": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordCartesian": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordFixed": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordFlip": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordMap": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordPolar": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordQuickmap": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordRadial": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordSf": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordTrans": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CoordTransform": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Facet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FacetGrid": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FacetNull": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FacetWrap": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomAbline": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomAnnotationMap": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomArea": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomBar": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomBin2d": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomBlank": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomBoxplot": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomCol": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomContour": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomContourFilled": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomCrossbar": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomCurve": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomCustomAnn": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomDensity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomDensity2d": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomDensity2dFilled": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomDotplot": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomErrorbar": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomErrorbarh": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomFunction": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomHex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomHline": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomLabel": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomLine": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomLinerange": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomLogticks": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomMap": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomPath": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomPoint": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomPointrange": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomPolygon": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomQuantile": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomRaster": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomRasterAnn": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomRect": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomRibbon": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomRug": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomSegment": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomSf": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomSmooth": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomSpoke": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomStep": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomText": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomTile": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomViolin": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GeomVline": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Guide": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideAxis": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideAxisLogticks": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideAxisStack": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideAxisTheta": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideBins": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideColourbar": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideColoursteps": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideCustom": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideLegend": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideNone": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GuideOld": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Layout": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Position": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionDodge": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionDodge2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionFill": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionIdentity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionJitter": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionJitterdodge": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionNudge": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PositionStack": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Scale": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleBinned": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleBinnedPosition": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleContinuous": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleContinuousDate": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleContinuousDatetime": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleContinuousIdentity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleContinuousPosition": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleDiscrete": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleDiscreteIdentity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ScaleDiscretePosition": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Stat": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatAlign": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatBin": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatBin2d": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatBindot": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatBinhex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatBoxplot": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatConnect": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatContour": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatContourFilled": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatCount": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatDensity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatDensity2d": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatDensity2dFilled": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatEcdf": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatEllipse": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatFunction": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatIdentity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatManual": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatQq": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatQqLine": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatQuantile": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSf": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSfCoordinates": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSmooth": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSum": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSummary": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSummary2d": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSummaryBin": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatSummaryHex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatUnique": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "StatYdensity": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "diamonds": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "economics": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "economics_long": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "faithfuld": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "luv_colours": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "midwest": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "mpg": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "msleep": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "presidential": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "seals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "txhousing": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

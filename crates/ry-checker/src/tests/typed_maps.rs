@@ -8,7 +8,10 @@ fn regmatches_callbacks_do_not_assume_scalar_elements() {
         "matches <- regmatches('ab',regexpr('a','ab'),invert=TRUE); lapply(matches,function(z) { if(length(z)==0L) return(z); z })",
     ] {
         let diags = check(source);
-        assert!(diags.iter().all(|d| d.code != "RY105"), "{source}: {diags:?}");
+        assert!(
+            diags.iter().all(|d| d.code != "RY105"),
+            "{source}: {diags:?}"
+        );
     }
 }
 

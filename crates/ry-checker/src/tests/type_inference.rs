@@ -1433,3 +1433,24 @@ fn deferred_loop_transfers_do_not_change_the_function_body_exit() {
         scope.get("out")
     );
 }
+
+#[test]
+fn loop_exit_preserves_uncertainty_from_unmodelled_paths() {
+    let source = r#"`+` <- function(e1, e2) { assign("x", list(field = 1L), envir = parent.frame()); NULL }
+f <- function(flag) {
+    x <- 1L
+    while (TRUE) {
+        if (flag) break
+        1 + 2
+        break
+    }
+    if (!flag) x$field
+}
+f(FALSE)
+"#;
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+}

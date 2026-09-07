@@ -110,7 +110,14 @@ impl Checker {
         let frame = self.loop_frames.pop().expect("active loop frame");
         let has_transfer = frame.breaks.is_some() || frame.nexts.is_some();
         let body_unreachable = inner.unreachable;
+        // An unmodelled path may mutate bindings or control syntax before
+        // leaving the loop. A previously recorded safe break cannot erase it.
+        scope.ops_environment_unknown |= inner.ops_environment_unknown;
+        scope.effects_unknown |= inner.effects_unknown;
         let mut exits = frame.breaks;
+        if has_transfer && inner.effects_unknown {
+            join_path(&mut exits, &inner);
+        }
         if has_transfer {
             // A literal-TRUE loop can leave only through break. Finite loops
             // can also finish after the body or a next; their initial state

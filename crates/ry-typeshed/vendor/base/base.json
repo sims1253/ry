@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -1565,7 +1565,6 @@
       "mirror2html",
       "missingArg",
       "mode<-",
-      "model.extract",
       "model.frame",
       "model.frame.default",
       "model.matrix.default",
@@ -5241,6 +5240,20 @@
         "mode": "logical",
         "length": "1",
         "na": false
+      }
+    },
+    "model.extract": {
+      "params": [
+        "frame",
+        "component"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "eval": {
+        "component": "quoted_symbol"
       }
     },
     "mode": {

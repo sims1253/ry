@@ -171,6 +171,9 @@ All notable changes to ry are documented in this file.
   longer trigger dollar-access errors. Keep slot results and replaced roots
   unknown, including mixed nested replacements; respect explicit accessors.
 
+- Capture bare component names in `stats::model.extract` without reporting
+  them as unbound variables; keep ordinary frame arguments checked.
+
 - Account for forwarded `...` when checking missing and unknown arguments.
   Expanded arguments can fill required parameters and resolve partial names;
   explicit named holes and unrelated argument names still produce warnings.

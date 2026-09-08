@@ -220,4 +220,137 @@ mod tests {
             assert!(matches!(read_serialized(corrupt, 256), Decoded::Failed));
         }
     }
+
+    /// Value kinds the probe workspace writer can emit. Doubles and logicals
+    /// are enough to pin that inventory results never depend on the value.
+    #[derive(Clone, Copy)]
+    enum ProbeValue {
+        Doubles(usize),
+        Logicals(usize),
+    }
+
+    /// Write an uncompressed R v2 `.rda` workspace whose top-level pairlist
+    /// binds each name to a zero-filled vector. The byte grammar mirrors what
+    /// R's `save(..., version = 2, compress = FALSE)` emits for tagged cells:
+    /// per cell the `LISTSXP` flags with the tag bit, a `SYMSXP` tag whose
+    /// print name is a UTF-8 `CHARSXP`, the value item, and a final
+    /// `NILVALUE_SXP` terminator. Zero payloads keep the stream compressible
+    /// so a gzip-wrapped copy stays tiny on disk while its decoded size
+    /// crosses the cap under test.
+    fn rda_v2_workspace(bindings: &[(&str, ProbeValue)]) -> Vec<u8> {
+        fn u32_be(out: &mut Vec<u8>, value: u32) {
+            out.extend_from_slice(&value.to_be_bytes());
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RDX2\nX\n");
+        u32_be(&mut out, 2); // serialization format version
+        u32_be(&mut out, 0x0004_0601); // writer version (any plausible R works)
+        u32_be(&mut out, 0x0002_0300); // minimum reader version
+        for (name, value) in bindings {
+            u32_be(&mut out, 0x0402); // LISTSXP cell with tag
+            u32_be(&mut out, 1); // SYMSXP tag item
+            u32_be(&mut out, 0x40009); // UTF-8 CHARSXP print name
+            u32_be(&mut out, name.len() as u32);
+            out.extend_from_slice(name.as_bytes());
+            match *value {
+                ProbeValue::Doubles(count) => {
+                    u32_be(&mut out, 14); // REALSXP
+                    u32_be(&mut out, count as u32);
+                    out.resize(out.len() + count * 8, 0);
+                }
+                ProbeValue::Logicals(count) => {
+                    u32_be(&mut out, 10); // LGLSXP
+                    u32_be(&mut out, count as u32);
+                    out.resize(out.len() + count * 4, 0);
+                }
+            }
+        }
+        u32_be(&mut out, 0xfe); // NILVALUE_SXP terminator
+        out
+    }
+
+    /// Gzip the probe workspace and write it as `R/sysdata.rda` under a fresh
+    /// temporary package root.
+    fn gzipped_sysdata(bindings: &[(&str, ProbeValue)]) -> PathBuf {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.keep();
+        std::fs::create_dir_all(root.join("R")).expect("mkdir R");
+        let path = root.join("R/sysdata.rda");
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(&rda_v2_workspace(bindings))
+            .expect("encode workspace");
+        std::fs::write(&path, encoder.finish().expect("finish gzip")).expect("write sysdata");
+        path
+    }
+
+    #[test]
+    fn multi_mib_workspace_enumerates_under_the_default_cap() {
+        // gt ships an 8 MB decoded R/sysdata.rda; a default cap below real
+        // sysdata sizes degrades every such package to a file-stem binding
+        // and re-flags all internal lookup tables as unbound (#378).
+        let cap = ry_config::Config::default().max_serialized_bytes;
+        let path = gzipped_sysdata(&[
+            ("locales", ProbeValue::Doubles(200_000)),
+            ("currencies", ProbeValue::Doubles(200_000)),
+        ]);
+        let inventory = serialized_inventory(&path, cap);
+        assert!(!inventory.degraded, "3.2 MB workspace must enumerate");
+        assert!(inventory.bindings.contains("locales"));
+        assert!(inventory.bindings.contains("currencies"));
+    }
+
+    #[test]
+    fn explicit_small_cap_still_degrades_to_the_file_stem() {
+        // An explicit cap always wins over the raised default: users keep a
+        // hard bound for adversarial or huge files.
+        let path = gzipped_sysdata(&[("locales", ProbeValue::Doubles(4))]);
+        let inventory = serialized_inventory(&path, 64);
+        assert!(inventory.degraded);
+        assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
+    }
+
+    #[test]
+    fn workspace_over_the_default_cap_stays_bounded_and_degraded() {
+        // Above the default the reader still stops at cap + 1 decoded bytes:
+        // enumeration is skipped, the stem fallback keeps RY010 alive, and
+        // the degraded flag drives the user-visible note.
+        let cap = ry_config::Config::default().max_serialized_bytes;
+        let path = gzipped_sysdata(&[
+            ("a", ProbeValue::Doubles(1_100_000)),
+            ("b", ProbeValue::Doubles(1_100_000)),
+        ]);
+        let inventory = serialized_inventory(&path, cap);
+        assert!(inventory.degraded);
+        assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
+    }
+
+    #[test]
+    fn malformed_stream_yields_empty_inventory_without_degrading() {
+        // Bytes that are not a serialization stream must not masquerade as an
+        // over-cap file: the reader reports failure, not degradation, so the
+        // scope keeps full RY010 precision instead of a stem fallback.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("sysdata.rda");
+        std::fs::write(&path, b"not a serialization stream").expect("write garbage");
+        let inventory = serialized_inventory(&path, 1 << 20);
+        assert!(!inventory.degraded);
+        assert!(inventory.bindings.is_empty());
+    }
+
+    #[test]
+    fn inventory_names_are_existence_only_across_value_kinds() {
+        // sysdata workspaces hold tables, options, and lookups alike; a name
+        // may equally hold a function. The inventory returns names only, so
+        // serialized files never lend kind or type certainty to analysis.
+        let path = gzipped_sysdata(&[
+            ("data_like", ProbeValue::Doubles(2)),
+            ("flag_like", ProbeValue::Logicals(2)),
+        ]);
+        let inventory = serialized_inventory(&path, 1 << 20);
+        assert_eq!(
+            inventory.bindings,
+            HashSet::from(["data_like".to_string(), "flag_like".to_string()])
+        );
+    }
 }

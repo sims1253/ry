@@ -27,8 +27,13 @@ pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
 
-/// Default cap on serialized artifacts (workspace caches).
-const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
+/// Default cap on decoded serialized R data (`.rda`/`.RData` inventories and
+/// `load()` targets). Must sit above real package `R/sysdata.rda` sizes so
+/// binding enumeration runs without per-project configuration (gt ships an
+/// ~8 MB decoded sysdata); files above the cap degrade to a file-stem binding
+/// with a user-visible note instead of unbounded decoding. Explicit
+/// `max-serialized-bytes` values, including small ones, always win.
+const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Defaults for bounded directory discovery.
 const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
@@ -566,6 +571,19 @@ paths = ["inst/shiny/**"]
         assert_eq!(cfg.environments[0].name, "shiny-server");
         assert_eq!(cfg.environments[0].bindings, ["input", "output", "session"]);
         assert_eq!(cfg.environments[0].paths, ["inst/shiny/**"]);
+    }
+
+    #[test]
+    fn default_serialized_byte_cap_enumerates_real_sysdata_inventories() {
+        // gt's R/sysdata.rda decodes to ~8 MB, so the default cap must sit
+        // above real package sysdata for tag enumeration to run without
+        // per-project configuration. Explicit caps, including small ones,
+        // always take precedence.
+        assert_eq!(
+            Config::default().max_serialized_bytes,
+            16 * 1024 * 1024,
+            "the default cap must cover real R/sysdata.rda sizes"
+        );
     }
 
     #[test]

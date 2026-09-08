@@ -124,7 +124,7 @@
       "repo": "r-lib/usethis",
       "stars": 919,
       "commit": "5f60819dc5dee7071d6e67cfa1fd934bb665466c",
-      "diagnostics": 8
+      "diagnostics": 7
     },
     {
       "name": "keras3",
@@ -5169,15 +5169,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "usethis",
-      "code": "RY092",
-      "path": "R/utils-github.R",
-      "line": 131,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "dbplyr",
       "code": "RY091",
       "path": "tests/testthat/test-backend-.R",
@@ -5234,7 +5225,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 489,
+    "false_positive": 488,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -5248,7 +5239,7 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 67,
+    "type-narrowing": 66,
     "upstream-package": 31
   },
   "notes": [

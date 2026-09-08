@@ -373,15 +373,6 @@
       "audit_group": "P8"
     },
     {
-      "package": "googlesheets4",
-      "code": "RY092",
-      "path": "R/sheet_write.R",
-      "line": 83,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P8"
-    },
-    {
       "package": "dbplyr",
       "code": "RY090",
       "path": "tests/testthat/test-query-set-op.R",
@@ -1068,7 +1059,7 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 45,
+    "false_positive": 44,
     "uncertain": 0,
     "unowned": 52
   },
@@ -1084,7 +1075,7 @@
     "P3e": 2,
     "P3b": 0,
     "P3d": 0,
-    "P8": 4,
+    "P8": 3,
     "P7b": 3,
     "P3a": 0,
     "P3c": 0,

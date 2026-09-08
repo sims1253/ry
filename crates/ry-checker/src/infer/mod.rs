@@ -1125,17 +1125,17 @@ impl Checker {
                 })?;
             let source = argument.1.as_deref()?;
             // The forwarded argument is the caller's parameter *name*, not
-            // its value. Any rebinding of that name in the caller body —
-            // an assignment statement, a loop variable, or an
-            // expression-position `<-`/`<<-` — replaces the default before
-            // the call, so the literal default no longer describes what
-            // the callee receives. `assigned_names_in_body` prunes nested
-            // function bodies: a closure binds its own local, and whether
-            // it superassigns before this call is statically unknown.
-            // Degrading to "no forwarded fact" (the formal falls back to
-            // unknown) can only widen types, never narrow them.
+            // its value. An assignment that may execute before this call
+            // replaces the default, so the literal default no longer
+            // describes what the callee receives; drop the fact (the
+            // formal falls back to unknown). Only a straight-line
+            // top-level assignment after the call's statement is
+            // definitely too late to matter — R runs the caller's
+            // top-level statements in order. This is a conservative
+            // may-rebind approximation, not an execution proof; see
+            // `may_rebind_source_before`.
             if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
-                && assigned_names_in_body(&caller_fn.body).contains(source)
+                && may_rebind_source_before(&caller_fn.body, source, call.call_statement)
             {
                 return None;
             }

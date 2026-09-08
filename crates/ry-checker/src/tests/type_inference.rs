@@ -112,6 +112,121 @@ fn loop_or_conditional_rebinding_also_invalidates_the_forwarded_default() {
 }
 
 #[test]
+fn post_call_straight_line_rebinding_keeps_the_forwarded_default() {
+    // R runs the caller's top-level statements in order, so an assignment
+    // that follows the call cannot replace the default before it: the
+    // forwarded fact survives and the omitted-call true positive keeps
+    // firing.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+           bins <- 30L\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a straight-line rebinding after the call is too late to matter: {diags:?}"
+    );
+}
+
+#[test]
+fn condition_assignment_counts_as_a_rebinding() {
+    // Bounded delta from the earlier blanket invalidation:
+    // statement_assigns_name descends control-flow tests, unlike
+    // assigned_names_in_body, so a `while ((bins <- f()) > 0)` condition
+    // assignment counts. It genuinely rebinds before any later call, so
+    // the forwarded default is dropped here.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           while ((bins <- f(x)) > 0) break\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "an assignment in a control test rebinds before the call: {diags:?}"
+    );
+}
+
+#[test]
+fn wrapped_post_call_rebinding_stays_conservative() {
+    // A wrapped call (`print(callee(...))`) may defer argument forcing or
+    // capture past the later rebinding, so it keeps the conservative
+    // invalidation: only the bare call statement earns the definite-after
+    // exception.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           print(callee(range, bins))\n\
+           bins <- 30L\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "a wrapped forwarding call stays conservative: {diags:?}"
+    );
+}
+
+#[test]
+fn post_call_rebinding_in_loops_or_branches_still_invalidates() {
+    // Structured contexts stay conservative: a nested assignment (in a
+    // loop or a branch) may execute before a later iteration or another
+    // call, so the forwarded default is dropped there.
+    for body in [
+        "callee(range, bins)\nfor (i in 1:2) bins <- 30L",
+        "callee(range, bins)\nif (x) bins <- 30L",
+    ] {
+        let src = format!(
+            "callee <- function(x_range, bins = 30) {{\n\
+               if (bins == 1) 1 else 2\n\
+             }}\n\
+             caller <- function(x, bins = NULL) {{\n\
+               {body}\n\
+             }}\n\
+             z <- caller(c(0, 1))\n"
+        );
+        let diags = check(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY001"),
+            "structured-context rebinding stays conservative: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn multi_call_ordering_decides_per_call() {
+    // The first call still sees the untouched default; the second follows
+    // the rebinding and loses the forwarded fact. The callee's condition
+    // keeps its true positive through the first call.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+           bins <- 30L\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "the call before the rebinding keeps the forwarded default: {diags:?}"
+    );
+}
+
+#[test]
 fn unmodified_forwarded_default_still_types_the_callee_formal() {
     // True-positive direction: without any rebinding, an omitting call
     // site really does deliver the caller's NULL default to the callee,

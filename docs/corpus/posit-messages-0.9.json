@@ -2374,7 +2374,7 @@
       "line": 100,
       "column": 5,
       "severity": "error",
-      "message": "`callback` is `NULL`, not a function; cannot call it"
+      "message": "could not find function `callback` (bound here as `NULL`)"
     },
     "keras3::RY010::R/model-training.R:596:35": {
       "package": "keras3",
@@ -3004,34 +3004,7 @@
       "line": 57,
       "column": 5,
       "severity": "error",
-      "message": "`path` is `NULL`, not a function; cannot call it"
-    },
-    "pkgdown::RY070::tests/testthat/helper.R:24:15": {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 24,
-      "column": 15,
-      "severity": "error",
-      "message": "`path` is `union`, not a function; cannot call it"
-    },
-    "pkgdown::RY070::tests/testthat/helper.R:25:14": {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 25,
-      "column": 14,
-      "severity": "error",
-      "message": "`path` is `union`, not a function; cannot call it"
-    },
-    "pkgdown::RY070::tests/testthat/helper.R:26:15": {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 26,
-      "column": 15,
-      "severity": "error",
-      "message": "`path` is `union`, not a function; cannot call it"
+      "message": "could not find function `path` (bound here as `NULL`)"
     },
     "pkgdown::RY091::R/topics.R:271:16": {
       "package": "pkgdown",
@@ -3598,7 +3571,7 @@
       "line": 367,
       "column": 12,
       "severity": "error",
-      "message": "`callback` is `NULL`, not a function; cannot call it"
+      "message": "could not find function `callback` (bound here as `NULL`)"
     },
     "renv::RY070::R/package.R:370:25": {
       "package": "renv",
@@ -3607,7 +3580,7 @@
       "line": 370,
       "column": 25,
       "severity": "error",
-      "message": "`callback` is `NULL`, not a function; cannot call it"
+      "message": "could not find function `callback` (bound here as `NULL`)"
     },
     "reticulate::RY001::R/py_require.R:579:7": {
       "package": "reticulate",
@@ -3752,15 +3725,6 @@
       "column": 28,
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
-    },
-    "rlang::RY070::tests/testthat/helper-locale.R:134:5": {
-      "package": "rlang",
-      "code": "RY070",
-      "path": "tests/testthat/helper-locale.R",
-      "line": 134,
-      "column": 5,
-      "severity": "error",
-      "message": "`skip` is `logical`, not a function; cannot call it"
     },
     "rlang::RY091::tests/testthat/test-trace.R:325:5": {
       "package": "rlang",

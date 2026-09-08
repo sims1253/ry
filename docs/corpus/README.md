@@ -17,7 +17,7 @@ the other, `upstream-ggplot2`, names the upstream package.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 107 | 10 / 45 / 0 (+52 unowned) | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 106 | 10 / 44 / 0 (+52 unowned) | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 454 | 43 / 411 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
@@ -97,6 +97,12 @@ Checker and LSP changes may alter diagnostics intentionally. Any such change mus
 regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
 or manually review every new identity's label, and explain all missing/unowned
 identities. Never weaken `reconciliation: hermetic` to accept a delta.
+
+The tidyverse ledger’s `source_sha256` uses the same recipe over every
+non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
+entries — while the index’s “24 Packages” counts ledger packages-block
+entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
+testthat, withr) have reports with zero findings and no block entry.
 
 The Posit ledger’s `source_sha256` hashes the concatenated bytes of all
 `ecosystem/reports/posit.*.root.txt` files, sorted by filename. Recompute it

@@ -142,6 +142,26 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "failed version probes are retried, never cached",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-failprobe-"));
+    try {
+      const binary = path.join(dir, "ry");
+      // A spawn that fails (non-zero exit) must not pin an unknown
+      // version for the binary's lifetime: the next restart retries.
+      fs.writeFileSync(binary, `#!/bin/sh\necho run >> "$0.marker"\nexit 1\n`, {
+        mode: 0o755,
+      });
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
 it("returns an unknown version when the executable is missing", async () => {
   expect(
     await Effect.runPromise(getRyVersion("/nonexistent/ry")),
@@ -162,7 +182,7 @@ it("keeps process failures in the typed error channel", async () => {
 });
 
 it.skipIf(process.platform === "win32")(
-  "CLI effects are lazy and reusable",
+  "CLI effects are lazy and reusable, with cached version probes",
   async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
     try {
@@ -176,6 +196,12 @@ it.skipIf(process.platform === "win32")(
       const probe = getRyVersion(binary);
       expect(fs.existsSync(binary + ".marker")).toBe(false);
       await Effect.runPromise(probe);
+      // Re-running against an unchanged binary is served from the cache.
+      await Effect.runPromise(probe);
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\n");
+      // Replacing the binary (new mtime) invalidates the cache entry.
+      const later = new Date(Date.now() + 2000);
+      fs.utimesSync(binary, later, later);
       await Effect.runPromise(probe);
       fs.renameSync(binary + ".marker", marker);
       expect(fs.readFileSync(marker, "utf8")).toBe("run\nrun\n");

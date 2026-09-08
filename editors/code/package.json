@@ -58,7 +58,8 @@
     "compile-tests": "tsc -p tsconfig.test.json --outDir out",
     "test": "node test/installed.cjs",
     "pretest": "npm run compile-tests && npm run compile",
-    "vscode:prepublish": "npm run compile",
+    "compile:production": "node esbuild.js --production",
+    "vscode:prepublish": "npm run compile:production",
     "vsce-package": "vsce package -o ry.vsix --no-dependencies"
   },
   "contributes": {

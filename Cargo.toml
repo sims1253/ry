@@ -58,8 +58,9 @@ flate2 = "1"
 liblzma = { version = "0.4.8", default-features = false }
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
+strip = "symbols"
 
 # Profile cargo-dist builds release artifacts with.
 [profile.dist]

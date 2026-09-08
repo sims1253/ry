@@ -41,6 +41,11 @@ exclude = ["renv", "tests/snaps/**"]
 # Include R fixture data nested under package tests/ directories.
 check-test-fixtures = false
 
+# Decoded-byte cap per serialized R data file (R/sysdata.rda, data/*.rda,
+# load() targets). Files above the cap fall back to a file-stem binding and
+# are reported as degraded scopes.
+max-serialized-bytes = 16777216 # 16 MiB (default)
+
 # Bounded directory discovery. Both CLI (`ry check`) and LSP apply the
 # same limits so the two modes discover exactly the same file set.
 # Each key accepts a positive integer; zero is a configuration error.
@@ -49,6 +54,12 @@ max-files      = 20000   # files discovered per root (default: 20,000)
 max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
 ```
+
+Serialized R data files are inventoried by decoding at most
+`max-serialized-bytes` bytes; one further byte is read to detect overflow. The
+16 MiB default covers real package sysdata such as gt's ~8 MB table bundle. A
+file above the cap falls back to a file-stem binding and `ry check` reports it
+as a degraded scope; raise the value to enumerate such files precisely.
 
 Use an environment profile for bindings supplied only to selected files:
 

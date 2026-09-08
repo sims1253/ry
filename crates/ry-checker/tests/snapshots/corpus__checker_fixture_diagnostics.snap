@@ -663,6 +663,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_closure_factory.R
 - diagnostics: []
+  fixture: ok_coercible_condition.R
+- diagnostics: []
   fixture: ok_compare.R
 - diagnostics: []
   fixture: ok_compare_na_idiom.R
@@ -1018,7 +1020,7 @@ expression: snapshots
   fixture: ok_with_unknown_object.R
 - diagnostics:
     - code: RY001
-      message: "`if` condition is `character<len=1>`, expected length-1 logical"
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
       severity: error
       span:
         column: 4
@@ -1210,7 +1212,7 @@ expression: snapshots
   fixture: ry098_default_forced_before_assignment.R
 - diagnostics:
     - code: RY001
-      message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: error
       span:
         column: 6
@@ -1230,7 +1232,89 @@ expression: snapshots
   fixture: warn_missing_match_condition.R
 - diagnostics:
     - code: RY001
-      message: "`if` condition is `NULL<len=0>`, expected length-1 logical"
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 419
+        line: 6
+        start: 416
+    - code: RY001
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 445
+        line: 7
+        start: 439
+    - code: RY001
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 468
+        line: 8
+        start: 465
+    - code: RY001
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 492
+        line: 9
+        start: 488
+    - code: RY001
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 514
+        line: 10
+        start: 512
+    - code: RY001
+      message: "`if` condition is `character<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 552
+        line: 11
+        start: 534
+    - code: RY001
+      message: "`if` condition is `character<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 584
+        line: 12
+        start: 572
+    - code: RY001
+      message: "`if` condition is `list<len=1>{[[1]]:logical<len=1>}`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 614
+        line: 13
+        start: 604
+    - code: RY001
+      message: "`if` condition is `complex<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 654
+        line: 14
+        start: 634
+    - code: RY001
+      message: "`if` condition is `complex<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: error
+      span:
+        column: 9
+        end: 694
+        line: 15
+        start: 674
+  fixture: warn_noncoercible_condition_shapes.R
+- diagnostics:
+    - code: RY001
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: error
       span:
         column: 6

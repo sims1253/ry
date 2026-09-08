@@ -339,7 +339,10 @@ fn two_roots_different_editor_settings_differential() {
 fn colliding_local_stubs_isolation() {
     let fixture = FixtureProject::empty().unwrap();
 
-    for (root, return_mode) in [("root-a", "integer"), ("root-b", "character")] {
+    // root-b's stub returns a list so `if (my_func())` fires RY001 there;
+    // a character return went silent for conditions in #373 and can no
+    // longer discriminate the two roots' outputs.
+    for (root, return_mode) in [("root-a", "integer"), ("root-b", "list")] {
         fixture
             .write_file(
                 format!("{root}/DESCRIPTION"),
@@ -1224,7 +1227,7 @@ fn invalid_root_rytoml_degrades_entirely_to_defaults() {
         "functions": {
             "my_func": {
                 "params": [],
-                "return": {"mode": "character", "length": "1"}
+                "return": {"mode": "list", "length": "1"}
             }
         }
     }))
@@ -1238,8 +1241,9 @@ fn invalid_root_rytoml_degrades_entirely_to_defaults() {
 
     // Probe document. Line 1 pins the default filter and severity (the
     // broken config would both ignore and error RY002). Lines 2-3 pin the
-    // stub channel: applied stubs give `my_func` a character return type,
-    // firing RY001 on line 3.
+    // stub channel: applied stubs give `my_func` a list return type,
+    // firing RY001 on line 3 (a character condition went silent in #373
+    // and can no longer pin the stub channel).
     let probe = "if (c(TRUE, FALSE)) print(1)\nlibrary(localdep)\nif (my_func()) print(1)\n";
     fixture.write_file("outside/main.R", probe).unwrap();
 
@@ -1296,7 +1300,7 @@ fn invalid_root_rytoml_degrades_entirely_to_defaults() {
         .unwrap();
     runtime.block_on(async {
         // Control: a valid root config applies the stubs, so `my_func()`
-        // resolves to a character return and RY001 fires. This proves the
+        // resolves to a list return and RY001 fires. This proves the
         // probe distinguishes stubs-applied from stubs-absent.
         let valid_pairs = open_unowned_and_collect(&valid_root, &doc_uri, probe).await;
         assert!(

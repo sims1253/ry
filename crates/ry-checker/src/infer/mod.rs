@@ -63,9 +63,58 @@ impl ConditionContext {
     }
 }
 
+/// R's `if`/`while` coercion accepts more than logical scalars: numeric
+/// and raw values coerce numerically, a complex scalar coerces by OR
+/// over its real and imaginary components, and a character scalar
+/// coerces only when its text is one of the eight accepted literals
+/// (see `r_condition_string_is_accepted`). A scalar of these modes whose
+/// value is not statically known MAY therefore be a valid condition, so
+/// the type alone does not prove it invalid — this is an uncertainty
+/// boundary, not a validity claim: the untracked value may equally be a
+/// runtime error (non-literal character text, or NA values such as
+/// `NA_complex_`, which `if` rejects in the "not interpretable" family;
+/// the logical-`NA` condition error is #354 and stays out of scope).
+/// Proven-wrong lengths stay wrong regardless of mode: a zero-length
+/// condition errors ("argument is of length zero") and a known length
+/// above one errors ("the condition has length > 1").
+fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
+    matches!(t.mode, Mode::Character | Mode::Complex | Mode::Raw)
+        && matches!(t.length, Length::One | Length::Unknown)
+}
+
+/// The decoded text of a direct string-literal condition, or `None` for
+/// any other shape. The parser decodes escapes and raw strings when it
+/// builds `Expr::String`, so `"\x54RUE"`, `"\124RUE"`, and `r"(TRUE)"`
+/// all compare as `"TRUE"` — matching R, which decodes the literal
+/// before coercion. The parser drops redundant parentheses, so
+/// `(("TRUE"))` still reaches this helper as a direct literal.
+fn condition_string_literal(cond: &Expr) -> Option<&str> {
+    match cond {
+        Expr::String(value, _) => Some(value),
+        _ => None,
+    }
+}
+
+/// Whether R's `if`/`while` coercion accepts this character text. The
+/// runtime path matches exactly these eight spellings; every other
+/// string — including `"NA"`, `"1"`, `""`, and whitespace-padded
+/// variants — errors with "argument is not interpretable as a logical".
+/// Note the `"NA"` boundary: `as.logical("NA")` itself returns `NA`
+/// without error, and it is USING that logical `NA` as a condition that
+/// errors with "missing value where TRUE/FALSE needed" (#354, out of
+/// scope here). The `if`/`while` coercion path rejects the `"NA"`
+/// string before any of that happens, so it stays in this rule's
+/// proven-invalid set.
+fn r_condition_string_is_accepted(value: &str) -> bool {
+    matches!(
+        value,
+        "T" | "TRUE" | "true" | "True" | "F" | "FALSE" | "false" | "False"
+    )
+}
+
 /// Classify a condition without losing the member-level information carried
 /// by unions. In particular, `integer | double` is numeric truthiness, while
-/// `integer | character` can still fail at runtime and is invalid.
+/// `integer | list` is invalid.
 pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     if matches!(t.length, Length::Zero) {
         return Some(ConditionDiagnostic::Invalid);
@@ -79,6 +128,11 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
             let members = t.members.as_ref()?;
             let mut numeric = false;
             let mut invalid = false;
+            // A coercible scalar branch (character, complex, raw) with an
+            // untracked value: its runtime story may differ from numeric
+            // truthiness (character literal gate, complex component-OR,
+            // raw byte truthiness).
+            let mut coercible_member = false;
             for member in members.iter() {
                 match condition_diagnostic(member) {
                     Some(ConditionDiagnostic::Invalid) => {
@@ -90,15 +144,28 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
                     // unions. An opaque branch is unknown for the same
                     // reason.
                     None if matches!(member.mode, Mode::Logical | Mode::Opaque) => return None,
+                    // A coercible scalar branch is not itself invalid, but
+                    // it does not silence the union either: a sibling
+                    // member that R provably rejects (a list, zero length,
+                    // or a length above one) still flags the condition, and
+                    // paired with a numeric member the RY003 message would
+                    // misdescribe the coercible case, so the union goes
+                    // quiet instead.
+                    None if is_coercible_scalar_condition_mode(member) => {
+                        coercible_member = true;
+                    }
                     None => {}
                 }
             }
             if invalid {
                 Some(ConditionDiagnostic::Invalid)
+            } else if numeric && coercible_member {
+                None
             } else {
                 numeric.then_some(ConditionDiagnostic::Numeric)
             }
         }
+        _ if is_coercible_scalar_condition_mode(t) => None,
         _ => Some(ConditionDiagnostic::Invalid),
     }
 }
@@ -531,13 +598,25 @@ impl Checker {
             .iter()
             .any(|diagnostic| diagnostic.code == "RY100");
         let condition = condition_diagnostic(&ct);
-        if matches!(condition, Some(ConditionDiagnostic::Invalid)) && !has_ry100 {
+        // A character literal condition is decidable where the type is
+        // not: R's coercion accepts exactly eight string spellings, and
+        // every other string errors with "argument is not interpretable
+        // as a logical". The scalar character type alone no longer proves
+        // this (the value may be an accepted literal), so a proven
+        // non-coercible literal re-establishes the diagnostic here.
+        let invalid_string_literal = matches!(ct.mode, Mode::Character)
+            && matches!(ct.length, Length::One)
+            && condition_string_literal(cond)
+                .is_some_and(|value| !r_condition_string_is_accepted(value));
+        if (matches!(condition, Some(ConditionDiagnostic::Invalid)) || invalid_string_literal)
+            && !has_ry100
+        {
             self.emit(
                 Severity::Error,
                 span_of(cond),
                 "RY001",
                 format!(
-                    "{} condition is `{}`, expected length-1 logical",
+                    "{} condition is `{}`, expected length-1 logical (or a value R coerces to logical)",
                     ctx.noun(),
                     ct
                 ),

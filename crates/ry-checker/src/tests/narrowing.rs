@@ -688,6 +688,26 @@ fn concrete_classless_values_still_reject_list_assertions() {
 }
 
 #[test]
+fn classless_list_stub_return_still_rejects_data_frame_assertions() {
+    // Control for the opaque-silence change: `as.list` returns a plain
+    // list with no class entry. That non-opaque class-less reading is a
+    // true positive here -- rlang rejects a bare list where a data frame
+    // is required -- so only the opaque arm of the mapping stays silent.
+    let diagnostics = check(
+        "g <- function() {\n\
+           w <- as.list(data.frame(a = 1L))\n\
+           rlang::check_data_frame(w)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY092"),
+        "a classless plain list still fails a data-frame assertion: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn impossible_guards_in_all_if_arms_make_continuation_unreachable() {
     let diagnostics = check(
         "if (runif(1) > 0.5) {\n\

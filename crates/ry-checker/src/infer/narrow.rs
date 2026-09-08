@@ -497,12 +497,16 @@ pub(crate) fn apply_narrowing_branch<'a>(
             // is not any tested mode, the default-derived mode cannot
             // describe it here; degrade to unknown in this branch only.
             // Mode predicates carry a concrete or union mode and no class
-            // claim — `Mode::Opaque` targets are class predicates
-            // (`inherits`, `is.environment`, `is.<class>`), whose false
-            // path rejects no mode. Locals keep their type (their rejected
-            // branch is genuinely unreachable), mixed unions keep any
-            // surviving member, and a rebinding clears the default-
-            // parameter marker before this can apply.
+            // claim. `Mode::Opaque` targets are class predicates
+            // (`inherits`, `is.environment`, `is.<class>`), and a concrete
+            // mode target can still carry an explicit class
+            // (`is.data.frame` is list + "data.frame"; stub-declared
+            // predicates can express the same shape) — a false path there
+            // rejects the class claim, not the mode, so
+            // `has_known_class()` targets never degrade. Locals keep their
+            // type (their rejected branch is genuinely unreachable), mixed
+            // unions keep any surviving member, and a rebinding clears the
+            // default-parameter marker before this can apply.
             if matches!(
                 target.mode,
                 Mode::Logical
@@ -514,7 +518,8 @@ pub(crate) fn apply_narrowing_branch<'a>(
                     | Mode::List
                     | Mode::Function
                     | Mode::Union
-            ) && scope.is_default_parameter(var)
+            ) && !target.class.has_known_class()
+                && scope.is_default_parameter(var)
                 && let Some(existing) = scope.get(var)
                 && type_is_exactly_tested_family(existing, target)
             {
@@ -643,6 +648,29 @@ impl Checker {
 #[cfg(test)]
 mod selected_branch_tests {
     use super::*;
+
+    #[test]
+    fn class_carrying_predicate_targets_do_not_degrade_the_rejected_branch() {
+        // `is.data.frame` narrows to list + "data.frame": its false path
+        // rejects the class claim, not the list mode, so the recorded type
+        // must survive the rejected branch untouched even when the mode
+        // alone would match.
+        let mut scope = Scope::default();
+        scope.insert_parameter_default("x", RType::scalar(Mode::List));
+        apply_narrowing_branch(
+            &mut scope,
+            &Narrowing::Positive {
+                var: "x".into(),
+                target: RType::scalar(Mode::List).with_class(ClassVector::single("data.frame")),
+            },
+            NarrowingBranch::Else,
+        );
+        assert_eq!(
+            scope.get("x"),
+            Some(&RType::scalar(Mode::List)),
+            "a classed predicate must not degrade the default-parameter type"
+        );
+    }
 
     #[test]
     fn exactly_tested_family_covers_groups_but_not_mixed_unions() {

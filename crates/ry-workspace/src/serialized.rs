@@ -270,18 +270,18 @@ mod tests {
     }
 
     /// Gzip the probe workspace and write it as `R/sysdata.rda` under a fresh
-    /// temporary package root.
-    fn gzipped_sysdata(bindings: &[(&str, ProbeValue)]) -> PathBuf {
+    /// temporary package root. The `TempDir` guard is returned so its lifetime
+    /// covers the assertions; dropping it removes the fixture.
+    fn gzipped_sysdata(bindings: &[(&str, ProbeValue)]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let root = dir.keep();
-        std::fs::create_dir_all(root.join("R")).expect("mkdir R");
-        let path = root.join("R/sysdata.rda");
+        std::fs::create_dir_all(dir.path().join("R")).expect("mkdir R");
+        let path = dir.path().join("R/sysdata.rda");
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder
             .write_all(&rda_v2_workspace(bindings))
             .expect("encode workspace");
         std::fs::write(&path, encoder.finish().expect("finish gzip")).expect("write sysdata");
-        path
+        (dir, path)
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
         // sysdata sizes degrades every such package to a file-stem binding
         // and re-flags all internal lookup tables as unbound (#378).
         let cap = ry_config::Config::default().max_serialized_bytes;
-        let path = gzipped_sysdata(&[
+        let (_guard, path) = gzipped_sysdata(&[
             ("locales", ProbeValue::Doubles(200_000)),
             ("currencies", ProbeValue::Doubles(200_000)),
         ]);
@@ -304,22 +304,38 @@ mod tests {
     fn explicit_small_cap_still_degrades_to_the_file_stem() {
         // An explicit cap always wins over the raised default: users keep a
         // hard bound for adversarial or huge files.
-        let path = gzipped_sysdata(&[("locales", ProbeValue::Doubles(4))]);
+        let (_guard, path) = gzipped_sysdata(&[("locales", ProbeValue::Doubles(4))]);
         let inventory = serialized_inventory(&path, 64);
         assert!(inventory.degraded);
         assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
     }
 
     #[test]
-    fn workspace_over_the_default_cap_stays_bounded_and_degraded() {
-        // Above the default the reader still stops at cap + 1 decoded bytes:
-        // enumeration is skipped, the stem fallback keeps RY010 alive, and
-        // the degraded flag drives the user-visible note.
+    fn workspace_marginally_over_the_default_cap_stays_bounded_and_degraded() {
+        // A COMPLETE, VALID workspace whose decoded stream is only a few bytes
+        // past the cap. The degraded stem-only outcome pins overflow
+        // classification at the boundary: a stream just past the cap must
+        // degrade exactly like a far larger one, never enumerate. It does
+        // NOT by itself prove how many bytes were read — a full decode
+        // followed by a length check would degrade identically — so the
+        // consumption bound (stop after cap + 1 decoded bytes) is pinned
+        // separately by the TinyReads assertions in
+        // `serialization_reads_are_capped_...` above.
         let cap = ry_config::Config::default().max_serialized_bytes;
-        let path = gzipped_sysdata(&[
-            ("a", ProbeValue::Doubles(1_100_000)),
-            ("b", ProbeValue::Doubles(1_100_000)),
-        ]);
+        // One binding of zero doubles: 19 header + 25 cell + 4 terminator
+        // bytes; each extra double adds 8 bytes, so this count lands the
+        // decoded stream a few bytes past the cap.
+        let doubles = ((cap + 8 - 48) / 8) as usize;
+        let stream = rda_v2_workspace(&[("a", ProbeValue::Doubles(doubles))]);
+        assert!(
+            stream.len() > cap as usize + 1,
+            "fixture must decode to more than cap + 1 bytes"
+        );
+        assert!(
+            (stream.len() - cap as usize) <= 16,
+            "fixture should sit just past the cap, not far beyond it"
+        );
+        let (_guard, path) = gzipped_sysdata(&[("a", ProbeValue::Doubles(doubles))]);
         let inventory = serialized_inventory(&path, cap);
         assert!(inventory.degraded);
         assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
@@ -343,7 +359,7 @@ mod tests {
         // sysdata workspaces hold tables, options, and lookups alike; a name
         // may equally hold a function. The inventory returns names only, so
         // serialized files never lend kind or type certainty to analysis.
-        let path = gzipped_sysdata(&[
+        let (_guard, path) = gzipped_sysdata(&[
             ("data_like", ProbeValue::Doubles(2)),
             ("flag_like", ProbeValue::Logicals(2)),
         ]);

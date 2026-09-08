@@ -55,11 +55,11 @@ max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
 ```
 
-Serialized R data files are inventoried by decoding up to
-`max-serialized-bytes` bytes. The 16 MiB default covers real package sysdata
-such as gt's ~8 MB table bundle. A file above the cap falls back to a
-file-stem binding and `ry check` reports it as a degraded scope; raise the
-value to enumerate such files precisely.
+Serialized R data files are inventoried by decoding at most
+`max-serialized-bytes` bytes; one further byte is read to detect overflow. The
+16 MiB default covers real package sysdata such as gt's ~8 MB table bundle. A
+file above the cap falls back to a file-stem binding and `ry check` reports it
+as a degraded scope; raise the value to enumerate such files precisely.
 
 Use an environment profile for bindings supplied only to selected files:
 

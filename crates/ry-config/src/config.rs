@@ -30,9 +30,10 @@ pub const CONFIG_FILENAME: &str = "ry.toml";
 /// Default cap on decoded serialized R data (`.rda`/`.RData` inventories and
 /// `load()` targets). Must sit above real package `R/sysdata.rda` sizes so
 /// binding enumeration runs without per-project configuration (gt ships an
-/// ~8 MB decoded sysdata); files above the cap degrade to a file-stem binding
-/// with a user-visible note instead of unbounded decoding. Explicit
-/// `max-serialized-bytes` values, including small ones, always win.
+/// ~8 MB decoded sysdata); reading stops at the cap plus one overflow-detection
+/// byte, and files past it degrade to a file-stem binding with a user-visible
+/// note instead of unbounded decoding. Explicit `max-serialized-bytes` values,
+/// including small ones, always win.
 const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Defaults for bounded directory discovery.

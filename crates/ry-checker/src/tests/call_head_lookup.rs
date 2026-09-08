@@ -210,3 +210,17 @@ fn unknown_data_mask_stays_silent() {
         "an unknown data mask can hold a function binding: {diagnostics:?}"
     );
 }
+
+#[test]
+fn open_search_path_silences_bare_dataset_head() {
+    // First-site counterpart of `uncertain_search_path_stays_silent`:
+    // the bare typeshed-value stage (#384's site) must honor `Uncertain`
+    // too, not just the lexical-value stage. With the search path open,
+    // a function named `trees` could be attached, so the dataset stub
+    // alone is not proof of a call error.
+    let diagnostics = check("library(notastubbedpkg)\ntrees()\n");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "the bare dataset-value stage must stay silent under uncertainty: {diagnostics:?}"
+    );
+}

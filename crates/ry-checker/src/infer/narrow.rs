@@ -391,6 +391,27 @@ pub(crate) fn apply_narrowing(
     (then_scope, else_scope, narrowed)
 }
 
+/// Whether every mode `existing` may take is one of `target`'s tested modes,
+/// so the predicate's false path excludes the whole recorded type. A union
+/// target (`is.numeric`) tests each of its member modes.
+fn type_is_exactly_tested_family(existing: &RType, target: &RType) -> bool {
+    let tested = |mode: Mode| -> bool {
+        match target.mode {
+            Mode::Union => target
+                .members
+                .as_ref()
+                .is_some_and(|members| members.iter().any(|member| member.mode == mode)),
+            _ => mode == target.mode,
+        }
+    };
+    match existing.mode {
+        Mode::Union => existing.members.as_ref().is_some_and(|members| {
+            !members.is_empty() && members.iter().all(|member| tested(member.mode))
+        }),
+        mode => tested(mode),
+    }
+}
+
 /// Apply only the selected path's refinement. Assertions keep this scope;
 /// conditional expressions supply a single isolated clone for their RHS.
 pub(crate) fn apply_narrowing_branch<'a>(
@@ -468,6 +489,36 @@ pub(crate) fn apply_narrowing_branch<'a>(
         | (Narrowing::Negative { var, target }, NarrowingBranch::Then) => {
             // Only NULL has a representable negative-path complement.
             if target.mode == Mode::Null && narrow_away_from_null_in(scope, var) {
+                return Some(var.as_str());
+            }
+            // A defaulted parameter's recorded type describes only the
+            // omitted-argument call shape (`diagnostic_parameter_type`).
+            // When a mode predicate's false path proves the runtime value
+            // is not any tested mode, the default-derived mode cannot
+            // describe it here; degrade to unknown in this branch only.
+            // Mode predicates carry a concrete or union mode and no class
+            // claim — `Mode::Opaque` targets are class predicates
+            // (`inherits`, `is.environment`, `is.<class>`), whose false
+            // path rejects no mode. Locals keep their type (their rejected
+            // branch is genuinely unreachable), mixed unions keep any
+            // surviving member, and a rebinding clears the default-
+            // parameter marker before this can apply.
+            if matches!(
+                target.mode,
+                Mode::Logical
+                    | Mode::Integer
+                    | Mode::Double
+                    | Mode::Character
+                    | Mode::Complex
+                    | Mode::Raw
+                    | Mode::List
+                    | Mode::Function
+                    | Mode::Union
+            ) && scope.is_default_parameter(var)
+                && let Some(existing) = scope.get(var)
+                && type_is_exactly_tested_family(existing, target)
+            {
+                scope.insert_narrowed(var.clone(), RType::unknown());
                 return Some(var.as_str());
             }
         }
@@ -592,6 +643,30 @@ impl Checker {
 #[cfg(test)]
 mod selected_branch_tests {
     use super::*;
+
+    #[test]
+    fn exactly_tested_family_covers_groups_but_not_mixed_unions() {
+        let character = RType::scalar(Mode::Character);
+        let numeric = RType::scalar(Mode::Integer).join(RType::scalar(Mode::Double));
+        let mixed = RType::scalar(Mode::Character).join(RType::scalar(Mode::Integer));
+        // Single-mode predicate over the same mode.
+        assert!(type_is_exactly_tested_family(&character, &character));
+        // Group predicate over both member modes.
+        assert!(type_is_exactly_tested_family(&numeric, &numeric));
+        assert!(type_is_exactly_tested_family(
+            &RType::scalar(Mode::Integer),
+            &numeric
+        ));
+        // A mixed union survives the false path of a single-mode or group
+        // predicate, so it is not "exactly tested".
+        assert!(!type_is_exactly_tested_family(&mixed, &character));
+        assert!(!type_is_exactly_tested_family(&mixed, &numeric));
+        // A mode outside the tested family is not excluded.
+        assert!(!type_is_exactly_tested_family(
+            &RType::scalar(Mode::List),
+            &character
+        ));
+    }
 
     #[test]
     fn positive_and_negated_union_guards_keep_their_distinct_rules() {

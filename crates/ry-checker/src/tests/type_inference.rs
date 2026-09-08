@@ -89,26 +89,41 @@ fn reassigned_forwarded_default_does_not_reach_the_callee() {
 }
 
 #[test]
-fn loop_or_conditional_rebinding_also_invalidates_the_forwarded_default() {
-    for body in [
-        "for (bins in list(1)) callee(range, bins)",
-        "if (is.null(bins)) bins <- 30L\ncallee(range, bins)",
-    ] {
-        let src = format!(
-            "callee <- function(x_range, bins = 30) {{\n\
-               if (bins == 1) 1 else 2\n\
-             }}\n\
-             caller <- function(x, bins = NULL) {{\n\
-               {body}\n\
-             }}\n\
-             z <- caller(c(0, 1))\n"
-        );
-        let diags = check(&src);
-        assert!(
-            diags.iter().all(|d| d.code != "RY001"),
-            "rebinding through loops and branches replaces the default too: {diags:?}"
-        );
-    }
+fn pre_call_conditional_rebinding_invalidates_the_root_anchored_default() {
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           if (is.null(bins)) bins <- 30L\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "a conditional rebinding before the anchored call may replace the default: {diags:?}"
+    );
+}
+
+#[test]
+fn loop_nested_call_keeps_prefix_forwarded_default_behavior() {
+    // The call is not root-anchored, so the original forwarded-default
+    // behavior is retained: the fact is asserted and the pre-fix true
+    // positive keeps firing instead of being silenced.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           for (bins in list(1)) callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a non-anchored call keeps the pre-fix forwarded-default diagnostic: {diags:?}"
+    );
 }
 
 #[test]
@@ -157,11 +172,11 @@ fn condition_assignment_counts_as_a_rebinding() {
 }
 
 #[test]
-fn wrapped_post_call_rebinding_stays_conservative() {
-    // A wrapped call (`print(callee(...))`) may defer argument forcing or
-    // capture past the later rebinding, so it keeps the conservative
-    // invalidation: only the bare call statement earns the definite-after
-    // exception.
+fn wrapped_forwarding_call_keeps_prefix_default_behavior() {
+    // A wrapped call (`print(callee(...))`) is not root-anchored, so it
+    // keeps the original forwarded-default behavior: the fact is asserted
+    // and the pre-fix true positive keeps firing (1->1 against the
+    // published baseline) instead of being silenced.
     let diags = check(
         "callee <- function(x_range, bins = 30) {\n\
            if (bins == 1) 1 else 2\n\
@@ -173,16 +188,16 @@ fn wrapped_post_call_rebinding_stays_conservative() {
          z <- caller(c(0, 1))\n",
     );
     assert!(
-        diags.iter().all(|d| d.code != "RY001"),
-        "a wrapped forwarding call stays conservative: {diags:?}"
+        diags.iter().any(|d| d.code == "RY001"),
+        "a wrapped forwarding call keeps its pre-fix diagnostic: {diags:?}"
     );
 }
 
 #[test]
-fn post_call_rebinding_in_loops_or_branches_still_invalidates() {
-    // Structured contexts stay conservative: a nested assignment (in a
-    // loop or a branch) may execute before a later iteration or another
-    // call, so the forwarded default is dropped there.
+fn post_call_rebinding_in_loops_or_branches_keeps_the_default() {
+    // Statements after the anchored call bind only after it received its
+    // argument, whatever their shape; the fact survives and the true
+    // positive keeps firing.
     for body in [
         "callee(range, bins)\nfor (i in 1:2) bins <- 30L",
         "callee(range, bins)\nif (x) bins <- 30L",
@@ -198,8 +213,8 @@ fn post_call_rebinding_in_loops_or_branches_still_invalidates() {
         );
         let diags = check(&src);
         assert!(
-            diags.iter().all(|d| d.code != "RY001"),
-            "structured-context rebinding stays conservative: {diags:?}"
+            diags.iter().any(|d| d.code == "RY001"),
+            "any rebinding after the anchored call is too late to matter: {diags:?}"
         );
     }
 }

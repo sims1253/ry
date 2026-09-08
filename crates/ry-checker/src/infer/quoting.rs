@@ -69,51 +69,31 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
     }
 }
 
-/// Whether an assignment to `source` may execute before the forwarding
-/// call recorded at top-level statement `call_statement` (`None` when the
-/// call is nested in structured control flow, where no top-level position
-/// applies and every assignment conservatively counts).
+/// Whether an assignment to `source` may execute before the root-anchored
+/// forwarding call at top-level statement `call_statement`.
 ///
-/// R runs the caller's top-level statements in order, so the single
-/// definite-after shape is a straight-line top-level assignment that
-/// follows the call's statement: it cannot replace the default before
-/// the call, and the forwarded fact survives. Every other assignment
-/// shape — nested in branches or loops, expression-position, a loop
-/// variable, or any statement before the call — may execute first, so it
-/// conservatively invalidates the forwarded default. Nested function
-/// bodies are pruned exactly as in `assigned_names_in_body`: a closure
-/// binds its own local, and whether it superassigns before this call is
-/// statically unordered. This is a may-rebind approximation, not an
-/// execution proof. Even for a bare call statement the callee may store
-/// the argument promise and force it after the caller rebinds; deferred
-/// forcing stays out of scope.
-pub(crate) fn may_rebind_source_before(
-    body: &[Stmt],
-    source: &str,
-    call_statement: Option<usize>,
-) -> bool {
-    let Some(call_statement) = call_statement else {
-        // A call nested in a branch, loop, or block has no fixed position
-        // in the top-level order; every assignment may precede it.
-        return body
-            .iter()
-            .any(|statement| statement_assigns_name(statement, source));
-    };
-    for (statement_index, statement) in body.iter().enumerate() {
-        let straight_line_after = statement_index > call_statement
-            && matches!(
-                statement,
-                Stmt::Assign { target, .. }
-                    if matches!(target, Expr::Ident { name, .. } if name == source)
-            );
-        if straight_line_after {
-            continue;
-        }
-        if statement_assigns_name(statement, source) {
-            return true;
-        }
-    }
-    false
+/// R runs the caller's top-level statements in order, so every binding of
+/// `source` in a statement BEFORE the anchored call may have replaced the
+/// default by the time the call receives its argument — loops, branches,
+/// and control-test assignments included, because any of them may execute
+/// first. The anchored statement itself is the bare call and cannot bind,
+/// and every statement AFTER it binds only after the call has already
+/// received its argument, whatever shape that binding takes.
+///
+/// Calls that are not root-anchored (wrapped, or nested in branches,
+/// loops, or blocks) never reach this function: they keep the original
+/// forwarded-default behavior, preserving their pre-fix diagnostics
+/// rather than silencing them. Nested function bodies are pruned exactly
+/// as in `assigned_names_in_body`: a closure binds its own local, and
+/// whether it superassigns before this call is statically unordered.
+/// This is a may-rebind approximation, not an execution proof. Even for
+/// a bare call statement the callee may store the argument promise and
+/// force it after the caller rebinds; deferred forcing stays out of
+/// scope.
+pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_statement: usize) -> bool {
+    body[..call_statement]
+        .iter()
+        .any(|statement| statement_assigns_name(statement, source))
 }
 
 /// Whether any assignment form inside one statement binds `name`

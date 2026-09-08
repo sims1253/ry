@@ -25,3 +25,5 @@
 
 # Python bytecode from the ecosystem harness
 __pycache__/
+# R plot-sink output from local oracle runs; never commit it
+Rplots.pdf

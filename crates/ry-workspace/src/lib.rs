@@ -145,6 +145,10 @@ pub fn resolve_workspace_context<'a>(
     // A package root is visited once per file in it, so cache the
     // DESCRIPTION read like the sibling namespace/dataset caches.
     let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
+    // The ancestor walk to the enclosing package root is identical for
+    // every file in one directory; cache its result per directory so a
+    // many-file directory does not repeat the same stat calls per file.
+    let mut package_root_cache: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
@@ -195,7 +199,16 @@ pub fn resolve_workspace_context<'a>(
                 }
             }
         }
-        if let Some(root) = r_package_root(Path::new(&file.path)) {
+        if let Some(root) = package_root_cache
+            .entry(
+                Path::new(&file.path)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .to_path_buf(),
+            )
+            .or_insert_with(|| r_package_root(Path::new(&file.path)))
+            .clone()
+        {
             let source_bindings = source_binding_cache
                 .entry(root.clone())
                 .or_insert_with(|| source_package_namespace_bindings(&root))
@@ -827,6 +840,10 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
     }
     let mut roots = Vec::new();
     let mut seen_renv = HashSet::new();
+    // The renv probe walks each file's ancestor directories; files in
+    // one directory share the walk, so probe each distinct directory
+    // once instead of once per file.
+    let mut seen_parents: HashSet<&Path> = HashSet::new();
     for path in all_paths {
         let start = if path.is_dir() {
             path.as_path()
@@ -835,6 +852,9 @@ fn r_library_roots(all_paths: &[PathBuf]) -> Vec<LibraryRoot> {
         } else {
             continue;
         };
+        if !seen_parents.insert(start) {
+            continue;
+        }
         if let Some(renv) = start
             .ancestors()
             .map(|ancestor| ancestor.join("renv/library"))

@@ -10,7 +10,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
+use rayon::prelude::*;
 use ry_config::Config;
 use ry_core::{RParser, SourceFile};
 
@@ -38,21 +40,97 @@ pub(crate) fn index_workspace(root: &Path, config: &Config) -> IndexOutcome {
     }
 }
 
+/// Upper bound on index parse parallelism (see [`index_pool`]).
+const MAX_INDEX_THREADS: usize = 8;
+
+/// Bounded rayon pool dedicated to workspace indexing, created lazily on
+/// the first index and reused for every re-index (watched-files and
+/// configuration changes trigger rescans) so worker threads and their
+/// cached parsers survive between scans.
+///
+/// The CLI parses on rayon's global pool — its whole process exists to
+/// check one workspace and then exit, so using every core is right. The
+/// LSP is different: it is a long-lived background process sharing the
+/// machine with the editor, and it indexes while the user types.
+/// Saturating every core would starve the editor and any other language
+/// server, so index parallelism is capped at `min(8,
+/// available_parallelism)`: enough to hide parse latency on large
+/// workspaces while leaving headroom on big machines. Idle pool threads
+/// park (no CPU cost) and each holds one parser, so the pool's steady
+/// footprint is at most 8 cached tree-sitter parsers.
+fn index_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .clamp(1, MAX_INDEX_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("ry-index-{i}"))
+            .build()
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, threads, "failed to build index pool; indexing single-threaded");
+                // Indexing must never take the server down: degrade to
+                // one worker rather than propagate the panic.
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .thread_name(|i| format!("ry-index-{i}"))
+                    .build()
+                    .expect("single-threaded rayon pool")
+            })
+    })
+}
+
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
-    let mut parsed = HashMap::new();
-    let mut parser = match RParser::new() {
-        Ok(p) => p,
-        Err(_) => return parsed,
-    };
-    for path in paths {
-        let Ok(source) = ry_workspace::read_r_source(path) else {
-            continue;
-        };
-        if let Ok(file) = parser.parse(&path.to_string_lossy(), &source) {
-            parsed.insert(path.to_string_lossy().into_owned(), Arc::new(file));
-        }
+    // Parse in parallel on the bounded index pool, mirroring the CLI's
+    // `ry-cli::pipeline::parse_files`: each worker reuses a thread-local
+    // `RParser` (tree-sitter parsers are Send but neither Sync nor
+    // cheap to construct, so one per worker is the right granularity).
+    // Error tolerance matches the previous serial loop: an unreadable
+    // file or a parse failure is skipped, never fatal to the index.
+    index_pool().install(|| {
+        paths
+            .par_iter()
+            .filter_map(|path| {
+                let source = ry_workspace::read_r_source(path).ok()?;
+                let path_str = path.to_string_lossy().into_owned();
+                let file = parse_with_worker_parser(&path_str, &source)?;
+                Some((path_str, Arc::new(file)))
+            })
+            .collect()
+    })
+}
+
+/// Parse one file with this worker thread's cached parser, constructing
+/// it on first use. A construction failure skips this file (and leaves
+/// the slot empty so the next file retries) rather than failing the
+/// whole index.
+fn parse_with_worker_parser(path: &str, source: &str) -> Option<SourceFile> {
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<RParser>> =
+            const { std::cell::RefCell::new(None) };
     }
-    parsed
+    PARSER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let parser = match slot.as_mut() {
+            Some(parser) => parser,
+            None => match RParser::new() {
+                Ok(parser) => slot.insert(parser),
+                Err(error) => {
+                    tracing::warn!(path, %error, "index parser init failed; skipping file");
+                    return None;
+                }
+            },
+        };
+        match parser.parse(path, source) {
+            Ok(file) => Some(file),
+            Err(error) => {
+                tracing::debug!(path, %error, "index parse failed; skipping file");
+                None
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -147,6 +225,32 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "target/ must be skipped"
         );
+    }
+
+    /// Parallel parsing on the bounded pool must land every parseable
+    /// file in the map regardless of how rayon splits the work across
+    /// workers (each worker owns its own thread-local parser).
+    #[test]
+    fn parallel_index_parses_every_file() {
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
+        let count = 33;
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:02}.R")), format!("x_{i} <- {i}\n")).unwrap();
+        }
+        let config = Config::default();
+        let outcome = index_workspace(dir, &config);
+        assert_eq!(outcome.files.len(), count, "every file must be indexed");
+        for i in 0..count {
+            assert!(
+                outcome.files.contains_key(
+                    &dir.join(format!("f{i:02}.R"))
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                "f{i:02}.R missing"
+            );
+        }
     }
 
     /// Truncated state must be exposed to tests.

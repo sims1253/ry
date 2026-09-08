@@ -1204,6 +1204,14 @@ impl Checker {
                         // A declared source is conditional: without a
                         // supplied `data` argument, formula extras evaluate
                         // normally in the caller environment.
+                        let leading_argument_is_masked =
+                            declared_binding
+                                .as_ref()
+                                .is_some_and(|(signature, bindings)| {
+                                    eval_mode_for_arg(signature, bindings, 0).is_some_and(|mode| {
+                                        matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
+                                    })
+                                });
                         let Some(data) = supplied_data_mask_source
                             .as_ref()
                             .map(|(_, data)| data.clone())
@@ -1212,7 +1220,21 @@ impl Checker {
                                     .as_ref()
                                     .is_some_and(|signature| signature.data_mask_source.is_none())
                                     .then(|| {
-                                        arg_types.first().cloned().unwrap_or_else(RType::unknown)
+                                        if leading_argument_is_masked {
+                                            // A signature that data-masks its own
+                                            // leading formals (ggplot2 `aes()`,
+                                            // `vars()`, tidyr `nesting()`) has no
+                                            // data argument at the call site: the
+                                            // mask is unknown and `.data` stays
+                                            // opaque instead of adopting a sibling
+                                            // argument's atomic type.
+                                            RType::unknown()
+                                        } else {
+                                            arg_types
+                                                .first()
+                                                .cloned()
+                                                .unwrap_or_else(RType::unknown)
+                                        }
                                     })
                             })
                         else {

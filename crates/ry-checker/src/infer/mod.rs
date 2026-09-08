@@ -1124,6 +1124,21 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
+            // The forwarded argument is the caller's parameter *name*, not
+            // its value. Any rebinding of that name in the caller body —
+            // an assignment statement, a loop variable, or an
+            // expression-position `<-`/`<<-` — replaces the default before
+            // the call, so the literal default no longer describes what
+            // the callee receives. `assigned_names_in_body` prunes nested
+            // function bodies: a closure binds its own local, and whether
+            // it superassigns before this call is statically unknown.
+            // Degrading to "no forwarded fact" (the formal falls back to
+            // unknown) can only widen types, never narrow them.
+            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+                && assigned_names_in_body(&caller_fn.body).contains(source)
+            {
+                return None;
+            }
             let (source_index, source_parameter) = call
                 .caller_params
                 .iter()

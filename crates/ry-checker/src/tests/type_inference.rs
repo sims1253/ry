@@ -61,6 +61,114 @@ fn detects_char_plus_int() {
     );
 }
 
+// Forwarded-default typing (#342). `forwarded_default_type` asserts that a
+// caller's parameter default reaches the callee's formal when the argument
+// is the bare parameter name and some caller call site omits it. That
+// assertion is only sound while the caller never rebinds the name before
+// the call: once the body assigns it (statement, loop variable, or
+// expression-position `<-`/`<<-`), the forwarded value is the rebinding's
+// result, not the literal default. ggplot2's `compute_bins` reassigns and
+// standalone-checks `bins` before forwarding it, which manufactured a
+// `logical<len=0>` condition at `bin_breaks_bins`'s `bins == 1`.
+#[test]
+fn reassigned_forwarded_default_does_not_reach_the_callee() {
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           bins <- allow_lambda(bins)\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "a rebinding replaces the caller default before the call: {diags:?}"
+    );
+}
+
+#[test]
+fn loop_or_conditional_rebinding_also_invalidates_the_forwarded_default() {
+    for body in [
+        "for (bins in list(1)) callee(range, bins)",
+        "if (is.null(bins)) bins <- 30L\ncallee(range, bins)",
+    ] {
+        let src = format!(
+            "callee <- function(x_range, bins = 30) {{\n\
+               if (bins == 1) 1 else 2\n\
+             }}\n\
+             caller <- function(x, bins = NULL) {{\n\
+               {body}\n\
+             }}\n\
+             z <- caller(c(0, 1))\n"
+        );
+        let diags = check(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY001"),
+            "rebinding through loops and branches replaces the default too: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn unmodified_forwarded_default_still_types_the_callee_formal() {
+    // True-positive direction: without any rebinding, an omitting call
+    // site really does deliver the caller's NULL default to the callee,
+    // and `bins == 1` really is `logical(0)` at runtime.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "the unmodified forwarded default still reaches the callee: {diags:?}"
+    );
+}
+
+#[test]
+fn nested_closure_rebinding_does_not_invalidate_the_forwarded_default() {
+    // A closure body binds its own local `bins`; it cannot replace the
+    // enclosing parameter unless it superassigns, and whether it runs
+    // before the call is statically unknown. The forwarded default stays
+    // asserted (documented residual: `bins <<- v` inside a closure that
+    // runs before the call is not modeled).
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           rebinder <- function() bins <- 5\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a closure's own local rebinding leaves the forwarded default intact: {diags:?}"
+    );
+}
+
+#[test]
+fn proven_zero_length_conditions_still_fire() {
+    // Insurance for the #342 family: genuinely zero-length conditions keep
+    // their diagnostics; only the manufactured forwarded-default zero goes.
+    let diags = check(
+        "a <- if (character(0) == \"a\") 1 else 2\n\
+         b <- if (numeric(0) > 1) 1 else 2\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY001").count(),
+        2,
+        "real zero-length conditions stay diagnosed: {diags:?}"
+    );
+}
+
 #[test]
 fn allows_int_plus_double() {
     let diags = check("1L + 2.0\n");

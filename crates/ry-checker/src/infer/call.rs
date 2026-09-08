@@ -260,12 +260,21 @@ impl Checker {
             return t;
         }
 
-        // No lexical callable won. A bare typed package value is therefore a
-        // non-function call, not a zero-argument function signature.
+        // No lexical callable won. A bare typed package value is a
+        // non-function call, not a zero-argument function signature --
+        // but only when no function of that name is reachable anywhere
+        // (#384): package-own definitions live in the FnTable, and R's
+        // function-mode call lookup skips the dataset binding in favor
+        // of any such outward function. An uncertain outward state
+        // (open search path, unenumerable data mask) silences too.
         if scope.get(&lookup_name).is_none()
             && let Some(value_type) = self.resolve_typeshed_value(&name)
+            && matches!(
+                self.call_head_function_evidence(&name, scope),
+                CallHeadFunctionEvidence::Diagnose
+            )
         {
-            return self.emit_not_callable(&name, value_type.mode, span);
+            return self.emit_symbol_not_callable(&name, value_type.mode, span);
         }
 
         // The atomic-constructor stage: `c`, `list`, `data.frame`, `t`,
@@ -1447,6 +1456,32 @@ impl Checker {
         }
     }
 
+    /// The diagnostic decision for a bare symbol call head (#381).
+    /// Uncertainty is decided first and cannot be overridden by the
+    /// callable-inventory approximation below: an attached package
+    /// without a stub (or an unenumerable data mask) can export any
+    /// name, so a would-be RY070 stays silent. The existing S7 carveout
+    /// is retained as a known approximation, not a proof: the
+    /// whole-project callable inventory has no execution-order
+    /// information, so at the top level a concrete value still yields
+    /// the diagnostic (`err_s7_callable_future_assignment`), and a
+    /// frame-local value above a live generator can be over-diagnosed.
+    /// `Suppress` likewise is not a proven function: it inherits
+    /// `has_function_anywhere`'s conservatism, which treats externally
+    /// supplied names as possible functions.
+    fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
+        if scope.search_path_unknown || scope.data_mask_unknown {
+            return CallHeadFunctionEvidence::Uncertain;
+        }
+        if !self.has_function_anywhere(name) {
+            return CallHeadFunctionEvidence::Diagnose;
+        }
+        if !scope.is_default_parameter(name) && self.fn_table.callable_vars.contains(name) {
+            return CallHeadFunctionEvidence::Diagnose;
+        }
+        CallHeadFunctionEvidence::Suppress
+    }
+
     /// The lexical-callable stage: a `Function`-typed scope binding with an
     /// inferred `fn_sig` resolves to the signature's return type (this is
     /// what makes `c <- make_counter(); v <- c()` work). Qualified calls
@@ -1488,20 +1523,19 @@ impl Checker {
             // FnTable at a call site. If such a function exists, fall
             // through to the resolution below instead of firing RY070.
             // Only when no function of that name exists anywhere does
-            // calling the non-function value warrant RY070.
-            // A concrete lexical value at this point wins over the
-            // whole-project callable inventory; a later or cross-file
-            // S7 constructor must not hide this proven call error.
-            let has_function_elsewhere = self.has_function_anywhere(name)
-                && (scope.is_default_parameter(name)
-                    || !self.fn_table.callable_vars.contains(name));
-            if !has_function_elsewhere {
-                // RY070: a non-function value is being called as if it
-                // were a function. R errors at runtime with
+            // calling the non-function value warrant RY070; an
+            // uncertain outward state also falls through in silence
+            // (see `call_head_function_evidence`).
+            if matches!(
+                self.call_head_function_evidence(name, scope),
+                CallHeadFunctionEvidence::Diagnose
+            ) {
+                // RY070: no function of this name is reachable in any
+                // frame, so R errors at runtime with
                 // "could not find function". Args have already been
                 // inferred above, so we just emit and return opaque
                 // (re-inferring would double-emit arg diagnostics).
-                return Some(self.emit_not_callable(name, t.mode, span));
+                return Some(self.emit_symbol_not_callable(name, t.mode, span));
             }
             // A function exists elsewhere; fall through to resolve it
             // (the local non-function binding is ignored at the call
@@ -1567,15 +1601,32 @@ impl Checker {
         Some(join_all(returns))
     }
 
-    /// Emit RY070 for a call to a name whose type is known to be a
-    /// non-function value, and return the opaque result every such site
-    /// yields.
+    /// Emit RY070 for a value-expression head (`pkg::value()`) whose
+    /// typeshed type is known to be a non-function value, and return
+    /// the opaque result every such site yields. Qualified `::` lookup
+    /// fetches the value itself, so R's error here is
+    /// "attempt to apply non-function", not a function-mode miss.
     fn emit_not_callable(&mut self, name: &str, mode: Mode, span: Span) -> RType {
         self.emit(
             Severity::Error,
             span,
             "RY070",
             format!("`{}` is `{}`, not a function; cannot call it", name, mode),
+        );
+        RType::unknown()
+    }
+
+    /// Emit RY070 for a bare symbol call head with no reachable
+    /// function binding (#381). R's function-mode lookup skips the
+    /// non-function bindings, so the reachable runtime error is exactly
+    /// R's own: the function is not found. Value-expression heads keep
+    /// [`Self::emit_not_callable`].
+    fn emit_symbol_not_callable(&mut self, name: &str, mode: Mode, span: Span) -> RType {
+        self.emit(
+            Severity::Error,
+            span,
+            "RY070",
+            format!("could not find function `{name}` (bound here as `{mode}`)"),
         );
         RType::unknown()
     }
@@ -1815,6 +1866,26 @@ struct CallResolution {
 
 fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
+}
+
+/// The diagnostic decision for a bare symbol call head under the
+/// checker's current outward-lookup model, mirroring R's function-mode
+/// call lookup (non-function bindings are skipped in every frame). The
+/// variants are decisions, not proofs: `Diagnose` includes the retained
+/// callable-inventory approximation documented on
+/// [`Checker::call_head_function_evidence`], and `Suppress` inherits
+/// `has_function_anywhere`'s conservatism (externally supplied names are
+/// treated as possible functions).
+enum CallHeadFunctionEvidence {
+    /// A function binding is modeled reachable outward; the call head
+    /// resolves to it, the local value is skipped, and no RY070 fires.
+    Suppress,
+    /// An open search path or an unenumerable data mask can hide a
+    /// function binding, so silence is the only truthful action.
+    Uncertain,
+    /// Under the current model no function binding is reachable, so
+    /// RY070 fires with R's function-mode error text.
+    Diagnose,
 }
 
 /// The callee of a direct call, spelled as an identifier or a string

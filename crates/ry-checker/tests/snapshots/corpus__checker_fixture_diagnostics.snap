@@ -68,7 +68,7 @@ expression: snapshots
   fixture: err_call_literal.R
 - diagnostics:
     - code: RY070
-      message: "`x` is `double`, not a function; cannot call it"
+      message: "could not find function `x` (bound here as `double`)"
       severity: error
       span:
         column: 5
@@ -178,7 +178,7 @@ expression: snapshots
   fixture: err_impossible_standalone_guard.R
 - diagnostics:
     - code: RY070
-      message: "`x` is `NULL`, not a function; cannot call it"
+      message: "could not find function `x` (bound here as `NULL`)"
       severity: error
       span:
         column: 2
@@ -554,7 +554,7 @@ expression: snapshots
   fixture: err_s3_literal_ops_chooser.R
 - diagnostics:
     - code: RY070
-      message: "`x` is `integer`, not a function; cannot call it"
+      message: "could not find function `x` (bound here as `integer`)"
       severity: error
       span:
         column: 0
@@ -564,7 +564,7 @@ expression: snapshots
   fixture: err_s7_callable_future_assignment.R
 - diagnostics:
     - code: RY070
-      message: "`x` is `integer`, not a function; cannot call it"
+      message: "could not find function `x` (bound here as `integer`)"
       severity: error
       span:
         column: 0

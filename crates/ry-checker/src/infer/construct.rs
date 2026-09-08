@@ -758,6 +758,12 @@ impl Checker {
                 )
                 .unwrap_or(length);
                 let mut result = RType::new(mode, length);
+                if c.class.is_empty() && mode == Mode::Opaque {
+                    // An opaque return without a class entry knows nothing
+                    // about the class; absent metadata must not read as a
+                    // proven-empty class vector (see `json_rtype_scalar`).
+                    result.class = ClassVector::unknown();
+                }
                 if !c.class.is_empty() {
                     let refs: Vec<&str> = c.class.iter().map(String::as_str).collect();
                     result = result.with_class(ClassVector::from_slice(&refs));

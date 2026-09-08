@@ -434,7 +434,17 @@ pub(crate) fn json_rtype_scalar(jt: &JsonRType) -> RType {
     }
     let mode = concrete_json_mode(&jt.mode).unwrap_or(Mode::Opaque);
     let class = if jt.class.is_empty() {
-        ClassVector::empty()
+        // An omitted class entry means the stub does not know the class.
+        // For an opaque return that absence is not evidence: the runtime
+        // value may carry any S3 class (rlang `eval_tidy` typically returns
+        // exactly the captured object). Only concrete modes may read as
+        // provably classless, and even that is a stub approximation (a
+        // `double` return can still be a Date at runtime).
+        if mode == Mode::Opaque {
+            ClassVector::unknown()
+        } else {
+            ClassVector::empty()
+        }
     } else {
         let refs: Vec<&str> = jt.class.iter().map(|s| s.as_str()).collect();
         ClassVector::from_slice(&refs)

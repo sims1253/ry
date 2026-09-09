@@ -1514,3 +1514,53 @@ fn scoped_invalidation_does_not_seed_mutually_recursive_returns() {
         callback_project(&sources).check()
     );
 }
+
+#[test]
+fn cross_file_function_beats_dataset_stub() {
+    // #384: a project function defined in one file must win over the
+    // base `datasets` stub when called bare from another file. R
+    // resolves the call head through the namespace, never through the
+    // attached dataset.
+    let mut project = Project::new();
+    project.add_file(
+        "trees.R".to_string(),
+        parse(
+            "trees.R",
+            "trees <- function(deg_free = NULL) {\n  structure(list(), class = \"param\")\n}\n",
+        ),
+    );
+    project.add_file(
+        "tree_grid.R".to_string(),
+        parse(
+            "tree_grid.R",
+            "tree_grid <- function() {\n  trees(deg_free = 3)\n}\n",
+        ),
+    );
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().all(|d| d.code != "RY070"),
+        "the package-own function must outrank the dataset stub at call heads: {all:?}"
+    );
+}
+
+#[test]
+fn cross_file_dataset_call_without_function_keeps_error() {
+    // Control for the same shape: with no `WWWusage` function anywhere,
+    // the bare dataset call stays a true no-function error.
+    let mut project = Project::new();
+    project.add_file("empty.R".to_string(), parse("empty.R", "# no-diag\n"));
+    project.add_file("use.R".to_string(), parse("use.R", "WWWusage()\n"));
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().any(|d| d.code == "RY070"),
+        "no function anywhere keeps the dataset call error: {all:?}"
+    );
+}

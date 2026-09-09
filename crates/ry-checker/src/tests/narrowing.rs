@@ -643,6 +643,71 @@ fn standalone_check_data_frame_accepts_multiple_columns() {
 }
 
 #[test]
+fn classless_opaque_stub_return_is_not_a_proven_class_rejection() {
+    // Issue #341: `eval_tidy`'s stub return is opaque with no class entry.
+    // Absent class metadata must not prove class absence, so the rlang
+    // standalone data-frame check stays silent for it (the runtime value
+    // is typically exactly the data frame being checked).
+    let diagnostics = check(
+        "f <- function(data) {\n\
+           data <- rlang::eval_tidy(rlang::enquo(data))\n\
+           rlang::check_data_frame(data)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY092"),
+        "a classless opaque stub return must not prove class absence: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn concrete_classless_values_still_reject_list_assertions() {
+    // Adjacent true-positive control for the opaque-silence policy: a
+    // concrete atomic value is legitimately classless and still provably
+    // rejected by a list/data-frame assertion.
+    let diagnostics = check(
+        "f <- function() {\n\
+           v <- 1.5\n\
+           rlang::check_data_frame(v)\n\
+         }\n\
+         g <- function() {\n\
+           s <- letters[1]\n\
+           rlang::check_data_frame(s)\n\
+         }\n",
+    );
+    let rejections = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY092")
+        .count();
+    assert_eq!(
+        rejections, 2,
+        "concrete non-list values must still be rejected: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn classless_list_stub_return_still_rejects_data_frame_assertions() {
+    // Control for the opaque-silence change: `as.list` returns a plain
+    // list with no class entry. That non-opaque class-less reading is a
+    // true positive here -- rlang rejects a bare list where a data frame
+    // is required -- so only the opaque arm of the mapping stays silent.
+    let diagnostics = check(
+        "g <- function() {\n\
+           w <- as.list(data.frame(a = 1L))\n\
+           rlang::check_data_frame(w)\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY092"),
+        "a classless plain list still fails a data-frame assertion: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn impossible_guards_in_all_if_arms_make_continuation_unreachable() {
     let diagnostics = check(
         "if (runif(1) > 0.5) {\n\

@@ -364,15 +364,6 @@
       "audit_group": "P8"
     },
     {
-      "package": "googlesheets4",
-      "code": "RY092",
-      "path": "R/sheet_write.R",
-      "line": 83,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P8"
-    },
-    {
       "package": "dbplyr",
       "code": "RY090",
       "path": "tests/testthat/test-query-set-op.R",
@@ -1059,7 +1050,7 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 44,
+    "false_positive": 43,
     "uncertain": 0,
     "unowned": 52
   },
@@ -1075,7 +1066,7 @@
     "P3e": 2,
     "P3b": 0,
     "P3d": 0,
-    "P8": 4,
+    "P8": 3,
     "P7b": 3,
     "P3a": 0,
     "P3c": 0,
@@ -1088,7 +1079,9 @@
     "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
     "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered.",
-    "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved."
+    "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved.",
+    "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md."
   ],
   "ry_commit": "42fbc6b284bec619507c10781c72a90d80a4aa7c",
   "source_sha256": "91a4bd74c5663a8dd0df9d6825ecbf4280f6acd6516bf8961ce4d09d74f835e3"

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "mirai",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "functions": {
     "call_mirai": {
       "params": [
@@ -89,12 +89,13 @@
     },
     "status": {
       "params": [
-        ".x"
+        ".compute"
       ],
       "return": {
-        "mode": "integer",
-        "length": "1",
-        "na": false
+        "mode": "list",
+        "length": "unknown",
+        "na": false,
+        "note": "Named list: connections (integer), daemons (character URL or 0L); mirai (named integer) and memory (named numeric) present only under a dispatcher. Source: mirai 2.7.2 R/daemons.R status(); runtime checked on mirai 2.7.1 / R 4.6.1."
       }
     },
     "stop_mirai": {

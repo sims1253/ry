@@ -276,6 +276,10 @@ enum TypeshedCmd {
 }
 
 fn main() -> Result<ExitCode> {
+    // Rayon's global pool is sized lazily in `pipeline::parse_files` so
+    // subcommands that never run parallel work (`--version`, `--help`,
+    // completions) do not spawn worker threads at all.
+
     // `ArgMatches` is kept alongside the typed `Cli` so check's
     // `flag_set` can tell a user-passed flag from its clap default.
     //

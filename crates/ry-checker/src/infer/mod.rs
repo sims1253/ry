@@ -1203,6 +1203,29 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
+            // The forwarded argument is the caller's parameter *name*, not
+            // its value. The invalidation is scoped to root-anchored
+            // forwarding calls — a top-level statement that IS the call:
+            // an assignment that may execute before such a call replaces
+            // the default, so the literal default no longer describes
+            // what the callee receives (drop the fact; the formal falls
+            // back to unknown). Only a straight-line top-level assignment
+            // after the call's statement is definitely too late to
+            // matter — R runs the caller's top-level statements in order.
+            // Calls wrapped or nested in structured contexts keep the
+            // original forwarded-default behavior unchanged, preserving
+            // their pre-fix true positives rather than silencing them.
+            // This is a may-rebind approximation, not an execution proof;
+            // see `may_rebind_source_before`. Even for a bare call
+            // statement the callee may store the argument promise and
+            // force it after the caller rebinds; deferred forcing stays
+            // out of scope.
+            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+                && let Some(call_statement) = call.call_statement
+                && may_rebind_source_before(&caller_fn.body, source, call_statement)
+            {
+                return None;
+            }
             let (source_index, source_parameter) = call
                 .caller_params
                 .iter()

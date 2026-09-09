@@ -445,7 +445,7 @@ fn coercible_scalar_conditions_stay_silent() {
         (
             // NA_complex_ is complex<len=1>, so this exercises the same
             // silence arm. R ERRORS at runtime ("argument is not
-            // interpretable as a logical"): the VALUE, not the mode,
+            // interpretable as logical"): the VALUE, not the mode,
             // decides. Silence is the uncertainty policy for untracked
             // values (NA boundary stays with #354), not a validity claim.
             "NA complex constant stays silent (uncertainty boundary)",

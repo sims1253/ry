@@ -354,8 +354,8 @@ impl PackageSpec {
     /// Parse this package on first use and cache it for the life of the
     /// process. The embedded JSON always parses; a failure here is a
     /// build-time data bug, not a runtime condition, so panicking during
-    /// first access is acceptable. Concurrent first callers may each
-    /// parse; all receive the same cached value.
+    /// first access is acceptable. Concurrent first callers block in
+    /// `get_or_init` until one parse wins and is shared by all.
     fn load(&self) -> &Typeshed {
         self.cache.get_or_init(|| {
             let json = inflate_embedded(self.blob, self.name);

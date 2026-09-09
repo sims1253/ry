@@ -502,7 +502,8 @@ impl Checker {
     /// class-equality operand check runs first, then the condition's own
     /// inference, and `diagnostic_start` bounds exactly the diagnostics
     /// that inference produced — which is what lets an RY100 reported
-    /// inside the condition suppress the RY001/RY003/RY002 family. All
+    /// inside the condition suppress the RY001 and RY003 arms below (the
+    /// RY002 length rule is not gated on it). All
     /// three condition contexts (`if` statements, loop conditions, `if`
     /// expressions) route through here so they cannot drift apart.
     fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
@@ -582,7 +583,8 @@ impl Checker {
     ///
     /// `diagnostic_start` is the `diagnostics` length captured before that
     /// inference. An RY100 reported inside the condition already covers the
-    /// same span, so it suppresses this family.
+    /// same span, so it suppresses the RY001 and RY003 arms below (RY002's
+    /// length rule is not gated on it).
     ///
     /// RY002 fires for `ConditionContext::If` only. The rule table scopes that
     /// code to `if` conditions, and the `while` arm has never carried it.

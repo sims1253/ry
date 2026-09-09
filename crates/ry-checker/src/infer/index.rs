@@ -332,9 +332,17 @@ impl Checker {
                     result.columns = None;
                     return result;
                 }
-                // An opaque receiver supplies no subsetting contract. Its
-                // length and schema describe the source, not the result.
-                if bt.mode == Mode::Opaque {
+                // An opaque receiver supplies no subsetting contract, and a
+                // union receiver supplies none either: `vector_base` above
+                // already excludes unions, so reaching here means the
+                // members' shapes cannot drive the result. Their lengths
+                // and schemas describe the source members, not the
+                // index-derived result — a members-agree union such as
+                // `if (p) c("a", "b") else c("a", "b", "c")` would
+                // otherwise carry `logical<len=2>|logical<len=3>` past
+                // `x[1L] == "a"` and surface a false condition-length
+                // warning once member-level lengths are inspected.
+                if matches!(bt.mode, Mode::Opaque | Mode::Union) {
                     return RType::unknown();
                 }
                 bt

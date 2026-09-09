@@ -84,7 +84,7 @@ use ry_typeshed::{
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
     InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
     ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
-    load_base_cached, load_package,
+    load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -308,31 +308,31 @@ pub struct Scope {
     /// active bindings. Later expression inference cannot reuse caller facts.
     pub(crate) effects_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
-    pub(crate) plain_ops_vectors: HashSet<String>,
-    pub(crate) literal_functions: HashMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
+    pub(crate) plain_ops_vectors: FxSet<String>,
+    pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
-    pub bindings: HashMap<String, RType>,
+    pub bindings: FxMap<String, RType>,
     /// Names whose current binding was installed by flow narrowing rather
-    /// than an R assignment. `insert` clears this marker, so branch merging
+    /// than by an R assignment. `insert` clears this marker, so branch merging
     /// can distinguish a temporary refinement from a rebinding.
-    pub(crate) narrowed_bindings: HashSet<String>,
+    pub(crate) narrowed_bindings: FxSet<String>,
     /// Bindings that still refer directly to function parameters. Assigning
     /// to the name clears this marker; flow narrowing preserves it.
-    pub parameter_bindings: HashSet<String>,
+    pub parameter_bindings: FxSet<String>,
     /// Bindings derived from list-valued expressions even when later subset
     /// inference loses the concrete mode. Used by container-shape rules.
-    pub list_origin_bindings: HashSet<String>,
+    pub list_origin_bindings: FxSet<String>,
     /// Bindings whose current type came from a function parameter default.
     /// A default is one call shape, not a complete declaration of the
     /// parameter's runtime type, so an explicit `is.*()` guard may replace
     /// an otherwise incompatible default-derived type in its true branch.
-    pub default_parameter_bindings: HashSet<String>,
+    pub default_parameter_bindings: FxSet<String>,
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
-    pub function_aliases: HashMap<String, String>,
+    pub function_aliases: FxMap<String, String>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
-    pub(crate) lexical_functions: HashSet<String>,
+    pub(crate) lexical_functions: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) tidy_injection: Option<InjectionMode>,
     pub search_path_unknown: bool,
@@ -692,7 +692,7 @@ impl ReturnSlots {
 /// it the same way.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
-    pub(crate) fns: HashMap<String, UserFn>,
+    pub(crate) fns: FxMap<String, UserFn>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -702,8 +702,8 @@ pub(crate) struct FnTable {
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
-    pub(crate) s3_methods: HashMap<(String, String), usize>,
-    pub(crate) s4_methods: HashMap<(String, String), usize>,
+    pub(crate) s3_methods: FxMap<(String, String), usize>,
+    pub(crate) s4_methods: FxMap<(String, String), usize>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -717,7 +717,7 @@ pub(crate) struct FnTable {
     pub(crate) callable_vars: std::collections::HashSet<String>,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
-    pub(crate) call_sites: HashMap<String, Vec<Vec<Option<String>>>>,
+    pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
     // Calls that forward an enclosing formal directly into another
     // function. Used to propagate evidence that a caller's default can reach
     // a callee parameter without treating every callee default as exhaustive.
@@ -786,6 +786,13 @@ struct ForwardedCall {
     stub_callee: String,
     caller_params: Vec<Param>,
     arguments: Vec<(Option<String>, Option<String>)>,
+    /// Index of the caller's top-level bare call statement that is the
+    /// forwarding call (the ggplot2 shape). R runs the top-level
+    /// statements in order, so a later straight-line top-level assignment
+    /// cannot precede such a call. `None` for any wrapped call
+    /// (`print(callee(...))`) and for calls nested in branches, loops, or
+    /// blocks: those keep the conservative may-rebind invalidation.
+    call_statement: Option<usize>,
 }
 
 /// Maximum refinement rounds before retaining the current inferred types.
@@ -1307,6 +1314,24 @@ impl Checker {
             .or_else(|| load_package(package))
     }
 
+    /// Conservative gate for cross-package injection scans (see
+    /// `infer_injected_call`): an embedded stub that declares no
+    /// `injects` cannot contribute a signature, and skipping it keeps
+    /// the package from being parsed at all. User stubs shadow
+    /// embedded data and are always scanned.
+    pub(crate) fn package_may_inject(&self, package: &str) -> bool {
+        self.user_stubs.contains_key(package) || package_has_injects(package)
+    }
+
+    /// Conservative gate for cross-package S3 method scans (see
+    /// `s3_lookup_method` and `s3_dispatch_miss`): an embedded stub
+    /// that ships no S3 methods cannot contribute, and skipping it
+    /// keeps the package from being parsed at all. User stubs shadow
+    /// embedded data and are always scanned.
+    pub(crate) fn package_may_declare_s3(&self, package: &str) -> bool {
+        self.user_stubs.contains_key(package) || package_has_s3_methods(package)
+    }
+
     pub(crate) fn package_is_known(&self, package: &str) -> bool {
         self.user_stubs.contains_key(package) || is_known_package(package)
     }
@@ -1373,6 +1398,87 @@ fn whole_file_span(source: &str) -> Span {
         .unwrap_or(source.len());
     Span::new(0, source.len(), line, col)
 }
+
+/// FxHash-style hasher (the rustc-hash algorithm) for checker-internal
+/// maps keyed by short source identifiers.
+///
+/// Inference clones [`Scope`] for every branch merge and speculative
+/// walk, re-hashing every binding name each time; with SipHash that
+/// hashing shows up as a top cost in profiles of large projects. FxHash
+/// trades SipHash's collision guarantees (irrelevant here: keys are
+/// identifiers from the project's own sources, not adversarial input)
+/// for roughly an order of magnitude fewer instructions per key.
+/// Lookup results are identical to any other hasher, and diagnostics
+/// are order-sorted before printing, so observable behavior is
+/// unchanged.
+#[derive(Default)]
+pub struct FxHasher {
+    hash: u64,
+}
+
+impl FxHasher {
+    #[inline]
+    fn add_to_hash(&mut self, value: u64) {
+        self.hash = (self.hash.rotate_left(5) ^ value).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut rest = bytes;
+        while rest.len() >= 8 {
+            self.add_to_hash(u64::from_ne_bytes(rest[..8].try_into().unwrap()));
+            rest = &rest[8..];
+        }
+        if rest.len() >= 4 {
+            self.add_to_hash(u32::from_ne_bytes(rest[..4].try_into().unwrap()) as u64);
+            rest = &rest[4..];
+        }
+        if rest.len() >= 2 {
+            self.add_to_hash(u16::from_ne_bytes(rest[..2].try_into().unwrap()) as u64);
+            rest = &rest[2..];
+        }
+        if !rest.is_empty() {
+            self.add_to_hash(rest[0] as u64);
+        }
+    }
+
+    #[inline]
+    fn write_u8(&mut self, value: u8) {
+        self.add_to_hash(value as u64);
+    }
+
+    #[inline]
+    fn write_u16(&mut self, value: u16) {
+        self.add_to_hash(value as u64);
+    }
+
+    #[inline]
+    fn write_u32(&mut self, value: u32) {
+        self.add_to_hash(value as u64);
+    }
+
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.add_to_hash(value);
+    }
+
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.add_to_hash(value as u64);
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+}
+
+/// Map/set aliases with [`FxHasher`]; see the hasher's doc comment for
+/// why the checker uses them for identifier-keyed collections.
+pub type FxMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FxHasher>>;
+pub type FxSet<K> = HashSet<K, std::hash::BuildHasherDefault<FxHasher>>;
 
 #[cfg(test)]
 mod tests;

@@ -61,6 +61,244 @@ fn detects_char_plus_int() {
     );
 }
 
+// Forwarded-default typing (#342). `forwarded_default_type` asserts that a
+// caller's parameter default reaches the callee's formal when the argument
+// is the bare parameter name and some caller call site omits it. That
+// assertion is only sound while the caller never rebinds the name before
+// the call: once the body assigns it (statement, loop variable, or
+// expression-position `<-`/`<<-`), the forwarded value is the rebinding's
+// result, not the literal default. ggplot2's `compute_bins` reassigns and
+// standalone-checks `bins` before forwarding it, which manufactured a
+// `logical<len=0>` condition at `bin_breaks_bins`'s `bins == 1`.
+#[test]
+fn reassigned_forwarded_default_does_not_reach_the_callee() {
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           bins <- allow_lambda(bins)\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "a rebinding replaces the caller default before the call: {diags:?}"
+    );
+}
+
+#[test]
+fn pre_call_conditional_rebinding_invalidates_the_root_anchored_default() {
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           if (is.null(bins)) bins <- 30L\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "a conditional rebinding before the anchored call may replace the default: {diags:?}"
+    );
+}
+
+#[test]
+fn loop_nested_call_keeps_prefix_forwarded_default_behavior() {
+    // The call is not root-anchored, so the original forwarded-default
+    // behavior is retained: the fact is asserted and the pre-fix true
+    // positive keeps firing instead of being silenced.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           for (bins in list(1)) callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a non-anchored call keeps the pre-fix forwarded-default diagnostic: {diags:?}"
+    );
+}
+
+#[test]
+fn post_call_straight_line_rebinding_keeps_the_forwarded_default() {
+    // R runs the caller's top-level statements in order, so an assignment
+    // that follows the call cannot replace the default before it: the
+    // forwarded fact survives and the omitted-call true positive keeps
+    // firing.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+           bins <- 30L\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a straight-line rebinding after the call is too late to matter: {diags:?}"
+    );
+}
+
+#[test]
+fn condition_assignment_counts_as_a_rebinding() {
+    // Bounded delta from the earlier blanket invalidation:
+    // statement_assigns_name descends control-flow tests, unlike
+    // assigned_names_in_body, so a `while ((bins <- f()) > 0)` condition
+    // assignment counts. It genuinely rebinds before any later call, so
+    // the forwarded default is dropped here.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           while ((bins <- f(x)) > 0) break\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().all(|d| d.code != "RY001"),
+        "an assignment in a control test rebinds before the call: {diags:?}"
+    );
+}
+
+#[test]
+fn wrapped_forwarding_call_keeps_prefix_default_behavior() {
+    // A wrapped call (`print(callee(...))`) is not root-anchored, so it
+    // keeps the original forwarded-default behavior: the fact is asserted
+    // and the pre-fix true positive keeps firing (1->1 against the
+    // published baseline) instead of being silenced.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           print(callee(range, bins))\n\
+           bins <- 30L\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a wrapped forwarding call keeps its pre-fix diagnostic: {diags:?}"
+    );
+}
+
+#[test]
+fn post_call_rebinding_in_loops_or_branches_keeps_the_default() {
+    // Statements after the anchored call bind only after it received its
+    // argument, whatever their shape; the fact survives and the true
+    // positive keeps firing.
+    for body in [
+        "callee(range, bins)\nfor (i in 1:2) bins <- 30L",
+        "callee(range, bins)\nif (x) bins <- 30L",
+    ] {
+        let src = format!(
+            "callee <- function(x_range, bins = 30) {{\n\
+               if (bins == 1) 1 else 2\n\
+             }}\n\
+             caller <- function(x, bins = NULL) {{\n\
+               {body}\n\
+             }}\n\
+             z <- caller(c(0, 1))\n"
+        );
+        let diags = check(&src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY001"),
+            "any rebinding after the anchored call is too late to matter: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn multi_call_ordering_decides_per_call() {
+    // The first call still sees the untouched default; the second follows
+    // the rebinding and loses the forwarded fact. The callee's condition
+    // keeps its true positive through the first call.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+           bins <- 30L\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "the call before the rebinding keeps the forwarded default: {diags:?}"
+    );
+}
+
+#[test]
+fn unmodified_forwarded_default_still_types_the_callee_formal() {
+    // True-positive direction: without any rebinding, an omitting call
+    // site really does deliver the caller's NULL default to the callee,
+    // and `bins == 1` really is `logical(0)` at runtime.
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "the unmodified forwarded default still reaches the callee: {diags:?}"
+    );
+}
+
+#[test]
+fn nested_closure_rebinding_does_not_invalidate_the_forwarded_default() {
+    // A closure body binds its own local `bins`; it cannot replace the
+    // enclosing parameter unless it superassigns, and whether it runs
+    // before the call is statically unknown. The forwarded default stays
+    // asserted (documented residual: `bins <<- v` inside a closure that
+    // runs before the call is not modeled).
+    let diags = check(
+        "callee <- function(x_range, bins = 30) {\n\
+           if (bins == 1) 1 else 2\n\
+         }\n\
+         caller <- function(x, bins = NULL) {\n\
+           rebinder <- function() bins <- 5\n\
+           callee(range, bins)\n\
+         }\n\
+         z <- caller(c(0, 1))\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a closure's own local rebinding leaves the forwarded default intact: {diags:?}"
+    );
+}
+
+#[test]
+fn proven_zero_length_conditions_still_fire() {
+    // Insurance for the #342 family: genuinely zero-length conditions keep
+    // their diagnostics; only the manufactured forwarded-default zero goes.
+    let diags = check(
+        "a <- if (character(0) == \"a\") 1 else 2\n\
+         b <- if (numeric(0) > 1) 1 else 2\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY001").count(),
+        2,
+        "real zero-length conditions stay diagnosed: {diags:?}"
+    );
+}
+
 #[test]
 fn allows_int_plus_double() {
     let diags = check("1L + 2.0\n");

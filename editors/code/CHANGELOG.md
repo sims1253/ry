@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-09
+
+- Bundle ry 0.9.2 with fewer false positives in package code and a fix for
+  cyclic serialized-data crashes.
+- Reduce extension size with a minified production bundle.
+- Reuse successful version checks when the language server restarts within
+  the same editor session. Changed binaries and failed checks are probed again.
+
 ## [0.9.1] - 2026-09-07
 
 - Publish on VS Code Marketplace as `scholzmx.ry-checker`, displayed as

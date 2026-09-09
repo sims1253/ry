@@ -50,11 +50,12 @@ Before starting any release:
 3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json`
    reports agreement.
 
-4. **CHANGELOG reviewed:** verify the Unreleased section is complete and
-   dated.
+4. **CHANGELOG reviewed:** verify the new version's section is complete and
+   dated, including changes since the previous release and any upgrade notes.
+   Check both product changelogs and the comparison links.
 
 5. **Version bumped:** core workspace `Cargo.toml` to the target version
-   (e.g. `0.9.0`). Editor extension versions are independent.
+   (e.g. `0.9.2`). Editor extension versions are independent.
 
 6. **Zed binary integrity verified:** confirm the core release includes
    executable `ry-cli-<target>.bin.sha256` sidecars for all six targets.
@@ -70,7 +71,7 @@ Before starting any release:
 ### Tag format
 
 ```
-v{version}  (e.g. v0.9.0)
+v{version}  (e.g. v0.9.2)
 ```
 
 ### Steps
@@ -141,15 +142,15 @@ The `registry` dispatch input defaults to `both`; select `marketplace` or
 ### Steps
 
 1. Dispatch `release-vscode.yml` from the reviewed extension source ref with:
-   - `version`: extension SemVer (e.g. `0.1.0`)
-   - `core-tag`: the core binary tag (e.g. `v0.9.0`)
+   - `version`: extension SemVer (e.g. `0.9.2`)
+   - `core-tag`: the core binary tag (e.g. `v0.9.2`)
    - `pre-release`: true/false
 
-   For a stable 0.9.0 extension built from the core release commit:
+   For a stable 0.9.2 extension built from the matching core release commit:
 
    ```bash
-   gh workflow run release-vscode.yml --ref v0.9.0 \
-     -f version=0.9.0 -f core-tag=v0.9.0 -F pre-release=false
+   gh workflow run release-vscode.yml --ref v0.9.2 \
+     -f version=0.9.2 -f core-tag=v0.9.2 -F pre-release=false
    ```
 
    This command publishes to both registries; it is not a packaging dry run.
@@ -275,7 +276,7 @@ runtime check on platforms that were not exercised automatically.
 ## Version policy
 
 - Core and editor extension versions are **independent**.
-- Core uses SemVer (e.g. `0.9.0`).
+- Core uses SemVer (e.g. `0.9.2`).
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
 - Each VS Code extension release records the exact core tag it packages.

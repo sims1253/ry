@@ -89,6 +89,24 @@ fn reassigned_forwarded_default_does_not_reach_the_callee() {
 }
 
 #[test]
+fn backticked_rebinding_does_not_forward_null_default() {
+    for statement in [
+        "`bins` <- 1",
+        "for (`bins` in list(1)) NULL",
+        "if ((`bins` <- 1) > 0) NULL",
+    ] {
+        let source = format!(
+            "callee <- function(x_range, bins = 30) {{\n               if (bins == 1) 1 else 2\n             }}\n             caller <- function(x, bins = NULL) {{\n               {statement}\n               callee(range, bins)\n             }}\n             z <- caller(c(0, 1))\n"
+        );
+        let diags = check(&source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY001"),
+            "backticked rebinding {statement} replaces the default: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn pre_call_conditional_rebinding_invalidates_the_root_anchored_default() {
     let diags = check(
         "callee <- function(x_range, bins = 30) {\n\
@@ -109,8 +127,10 @@ fn pre_call_conditional_rebinding_invalidates_the_root_anchored_default() {
 #[test]
 fn loop_nested_call_keeps_prefix_forwarded_default_behavior() {
     // The call is not root-anchored, so the original forwarded-default
-    // behavior is retained: the fact is asserted and the pre-fix true
-    // positive keeps firing instead of being silenced.
+    // behavior is retained. This is a known false positive: the loop
+    // rebinds bins before forwarding it. The bounded root-call rule does
+    // not model this nested call; the wrapped-call test below is a true
+    // positive retention control.
     let diags = check(
         "callee <- function(x_range, bins = 30) {\n\
            if (bins == 1) 1 else 2\n\

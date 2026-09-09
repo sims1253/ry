@@ -547,6 +547,36 @@ fn proven_invalid_conditions_keep_ry001() {
 // the union invalid, but members with proven-wrong shapes (zero length,
 // known length above one, list) still do. A logical or opaque member
 // keeps its existing whole-union silence.
+// Retain the existing uncertainty contract from scope_resolution:
+// a valid logical alternative prevents a definitely-invalid RY001 claim.
+// The runtime oracle pins both the passing and failing branch outcomes.
+#[test]
+fn logical_union_members_preserve_possibly_valid_conditions() {
+    for (left, right) in [("TRUE", "list(TRUE)"), ("list(TRUE)", "TRUE")] {
+        for condition in ["if (x) print(1)", "while (x) { break }"] {
+            let source = format!("x <- if (runif(1) > 0.5) {left} else {right}\n{condition}\n");
+            let (diags, scope) = check_with_scope(&source);
+            assert_eq!(scope.get("x").expect("union binding").mode, Mode::Union);
+            assert!(
+                diags.iter().all(|d| d.code != "RY001"),
+                "{source}: {diags:?}"
+            );
+            assert!(diags.iter().all(|d| !matches!(d.code, "RY002" | "RY003")));
+        }
+    }
+    for (left, right) in [("TRUE", "1L"), ("1L", "TRUE")] {
+        let source = format!("x <- if (runif(1) > 0.5) {left} else {right}\nif (x) print(1)\n");
+        let (diags, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("x").expect("union binding").mode, Mode::Union);
+        assert!(
+            diags
+                .iter()
+                .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
 #[test]
 fn union_condition_members_keep_proven_invalidity() {
     for (note, src, wants_ry001, wants_union) in [

@@ -60,3 +60,17 @@ for (code in c(
   rejected_length <- tryCatch(eval(parse(text = code)), error = identity)
   stopifnot(inherits(rejected_length, "error"))
 }
+
+# A logical branch does not make the list branch a valid condition.
+# Both branch orders and both condition contexts have the same boundary.
+for (code in c(
+  "function(flag) { x <- if (flag) TRUE else list(TRUE); if (x) TRUE else FALSE }",
+  "function(flag) { x <- if (!flag) list(TRUE) else TRUE; if (x) TRUE else FALSE }",
+  "function(flag) { x <- if (flag) TRUE else list(TRUE); while (x) { break }; TRUE }",
+  "function(flag) { x <- if (!flag) list(TRUE) else TRUE; while (x) { break }; TRUE }"
+)) {
+  union_condition <- eval(parse(text = code))
+  stopifnot(isTRUE(union_condition(TRUE)))
+  rejected_union <- tryCatch(union_condition(FALSE), error = identity)
+  stopifnot(inherits(rejected_union, "error"))
+}

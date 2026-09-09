@@ -1090,6 +1090,6 @@
     "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered.",
     "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved."
   ],
-  "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
+  "ry_commit": "42fbc6b284bec619507c10781c72a90d80a4aa7c",
   "source_sha256": "91a4bd74c5663a8dd0df9d6825ecbf4280f6acd6516bf8961ce4d09d74f835e3"
 }

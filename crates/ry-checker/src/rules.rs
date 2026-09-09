@@ -139,7 +139,7 @@ pub const RULES: &[Rule] = &[
         code: "RY070",
         name: "call-non-function",
         default_severity: Severity::Error,
-        summary: "A non-function value (a variable bound to a non-function, or a literal like `42()`) is being called as a function. R will error at runtime ('attempt to apply non-function' / 'could not find function').",
+        summary: "A call uses a non-function value after the lookup ry can resolve. Bare-name lookup skips known non-functions; outer-frame and S7 cases can still produce false positives. Value expressions such as `42()` are checked directly.",
     },
     Rule {
         code: "RY080",

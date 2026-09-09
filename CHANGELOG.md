@@ -21,7 +21,7 @@ reading serialized package data.
 - Correct `mirai::status()` to accept `.compute` and return a list, so `$`
   access no longer produces a false RY061 error (#382).
 - Keep class information unknown for opaque stub results without class
-  metadata. This avoids false RY092 warnings (#341).
+  metadata. This avoids false RY092 diagnostics (#341).
 - Skip non-function bindings when looking for outward functions at bare
   call heads. Package functions take precedence over dataset names (#384).
 - Keep later assignments from invalidating forwarded defaults at earlier
@@ -40,6 +40,18 @@ reading serialized package data.
   embedded stubs. Load package stubs when needed (#340).
 - Speed up workspace indexing and project checks with bounded parallel
   processing and cached package discovery (#340).
+- Clarify RY001 and RY070 messages. Baselines match message text, so
+  previously accepted findings can reappear after upgrading. Review them
+  before regenerating the entries you still accept.
+
+### Editors and maintenance
+
+- Align the core and VS Code/Positron extension at 0.9.2. The extension uses
+  a smaller production bundle and reuses successful binary-version checks
+  during the same editor session; see its [changelog](editors/code/CHANGELOG.md).
+- Use `scholzmx.ry-checker` for the VS Code Marketplace listing and keep
+  `scholzmx.ry` for Open VSX. Prepare `ry-lsp` as the Zed gallery identity.
+- Update R setup, Pages deployment, and workflow security Actions.
 
 ## [0.9.0] - 2026-09-07
 

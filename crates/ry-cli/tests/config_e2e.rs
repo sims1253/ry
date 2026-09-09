@@ -1030,6 +1030,11 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
     // Generated from two distinct self-referential R environments wrapped
     // in pairlists. The decoder must not compare their cyclic graphs in dedup.
+    // Regenerate in tests/fixtures/ with R:
+    // a <- new.env(parent = emptyenv()); a$self <- a
+    // b <- new.env(parent = emptyenv()); b$self <- b
+    // x <- pairlist(a); y <- pairlist(b)
+    // save(x, y, file = "cyclic-pairlists.rda", version = 2, compress = FALSE)
     let tmp = tempfile::tempdir().unwrap();
     let pkg = tmp.path();
     fs::write(

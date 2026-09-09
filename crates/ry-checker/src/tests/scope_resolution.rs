@@ -516,6 +516,25 @@ fn bare_data_pronoun_inside_mask_is_silent() {
 }
 
 #[test]
+fn opaque_subset_does_not_keep_source_length() {
+    for index in ["1L", "choice", "1L, drop = TRUE"] {
+        let source = format!(
+            "f <- function(flag, choice) {{\n\
+             choices <- c(if (flag) \"a\", \"b\", \"c\")\n\
+             if (choices[{index}] == \"a\") 1L\n\
+             }}\n"
+        );
+        let diagnostics = check(&source);
+        assert!(diagnostics.is_empty(), "{index}: {diagnostics:?}");
+    }
+    let diagnostics =
+        check("f <- function(flag) { x <- c(if (flag) 1L, 2L, 3L); x[undefined_index] }\n");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("undefined_index")
+    }));
+}
+
+#[test]
 fn scalar_string_subset_of_atomic_vector_has_length_one() {
     let (diags, scope) = check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[\"first\"]\n");
     assert!(diags.is_empty(), "{diags:?}");

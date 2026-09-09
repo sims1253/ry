@@ -6,6 +6,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep subset results unknown when the receiver has no known subsetting
+  contract. This avoids a false condition-length warning in `rstan`.
 - Read serialized package data containing cyclic objects without crashing.
   This fixes a stack overflow while checking `workflowsets` and preserves
   unbound-name diagnostics after data inventory.

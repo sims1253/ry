@@ -332,6 +332,11 @@ impl Checker {
                     result.columns = None;
                     return result;
                 }
+                // An opaque receiver supplies no subsetting contract. Its
+                // length and schema describe the source, not the result.
+                if bt.mode == Mode::Opaque {
+                    return RType::unknown();
+                }
                 bt
             }
         }

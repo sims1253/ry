@@ -98,7 +98,7 @@ fn condition_string_literal(cond: &Expr) -> Option<&str> {
 /// Whether R's `if`/`while` coercion accepts this character text. The
 /// runtime path matches exactly these eight spellings; every other
 /// string — including `"NA"`, `"1"`, `""`, and whitespace-padded
-/// variants — errors with "argument is not interpretable as a logical".
+/// variants — errors with "argument is not interpretable as logical".
 /// Note the `"NA"` boundary: `as.logical("NA")` itself returns `NA`
 /// without error, and it is USING that logical `NA` as a condition that
 /// errors with "missing value where TRUE/FALSE needed" (#354, out of
@@ -116,7 +116,7 @@ fn r_condition_string_is_accepted(value: &str) -> bool {
 /// by unions. In particular, `integer | double` is numeric truthiness, while
 /// `integer | list` is invalid.
 pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
-    if matches!(t.length, Length::Zero) {
+    if matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1) {
         return Some(ConditionDiagnostic::Invalid);
     }
 
@@ -601,14 +601,31 @@ impl Checker {
         // A character literal condition is decidable where the type is
         // not: R's coercion accepts exactly eight string spellings, and
         // every other string errors with "argument is not interpretable
-        // as a logical". The scalar character type alone no longer proves
+        // as logical". The scalar character type alone no longer proves
         // this (the value may be an accepted literal), so a proven
         // non-coercible literal re-establishes the diagnostic here.
         let invalid_string_literal = matches!(ct.mode, Mode::Character)
             && matches!(ct.length, Length::One)
             && condition_string_literal(cond)
                 .is_some_and(|value| !r_condition_string_is_accepted(value));
-        if (matches!(condition, Some(ConditionDiagnostic::Invalid)) || invalid_string_literal)
+        // Preserve the established if-only logical-vector RY002 rule.
+        // Other proven multi-value conditions use RY001, never RY003.
+        if ctx.allows_length_rule()
+            && matches!(ct.mode, Mode::Logical)
+            && let Length::Known(n) = ct.length
+            && n > 1
+        {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY002",
+                format!(
+                    "`if` condition has length {}; R requires a length-1 condition",
+                    n
+                ),
+            );
+        } else if (matches!(condition, Some(ConditionDiagnostic::Invalid))
+            || invalid_string_literal)
             && !has_ry100
         {
             self.emit(
@@ -633,20 +650,6 @@ impl Checker {
                     "{} condition is `{}`; R coerces nonzero to TRUE",
                     ctx.noun(),
                     ct.mode
-                ),
-            );
-        } else if ctx.allows_length_rule()
-            && matches!(ct.mode, Mode::Logical)
-            && let Length::Known(n) = ct.length
-            && n > 1
-        {
-            self.emit(
-                Severity::Warning,
-                span_of(cond),
-                "RY002",
-                format!(
-                    "`if` condition has length {}; R requires a length-1 condition",
-                    n
                 ),
             );
         }

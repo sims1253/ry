@@ -2,7 +2,7 @@
 # R coerces if/while conditions to logical. A character scalar coerces
 # only when its text is exactly one of "T", "TRUE", "true", "True",
 # "F", "FALSE", "false", "False"; every other string (including "NA"
-# and "") errors with "argument is not interpretable as a logical".
+# and "") errors with "argument is not interpretable as logical".
 # Escapes decode before coercion, so the hex, octal, and raw-string
 # spellings below are the same literals. A computed scalar string such
 # as Sys.getenv("FLAG") is valid only when its value is an accepted
@@ -42,8 +42,21 @@ stopifnot(inherits(zero_complex, "error"))
 long_complex <- tryCatch(eval(parse(text = 'if (vector("complex", 2)) 1 else 2')), error = identity)
 stopifnot(inherits(long_complex, "error"))
 # NA_complex_ is complex of length 1 and ERRORS at `if` ("argument is
-# not interpretable as a logical") — the only scalar complex shape R
+# not interpretable as logical") — the only scalar complex shape R
 # rejects. ry stays silent on it (untracked value; NA policy is #354);
 # this assertion pins the runtime fact, it is not a passing shape.
 na_cx <- tryCatch(eval(parse(text = 'if (NA_complex_) 1 else 2')), error = identity)
 stopifnot(inherits(na_cx, "error"))
+
+# Known multi-value logical and numeric conditions fail in both contexts.
+for (code in c(
+  "if (c(TRUE, FALSE)) print(1)",
+  "if (c(1L, 2L)) print(1)",
+  "if (c(1, 2)) print(1)",
+  "while (c(TRUE, FALSE)) { break }",
+  "while (c(1L, 2L)) { break }",
+  "while (c(1, 2)) { break }"
+)) {
+  rejected_length <- tryCatch(eval(parse(text = code)), error = identity)
+  stopifnot(inherits(rejected_length, "error"))
+}

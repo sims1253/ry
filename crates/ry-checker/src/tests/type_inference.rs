@@ -492,6 +492,26 @@ fn coercible_condition_silence_uses_real_complex_and_raw_modes() {
 // text), multi-element character, zero-length, NULL, and list values
 // all error at runtime.
 #[test]
+fn known_multi_value_conditions_are_rejected_in_if_and_while() {
+    for (source, expected) in [
+        ("if (c(TRUE, FALSE)) print(1)", "RY002"),
+        ("if (c(1L, 2L)) print(1)", "RY001"),
+        ("if (c(1, 2)) print(1)", "RY001"),
+        ("while (c(TRUE, FALSE)) { break }", "RY001"),
+        ("while (c(1L, 2L)) { break }", "RY001"),
+        ("while (c(1, 2)) { break }", "RY001"),
+    ] {
+        let diags = check(source);
+        let condition_codes: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.code, "RY001" | "RY002" | "RY003"))
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(condition_codes, vec![expected], "{source}: {diags:?}");
+    }
+}
+
+#[test]
 fn proven_invalid_conditions_keep_ry001() {
     for (note, src) in [
         ("non-coercible literal", r#"if ("x") print(1)"#),
@@ -529,29 +549,42 @@ fn proven_invalid_conditions_keep_ry001() {
 // keeps its existing whole-union silence.
 #[test]
 fn union_condition_members_keep_proven_invalidity() {
-    for (note, src, wants_ry001) in [
+    for (note, src, wants_ry001, wants_union) in [
         (
             "zero-length member stays invalid",
             "x <- if (runif(1) > 0.5) \"TRUE\" else character(0)\nif (x) print(1)\n",
+            true,
             true,
         ),
         (
             "known-length-two member stays invalid",
             "x <- if (runif(1) > 0.5) \"TRUE\" else c(\"T\", \"F\")\nif (x) print(1)\n",
             true,
+            true,
         ),
         (
             "list member stays invalid",
             "x <- if (runif(1) > 0.5) \"TRUE\" else list(TRUE)\nif (x) print(1)\n",
+            true,
             true,
         ),
         (
             "scalar character members stay silent",
             "x <- if (runif(1) > 0.5) \"TRUE\" else Sys.getenv(\"F\")\nif (x) print(1)\n",
             false,
+            false,
         ),
     ] {
-        let diags = check(src);
+        let (diags, scope) = check_with_scope(src);
+        assert_eq!(
+            scope.get("x").expect("condition binding").mode,
+            if wants_union {
+                Mode::Union
+            } else {
+                Mode::Character
+            },
+            "{note}: inferred condition shape"
+        );
         assert_eq!(
             diags.iter().any(|d| d.code == "RY001"),
             wants_ry001,

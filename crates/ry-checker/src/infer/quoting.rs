@@ -1,54 +1,148 @@
 //! Forwarded promises and guaranteed evaluation of lazy defaults.
 
 use super::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt};
 use std::ops::ControlFlow;
 
 /// Walk `stmts` collecting calls inside `caller`'s body that forward its
 /// `params` to nested calls. Skips nested function bodies: a nested
 /// function has its own formals and is collected separately when it has
-/// a binding.
+/// a binding. Each recorded call remembers the index of the top-level
+/// statement it appears in, so a later straight-line top-level
+/// assignment can be recognized as unable to precede it.
 pub(crate) fn collect_forwarded_calls_in_stmts(
     caller: &str,
     params: &[Param],
     stmts: &[Stmt],
     calls: &mut Vec<ForwardedCall>,
 ) {
-    let _ = walk_stmts(
-        stmts,
+    for (statement_index, statement) in stmts.iter().enumerate() {
+        // Only a bare call expression statement fixes the call's position
+        // in the top-level order: the forwarding call must BE the
+        // statement's expression. Any wrapper (`print(callee(...))`, a
+        // pipe, arithmetic) may defer the call's argument forcing or
+        // capture, and calls nested in branches, loops, or blocks have no
+        // fixed position at all; those stay positionless and conservative.
+        let bare_call_span = match statement {
+            Stmt::Expr(Expr::Call { span, .. }) => Some(*span),
+            _ => None,
+        };
+        let _ = walk_stmt(
+            statement,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, span }) = node
+                    && let Expr::Ident { name, .. } = func.as_ref()
+                    && args.iter().any(|argument| {
+                        matches!(&argument.value, Expr::Ident { name, .. }
+                            if params.iter().any(|parameter| parameter.name == *name))
+                    })
+                {
+                    let callee = crate::semantic_lists::bare_name(name);
+                    let call_statement = bare_call_span
+                        .is_some_and(|bare| bare == *span)
+                        .then_some(statement_index);
+                    calls.push(ForwardedCall {
+                        caller: caller.to_string(),
+                        callee: callee.to_string(),
+                        stub_callee: name.clone(),
+                        caller_params: params.to_vec(),
+                        arguments: args
+                            .iter()
+                            .map(|argument| {
+                                let forwarded = match &argument.value {
+                                    Expr::Ident { name, .. } => Some(name.clone()),
+                                    _ => None,
+                                };
+                                (argument.name.clone(), forwarded)
+                            })
+                            .collect(),
+                        call_statement,
+                    });
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+    }
+}
+
+/// Whether an assignment to `source` may execute before the root-anchored
+/// forwarding call at top-level statement `call_statement`.
+///
+/// R runs the caller's top-level statements in order, so every binding of
+/// `source` in a statement BEFORE the anchored call may have replaced the
+/// default by the time the call receives its argument — loops, branches,
+/// and control-test assignments included, because any of them may execute
+/// first. The anchored statement itself is the bare call and cannot bind,
+/// and every statement AFTER it binds only after the call has already
+/// received its argument, whatever shape that binding takes.
+///
+/// Calls that are not root-anchored (wrapped, or nested in branches,
+/// loops, or blocks) never reach this function: they keep the original
+/// forwarded-default behavior, preserving their pre-fix diagnostics
+/// rather than silencing them. Nested function bodies are pruned exactly
+/// as in `assigned_names_in_body`: a closure binds its own local, and
+/// whether it superassigns before this call is statically unordered.
+/// This is a may-rebind approximation, not an execution proof. Even for
+/// a bare call statement the callee may store the argument promise and
+/// force it after the caller rebinds; deferred forcing stays out of
+/// scope. Dynamic `assign()` calls and replacement targets are not modeled.
+pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_statement: usize) -> bool {
+    body[..call_statement]
+        .iter()
+        .any(|statement| statement_assigns_name(statement, source))
+}
+
+/// Whether any assignment form inside one statement binds `name`
+/// (statement targets, loop variables, and expression-position `<-` and
+/// `<<-`), pruning nested function bodies.
+fn statement_assigns_name(statement: &Stmt, name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    let mut assigns = false;
+    let mut visit = |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+        match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                if matches!(target, Expr::Ident { name: target_name, .. } if semantic_argument_name(target_name) == name)
+                {
+                    assigns = true;
+                    return ControlFlow::Break(());
+                }
+            }
+            AstNode::Stmt(Stmt::For {
+                name: loop_name, ..
+            }) => {
+                if semantic_argument_name(loop_name) == name {
+                    assigns = true;
+                    return ControlFlow::Break(());
+                }
+            }
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) => {
+                if matches!(lhs.as_ref(), Expr::Ident { name: lhs_name, .. } if semantic_argument_name(lhs_name) == name)
+                {
+                    assigns = true;
+                    return ControlFlow::Break(());
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(Descend::Into)
+    };
+    let _ = walk_stmt(
+        statement,
         Walk {
             fn_bodies: false,
             ..Walk::ALL
         },
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-                && let Expr::Ident { name, .. } = func.as_ref()
-                && args.iter().any(|argument| {
-                    matches!(&argument.value, Expr::Ident { name, .. }
-                        if params.iter().any(|parameter| parameter.name == *name))
-                })
-            {
-                let callee = crate::semantic_lists::bare_name(name);
-                calls.push(ForwardedCall {
-                    caller: caller.to_string(),
-                    callee: callee.to_string(),
-                    stub_callee: name.clone(),
-                    caller_params: params.to_vec(),
-                    arguments: args
-                        .iter()
-                        .map(|argument| {
-                            let forwarded = match &argument.value {
-                                Expr::Ident { name, .. } => Some(name.clone()),
-                                _ => None,
-                            };
-                            (argument.name.clone(), forwarded)
-                        })
-                        .collect(),
-                });
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
+        &mut visit,
     );
+    assigns
 }
 
 impl Checker {
@@ -725,5 +819,90 @@ fn default_capture_mode(name: &str) -> Option<DefaultCapture> {
         ("base", "quote" | "substitute" | "expression") => Some(DefaultCapture::Literal),
         ("rlang", "expr") => Some(DefaultCapture::Tidy),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod forwarded_call_anchor_tests {
+    use super::*;
+
+    fn anchors(source: &str) -> Vec<Option<usize>> {
+        let file = ry_core::RParser::new()
+            .unwrap()
+            .parse("anchors.R", source)
+            .unwrap();
+        let params = vec![
+            Param {
+                name: "x".to_string(),
+                default: None,
+                span: Span::default(),
+            },
+            Param {
+                name: "bins".to_string(),
+                default: None,
+                span: Span::default(),
+            },
+        ];
+        let mut calls = Vec::new();
+        collect_forwarded_calls_in_stmts("caller", &params, &file.stmts, &mut calls);
+        calls
+            .iter()
+            .filter(|call| call.callee == "callee")
+            .map(|call| call.call_statement)
+            .collect()
+    }
+
+    #[test]
+    fn backticked_rebindings_match_semantic_source_names() {
+        for (source, target) in [("bins", "`bins`"), ("`bins`", "bins")] {
+            for statement in [
+                format!("{target} <- 1"),
+                format!("for ({target} in list(1)) NULL"),
+                format!("if (({target} <- 1) > 0) NULL"),
+                format!("if (({target} <<- 1) > 0) NULL"),
+            ] {
+                let text = format!("{statement}\ncallee(bins)\n");
+                let file = ry_core::RParser::new()
+                    .unwrap()
+                    .parse("backticks.R", &text)
+                    .unwrap();
+                assert!(
+                    may_rebind_source_before(&file.stmts, source, 1),
+                    "{source} must match {statement}"
+                );
+                assert!(!may_rebind_source_before(&file.stmts, "other", 1));
+                assert!(!may_rebind_source_before(&file.stmts, source, 0));
+            }
+        }
+    }
+
+    #[test]
+    fn only_root_call_statements_carry_a_top_level_anchor() {
+        // A bare call statement anchors at its statement index; the same
+        // call wrapped in print(), a second inner call, and a loop-nested
+        // call all stay unanchored.
+        assert_eq!(
+            anchors("callee(range, bins)\ncallee(range, bins)\n"),
+            vec![Some(0), Some(1)],
+            "bare call statements anchor at their own index"
+        );
+        assert_eq!(
+            anchors("print(callee(range, bins))\n"),
+            vec![None],
+            "the root call is print; the forwarded inner call stays None"
+        );
+        assert_eq!(
+            anchors("for (i in 1:2) callee(range, bins)\n"),
+            vec![None],
+            "loop-nested calls have no top-level position"
+        );
+        assert_eq!(
+            anchors("callee(range, bins)\nprint(callee(range, bins))\ncallee(range, bins)\n"),
+            vec![Some(0), None, Some(2)],
+            "each recorded call is anchored independently"
+        );
+        // `callee(range(x), bins)` still forwards `bins`; the inner
+        // `range(x)` is not a forwarded call, so only one record exists.
+        assert_eq!(anchors("callee(range(x), bins)\n"), vec![Some(0)]);
     }
 }

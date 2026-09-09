@@ -4,21 +4,42 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-09
+
+This release reduces false positives in package code and fixes a crash when
+reading serialized package data.
+
 ### Fixed
 
 - Keep subset results unknown when the receiver has no known subsetting
   contract. This avoids a false condition-length warning in `rstan`.
-- Read serialized package data containing cyclic objects without crashing.
-  This fixes a stack overflow while checking `workflowsets` and preserves
-  unbound-name diagnostics after data inventory.
+- Read cyclic serialized objects without a stack overflow, including the
+  package data used by `workflowsets`.
+- Keep `.data` opaque in data-masked calls such as `aes()` when no usable
+  data argument is available. Calls with known data frames still report
+  missing columns (#383).
+- Correct `mirai::status()` to accept `.compute` and return a list, so `$`
+  access no longer produces a false RY061 error (#382).
+- Keep class information unknown for opaque stub results without class
+  metadata. This avoids false RY092 warnings (#341).
+- Skip non-function bindings when looking for outward functions at bare
+  call heads. Package functions take precedence over dataset names (#384).
+- Keep later assignments from invalidating forwarded defaults at earlier
+  direct calls (#342).
+- Widen default-derived parameter types in branches that reject their
+  inferred mode, avoiding false `$` errors in those branches (#343).
+- Accept scalar character, raw, and complex conditions that R can coerce
+  to logical. Known invalid literals and lengths still produce RY001 (#373).
 
 ### Changed
 
-- Raise the default `max-serialized-bytes` cap from 2 MiB to 16 MiB so real
-  package `R/sysdata.rda` inventories (gt decodes to ~8 MB) enumerate their
-  binding names without per-project configuration. Files above the cap keep
-  the bounded file-stem fallback and degraded-scope notice; explicit
-  `max-serialized-bytes` values still take precedence.
+- Raise the default serialized-data cap from 2 MiB to 16 MiB. Packages such
+  as gt can resolve their internal data names without custom configuration.
+  Larger files still produce a degraded-scope notice (#378).
+- Reduce binary size with symbol stripping, full LTO, and compressed
+  embedded stubs. Load package stubs when needed (#340).
+- Speed up workspace indexing and project checks with bounded parallel
+  processing and cached package discovery (#340).
 
 ## [0.9.0] - 2026-09-07
 
@@ -1281,7 +1302,9 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/sims1253/ry/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/sims1253/ry/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sims1253/ry/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/sims1253/ry/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/sims1253/ry/compare/v0.6.1...v0.7.0

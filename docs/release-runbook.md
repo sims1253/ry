@@ -87,7 +87,8 @@ v{version}  (e.g. v0.9.0)
    ```
 
    Record the run's commit SHA. Require all six platform builds and
-   `custom-binary-checksums` to succeed, with `host` skipped. Inspect the
+   `custom-binary-checksums` to succeed, including its six native smoke jobs,
+   with `host` skipped. Inspect the
    `artifacts-binary-checksums` artifact for six `.bin.sha256` files.
 4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
@@ -205,7 +206,10 @@ run after correcting the cause. It reuses the packaged artifacts, and
    Before publishing, run
    `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
    Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
-   artifact contains all six `.bin.sha256` sidecars. Confirm the `host` publication
+   artifact contains all six `.bin.sha256` sidecars. The six native smoke jobs
+   verify the version, archive and executable checksums, and error/repair CLI
+   behavior. Their `smoke-<target>` artifacts record compressed and installed
+   bytes separately. Confirm the `host` publication
    job is skipped; `dry-run` builds artifacts without creating a release.
 5. Submit to the Zed extension gallery after the server release is available.
    Automatic downloads require executable sidecars, published from 0.9.0 onward.

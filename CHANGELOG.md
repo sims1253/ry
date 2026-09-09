@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Read serialized package data containing cyclic objects without crashing.
+  This fixes a stack overflow while checking `workflowsets` and preserves
+  unbound-name diagnostics after data inventory.
+
 ### Changed
 
 - Raise the default `max-serialized-bytes` cap from 2 MiB to 16 MiB so real

@@ -50,9 +50,9 @@ proptest = "1.7"
 # parallelism (Project::check pass 3 + CLI parsing)
 rayon = "1"
 # Static inventory of R serialized data files (never evaluates R code).
-# rds2rust 0.2.0 plus the liblzma dependency switch and an xz regression test.
-# Replace this fork pin when a registry release supports the same liblzma graph.
-rds2rust = { git = "https://github.com/sims1253/rds2rust", rev = "5376fded908444695bf0193f41f7759a98fa953e" }
+# rds2rust 0.2.0 with liblzma and cycle-safe composite deduplication.
+# Replace this fork pin when a registry release includes both fixes.
+rds2rust = { git = "https://github.com/sims1253/rds2rust", rev = "6d4014b316e465024d99fe30c0e8b424ce11cca1" }
 bzip2 = "0.6"
 flate2 = "1"
 liblzma = { version = "0.4.8", default-features = false }
@@ -65,4 +65,3 @@ strip = "symbols"
 # Profile cargo-dist builds release artifacts with.
 [profile.dist]
 inherits = "release"
-

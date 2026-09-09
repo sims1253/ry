@@ -89,7 +89,7 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
 /// This is a may-rebind approximation, not an execution proof. Even for
 /// a bare call statement the callee may store the argument promise and
 /// force it after the caller rebinds; deferred forcing stays out of
-/// scope.
+/// scope. Dynamic `assign()` calls and replacement targets are not modeled.
 pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_statement: usize) -> bool {
     body[..call_statement]
         .iter()
@@ -100,11 +100,13 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_stateme
 /// (statement targets, loop variables, and expression-position `<-` and
 /// `<<-`), pruning nested function bodies.
 fn statement_assigns_name(statement: &Stmt, name: &str) -> bool {
+    let name = semantic_argument_name(name);
     let mut assigns = false;
     let mut visit = |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
         match node {
             AstNode::Stmt(Stmt::Assign { target, .. }) => {
-                if matches!(target, Expr::Ident { name: target_name, .. } if target_name == name) {
+                if matches!(target, Expr::Ident { name: target_name, .. } if semantic_argument_name(target_name) == name)
+                {
                     assigns = true;
                     return ControlFlow::Break(());
                 }
@@ -112,7 +114,7 @@ fn statement_assigns_name(statement: &Stmt, name: &str) -> bool {
             AstNode::Stmt(Stmt::For {
                 name: loop_name, ..
             }) => {
-                if loop_name == name {
+                if semantic_argument_name(loop_name) == name {
                     assigns = true;
                     return ControlFlow::Break(());
                 }
@@ -122,7 +124,8 @@ fn statement_assigns_name(statement: &Stmt, name: &str) -> bool {
                 lhs,
                 ..
             }) => {
-                if matches!(lhs.as_ref(), Expr::Ident { name: lhs_name, .. } if lhs_name == name) {
+                if matches!(lhs.as_ref(), Expr::Ident { name: lhs_name, .. } if semantic_argument_name(lhs_name) == name)
+                {
                     assigns = true;
                     return ControlFlow::Break(());
                 }
@@ -847,6 +850,30 @@ mod forwarded_call_anchor_tests {
             .filter(|call| call.callee == "callee")
             .map(|call| call.call_statement)
             .collect()
+    }
+
+    #[test]
+    fn backticked_rebindings_match_semantic_source_names() {
+        for (source, target) in [("bins", "`bins`"), ("`bins`", "bins")] {
+            for statement in [
+                format!("{target} <- 1"),
+                format!("for ({target} in list(1)) NULL"),
+                format!("if (({target} <- 1) > 0) NULL"),
+                format!("if (({target} <<- 1) > 0) NULL"),
+            ] {
+                let text = format!("{statement}\ncallee(bins)\n");
+                let file = ry_core::RParser::new()
+                    .unwrap()
+                    .parse("backticks.R", &text)
+                    .unwrap();
+                assert!(
+                    may_rebind_source_before(&file.stmts, source, 1),
+                    "{source} must match {statement}"
+                );
+                assert!(!may_rebind_source_before(&file.stmts, "other", 1));
+                assert!(!may_rebind_source_before(&file.stmts, source, 0));
+            }
+        }
     }
 
     #[test]

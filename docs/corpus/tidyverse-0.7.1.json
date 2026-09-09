@@ -373,15 +373,6 @@
       "audit_group": "P8"
     },
     {
-      "package": "googlesheets4",
-      "code": "RY092",
-      "path": "R/sheet_write.R",
-      "line": 83,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P8"
-    },
-    {
       "package": "dbplyr",
       "code": "RY090",
       "path": "tests/testthat/test-query-set-op.R",
@@ -1068,7 +1059,7 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 45,
+    "false_positive": 44,
     "uncertain": 0,
     "unowned": 52
   },
@@ -1084,7 +1075,7 @@
     "P3e": 2,
     "P3b": 0,
     "P3d": 0,
-    "P8": 4,
+    "P8": 3,
     "P7b": 3,
     "P3a": 0,
     "P3c": 0,
@@ -1096,8 +1087,9 @@
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
     "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
-    "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered."
+    "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered.",
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md."
   ],
-  "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
-  "source_sha256": "3467d1b9b1b472c7bc8ee20d1679471c6717a768e1cbe1727ba828e0c0ec7964"
+  "ry_commit": "accc27d48eef4f6ea76d107d1129a44be6dffd98",
+  "source_sha256": "7e4938f544533492035c01c1c4a2daa2fb5b854a3ef19116db0c55de6a2b1c1a"
 }

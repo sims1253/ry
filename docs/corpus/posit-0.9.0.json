@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "afbc1daed79e98842c9ea511e229fed86817269c11f6f87c4385cc2e4404cf65",
-  "ry_commit": "c974a96fd4bc9e1f5d354c590105b327af9b6a4e",
+  "source_sha256": "961a11e4e208fb4ba47ae7f53fd4a2bb404eff841eeca0047ccaf19ffd3e928e",
+  "ry_commit": "accc27d48eef4f6ea76d107d1129a44be6dffd98",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -124,7 +124,7 @@
       "repo": "r-lib/usethis",
       "stars": 919,
       "commit": "5f60819dc5dee7071d6e67cfa1fd934bb665466c",
-      "diagnostics": 8
+      "diagnostics": 7
     },
     {
       "name": "keras3",
@@ -4476,15 +4476,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "usethis",
-      "code": "RY092",
-      "path": "R/utils-github.R",
-      "line": 131,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "dbplyr",
       "code": "RY091",
       "path": "tests/testthat/test-backend-.R",
@@ -4541,7 +4532,7 @@
   ],
   "classification": {
     "true_positive": 43,
-    "false_positive": 412,
+    "false_positive": 411,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -4555,7 +4546,7 @@
     "reassign-scope": 10,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 67,
+    "type-narrowing": 66,
     "upstream-package": 31
   },
   "notes": [
@@ -4571,6 +4562,7 @@
     "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered.",
     "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43\u201355 and 58\u201372, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes.",
     "Verified htmltools tags and the identical shiny re-export remove 87 RY010 false positives under explicit namespace/import lookup: bslib 53, shinydashboard 31, shiny-r 2, and flexdashboard 1. The source values are lists of tag constructors; no ambient global or constructor-result schema is added. The full pinned comparison adds no findings and preserves all 43 true positives.",
-    "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed."
+    "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved."
   ]
 }

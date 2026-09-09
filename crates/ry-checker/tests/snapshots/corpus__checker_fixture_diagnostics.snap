@@ -729,6 +729,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_function_def.R
 - diagnostics: []
+  fixture: ok_ggplot2_aes_data_pronoun.R
+- diagnostics: []
   fixture: ok_global_variables_declaration.R
 - diagnostics: []
   fixture: ok_ho_filter_find.R
@@ -1184,6 +1186,50 @@ expression: snapshots
         line: 6
         start: 321
   fixture: ry050_missing_method.R
+- diagnostics:
+    - code: RY060
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 20
+        end: 486
+        line: 8
+        start: 469
+    - code: RY060
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 24
+        end: 533
+        line: 9
+        start: 516
+    - code: RY060
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 18
+        end: 570
+        line: 10
+        start: 553
+  fixture: ry060_data_mask_pronoun_schema_miss.R
+- diagnostics:
+    - code: RY060
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 34
+        end: 537
+        line: 10
+        start: 520
+    - code: RY060
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+      span:
+        column: 27
+        end: 583
+        line: 11
+        start: 566
+  fixture: ry060_dots_fallback_data_pronoun.R
 - diagnostics:
     - code: RY060
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."

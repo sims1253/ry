@@ -1210,6 +1210,39 @@ impl Checker {
                         // A declared source is conditional: without a
                         // supplied `data` argument, formula extras evaluate
                         // normally in the caller environment.
+                        // Classify by the first argument's OWN binding, not
+                        // `eval_mode_for_arg`: its `...` fallback would also
+                        // mark a leading data argument masked. Signatures such
+                        // as dplyr `transmute(.data, ...)` declare no eval
+                        // entry on the data formal, only on `...`, and their
+                        // first argument is the data frame at every real call
+                        // site -- the schema mask must survive. A named formal
+                        // counts as masked only through its own entry; an
+                        // argument absorbed by `...` counts through the dots
+                        // entry (ggplot2 `aes()`, tidyr `nesting()`).
+                        let leading_argument_is_masked =
+                            declared_binding
+                                .as_ref()
+                                .is_some_and(|(signature, bindings)| {
+                                    let own_formal = bindings
+                                        .param_for_arg
+                                        .first()
+                                        .and_then(|parameter| {
+                                            parameter.and_then(|index| signature.params.get(index))
+                                        })
+                                        .map(|param| param.name.as_str());
+                                    let own_mode = own_formal
+                                        .and_then(|name| signature.eval.get(name))
+                                        .or_else(|| {
+                                            own_formal
+                                                .is_none()
+                                                .then(|| signature.eval.get("..."))
+                                                .flatten()
+                                        });
+                                    own_mode.is_some_and(|mode| {
+                                        matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
+                                    })
+                                });
                         let Some(data) = supplied_data_mask_source
                             .as_ref()
                             .map(|(_, data)| data.clone())
@@ -1218,7 +1251,21 @@ impl Checker {
                                     .as_ref()
                                     .is_some_and(|signature| signature.data_mask_source.is_none())
                                     .then(|| {
-                                        arg_types.first().cloned().unwrap_or_else(RType::unknown)
+                                        if leading_argument_is_masked {
+                                            // A signature that data-masks its own
+                                            // leading formals (ggplot2 `aes()`,
+                                            // `vars()`, tidyr `nesting()`) has no
+                                            // data argument at the call site: the
+                                            // mask is unknown and `.data` stays
+                                            // opaque instead of adopting a sibling
+                                            // argument's atomic type.
+                                            RType::unknown()
+                                        } else {
+                                            arg_types
+                                                .first()
+                                                .cloned()
+                                                .unwrap_or_else(RType::unknown)
+                                        }
                                     })
                             })
                         else {

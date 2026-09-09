@@ -339,9 +339,11 @@ fn condition_rules_fire_their_family_code() {
             "x <- if (runif(1) > 0.5) 1L else 2.0\nif (x) print(1)",
             "RY003",
         ),
+        // A scalar character member no longer proves a union invalid
+        // (#373); a list member still does.
         (
             "invalid-union `if` condition",
-            "x <- if (runif(1) > 0.5) 1L else \"a\"\nif (x) print(1)",
+            "x <- if (runif(1) > 0.5) 1L else list(\"a\")\nif (x) print(1)",
             "RY001",
         ),
         ("NULL `if` condition", "if (NULL) print(1)", "RY001"),
@@ -376,6 +378,298 @@ fn condition_rules_fire_their_family_code() {
             "{note}: RY003 is an info-level nudge, got {diags:?}"
         );
     }
+}
+
+// #373: R coerces `if`/`while` conditions beyond logical scalars. Scalar
+// raw values coerce numerically, scalar complex values coerce by OR over
+// their real and imaginary components (0+0i is FALSE, 0+1i is TRUE), and
+// a scalar character value coerces only when its text is one of the eight
+// accepted literals. The value of a computed scalar string (Sys.getenv
+// flags) is unknowable statically, so those conditions stay silent
+// instead of claiming R rejects them.
+#[test]
+fn coercible_scalar_conditions_stay_silent() {
+    for (note, src) in [
+        ("character literal TRUE", r#"if ("TRUE") print(1)"#),
+        ("character literal T", r#"if ("T") print(1)"#),
+        ("character literal true", r#"if ("true") print(1)"#),
+        ("character literal True", r#"if ("True") print(1)"#),
+        ("character literal F", r#"if ("F") print(1)"#),
+        ("character literal false", r#"if ("false") print(1)"#),
+        (
+            "hex-escaped literal decodes to TRUE",
+            r#"if ("\x54RUE") print(1)"#,
+        ),
+        (
+            "octal-escaped literal decodes to FALSE",
+            r#"if ("\106ALSE") print(1)"#,
+        ),
+        ("raw string literal", r#"if (r"(TRUE)") print(1)"#),
+        ("parenthesized literal", r#"if ((("TRUE"))) print(1)"#),
+        (
+            "Sys.getenv flag in if",
+            r#"if (Sys.getenv("FLAG")) print(1)"#,
+        ),
+        (
+            "Sys.getenv flag binding in if",
+            "flag <- Sys.getenv(\"OTHER\")\nif (flag) print(1)\n",
+        ),
+        (
+            "Sys.getenv flag in while",
+            "while (Sys.getenv(\"LOOP\")) {\n  break\n}\n",
+        ),
+        ("raw scalar condition", "if (as.raw(1)) print(1)\n"),
+        ("raw zero scalar condition", "if (as.raw(0)) print(1)\n"),
+        (
+            "complex scalar condition",
+            "z <- complex(real = 1)\nif (z) print(1)\n",
+        ),
+        (
+            "complex scalar via vector",
+            "if (vector(\"complex\", 1)) print(1)\n",
+        ),
+        (
+            "complex scalar with imaginary part",
+            "if (complex(real = 0, imaginary = 1)) print(1)\n",
+        ),
+        (
+            "complex scalar zero components",
+            "if (complex(real = 0, imaginary = 0)) print(1)\n",
+        ),
+        // Imaginary literals (2+3i, 0+1i, 0+0i) type as opaque today, so
+        // these guard silence through that path too; the constructor rows
+        // above are what exercise Mode::Complex.
+        ("imaginary literal 2+3i", "if (2+3i) print(1)\n"),
+        ("imaginary literal 0+1i", "if (0+1i) print(1)\n"),
+        ("imaginary literal 0+0i", "if (0+0i) print(1)\n"),
+        (
+            // NA_complex_ is complex<len=1>, so this exercises the same
+            // silence arm. R ERRORS at runtime ("argument is not
+            // interpretable as a logical"): the VALUE, not the mode,
+            // decides. Silence is the uncertainty policy for untracked
+            // values (NA boundary stays with #354), not a validity claim.
+            "NA complex constant stays silent (uncertainty boundary)",
+            "if (NA_complex_) print(1)\n",
+        ),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags
+                .iter()
+                .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+            "{note}: a condition R may coerce must stay silent, got {diags:?}"
+        );
+    }
+}
+
+// The complex/raw silence must flow through the real constructor paths
+// (Mode::Complex via the `complex` stub, Mode::Raw via the `as.raw`
+// stub), not through an opaque fallback that would be silent anyway.
+#[test]
+fn coercible_condition_silence_uses_real_complex_and_raw_modes() {
+    let (diags, scope) = check_with_scope("z <- complex(real = 1)\nw <- as.raw(1)\n");
+    assert!(
+        matches!(scope.get("z").map(|t| t.mode), Some(Mode::Complex)),
+        "complex(real = 1) must infer Mode::Complex"
+    );
+    assert!(
+        matches!(scope.get("w").map(|t| t.mode), Some(Mode::Raw)),
+        "as.raw(1) must infer Mode::Raw"
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+    let (diags, _) = check_with_scope("z <- complex(real = 1)\nwhile (z) {\n  break\n}\n");
+    assert!(
+        diags
+            .iter()
+            .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+        "complex while condition must stay silent, got {diags:?}"
+    );
+}
+
+// The retained error side of #373: shapes R provably rejects keep RY001.
+// String literals outside the eight accepted spellings (including the
+// "NA" string, which the `if` coercion path rejects like any other
+// text), multi-element character, zero-length, NULL, and list values
+// all error at runtime.
+#[test]
+fn known_multi_value_conditions_are_rejected_in_if_and_while() {
+    for (source, expected) in [
+        ("if (c(TRUE, FALSE)) print(1)", "RY002"),
+        ("if (c(1L, 2L)) print(1)", "RY001"),
+        ("if (c(1, 2)) print(1)", "RY001"),
+        ("while (c(TRUE, FALSE)) { break }", "RY001"),
+        ("while (c(1L, 2L)) { break }", "RY001"),
+        ("while (c(1, 2)) { break }", "RY001"),
+    ] {
+        let diags = check(source);
+        let condition_codes: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.code, "RY001" | "RY002" | "RY003"))
+            .map(|d| d.code)
+            .collect();
+        assert_eq!(condition_codes, vec![expected], "{source}: {diags:?}");
+    }
+}
+
+#[test]
+fn proven_invalid_conditions_keep_ry001() {
+    for (note, src) in [
+        ("non-coercible literal", r#"if ("x") print(1)"#),
+        ("mixed-case literal", r#"if ("tRue") print(1)"#),
+        ("numeric-looking literal", r#"if ("1") print(1)"#),
+        ("empty literal", r#"if ("") print(1)"#),
+        ("NA string literal", r#"if ("NA") print(1)"#),
+        (
+            "two-element character",
+            r#"if (c("TRUE", "FALSE")) print(1)"#,
+        ),
+        ("zero-length character", "if (character(0)) print(1)\n"),
+        (
+            "zero-length complex",
+            "if (vector(\"complex\", 0)) print(1)\n",
+        ),
+        (
+            "two-element complex",
+            "if (vector(\"complex\", 2)) print(1)\n",
+        ),
+        ("list condition", "if (list(TRUE)) print(1)\n"),
+        ("NULL condition", "if (NULL) print(1)\n"),
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY001"),
+            "{note}: a condition R rejects keeps RY001, got {diags:?}"
+        );
+    }
+}
+
+// Union conditions: a coercible scalar character member no longer marks
+// the union invalid, but members with proven-wrong shapes (zero length,
+// known length above one, list) still do. A logical or opaque member
+// keeps its existing whole-union silence.
+// Retain the existing uncertainty contract from scope_resolution:
+// a valid logical alternative prevents a definitely-invalid RY001 claim.
+// The runtime oracle pins both the passing and failing branch outcomes.
+#[test]
+fn logical_union_members_preserve_possibly_valid_conditions() {
+    for (left, right) in [("TRUE", "list(TRUE)"), ("list(TRUE)", "TRUE")] {
+        for condition in ["if (x) print(1)", "while (x) { break }"] {
+            let source = format!("x <- if (runif(1) > 0.5) {left} else {right}\n{condition}\n");
+            let (diags, scope) = check_with_scope(&source);
+            assert_eq!(scope.get("x").expect("union binding").mode, Mode::Union);
+            assert!(
+                diags.iter().all(|d| d.code != "RY001"),
+                "{source}: {diags:?}"
+            );
+            assert!(diags.iter().all(|d| !matches!(d.code, "RY002" | "RY003")));
+        }
+    }
+    for (left, right) in [("TRUE", "1L"), ("1L", "TRUE")] {
+        let source = format!("x <- if (runif(1) > 0.5) {left} else {right}\nif (x) print(1)\n");
+        let (diags, scope) = check_with_scope(&source);
+        assert_eq!(scope.get("x").expect("union binding").mode, Mode::Union);
+        assert!(
+            diags
+                .iter()
+                .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn union_condition_members_keep_proven_invalidity() {
+    for (note, src, wants_ry001, wants_union) in [
+        (
+            "zero-length member stays invalid",
+            "x <- if (runif(1) > 0.5) \"TRUE\" else character(0)\nif (x) print(1)\n",
+            true,
+            true,
+        ),
+        (
+            "known-length-two member stays invalid",
+            "x <- if (runif(1) > 0.5) \"TRUE\" else c(\"T\", \"F\")\nif (x) print(1)\n",
+            true,
+            true,
+        ),
+        (
+            "list member stays invalid",
+            "x <- if (runif(1) > 0.5) \"TRUE\" else list(TRUE)\nif (x) print(1)\n",
+            true,
+            true,
+        ),
+        (
+            "scalar character members stay silent",
+            "x <- if (runif(1) > 0.5) \"TRUE\" else Sys.getenv(\"F\")\nif (x) print(1)\n",
+            false,
+            false,
+        ),
+    ] {
+        let (diags, scope) = check_with_scope(src);
+        assert_eq!(
+            scope.get("x").expect("condition binding").mode,
+            if wants_union {
+                Mode::Union
+            } else {
+                Mode::Character
+            },
+            "{note}: inferred condition shape"
+        );
+        assert_eq!(
+            diags.iter().any(|d| d.code == "RY001"),
+            wants_ry001,
+            "{note}: got {diags:?}"
+        );
+    }
+}
+
+// Mixed unions of a numeric member and any coercible scalar member
+// (character, complex, raw): the coercible member's runtime story may
+// differ from numeric truthiness (character literal gate, complex
+// component-OR, raw byte truthiness), so the RY003 "R coerces nonzero to
+// TRUE" message would misdescribe it. The union stays silent unless a
+// member is PROVEN invalid, which still dominates. Pure numeric unions
+// keep RY003.
+#[test]
+fn mixed_numeric_coercible_union_condition_is_silent() {
+    for (note, other_branch) in [
+        ("character member", "\"a\""),
+        ("raw member", "as.raw(1)"),
+        ("complex member", "complex(real = 1)"),
+    ] {
+        let (diags, _) = check_with_scope(&format!(
+            "x <- if (runif(1) > 0.5) 1L else {other_branch}\nif (x) print(1)\n"
+        ));
+        assert!(
+            diags
+                .iter()
+                .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+            "mixed numeric|{note} union must stay silent, got {diags:?}"
+        );
+    }
+    let (diags, _) = check_with_scope("x <- if (runif(1) > 0.5) 1L else \"a\"\nif (x) print(1)\n");
+    assert!(
+        diags
+            .iter()
+            .all(|d| !matches!(d.code, "RY001" | "RY002" | "RY003")),
+        "mixed numeric|character union must stay silent, got {diags:?}"
+    );
+    // An invalid member still dominates the mixed union.
+    let (diags, _) = check_with_scope(
+        "x <- if (runif(1) > 0.5) 1L else \"a\"\ny <- if (runif(1) > 0.5) x else list(TRUE)\nif (y) print(1)\n",
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "RY001"),
+        "a proven-invalid member dominates the mixed union, got {diags:?}"
+    );
+    // Pure integer|double unions keep the numeric info nudge.
+    let (diags, _) = check_with_scope("x <- if (runif(1) > 0.5) 1L else 2.0\nif (x) print(1)\n");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY003" && d.severity == Severity::Info),
+        "pure numeric union keeps RY003 info, got {diags:?}"
+    );
 }
 
 #[test]

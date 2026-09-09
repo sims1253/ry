@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "5e75c672bfec12eb52334e8458c6318e802329f58a84376e3e49ca6f4685dd87",
-  "ry_commit": "f1839f21c5158a3246b19b3d5db46376d8924583",
+  "source_sha256": "f2246323911e15fe73be4f08bef95d4247e717e9ae42cc27de170e47a73b769e",
+  "ry_commit": "ccdedb07d2103b92b3a57554cf464fdd514d5493",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -89,7 +89,7 @@
       "repo": "rstudio/renv",
       "stars": 1160,
       "commit": "a3f8952cf8f4b9cd6e676805431cb81ca5a24b64",
-      "diagnostics": 57
+      "diagnostics": 53
     },
     {
       "name": "tinytex",
@@ -2741,24 +2741,6 @@
     {
       "package": "renv",
       "code": "RY001",
-      "path": "R/bootstrap.R",
-      "line": 800,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/cache.R",
-      "line": 538,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
       "path": "R/parse.R",
       "line": 3,
       "column": 7,
@@ -2791,24 +2773,6 @@
       "column": 9,
       "label": "false_positive",
       "audit_group": "delayed-assign"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 16,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 960,
-      "column": 9,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
     },
     {
       "package": "renv",
@@ -4468,7 +4432,7 @@
     }
   ],
   "classification": {
-    "true_positive": 41,
+    "true_positive": 37,
     "false_positive": 406,
     "uncertain": 0
   },
@@ -4484,7 +4448,7 @@
     "s3-method-dispatch": 3,
     "test-fixture": 71,
     "type-narrowing": 61,
-    "upstream-package": 31
+    "upstream-package": 27
   },
   "notes": [
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
@@ -4499,6 +4463,7 @@
     "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered.",
     "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43–55 and 58–72, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes.",
     "Verified htmltools tags and the identical shiny re-export remove 87 RY010 false positives under explicit namespace/import lookup: bslib 53, shinydashboard 31, shiny-r 2, and flexdashboard 1. The source values are lists of tag constructors; no ambient global or constructor-result schema is added. The full pinned comparison adds no findings and preserves all 43 true positives.",
+    "The condition-coercion audit corrects four renv RY001 identities previously labeled true_positive in upstream-package: R/bootstrap.R:800:7, R/cache.R:538:7, and inst/resources/activate.R:16:7 and :960:9, at pin a3f8952cf8f4b9cd6e676805431cb81ca5a24b64. Each tests a scalar Sys.getenv result with unset=\"FALSE\" or \"TRUE\". R accepts these strings in if conditions; an unknown user value is not proof of an invalid condition. Exact pinned assignment/condition probes accept defaults and TRUE/FALSE while garbage raises the expected error. The four labels were therefore false positives under the uncertainty policy, not unconditional runtime errors. This rule does not guarantee arbitrary environment values are valid. Full pinned comparison removes exactly these four identities, adds none, and retains every other finding. Proven invalid literals remain tested by the condition-coercion fixtures.",
     "The bounded default-parameter false-branch refinement removes two reviewed ggplot2 RY061 false positives at R/geom-boxplot.R:164:19 and :166:7. Only a default-derived type wholly excluded by a false mode predicate is relaxed; explicit class predicates are excluded and reassignment clears the marker. The pinned corpus comparison removes exactly these two identities and adds none; all true-positive identities remain unchanged.",
     "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved.",
     "Function-mode call-head lookup removes four RY070 identities. rlang tests/testthat/helper-locale.R:134:5 called skip() past a local logical skip; R resolves the head to testthat::skip (probe: with testthat attached the call raises testthat's skip control condition, never an error), so the prior true_positive label -- assigned in the audit batch documented in docs/corpus/pre-governance-measurement.md with the ordinary-lookup rationale \"a local logical skip shadows the function\" -- was a mislabel and the finding was a false positive. pkgdown tests/testthat/helper.R:24-26 called path() past the NULL formal of local_pkgdown_site; pkgdown's NAMESPACE import(fs) binds fs::path, and R's function-mode lookup skips the NULL formal (probe: fs::path runs); their recorded false_positive labels were correct. All other identities are unchanged, including pkgdown R/templates.R:57:5, which still fires because import(fs) is not enumerable hermetically (fs ships no stub; issue #366); its true_positive label was assigned with the same shadowing rationale and is flagged to the maintainers for review under function-mode semantics, not relabeled here. Remaining RY070 messages gain the function-mode wording.",

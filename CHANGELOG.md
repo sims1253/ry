@@ -4,6 +4,14 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Raise the default `max-serialized-bytes` cap from 2 MiB to 16 MiB so real
+  package `R/sysdata.rda` inventories (gt decodes to ~8 MB) enumerate their
+  binding names without per-project configuration. Files above the cap keep
+  the bounded file-stem fallback and degraded-scope notice; explicit
+  `max-serialized-bytes` values still take precedence.
+
 ## [0.9.0] - 2026-09-07
 
 ### Added

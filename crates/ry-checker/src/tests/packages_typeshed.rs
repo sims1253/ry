@@ -1021,3 +1021,23 @@ fn find_results_preserve_no_match_and_list_element_uncertainty() {
             .any(|d| d.code == "RY105")
     );
 }
+
+#[test]
+fn attached_ggplot2_aes_data_pronoun_stays_opaque() {
+    // Unit-level attachment coverage, not end-to-end NAMESPACE import
+    // coverage: `set_bare_loaded` reproduces only the checker state the
+    // CLI derives from `import(ggplot2)` (ggplot2 on this file's search
+    // path). It pins that the pronoun stays opaque under that state --
+    // a sibling aesthetic's atomic type cannot become the data mask and
+    // flag `.data$col` (#383). End-to-end package evidence is the
+    // pinned-CRAN-package CLI comparison recorded in the issue
+    // investigation (see 0.14.2: 10 RY061 pre-fix, 0 post-fix).
+    let source = include_str!("../../testdata/ok_ggplot2_aes_data_pronoun.R");
+    let diagnostics = check_with(source, |checker| {
+        checker.set_bare_loaded(HashSet::from(["ggplot2".to_string()]));
+    });
+    assert!(
+        diagnostics.is_empty(),
+        "attached ggplot2 must keep `.data` opaque: {diagnostics:?}"
+    );
+}

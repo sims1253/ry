@@ -1132,7 +1132,7 @@
       "line": 381,
       "column": 11,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "flexdashboard::RY001::R/flex_dashboard.R:401:13": {
       "package": "flexdashboard",
@@ -1141,7 +1141,7 @@
       "line": 401,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "flexdashboard::RY010::R/bslib.R:34:24": {
       "package": "flexdashboard",
@@ -1168,7 +1168,7 @@
       "line": 101,
       "column": 14,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "ggplot2::RY010::R/facet-.R:1074:28": {
       "package": "ggplot2",
@@ -1582,7 +1582,7 @@
       "line": 166,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "gt::RY010::R/data_color.R:1520:23": {
       "package": "gt",
@@ -2689,7 +2689,7 @@
       "line": 100,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:108:13": {
       "package": "pak",
@@ -2698,7 +2698,7 @@
       "line": 108,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:118:13": {
       "package": "pak",
@@ -2707,7 +2707,7 @@
       "line": 118,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:120:20": {
       "package": "pak",
@@ -2716,7 +2716,7 @@
       "line": 120,
       "column": 20,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:135:14": {
       "package": "pak",
@@ -2725,7 +2725,7 @@
       "line": 135,
       "column": 14,
       "severity": "warning",
-      "message": "loop condition is `logical<len=0>`, expected length-1 logical"
+      "message": "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:141:13": {
       "package": "pak",
@@ -2734,7 +2734,7 @@
       "line": 141,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:143:20": {
       "package": "pak",
@@ -2743,7 +2743,7 @@
       "line": 143,
       "column": 20,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:81:11": {
       "package": "pak",
@@ -2752,7 +2752,7 @@
       "line": 81,
       "column": 11,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:83:18": {
       "package": "pak",
@@ -2761,7 +2761,7 @@
       "line": 83,
       "column": 18,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY001::R/json.R:98:14": {
       "package": "pak",
@@ -2770,7 +2770,7 @@
       "line": 98,
       "column": 14,
       "severity": "warning",
-      "message": "loop condition is `logical<len=0>`, expected length-1 logical"
+      "message": "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY010::R/compat-vctrs.R:231:16": {
       "package": "pak",
@@ -3096,24 +3096,6 @@
       "severity": "error",
       "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
     },
-    "renv::RY001::R/bootstrap.R:800:7": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/bootstrap.R",
-      "line": 800,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `character<len=1>`, expected length-1 logical"
-    },
-    "renv::RY001::R/cache.R:538:7": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/cache.R",
-      "line": 538,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `character<len=1>`, expected length-1 logical"
-    },
     "renv::RY001::R/parse.R:3:7": {
       "package": "renv",
       "code": "RY001",
@@ -3121,7 +3103,7 @@
       "line": 3,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "renv::RY001::R/snapshot.R:1153:7": {
       "package": "renv",
@@ -3130,7 +3112,7 @@
       "line": 1153,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "renv::RY001::R/snapshot.R:1158:7": {
       "package": "renv",
@@ -3139,7 +3121,7 @@
       "line": 1158,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "renv::RY001::R/utils.R:90:9": {
       "package": "renv",
@@ -3148,25 +3130,7 @@
       "line": 90,
       "column": 9,
       "severity": "warning",
-      "message": "`if` condition is `NULL<len=0>`, expected length-1 logical"
-    },
-    "renv::RY001::inst/resources/activate.R:16:7": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 16,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `character<len=1>`, expected length-1 logical"
-    },
-    "renv::RY001::inst/resources/activate.R:960:9": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 960,
-      "column": 9,
-      "severity": "warning",
-      "message": "`if` condition is `character<len=1>`, expected length-1 logical"
+      "message": "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "renv::RY010::tests/testthat/resources/import.R:11:14": {
       "package": "renv",
@@ -3616,7 +3580,7 @@
       "line": 579,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "reticulate::RY010::R/wrapper.R:89:9": {
       "package": "reticulate",
@@ -3670,7 +3634,7 @@
       "line": 548,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `NULL<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "rlang::RY001::R/trace.R:531:7": {
       "package": "rlang",
@@ -3679,7 +3643,7 @@
       "line": 531,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `opaque<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `opaque<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "rlang::RY001::R/trace.R:540:7": {
       "package": "rlang",
@@ -3688,7 +3652,7 @@
       "line": 540,
       "column": 7,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "rlang::RY010::R/cnd-abort.R:855:10": {
       "package": "rlang",
@@ -4246,7 +4210,7 @@
       "line": 375,
       "column": 9,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "sparklyr::RY001::R/ml_utils.R:181:13": {
       "package": "sparklyr",
@@ -4255,7 +4219,7 @@
       "line": 181,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `opaque<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `opaque<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "sparklyr::RY010::R/connection_livy.R:187:28": {
       "package": "sparklyr",
@@ -4399,7 +4363,7 @@
       "line": 205,
       "column": 13,
       "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
+      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:1": {
       "package": "testthat",

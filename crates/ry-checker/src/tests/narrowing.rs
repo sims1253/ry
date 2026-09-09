@@ -642,6 +642,135 @@ fn standalone_check_data_frame_accepts_multiple_columns() {
     );
 }
 
+// #343: a defaulted parameter's recorded type describes only the
+// omitted-argument call shape. When a mode predicate's false path proves the
+// runtime value is not the tested mode, the default-derived mode must not
+// survive into that branch as a fact.
+#[test]
+fn default_parameter_mode_default_stays_unknown_in_rejected_branch() {
+    let diagnostics = check(
+        "f <- function(position = \"dodge2\") {\n\
+           if (is.character(position)) {\n\
+             1\n\
+           } else {\n\
+             position$preserve\n\
+           }\n\
+         }\n\
+         f()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "the rejected branch of a mode test cannot assert the default's mode: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn numeric_group_default_parameter_rejected_branch() {
+    let diagnostics = check(
+        "m <- function(n = 1) {\n\
+           if (is.numeric(n)) {\n\
+             1\n\
+           } else {\n\
+             n$field\n\
+           }\n\
+         }\n\
+         m()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "is.numeric's integer|double family rejects the default's mode the same way: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn local_literal_else_branch_keeps_its_unreachable_diagnostic() {
+    let diagnostics = check(
+        "g <- function() {\n\
+           s <- \"a\"\n\
+           if (is.character(s)) 1 else s$n\n\
+         }\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061"),
+        "a local literal's rejected branch is genuinely unreachable; only default-parameter types degrade: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn reassigned_formal_keeps_its_else_branch_diagnostic() {
+    let diagnostics = check(
+        "h <- function(position = \"dodge2\") {\n\
+           position <- \"x\"\n\
+           if (is.character(position)) 1 else position$n\n\
+         }\n\
+         h()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061"),
+        "rebinding clears the default-parameter marker, so the local literal shape keeps its diagnostic: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn null_default_else_branch_stays_silent() {
+    let diagnostics = check(
+        "n <- function(x = NULL) {\n\
+           if (is.character(x)) 1 else x$n\n\
+         }\n\
+         n()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY061"),
+        "the NULL complement path is unchanged: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn class_predicate_else_branch_keeps_its_diagnostic() {
+    let diagnostics = check(
+        "i <- function(x = \"a\") {\n\
+           if (inherits(x, \"foo\")) 1 else x$n\n\
+         }\n\
+         i()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061"),
+        "class predicates do not reject a mode; their false path keeps the recorded mode: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn continuation_after_branch_keeps_default_shape_diagnostic() {
+    // Scope boundary: the degradation is branch-local. After the `if`, the
+    // binding still carries the default-derived shape (fixing that needs
+    // default-shape treatment at the join, out of this issue's scope).
+    let diagnostics = check(
+        "p1 <- function(x = \"a\") {\n\
+           if (is.character(x)) { 1 } else { 2 }\n\
+           x$n\n\
+         }\n\
+         p1()\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY061"),
+        "the continuation keeps the default-derived shape today: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn classless_opaque_stub_return_is_not_a_proven_class_rejection() {
     // Issue #341: `eval_tidy`'s stub return is opaque with no class entry.

@@ -104,24 +104,6 @@
   "findings": [
     {
       "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 164,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "P6c"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 166,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "P6c"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY100",
       "path": "tests/testthat/test-axis-secondary.R",
       "line": 36,
@@ -1050,13 +1032,13 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 43,
+    "false_positive": 41,
     "uncertain": 0,
     "unowned": 52
   },
   "audit_group_counts": {
     "plan-29": 0,
-    "P6c": 2,
+    "P6c": 0,
     "upstream-ggplot2": 4,
     "P7a": 2,
     "P4b": 1,
@@ -1079,10 +1061,11 @@
     "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
     "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered.",
+    "The bounded default-parameter false-branch refinement removes two reviewed ggplot2 RY061 false positives at R/geom-boxplot.R:164:19 and :166:7. Only a default-derived type wholly excluded by a false mode predicate is relaxed; explicit class predicates are excluded and reassignment clears the marker. The pinned corpus comparison removes exactly these two identities and adds none; all true-positive identities remain unchanged.",
     "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved.",
     "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md."
   ],
-  "ry_commit": "4ba10a70b2b65eaa1c2397b608900eea3b3a57cc",
-  "source_sha256": "fcbcaa758acd7821efb9b4c8259b93ba372c31a03ce2d2cab4a09c0892de483b"
+  "ry_commit": "f1839f21c5158a3246b19b3d5db46376d8924583",
+  "source_sha256": "15626d2b4da33a5e609b2eaf9659623b5376f84b2b3c74610b7da67a56dea081"
 }

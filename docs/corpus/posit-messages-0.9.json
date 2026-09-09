@@ -1503,24 +1503,6 @@
       "severity": "error",
       "message": "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
     },
-    "ggplot2::RY061::R/geom-boxplot.R:164:19": {
-      "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 164,
-      "column": 19,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
-    },
-    "ggplot2::RY061::R/geom-boxplot.R:166:7": {
-      "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 166,
-      "column": 7,
-      "severity": "error",
-      "message": "$ operator is invalid for atomic vectors of mode `character`"
-    },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:36:23": {
       "package": "ggplot2",
       "code": "RY100",

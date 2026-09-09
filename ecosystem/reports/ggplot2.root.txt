@@ -1,7 +1,5 @@
 R/bin.R:101:14 RY001
 R/facet-.R:1074:28 RY010
-R/geom-boxplot.R:164:19 RY061
-R/geom-boxplot.R:166:7 RY061
 R/plot-render.R:297:19 RY010
 R/plot-render.R:64:12 RY010
 R/plot-render.R:65:12 RY010

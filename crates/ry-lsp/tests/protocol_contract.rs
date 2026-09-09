@@ -330,8 +330,8 @@ fn two_roots_different_editor_settings_differential() {
 
 /// (#54): two roots define the same stub package (`localdep`) with
 /// different return types for `my_func`. Root A's stub returns integer (no
-/// diagnostic); root B's stub returns character (RY001 — `if` condition is
-/// character). Each root's LSP output must equal its independent CLI run.
+/// diagnostic); root B's stub returns list (RY001 — `if` condition is
+/// a list). Each root's LSP output must equal its independent CLI run.
 ///
 /// Before W2b, neither root loaded its local stubs: `my_func` had an
 /// unknown return type and neither root produced RY001.
@@ -1201,7 +1201,7 @@ fn publish_path_performs_no_baseline_disk_io() {
 ///
 /// A control session against an identical-but-valid root config proves
 /// the RY001 probe is live: with the stubs applied, `my_func()` returns
-/// character and `if (my_func())` fires RY001. Without that contrast, the
+/// list and `if (my_func())` fires RY001. Without that contrast, the
 /// RY001-absence assertion below could pass vacuously.
 #[test]
 fn invalid_root_rytoml_degrades_entirely_to_defaults() {

@@ -104,15 +104,6 @@
   "findings": [
     {
       "package": "ggplot2",
-      "code": "RY001",
-      "path": "R/bin.R",
-      "line": 101,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "plan-29"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY061",
       "path": "R/geom-boxplot.R",
       "line": 164,
@@ -1068,12 +1059,12 @@
   ],
   "classification": {
     "true_positive": 10,
-    "false_positive": 45,
+    "false_positive": 44,
     "uncertain": 0,
     "unowned": 52
   },
   "audit_group_counts": {
-    "plan-29": 1,
+    "plan-29": 0,
     "P6c": 2,
     "upstream-ggplot2": 4,
     "P7a": 2,
@@ -1096,8 +1087,9 @@
     "The ecosystem audit reconciles each hermetic report against finding identities in this ledger, including diagnostics that are absent from production-only reports.",
     "The grid export inventory resolves four ggplot2 RY010 findings for is.unit and is.grob callback values under import(grid). They were unowned in this ledger and are now verified as missing-export false positives; all other identities are unchanged.",
     "The source digest now records the concatenated bytes of all 32 unprefixed root reports in filename order from the complete default-manifest regeneration. The ledger retains its existing reviewed-package coverage.",
-    "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered."
+    "Unproven factor/new calls discard downstream facts because the callee or skipped arguments may mutate caller bindings. This conservatively reduces coverage by the ten dplyr identities recorded in the Posit ledger, plus six duckplyr RY040 identities in tests/testthat/test-dplyr-count-tally.R:143/144/179/222/223/254. These retain their existing false-positive audit labels; their disappearance is reduced coverage after uncertain factor calls, not individual diagnostic fixes. Required true-positive identities remain covered.",
+    "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved."
   ],
   "ry_commit": "71a2ae0e896dfaf17c62c8073dc264fe6cbda1ab",
-  "source_sha256": "3467d1b9b1b472c7bc8ee20d1679471c6717a768e1cbe1727ba828e0c0ec7964"
+  "source_sha256": "91a4bd74c5663a8dd0df9d6825ecbf4280f6acd6516bf8961ce4d09d74f835e3"
 }

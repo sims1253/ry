@@ -1161,15 +1161,6 @@
       "severity": "warning",
       "message": "comparing `logical` with `character`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
-    "ggplot2::RY001::R/bin.R:101:14": {
-      "package": "ggplot2",
-      "code": "RY001",
-      "path": "R/bin.R",
-      "line": 101,
-      "column": 14,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical"
-    },
     "ggplot2::RY010::R/facet-.R:1074:28": {
       "package": "ggplot2",
       "code": "RY010",

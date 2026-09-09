@@ -98,6 +98,32 @@ expression: snapshots
   fixture: err_dollar_assign_atomic.R
 - diagnostics:
     - code: RY061
+      message: "$ operator is invalid for atomic vectors of mode `double`"
+      severity: error
+      span:
+        column: 5
+        end: 248
+        line: 5
+        start: 243
+    - code: RY061
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 277
+        line: 7
+        start: 272
+    - code: RY061
+      message: "$ operator is invalid for atomic vectors of mode `logical`"
+      severity: error
+      span:
+        column: 5
+        end: 341
+        line: 10
+        start: 334
+  fixture: err_dollar_atomic_controls.R
+- diagnostics:
+    - code: RY061
       message: "$ operator is invalid for atomic vectors of mode `integer`"
       severity: error
       span:
@@ -796,6 +822,8 @@ expression: snapshots
   fixture: ok_loops.R
 - diagnostics: []
   fixture: ok_mirai_minimal.R
+- diagnostics: []
+  fixture: ok_mirai_status_dollar.R
 - diagnostics: []
   fixture: ok_multi_assign.R
 - diagnostics: []

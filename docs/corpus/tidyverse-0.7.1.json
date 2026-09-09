@@ -1066,6 +1066,6 @@
     "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md."
   ],
-  "ry_commit": "bade704f16e3f7f24b546ae81c72d16d3c292a00",
-  "source_sha256": "2c4a3bdd3b81c6e9092e26df80f830273cd0ccd90a2243d5261c4e0fce25d869"
+  "ry_commit": "f1839f21c5158a3246b19b3d5db46376d8924583",
+  "source_sha256": "15626d2b4da33a5e609b2eaf9659623b5376f84b2b3c74610b7da67a56dea081"
 }

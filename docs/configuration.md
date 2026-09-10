@@ -58,8 +58,9 @@ max-depth      = 64      # directory depth (default: 64)
 Serialized R data files are inventoried by decoding at most
 `max-serialized-bytes` bytes; one further byte is read to detect overflow. The
 16 MiB default covers real package sysdata such as gt's ~8 MB table bundle. A
-file above the cap falls back to a file-stem binding and `ry check` reports it
-as a degraded scope; raise the value to enumerate such files precisely.
+file above the cap falls back to a file-stem binding. The CLI and LSP report
+these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
+(256 MiB); zero does not mean unlimited.
 
 Use an environment profile for bindings supplied only to selected files:
 

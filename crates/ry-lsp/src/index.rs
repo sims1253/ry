@@ -43,46 +43,23 @@ pub(crate) fn index_workspace(root: &Path, config: &Config) -> IndexOutcome {
 /// Upper bound on index parse parallelism (see [`index_pool`]).
 const MAX_INDEX_THREADS: usize = 8;
 
-/// Bounded rayon pool dedicated to workspace indexing, created lazily on
-/// the first index and reused for every re-index (watched-files and
-/// configuration changes trigger rescans) so worker threads and their
-/// cached parsers survive between scans. Returns `None` when no pool can
-/// be built at all (thread exhaustion), in which case callers index
-/// serially: indexing must never take the server down.
-///
-/// The CLI parses on rayon's global pool — its whole process exists to
-/// check one workspace and then exit, so using every core is right. The
-/// LSP is different: it is a long-lived background process sharing the
-/// machine with the editor, and it indexes while the user types.
-/// Saturating every core would starve the editor and any other language
-/// server, so index parallelism is capped at `min(8,
-/// available_parallelism)`: enough to hide parse latency on large
-/// workspaces while leaving headroom on big machines. Idle pool threads
-/// park (no CPU cost) and each holds one parser, so the pool's steady
-/// footprint is at most 8 cached tree-sitter parsers.
+/// Reuse at most eight workers so indexing leaves room for the editor.
+/// If thread creation fails, parse inline instead.
 fn index_pool() -> Option<&'static rayon::ThreadPool> {
     static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .clamp(1, MAX_INDEX_THREADS);
+        let threads = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|&threads| threads > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .min(MAX_INDEX_THREADS);
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
             .thread_name(|i| format!("ry-index-{i}"))
             .build()
-            .or_else(|error| {
-                tracing::warn!(%error, threads, "failed to build index pool; indexing single-threaded");
-                // Indexing must never take the server down: degrade to
-                // one worker rather than propagate the panic.
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(1)
-                    .thread_name(|i| format!("ry-index-{i}"))
-                    .build()
-            })
-            .map_err(|error| {
-                tracing::warn!(%error, "single-threaded index pool also failed; indexing serially");
-                error
+            .inspect_err(|error| {
+                tracing::warn!(%error, threads, "failed to build index pool; indexing serially");
             })
             .ok()
     })

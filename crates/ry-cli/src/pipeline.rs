@@ -146,13 +146,24 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     let path_str = path.to_string_lossy().to_string();
     let file = PARSER.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let parser = slot
-            .get_or_insert_with(|| ry_core::RParser::new().expect("parser init (thread-local)"));
-        parser.parse(&path_str, &src)
+        let parser = match slot.as_mut() {
+            Some(parser) => parser,
+            None => match ry_core::RParser::new() {
+                Ok(parser) => slot.insert(parser),
+                // A worker whose parser cannot initialize must not panic the
+                // whole check: report the file as unparseable and leave the
+                // slot empty so the next file retries, matching the LSP's
+                // index tolerance.
+                Err(error) => return Err(error.to_string()),
+            },
+        };
+        parser
+            .parse(&path_str, &src)
+            .map_err(|message| message.to_string())
     });
     file.map(Arc::new).map_err(|message| ParseFailure {
         path: path.to_path_buf(),
-        error: ParseError::Parse(message.to_string()),
+        error: ParseError::Parse(message),
     })
 }
 

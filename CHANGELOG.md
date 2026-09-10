@@ -39,6 +39,9 @@ reading serialized package data.
   nudge, and multi-element logical loop conditions were not reported
   (#373). Review baselines and `--error-on-warning` runs for new
   findings.
+- Report files whose parser cannot be initialized instead of panicking the
+  whole check, and fall back to serial indexing in the language server when
+  its parse pool cannot be built.
 
 ### Changed
 

@@ -9,6 +9,10 @@
 - Reduce extension size with a minified production bundle.
 - Reuse successful version checks when the language server restarts within
   the same editor session. Changed binaries and failed checks are probed again.
+- New diagnostics can appear after upgrading: multi-value `if`/`while`
+  conditions now surface as RY001, and RY001/RY070 message text changed, so
+  accepted-baseline entries that match the old messages can reappear. See the
+  [core changelog](../../CHANGELOG.md) before regenerating baselines.
 
 ## [0.9.1] - 2026-09-07
 

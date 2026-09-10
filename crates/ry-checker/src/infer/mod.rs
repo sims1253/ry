@@ -1156,10 +1156,9 @@ impl Checker {
         // A default is selected only when the argument is omitted. An observed
         // omitted call proves that execution path even when other calls supply
         // the argument; without such evidence, the parameter stays opaque.
-        let Some(index) = parameters
-            .iter()
-            .position(|candidate| candidate.name == parameter.name)
-        else {
+        let Some(index) = parameters.iter().position(|candidate| {
+            semantic_argument_name(&candidate.name) == semantic_argument_name(&parameter.name)
+        }) else {
             return RType::unknown();
         };
         let Some(call_sites) = self.fn_table.call_sites.get(function) else {
@@ -1169,10 +1168,9 @@ impl Checker {
             return RType::unknown();
         }
         let omitted_somewhere = call_sites.iter().any(|arguments| {
-            let exact = arguments
-                .iter()
-                .flatten()
-                .any(|name| name == &parameter.name);
+            let exact = arguments.iter().flatten().any(|name| {
+                semantic_argument_name(name) == semantic_argument_name(&parameter.name)
+            });
             let positional = arguments.iter().filter(|name| name.is_none()).count() > index;
             !exact && !positional
         });
@@ -1194,13 +1192,16 @@ impl Checker {
         index: usize,
     ) -> Option<RType> {
         self.fn_table.forwarded_calls.iter().find_map(|call| {
-            if call.callee != function {
+            if semantic_argument_name(&call.callee) != semantic_argument_name(function) {
                 return None;
             }
             let argument = call
                 .arguments
                 .iter()
-                .find(|(name, _)| name.as_deref() == Some(parameter))
+                .find(|(name, _)| {
+                    name.as_deref().map(semantic_argument_name)
+                        == Some(semantic_argument_name(parameter))
+                })
                 .or_else(|| {
                     call.arguments
                         .iter()
@@ -1208,38 +1209,25 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
-            // The forwarded argument is the caller's parameter *name*, not
-            // its value. The invalidation is scoped to root-anchored
-            // forwarding calls — a top-level statement that IS the call:
-            // an assignment that may execute before such a call replaces
-            // the default, so the literal default no longer describes
-            // what the callee receives (drop the fact; the formal falls
-            // back to unknown). Only a straight-line top-level assignment
-            // after the call's statement is definitely too late to
-            // matter — R runs the caller's top-level statements in order.
-            // Calls wrapped or nested in structured contexts keep the
-            // original forwarded-default behavior unchanged, preserving
-            // their pre-fix true positives rather than silencing them.
-            // This is a may-rebind approximation, not an execution proof;
-            // see `may_rebind_source_before`. Even for a bare call
-            // statement the callee may store the argument promise and
-            // force it after the caller rebinds; deferred forcing stays
-            // out of scope.
             if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
-                && let Some(call_statement) = call.call_statement
-                && may_rebind_source_before(&caller_fn.body, source, call_statement)
+                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
             {
                 return None;
             }
-            let (source_index, source_parameter) = call
-                .caller_params
-                .iter()
-                .enumerate()
-                .find(|(_, candidate)| candidate.name == source)?;
+            let (source_index, source_parameter) =
+                call.caller_params
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| {
+                        semantic_argument_name(&candidate.name) == semantic_argument_name(source)
+                    })?;
             let source_default = source_parameter.default.as_ref()?;
             let caller_sites = self.fn_table.call_sites.get(&call.caller)?;
             let omitted = caller_sites.iter().any(|arguments| {
-                let exact = arguments.iter().flatten().any(|name| name == source);
+                let exact = arguments
+                    .iter()
+                    .flatten()
+                    .any(|name| semantic_argument_name(name) == semantic_argument_name(source));
                 let positional =
                     arguments.iter().filter(|name| name.is_none()).count() > source_index;
                 !exact && !positional

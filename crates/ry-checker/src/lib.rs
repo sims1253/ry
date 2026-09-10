@@ -786,13 +786,7 @@ struct ForwardedCall {
     stub_callee: String,
     caller_params: Vec<Param>,
     arguments: Vec<(Option<String>, Option<String>)>,
-    /// Index of the caller's top-level bare call statement that is the
-    /// forwarding call (the ggplot2 shape). R runs the top-level
-    /// statements in order, so a later straight-line top-level assignment
-    /// cannot precede such a call. `None` for any wrapped call
-    /// (`print(callee(...))`) and for calls nested in branches, loops, or
-    /// blocks: those keep the conservative may-rebind invalidation.
-    call_statement: Option<usize>,
+    call_start: usize,
 }
 
 /// Maximum refinement rounds before retaining the current inferred types.

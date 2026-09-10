@@ -12,7 +12,11 @@ reading serialized package data.
 ### Fixed
 
 - Keep subset results unknown when the receiver has no known subsetting
-  contract. This avoids a false condition-length warning in `rstan`.
+  contract. This avoids a false condition-length warning in `rstan`, and
+  likewise keeps union receivers such as
+  `if (p) c("a", "b") else c("a", "b", "c")` from carrying their
+  source lengths past a `[` subset into a false condition-length
+  warning.
 - Read cyclic serialized objects without a stack overflow, including the
   package data used by `workflowsets`.
 - Keep `.data` opaque in data-masked calls such as `aes()` when no usable
@@ -29,7 +33,12 @@ reading serialized package data.
 - Widen default-derived parameter types in branches that reject their
   inferred mode, avoiding false `$` errors in those branches (#343).
 - Accept scalar character, raw, and complex conditions that R can coerce
-  to logical. Known invalid literals and lengths still produce RY001 (#373).
+  to logical. Known invalid literals still produce RY001. Multi-value
+  conditions are newly visible as RY001 warnings in default output:
+  numeric conditions previously carried only the default-off RY003
+  nudge, and multi-element logical loop conditions were not reported
+  (#373). Review baselines and `--error-on-warning` runs for new
+  findings.
 
 ### Changed
 
@@ -40,6 +49,10 @@ reading serialized package data.
   embedded stubs. Load package stubs when needed (#340).
 - Speed up workspace indexing and project checks with bounded parallel
   processing and cached package discovery (#340).
+- Hash checker-internal identifier maps with FxHash instead of SipHash.
+  `Scope`'s public collections (`bindings`, `parameter_bindings`,
+  `function_aliases`, and siblings) are now `FxMap`/`FxSet` rather than
+  `HashMap`/`HashSet`; a source-level change for library consumers (#340).
 - Clarify RY001 and RY070 messages. Baselines match message text, so
   previously accepted findings can reappear after upgrading. Review them
   before regenerating the entries you still accept.

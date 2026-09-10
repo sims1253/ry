@@ -91,9 +91,15 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
 /// force it after the caller rebinds; deferred forcing stays out of
 /// scope. Dynamic `assign()` calls and replacement targets are not modeled.
 pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_statement: usize) -> bool {
-    body[..call_statement]
-        .iter()
-        .any(|statement| statement_assigns_name(statement, source))
+    // `get` rather than indexing: `call_statement` comes from the
+    // ForwardedCall recorded against this body, and a future FnTable
+    // that lets them drift out of sync must degrade to "no rebind"
+    // instead of panicking on untrusted input.
+    body.get(..call_statement).is_some_and(|before| {
+        before
+            .iter()
+            .any(|statement| statement_assigns_name(statement, source))
+    })
 }
 
 /// Whether any assignment form inside one statement binds `name`

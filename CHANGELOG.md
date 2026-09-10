@@ -4,7 +4,7 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-## [0.9.2] - 2026-09-09
+## [0.9.2] - 2026-09-10
 
 This release reduces false positives in package code and fixes a crash when
 reading serialized package data.

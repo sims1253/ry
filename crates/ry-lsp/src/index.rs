@@ -89,21 +89,34 @@ fn index_pool() -> Option<&'static rayon::ThreadPool> {
     .as_ref()
 }
 
+/// Parse every discovered path on the lazily built [`index_pool`], in
+/// parallel when the pool is available and serially when it is not.
+///
+/// Error tolerance is unchanged from the previous serial loop: a file
+/// that cannot be read or parsed is skipped, never fatal to the index.
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
-    // Parse in parallel on the bounded index pool, mirroring the CLI's
-    // `ry-cli::pipeline::parse_files`: each worker reuses a thread-local
-    // `RParser` (tree-sitter parsers are Send but neither Sync nor
-    // cheap to construct, so one per worker is the right granularity).
-    // Error tolerance matches the previous serial loop: an unreadable
-    // file or a parse failure is skipped, never fatal to the index.
-    // When no pool could be built, the same per-file logic runs inline.
+    parse_paths_with(paths, index_pool())
+}
+
+/// Parse `paths` with an explicit pool (or `None` to parse inline), so
+/// the serial fallback is exercisable without thread exhaustion.
+///
+/// Mirrors the CLI's `ry-cli::pipeline::parse_files`: each worker reuses
+/// a thread-local `RParser` (tree-sitter parsers are Send but neither
+/// Sync nor cheap to construct, so one per worker is the right
+/// granularity). When no pool could be built, the same per-file logic
+/// runs inline.
+fn parse_paths_with(
+    paths: &[PathBuf],
+    pool: Option<&rayon::ThreadPool>,
+) -> HashMap<String, Arc<SourceFile>> {
     let parse_one = |path: &PathBuf| {
         let source = ry_workspace::read_r_source(path).ok()?;
         let path_str = path.to_string_lossy().into_owned();
         let file = parse_with_worker_parser(&path_str, &source)?;
         Some((path_str, Arc::new(file)))
     };
-    match index_pool() {
+    match pool {
         Some(pool) => pool.install(|| paths.par_iter().filter_map(parse_one).collect()),
         None => paths.iter().filter_map(parse_one).collect(),
     }
@@ -232,6 +245,32 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "target/ must be skipped"
         );
+    }
+
+    /// The serial fallback used when no index pool can be built must
+    /// still land every parseable file in the map.
+    #[test]
+    fn serial_index_without_pool_parses_every_file() {
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
+        let paths: Vec<PathBuf> = (0..5)
+            .map(|i| {
+                let path = dir.join(format!("s{i}.R"));
+                std::fs::write(&path, format!("y_{i} <- {i}\n")).unwrap();
+                path
+            })
+            .collect();
+
+        let files = parse_paths_with(&paths, None);
+
+        assert_eq!(files.len(), paths.len(), "every file must be indexed");
+        for path in &paths {
+            assert!(
+                files.contains_key(&path.to_string_lossy().into_owned()),
+                "{} missing",
+                path.display()
+            );
+        }
     }
 
     /// Parallel parsing on the bounded pool must land every parseable

@@ -46,7 +46,9 @@ const MAX_INDEX_THREADS: usize = 8;
 /// Bounded rayon pool dedicated to workspace indexing, created lazily on
 /// the first index and reused for every re-index (watched-files and
 /// configuration changes trigger rescans) so worker threads and their
-/// cached parsers survive between scans.
+/// cached parsers survive between scans. Returns `None` when no pool can
+/// be built at all (thread exhaustion), in which case callers index
+/// serially: indexing must never take the server down.
 ///
 /// The CLI parses on rayon's global pool — its whole process exists to
 /// check one workspace and then exit, so using every core is right. The
@@ -58,8 +60,8 @@ const MAX_INDEX_THREADS: usize = 8;
 /// workspaces while leaving headroom on big machines. Idle pool threads
 /// park (no CPU cost) and each holds one parser, so the pool's steady
 /// footprint is at most 8 cached tree-sitter parsers.
-fn index_pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+fn index_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| {
         let threads = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -69,7 +71,7 @@ fn index_pool() -> &'static rayon::ThreadPool {
             .num_threads(threads)
             .thread_name(|i| format!("ry-index-{i}"))
             .build()
-            .unwrap_or_else(|error| {
+            .or_else(|error| {
                 tracing::warn!(%error, threads, "failed to build index pool; indexing single-threaded");
                 // Indexing must never take the server down: degrade to
                 // one worker rather than propagate the panic.
@@ -77,9 +79,14 @@ fn index_pool() -> &'static rayon::ThreadPool {
                     .num_threads(1)
                     .thread_name(|i| format!("ry-index-{i}"))
                     .build()
-                    .expect("single-threaded rayon pool")
             })
+            .map_err(|error| {
+                tracing::warn!(%error, "single-threaded index pool also failed; indexing serially");
+                error
+            })
+            .ok()
     })
+    .as_ref()
 }
 
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
@@ -89,17 +96,17 @@ fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
     // cheap to construct, so one per worker is the right granularity).
     // Error tolerance matches the previous serial loop: an unreadable
     // file or a parse failure is skipped, never fatal to the index.
-    index_pool().install(|| {
-        paths
-            .par_iter()
-            .filter_map(|path| {
-                let source = ry_workspace::read_r_source(path).ok()?;
-                let path_str = path.to_string_lossy().into_owned();
-                let file = parse_with_worker_parser(&path_str, &source)?;
-                Some((path_str, Arc::new(file)))
-            })
-            .collect()
-    })
+    // When no pool could be built, the same per-file logic runs inline.
+    let parse_one = |path: &PathBuf| {
+        let source = ry_workspace::read_r_source(path).ok()?;
+        let path_str = path.to_string_lossy().into_owned();
+        let file = parse_with_worker_parser(&path_str, &source)?;
+        Some((path_str, Arc::new(file)))
+    };
+    match index_pool() {
+        Some(pool) => pool.install(|| paths.par_iter().filter_map(parse_one).collect()),
+        None => paths.iter().filter_map(parse_one).collect(),
+    }
 }
 
 /// Parse one file with this worker thread's cached parser, constructing

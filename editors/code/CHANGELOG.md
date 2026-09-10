@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.9.2] - 2026-09-09
+## [0.9.2] - 2026-09-10
 
 - Bundle ry 0.9.2 with fewer false positives in package code and a fix for
   cyclic serialized-data crashes.

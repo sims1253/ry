@@ -301,51 +301,33 @@ impl Checker {
                     .iter()
                     .map(|argument| self.infer(&argument.value, scope))
                     .collect();
-                let vector_base = matches!(
-                    bt.mode,
-                    Mode::Integer
-                        | Mode::Double
-                        | Mode::Character
-                        | Mode::Logical
-                        | Mode::Complex
-                        | Mode::Raw
-                        | Mode::List
-                );
-                if vector_base && args.len() == 1 {
-                    let index = &index_types[0];
-                    let length = match index.mode {
-                        Mode::Character => index.length,
-                        Mode::Integer | Mode::Double if positive_numeric_index(&args[0].value) => {
-                            index.length
-                        }
-                        Mode::Integer | Mode::Double => {
-                            literal_negative_exclusion_length(bt.length, &args[0].value)
-                                .unwrap_or(Length::Unknown)
-                        }
-                        _ => Length::Unknown,
-                    };
-                    let mut result = RType { length, ..bt };
-                    // Generic `[` changes which names/elements are present.
-                    // Until we transform ColumnSchema by the index itself,
-                    // retaining the source schema would expose fields that the
-                    // subset may not contain (e.g. list(a=1, b=2)[2]$a).
-                    result.columns = None;
+                if let Some(members) = &bt.members {
+                    if args.len() != 1
+                        || members
+                            .iter()
+                            .any(|member| !member.class.known || member.class.len > 0)
+                    {
+                        return RType::unknown();
+                    }
+                    return members
+                        .iter()
+                        .map(|member| {
+                            subset_vector(member, &index_types[0], &args[0].value)
+                                .unwrap_or_else(RType::unknown)
+                        })
+                        .reduce(RType::join)
+                        .unwrap_or_else(RType::unknown);
+                }
+                if args.len() == 1
+                    && let Some(result) = subset_vector(&bt, &index_types[0], &args[0].value)
+                {
                     return result;
                 }
-                // An opaque receiver supplies no subsetting contract, and a
-                // union receiver supplies none either: `vector_base` above
-                // already excludes unions, so reaching here means the
-                // members' shapes cannot drive the result. Their lengths
-                // and schemas describe the source members, not the
-                // index-derived result — a members-agree union such as
-                // `if (p) c("a", "b") else c("a", "b", "c")` would
-                // otherwise carry `logical<len=2>|logical<len=3>` past
-                // `x[1L] == "a"` and surface a false condition-length
-                // warning once member-level lengths are inspected.
-                if matches!(bt.mode, Mode::Opaque | Mode::Union) {
-                    return RType::unknown();
+                if bt.mode == Mode::Opaque {
+                    RType::unknown()
+                } else {
+                    bt
                 }
-                bt
             }
         }
     }
@@ -375,6 +357,38 @@ impl Checker {
     }
 }
 
+fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType> {
+    if base.mode == Mode::Null {
+        return Some(base.clone());
+    }
+    if !matches!(
+        base.mode,
+        Mode::Integer
+            | Mode::Double
+            | Mode::Logical
+            | Mode::Character
+            | Mode::Complex
+            | Mode::Raw
+            | Mode::List
+    ) {
+        return None;
+    }
+    let length = match index.mode {
+        Mode::Character => index.length,
+        Mode::Integer | Mode::Double if positive_numeric_index(expression) => index.length,
+        Mode::Integer | Mode::Double => {
+            literal_negative_exclusion_length(base.length, expression).unwrap_or(Length::Unknown)
+        }
+        _ => Length::Unknown,
+    };
+    // Subsetting changes which fields exist; the source schema no longer applies.
+    Some(RType {
+        length,
+        columns: None,
+        ..base.clone()
+    })
+}
+
 /// Whether an index expression is a scalar element selector, rather than a
 /// negative exclusion selector. Zero selects no elements under `[`, so only a
 /// syntactically positive numeric literal proves scalar result length. A
@@ -395,6 +409,12 @@ fn positive_numeric_index(expr: &Expr) -> bool {
     match expr {
         Expr::Integer(index, _) => *index > 0,
         Expr::Double(index, _) => index.is_finite() && *index > 0.0 && index.fract() == 0.0,
+        Expr::BinOp {
+            op: BinOpKind::Colon,
+            lhs,
+            rhs,
+            ..
+        } => positive_numeric_index(lhs) && positive_numeric_index(rhs),
         Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "c") => {
             !args.is_empty()
                 && args

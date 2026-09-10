@@ -519,18 +519,22 @@ fn bare_data_pronoun_inside_mask_is_silent() {
 fn union_subset_does_not_keep_source_lengths() {
     // A members-agree union keeps neither a single length nor a usable
     // subsetting contract: `x[1L]` is index-shaped, so the condition on
-    // it must not see the source members' lengths (2 and 3).
-    let diags = check(
-        "f <- function(p) {\n\
-         x <- if (p) c(\"a\", \"b\") else c(\"a\", \"b\", \"c\")\n\
-         y <- x[1L]\n\
-         if (y == \"a\") 1L\n\
-         }\n",
-    );
-    assert!(
-        diags.is_empty(),
-        "union subset result must not keep source lengths: {diags:?}"
-    );
+    // it must not see the source members' lengths (2 and 3). Mirror
+    // the opaque sibling's index shapes, including the multi-arg form.
+    for index in ["1L", "choice", "1L, drop = TRUE"] {
+        let source = format!(
+            "f <- function(p, choice) {{\n\
+             x <- if (p) c(\"a\", \"b\") else c(\"a\", \"b\", \"c\")\n\
+             y <- x[{index}]\n\
+             if (y == \"a\") 1L\n\
+             }}\n"
+        );
+        let diags = check(&source);
+        assert!(
+            diags.is_empty(),
+            "{index}: union subset result must not keep source lengths: {diags:?}"
+        );
+    }
 }
 
 #[test]

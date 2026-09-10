@@ -1,12 +1,6 @@
-//! Build-time compression of the vendored typeshed stubs.
-//!
-//! The JSON under `vendor/` is the source of truth and stays
-//! uncompressed in the repository for the sync tooling and review. This
-//! script deflates every stub into `OUT_DIR`, and the library embeds
-//! those blobs with `include_bytes!` instead of the raw JSON, which
-//! cuts most of the embedded data from the binary. Decompression stays
-//! lazy in `src/lib.rs`, at the original parse points.
+//! Compress registered stubs and generate their lazy-load table.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -14,86 +8,88 @@ use std::path::{Path, PathBuf};
 use flate2::Compression;
 use flate2::write::DeflateEncoder;
 
-/// Recursively list the vendored stub JSON, sorted so the output is
-/// deterministic across machines.
-fn stub_paths(vendor: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(error) => panic!("read {}: {error}", dir.display()),
-        };
-        for entry in entries {
-            let path = entry
-                .unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))
-                .path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "json") {
-                out.push(path);
-            }
+fn stub_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
+    println!("cargo:rerun-if-changed={}", dir.display());
+    for entry in fs::read_dir(dir).unwrap_or_else(|error| panic!("read {}: {error}", dir.display()))
+    {
+        let path = entry.expect("read vendor entry").path();
+        if path.is_dir() {
+            stub_paths(&path, paths);
+        } else if path.extension().is_some_and(|ext| ext == "json") {
+            println!("cargo:rerun-if-changed={}", path.display());
+            paths.push(path);
         }
     }
-    let mut paths = Vec::new();
-    walk(vendor, &mut paths);
-    paths.sort();
-    paths
-}
-
-/// Deflate `data` into the raw stream format (no gzip/zlib wrapper):
-/// smallest payload, and the producer/consumer are both this crate.
-fn deflate(data: &[u8]) -> Vec<u8> {
-    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
-    encoder.write_all(data).expect("deflate vendored stub");
-    encoder.finish().expect("finish deflate stream")
 }
 
 fn main() {
-    let vendor = Path::new("vendor");
-    // A directory argument makes cargo watch the whole tree, so a
-    // typeshed sync re-runs this script on the next build.
-    println!("cargo:rerun-if-changed={}", vendor.display());
-    let out_dir =
-        PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR for build scripts"));
-
-    let mut stems: Vec<String> = Vec::new();
-    for path in stub_paths(vendor) {
+    println!("cargo:rerun-if-changed=packages.txt");
+    let packages: Vec<_> = include_str!("packages.txt").lines().collect();
+    let registered: HashSet<_> = packages.iter().copied().chain(["base"]).collect();
+    assert_eq!(
+        registered.len(),
+        packages.len() + 1,
+        "duplicate package registration"
+    );
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+    let mut paths = Vec::new();
+    stub_paths(Path::new("vendor"), &mut paths);
+    paths.sort();
+    let mut stems = HashSet::new();
+    for path in paths {
         let stem = path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| panic!("vendored stub path must be UTF-8: {}", path.display()));
+            .expect("UTF-8 stub name");
         assert!(
-            !stems.contains(&stem),
-            "vendored stubs must have unique file stems; duplicate: {stem}"
+            stems.insert(stem.to_owned()),
+            "duplicate vendored stub: {stem}"
         );
-
+        if !registered.contains(stem) {
+            println!(
+                "cargo:warning=unregistered vendor stub {}; add it to packages.txt",
+                path.display()
+            );
+            continue;
+        }
         let json =
             fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        fs::write(out_dir.join(format!("{stem}.json.deflate")), deflate(&json))
-            .unwrap_or_else(|error| panic!("write {stem}.json.deflate: {error}"));
-        stems.push(stem);
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(&json).expect("deflate stub");
+        fs::write(
+            out_dir.join(format!("{stem}.json.deflate")),
+            encoder.finish().expect("finish deflate"),
+        )
+        .expect("write compressed stub");
     }
-    assert!(
-        !stems.is_empty(),
-        "no vendored stubs found under {} (run scripts/sync_typeshed.sh)",
-        vendor.display()
-    );
-
-    // Cargo does not clean OUT_DIR between build-script reruns, so a
-    // renamed or removed vendor file would leave its stale blob behind.
-    // Delete any deflate output that no longer corresponds to a vendor
-    // stub; everything left over is exactly the set just written.
+    for name in &registered {
+        assert!(
+            stems.contains(*name),
+            "missing registered vendor stub: {name}"
+        );
+    }
+    // Cargo keeps OUT_DIR between builds, including outputs for removed stubs.
     for entry in fs::read_dir(&out_dir).expect("read OUT_DIR") {
         let path = entry.expect("read OUT_DIR entry").path();
-        let stale = path
+        if path
             .file_name()
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_suffix(".json.deflate"))
-            .map(|stem| !stems.contains(&stem.to_owned()))
-            .unwrap_or(false);
-        if stale {
-            fs::remove_file(&path)
-                .unwrap_or_else(|error| panic!("remove stale {}: {error}", path.display()));
+            .is_some_and(|stem| !registered.contains(stem))
+        {
+            fs::remove_file(path).expect("remove stale compressed stub");
         }
     }
+    let mut specs = format!(
+        "static PACKAGE_SPECS: [PackageSpec; {}] = [\n",
+        packages.len()
+    );
+    for name in packages {
+        let blob = out_dir.join(format!("{name}.json.deflate"));
+        specs.push_str(&format!(
+            "PackageSpec::new({name:?}, include_bytes!({blob:?})),\n"
+        ));
+    }
+    specs.push_str("];\n");
+    fs::write(out_dir.join("packages.rs"), specs).expect("write package table");
 }

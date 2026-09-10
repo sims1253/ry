@@ -55,7 +55,7 @@ rayon = "1"
 rds2rust = { git = "https://github.com/sims1253/rds2rust", rev = "6d4014b316e465024d99fe30c0e8b424ce11cca1" }
 bzip2 = "0.6"
 flate2 = "1"
-liblzma = { version = "0.4.8", default-features = false }
+liblzma = { version = "0.4.8", default-features = false, features = ["static"] }
 
 [profile.release]
 lto = "fat"

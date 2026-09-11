@@ -12,6 +12,12 @@ use super::*;
 /// from it when that complement is representable.
 #[derive(Debug, Clone)]
 pub(crate) enum Narrowing {
+    /// Each list contains facts proved on that path through a compound guard.
+    Compound {
+        base: Box<Narrowing>,
+        on_true: Vec<Narrowing>,
+        on_false: Vec<Narrowing>,
+    },
     /// No refinement could be extracted from the condition.
     None,
     /// `var` is narrowed to `target` in the positive (then) branch.
@@ -412,9 +418,37 @@ fn type_is_exactly_tested_family(existing: &RType, target: &RType) -> bool {
     }
 }
 
+/// Apply all facts proved by the selected branch and return their binding names.
+pub(crate) fn apply_narrowing_branch<'a>(
+    scope: &mut Scope,
+    narrowing: &'a Narrowing,
+    branch: NarrowingBranch,
+) -> Vec<&'a str> {
+    if let Narrowing::Compound {
+        base,
+        on_true,
+        on_false,
+    } = narrowing
+    {
+        let mut names = apply_narrowing_branch(scope, base, branch);
+        let facts = match branch {
+            NarrowingBranch::Then => on_true,
+            NarrowingBranch::Else => on_false,
+        };
+        for fact in facts {
+            names.extend(apply_narrowing_branch(scope, fact, NarrowingBranch::Then));
+        }
+        names
+    } else {
+        apply_single_narrowing_branch(scope, narrowing, branch)
+            .into_iter()
+            .collect()
+    }
+}
+
 /// Apply only the selected path's refinement. Assertions keep this scope;
 /// conditional expressions supply a single isolated clone for their RHS.
-pub(crate) fn apply_narrowing_branch<'a>(
+fn apply_single_narrowing_branch<'a>(
     scope: &mut Scope,
     narrowing: &'a Narrowing,
     branch: NarrowingBranch,
@@ -591,10 +625,95 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
 }
 
 impl Checker {
+    /// Restrict compound facts to predicates without intervening writes or calls.
+    fn compound_guard_is_pure(&self, cond: &Expr, scope: &Scope) -> bool {
+        match cond {
+            Expr::BinOp {
+                op: BinOpKind::AndAnd | BinOpKind::OrOr,
+                lhs,
+                rhs,
+                ..
+            } => self.compound_guard_is_pure(lhs, scope) && self.compound_guard_is_pure(rhs, scope),
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => self.compound_guard_is_pure(expr, scope),
+            Expr::Call { func, args, .. } => {
+                let Some(name) = ident_name(func) else {
+                    return false;
+                };
+                predicate_target(crate::semantic_lists::bare_name(name)).is_some()
+                    && self.resolves_to_base(name, scope)
+                    && !scope.data_mask_unknown
+                    && !scope.effects_unknown
+                    && args.len() == 1
+                    && matches!(args[0].value, Expr::Ident { .. })
+            }
+            _ => false,
+        }
+    }
+
+    fn compound_guard_facts(cond: &Expr, truth: bool) -> Vec<Narrowing> {
+        match cond {
+            Expr::BinOp { op, lhs, rhs, .. }
+                if (*op == BinOpKind::AndAnd && truth) || (*op == BinOpKind::OrOr && !truth) =>
+            {
+                let mut facts = Self::compound_guard_facts(lhs, truth);
+                facts.extend(Self::compound_guard_facts(rhs, truth));
+                facts
+            }
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => Self::compound_guard_facts(expr, !truth),
+            Expr::Call { func, args, .. } => {
+                let Some(target) = ident_name(func)
+                    .and_then(|name| predicate_target(crate::semantic_lists::bare_name(name)))
+                else {
+                    return Vec::new();
+                };
+                let Some(var) = first_arg_ident(args) else {
+                    return Vec::new();
+                };
+                vec![if truth {
+                    Narrowing::Positive { var, target }
+                } else {
+                    Narrowing::Negative { var, target }
+                }]
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Signature-declared predicates extend the built-in predicate vocabulary
     /// only when ordinary typeshed resolution establishes their provenance.
     pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
+        let mut compound = cond;
+        while let Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } = compound
+        {
+            compound = expr;
+        }
+        if matches!(
+            compound,
+            Expr::BinOp {
+                op: BinOpKind::AndAnd | BinOpKind::OrOr,
+                ..
+            }
+        ) && self.compound_guard_is_pure(cond, scope)
+        {
+            return Narrowing::Compound {
+                base: Box::new(built_in),
+                on_true: Self::compound_guard_facts(cond, true),
+                on_false: Self::compound_guard_facts(cond, false),
+            };
+        }
         if !matches!(built_in, Narrowing::None) {
             return built_in;
         }
@@ -657,7 +776,7 @@ mod selected_branch_tests {
         // alone would match.
         let mut scope = Scope::default();
         scope.insert_parameter_default("x", RType::scalar(Mode::List));
-        apply_narrowing_branch(
+        apply_single_narrowing_branch(
             &mut scope,
             &Narrowing::Positive {
                 var: "x".into(),
@@ -709,7 +828,7 @@ mod selected_branch_tests {
         // The positive guard requires an intersecting member. The false path
         // of the negated predicate has historically installed its target.
         assert_eq!(
-            apply_narrowing_branch(
+            apply_single_narrowing_branch(
                 &mut positive,
                 &Narrowing::Positive {
                     var: "x".into(),
@@ -721,7 +840,7 @@ mod selected_branch_tests {
         );
         assert_eq!(positive.get("x"), Some(&original));
         assert_eq!(
-            apply_narrowing_branch(
+            apply_single_narrowing_branch(
                 &mut negative,
                 &Narrowing::Negative {
                     var: "x".into(),
@@ -746,7 +865,7 @@ mod selected_branch_tests {
         scope.set_function_alias("untouched", "other".into());
         scope.mark_lexical_function("untouched");
         scope.tidy_injection = Some(InjectionMode::Full);
-        apply_narrowing_branch(
+        apply_single_narrowing_branch(
             &mut scope,
             &Narrowing::Positive {
                 var: "x".into(),
@@ -783,11 +902,12 @@ mod selected_branch_tests {
                 target: None,
             };
             assert_eq!(
-                apply_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Then),
+                apply_single_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Then),
                 None
             );
             assert!(!scope.unreachable);
-            let changed = apply_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Else);
+            let changed =
+                apply_single_narrowing_branch(&mut scope, &narrowing, NarrowingBranch::Else);
             assert_eq!(changed, default_parameter.then_some("x"));
             assert_eq!(scope.unreachable, !default_parameter);
             assert_eq!(

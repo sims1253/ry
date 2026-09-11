@@ -1546,3 +1546,14 @@ fn named_data_arguments_preserve_result_schemas_and_values() {
         );
     }
 }
+
+#[test]
+fn character_name_vectors_do_not_make_the_data_pronoun_atomic() {
+    let diagnostics = check("tidyselect::vars_rename(c('a', 'b'), B = .data$b)");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, "RY060" | "RY061")),
+        "{diagnostics:?}"
+    );
+}

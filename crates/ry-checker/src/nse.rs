@@ -153,7 +153,16 @@ impl Checker {
             None => base_scope.independent_execution_scope(),
         };
         scope.insert(DATA_MASK_ACTIVE, RType::unknown());
-        scope.insert(".data", df_type.clone());
+        // Some selection APIs take a character vector of column names.
+        // The pronoun represents a mask, never that input's atomic storage.
+        let pronoun = if df_type.columns.is_some()
+            && (df_type.mode == Mode::List || df_type.class.contains("data.frame"))
+        {
+            df_type.clone()
+        } else {
+            RType::unknown()
+        };
+        scope.insert(".data", pronoun);
         scope.insert(".env", RType::unknown());
         for (name, ty) in lexical_bindings {
             scope.insert(format!("{DATA_MASK_ENV_PREFIX}{name}"), ty);

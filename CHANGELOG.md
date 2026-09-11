@@ -4,6 +4,25 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Discard forwarded-default facts after writes before wrapped or nested calls,
+  including replacement assignments, loop variables, and literal `assign()`
+  targets. Match backticked parameter and argument names consistently
+  (#407, #409, #411, #423, #424).
+- Retain provable union lengths through `c()` and one-dimensional subsets of
+  classless members, including positive colon indices. Keep class information
+  unknown for opaque union members (#405, #416, #434).
+- Reject `max-serialized-bytes` values outside 1 byte through 256 MiB. Bound the
+  serialized-inventory cache to 1,024 entries and refresh it after same-size,
+  same-mtime file replacements, including symlink aliases (#413, #427).
+- Report degraded serialized scopes in the language-server log. Honor positive
+  `RAYON_NUM_THREADS` values up to eight and parse inline if the index pool
+  cannot start (#414, #430).
+- Link liblzma statically so distributed binaries run without a system liblzma
+  library (#431).
+- Build and upload only the selected VSIX registry variant (#419).
+
 ## [0.9.2] - 2026-09-10
 
 This release reduces false positives in package code and fixes a crash when

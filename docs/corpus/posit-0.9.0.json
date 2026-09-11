@@ -4,7 +4,7 @@
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
   "source_sha256": "a2f80bd0712056f9da28f910db7b4378df36c4e643217c1b284fc87140759477",
-  "ry_commit": "776fe2216f55ccfa96aa3c24159ed6ebe4df6e05",
+  "ry_commit": "01a255cf6d69d9e1b88770f3490b7e8d3e4311a0",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -4406,6 +4406,7 @@
     "upstream-package": 27
   },
   "notes": [
+    "Combined #438 and #440 retain 438 findings: 37 true positives and 401 false positives. The merged reports remove exactly the five reviewed false positives from the fixed main baseline fd48562; no identities are added.",
     "Call-position-aware forwarding removes four reviewed renv false positives: RY001 at R/snapshot.R:1153:7 and :1158:7, and RY070 at R/package.R:367:12 and :370:25. The callers replace their NULL defaults before the wrapped or loop-nested calls: type comes from snapshot settings and callback becomes a function. These defaults no longer describe the forwarded values. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Union subset precision removes the reviewed styler RY033 false positive at R/rules-line-breaks.R:364:9. first_arg is a scalar subset index, so lag(pd$token)[first_arg] is not a proven vector condition. Runtime and checker controls cover a union scalar comparison and retain a genuine two-element condition error. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",

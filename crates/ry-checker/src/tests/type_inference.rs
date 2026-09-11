@@ -185,7 +185,7 @@ fn forwarded_default_survives_writes_that_cannot_precede_the_call() {
 #[test]
 fn condition_assignment_counts_as_a_rebinding() {
     // Bounded delta from the earlier blanket invalidation:
-    // statement_assigns_name descends control-flow tests, unlike
+    // may_rebind_source_before descends control-flow tests, unlike
     // assigned_names_in_body, so a `while ((bins <- f()) > 0)` condition
     // assignment counts. It genuinely rebinds before any later call, so
     // the forwarded default is dropped here.

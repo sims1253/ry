@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Refresh the binary version check after replacements that preserve file size
+  and modification time (#429).
+
 ## [0.9.2] - 2026-09-10
 
 - Bundle ry 0.9.2 with fewer false positives in package code and a fix for

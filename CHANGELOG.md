@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report invalid character conditions through literal assignments and aliases.
+  Discard literal facts across calls, writes, loops, and branch merges (#425).
+
 - Return RY001 warnings from the checker API, matching the rule table and CLI.
   Keep RY002 length warnings when the condition also contains RY100 (#415).
 

@@ -29,6 +29,7 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .retain(|name| incoming.has_list_origin(name));
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
+    joined.literal_values_unknown |= incoming.literal_values_unknown;
     joined.has_escaped_slot_names |= incoming.has_escaped_slot_names;
 }
 
@@ -77,6 +78,7 @@ impl Checker {
     }
 
     pub(crate) fn begin_loop(&mut self, inner: &mut Scope) {
+        inner.clear_known_strings();
         inner.loop_frame = Some(self.loop_frames.len());
         self.loop_frames.push(LoopExitFrame::default());
     }
@@ -108,6 +110,7 @@ impl Checker {
         always_true: bool,
         entered: bool,
     ) {
+        scope.clear_known_strings();
         let frame = self.loop_frames.pop().expect("active loop frame");
         let has_transfer = frame.breaks.is_some() || frame.nexts.is_some();
         let body_unreachable = inner.unreachable;
@@ -115,6 +118,7 @@ impl Checker {
         // leaving the loop. A previously recorded safe break cannot erase it.
         scope.ops_environment_unknown |= inner.ops_environment_unknown;
         scope.effects_unknown |= inner.effects_unknown;
+        scope.literal_values_unknown |= inner.literal_values_unknown;
         scope.has_escaped_slot_names |= inner.has_escaped_slot_names;
         let mut exits = frame.breaks;
         if has_transfer && inner.effects_unknown {
@@ -146,6 +150,7 @@ impl Checker {
         if let Some(exit) = exits {
             scope.ops_environment_unknown |= exit.ops_environment_unknown;
             scope.effects_unknown |= exit.effects_unknown;
+            scope.literal_values_unknown |= exit.literal_values_unknown;
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);

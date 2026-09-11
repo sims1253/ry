@@ -82,15 +82,12 @@ fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
         && matches!(t.length, Length::One | Length::Unknown)
 }
 
-/// The decoded text of a direct string-literal condition, or `None` for
-/// any other shape. The parser decodes escapes and raw strings when it
-/// builds `Expr::String`, so `"\x54RUE"`, `"\124RUE"`, and `r"(TRUE)"`
-/// all compare as `"TRUE"` — matching R, which decodes the literal
-/// before coercion. The parser drops redundant parentheses, so
-/// `(("TRUE"))` still reaches this helper as a direct literal.
-fn condition_string_literal(cond: &Expr) -> Option<&str> {
+/// Decoded character text from a literal or a binding with a known value.
+/// The parser decodes escapes and removes redundant parentheses.
+fn condition_string_literal<'a>(cond: &'a Expr, scope: &'a Scope) -> Option<&'a str> {
     match cond {
         Expr::String(value, _) => Some(value),
+        Expr::Ident { name, .. } => scope.known_string(name),
         _ => None,
     }
 }
@@ -273,12 +270,23 @@ impl Checker {
                 // declarations, since a user-defined list-returning
                 // function marks its binding too.
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
+                let known_string = condition_string_literal(value, scope)
+                    .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                    .filter(|_| {
+                        ops_chooser::ordinary_assignment(self, target, value)
+                            && !ops_chooser::operator_rebound(self, "<-", scope)
+                            && !ops_chooser::operator_rebound(self, "=", scope)
+                    })
+                    .map(Arc::<str>::from);
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
+                    if let Some(value) = known_string {
+                        scope.set_known_string(name, value);
+                    }
                     if self.capture_references {
                         self.install_reference_definition(
                             scope,
@@ -608,7 +616,7 @@ impl Checker {
         // non-coercible literal re-establishes the diagnostic here.
         let invalid_string_literal = matches!(ct.mode, Mode::Character)
             && matches!(ct.length, Length::One)
-            && condition_string_literal(cond)
+            && condition_string_literal(cond, scope)
                 .is_some_and(|value| !r_condition_string_is_accepted(value));
         // Preserve the established if-only logical-vector RY002 rule.
         // Other proven multi-value conditions use RY001, never RY003.
@@ -756,9 +764,12 @@ impl Checker {
             })
             .collect();
         scope.clear_ops_facts();
+        scope.clear_known_strings();
         scope.ops_environment_unknown |=
             then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
         scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
+        scope.literal_values_unknown |=
+            then_delta.literal_values_unknown || else_delta.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_delta.has_escaped_slot_names || else_delta.has_escaped_slot_names;
         // Compute definite assignments only when both arms change a type,
@@ -1251,7 +1262,8 @@ impl Checker {
         scope: &mut Scope,
     ) -> bool {
         if binding_name(target).is_none() {
-            // Replacement functions may mutate a method or its environment.
+            // Replacement functions may install bindings in the caller.
+            scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
 
@@ -1702,8 +1714,9 @@ impl Checker {
         let mut found_lexical = false;
         let mut unresolved = false;
         if scope.is_parameter(name) || scope.get(name).is_none() {
-            // Forcing a promise can mutate the method environment.
+            // Forcing a promise can mutate methods or install active bindings.
             scope.invalidate_ops_environment();
+            scope.invalidate_literal_values();
         }
         let result = (|| match scope.get(name) {
             Some(t) => {
@@ -1919,6 +1932,12 @@ impl Checker {
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
+                if !scope.literal_values_unknown {
+                    let symbol = op_symbol(*op);
+                    if self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope) {
+                        scope.invalidate_literal_values();
+                    }
+                }
                 if let Some(result) = self.infer_custom_operator(*op, scope) {
                     return result;
                 }
@@ -1970,7 +1989,20 @@ impl Checker {
                     }
                     let class_write = self.prepare_class_attribute(lhs, rhs, scope);
                     let rt = self.infer(rhs, scope);
-                    self.try_assign_value(lhs, rt.clone(), class_write, scope);
+                    let known_string = condition_string_literal(rhs, scope)
+                        .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                        .filter(|_| {
+                            *op == BinOpKind::Assign
+                                && !ops_chooser::operator_rebound(self, "<-", scope)
+                                && !ops_chooser::operator_rebound(self, "=", scope)
+                        })
+                        .map(Arc::<str>::from);
+                    if self.try_assign_value(lhs, rt.clone(), class_write, scope)
+                        && let Some(name) = binding_name(lhs)
+                        && let Some(value) = known_string
+                    {
+                        scope.set_known_string(name, value);
+                    }
                     return rt;
                 }
                 // `:` sequence operator: when both operands are
@@ -2043,6 +2075,7 @@ impl Checker {
                     return RType::unknown();
                 }
                 let t = self.infer(expr, scope);
+                scope.invalidate_literal_values_for_dispatch(&t);
                 // Base R's `Math.data.frame`/`Ops.data.frame` apply unary
                 // operators column-wise. Preserve the frame rather than
                 // treating its list storage mode as primitive evidence.
@@ -2142,6 +2175,7 @@ impl Checker {
                 );
                 scope.invalidate_ops_environment();
                 let bt = self.infer(base, scope);
+                scope.invalidate_literal_values_for_dispatch(&bt);
                 self.infer_index(bt, *kind, args, *span, default_null_receiver, scope)
             }
             Expr::Function { params, body, .. } => {

@@ -166,12 +166,12 @@ impl RParser {
         } else {
             (self.lower_expr(lhs, src)?, self.lower_expr(rhs, src)?)
         };
-        // Super-assignment (`<<-`) must be recorded as such so the checker
+        // Super-assignment (`<<-` or `->>`) must be recorded so the checker
         // (and AST consumers) can distinguish it from plain assignment.
         // The statement form `x <<- v` lowers to `Stmt::Assign` carrying
         // the marker on the inner `Expr::BinOp` (mirroring how the rest of
         // the AST represents assignment-as-expression).
-        let value = if op_text.as_str() == "<<-" {
+        let value = if matches!(op_text.as_str(), "<<-" | "->>") {
             // Re-wrap the RHS so the SuperAssign marker survives in a form
             // downstream code already understands.
             let span = self.span(n);
@@ -553,14 +553,17 @@ impl RParser {
             // Assignment operators in expression position (e.g. the
             // inner assignment in `a <- b <- 1L`). These return the
             // assigned value in R, so `infer_binop` returns the RHS
-            // type for them. `->` and `->>` are right-to-left, so we
-            // swap the operands.
+            // type for them. Rightward assignments need swapped operands.
             "<-" | "=" => BinOpKind::Assign,
             "<<-" => BinOpKind::SuperAssign,
             "->" | "->>" => {
                 // Right-assigned: `a -> b` is `b <- a`. Swap operands.
                 return Some(Expr::BinOp {
-                    op: BinOpKind::Assign,
+                    op: if op_text == "->>" {
+                        BinOpKind::SuperAssign
+                    } else {
+                        BinOpKind::Assign
+                    },
                     lhs: Box::new(rhs),
                     rhs: Box::new(lhs),
                     span,

@@ -28,3 +28,22 @@ visit <- function(callback = NULL) {
   for (i in 1:2) invoke(callback)
 }
 visit()
+bins <- 0L
+local_rhs <- function(bins = NULL) {
+  bins <<- (bins <- 1L)
+  callee(bins)
+}
+right_local_rhs <- function(bins = NULL) {
+  (bins <- 1L) ->> bins
+  callee(bins)
+}
+local_outer <- function(bins = NULL) {
+  bins <- (bins <<- 1L)
+  callee(bins)
+}
+right_local_outer <- function(bins = NULL) {
+  bins <- (1L ->> bins)
+  callee(bins)
+}
+stopifnot(local_rhs() == 1L, right_local_rhs() == 1L,
+          local_outer() == 1L, right_local_outer() == 1L)

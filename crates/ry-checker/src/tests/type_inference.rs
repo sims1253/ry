@@ -66,7 +66,7 @@ fn detects_char_plus_int() {
 // is the bare parameter name and some caller call site omits it. That
 // assertion is only sound while the caller never rebinds the name before
 // the call: once the body assigns it (statement, loop variable, or
-// expression-position `<-`/`<<-`), the forwarded value is the rebinding's
+// expression-position `<-`), the forwarded value is the rebinding's
 // result, not the literal default. ggplot2's `compute_bins` reassigns and
 // standalone-checks `bins` before forwarding it, which manufactured a
 // `logical<len=0>` condition at `bin_breaks_bins`'s `bins == 1`.
@@ -101,7 +101,11 @@ fn rebinding_forms_invalidate_wrapped_and_backticked_forwarding() {
             "delayedAssign('bins', 1L); callee(bins)",
             "for (`bins` in list(1L)) callee(bins)",
             "if ((`bins` <- 1L) > 0) print(callee(bins))",
-            "if ((`bins` <<- 1L) > 0) callee(bins)",
+            "bins <<- (bins <- 1L); print(callee(bins))",
+            "(bins <- 1L) ->> bins; print(callee(bins))",
+            "bins <- (bins <<- 1L); print(callee(bins))",
+            "bins <- (1L ->> bins); print(callee(bins))",
+            "1L -> bins; print(callee(bins))",
             "print({ bins <- 1L; callee(bins) })",
         ] {
             let source = format!(
@@ -152,7 +156,7 @@ fn loop_variable_rebinding_precedes_the_forwarding_call() {
 }
 
 #[test]
-fn forwarded_default_survives_writes_that_cannot_precede_the_call() {
+fn forwarded_default_survives_without_a_prior_local_write() {
     for formal in ["bins", "`bins`"] {
         for body in [
             "callee(bins)",
@@ -164,6 +168,13 @@ fn forwarded_default_survives_writes_that_cannot_precede_the_call() {
             "rebinder <- function() bins <- 5L; callee(bins)",
             "bins <- callee(bins)",
             "for (bins in callee(bins)) NULL",
+            "bins <<- 1L; print(callee(bins))",
+            "if ((`bins` <<- 1L) > 0) print(callee(bins))",
+            "bins[1L] <<- 1L; print(callee(bins))",
+            "length(bins) <<- 1L; print(callee(bins))",
+            "1L ->> bins; print(callee(bins))",
+            "if ((1L ->> `bins`) > 0) print(callee(bins))",
+            "1L ->> bins[1L]; print(callee(bins))",
         ] {
             let source = format!(
                 "callee <- function({formal} = 30) {{ if ({formal} == 1) 1L else 2L }}\ncaller <- function(bins = NULL) {{ {body} }}\nz <- caller()\n"
@@ -177,6 +188,15 @@ fn forwarded_default_survives_writes_that_cannot_precede_the_call() {
     }
     let diagnostics = check(include_str!(
         "../../testdata/oracle/forwarded_rebinding_after_call.R"
+    ));
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "RY001");
+}
+
+#[test]
+fn superassignment_oracle_preserves_forwarded_default_diagnostic() {
+    let diagnostics = check(include_str!(
+        "../../testdata/oracle/forwarded_superassignment.R"
     ));
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0].code, "RY001");

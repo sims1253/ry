@@ -9,7 +9,8 @@ All notable changes to ry are documented in this file.
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently
-  (#407, #409, #411, #423, #424).
+  (#407, #409, #411, #423, #424). Preserve local parameter defaults across
+  `<<-` and `->>` writes to enclosing bindings.
 - Retain provable union lengths through `c()` and one-dimensional subsets of
   classless members, including positive colon indices. Keep class information
   unknown for opaque union members (#405, #416, #434).

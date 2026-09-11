@@ -51,7 +51,7 @@ pub(crate) fn collect_forwarded_calls_in_stmts(
     }
 }
 
-/// A preceding write may replace the default. Source order excludes writes
+/// A preceding local write may replace the default. Source order excludes writes
 /// after the call, but does not prove execution or model deferred forcing.
 pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: usize) -> bool {
     fn target_name(mut target: &Expr) -> Option<&str> {
@@ -68,8 +68,17 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
     body.iter().any(|statement| {
         walk_stmt(statement, Walk { fn_bodies: false, ..Walk::ALL }, |node, _| {
             let assigned = match node {
-                AstNode::Stmt(Stmt::Assign { target, span, .. }) if span.end <= call_start => target_name(target),
-                AstNode::Expr(Expr::BinOp { op: BinOpKind::Assign | BinOpKind::SuperAssign, lhs, span, .. }) if span.end <= call_start => target_name(lhs),
+                AstNode::Stmt(Stmt::Assign { target, value, span }) if span.end <= call_start => {
+                    // A statement-level superassignment carries a marker with
+                    // the whole statement's span. An inner marker, as in
+                    // `bins <- (other <<- 1L)`, still leaves a local write.
+                    if matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, span: marker_span, .. } if marker_span == span) {
+                        None
+                    } else {
+                        target_name(target)
+                    }
+                }
+                AstNode::Expr(Expr::BinOp { op: BinOpKind::Assign, lhs, span, .. }) if span.end <= call_start => target_name(lhs),
                 AstNode::Stmt(Stmt::For { name, iter, .. }) if span_of(iter).end <= call_start => Some(semantic_argument_name(name)),
                 AstNode::Expr(Expr::Call { func, args, span }) if span.end <= call_start
                     && matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(crate::semantic_lists::bare_name(name), "assign" | "delayedAssign")) => {

@@ -187,24 +187,38 @@ it.skipIf(process.platform === "win32")(
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
     try {
       const binary = path.join(dir, "ry");
-      const marker = path.join(dir, "invocations");
       fs.writeFileSync(
         binary,
         `#!/bin/sh\necho run >> "$0.marker"\necho '{"version":"0.9.0"}'\n`,
         { mode: 0o755 },
       );
+      fs.utimesSync(binary, 1_700_000_000, 1_700_000_000);
       const probe = getRyVersion(binary);
       expect(fs.existsSync(binary + ".marker")).toBe(false);
       await Effect.runPromise(probe);
-      // Re-running against an unchanged binary is served from the cache.
-      await Effect.runPromise(probe);
+      expect(await Effect.runPromise(probe)).toEqual({
+        major: 0,
+        minor: 9,
+        patch: 0,
+      });
       expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\n");
-      // Replacing the binary (new mtime) invalidates the cache entry.
-      const later = new Date(Date.now() + 2000);
-      fs.utimesSync(binary, later, later);
-      await Effect.runPromise(probe);
-      fs.renameSync(binary + ".marker", marker);
-      expect(fs.readFileSync(marker, "utf8")).toBe("run\nrun\n");
+      const stats = fs.statSync(binary);
+      const replacement = binary + ".new";
+      fs.writeFileSync(
+        replacement,
+        fs.readFileSync(binary, "utf8").replace("0.9.0", "0.9.1"),
+        { mode: 0o755 },
+      );
+      fs.utimesSync(replacement, stats.atime, stats.mtime);
+      fs.renameSync(replacement, binary);
+      expect(fs.statSync(binary).size).toBe(stats.size);
+      expect(fs.statSync(binary).mtimeMs).toBe(stats.mtimeMs);
+      expect(await Effect.runPromise(probe)).toEqual({
+        major: 0,
+        minor: 9,
+        patch: 1,
+      });
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

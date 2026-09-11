@@ -276,47 +276,8 @@ pub struct HigherOrderSpec {
 }
 
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
-// Vendored stub JSON, deflated at build time by `build.rs` into OUT_DIR
-// and re-inflated lazily at the load points below (see
-// `inflate_embedded`). The raw JSON costs ~1 MB of binary; the deflated
-// blobs cost ~63 KB. The vendor tree itself stays uncompressed for the
-// sync tooling and review.
+// Stubs stay uncompressed in vendor/ and inflate lazily at runtime.
 const BASE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/base.json.deflate"));
-const DPLYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dplyr.json.deflate"));
-const DBPLYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dbplyr.json.deflate"));
-const TIDYR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tidyr.json.deflate"));
-const TIDYSELECT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tidyselect.json.deflate"));
-const TESTTHAT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/testthat.json.deflate"));
-const TINYTEST_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/tinytest.json.deflate"));
-const RCPP_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/Rcpp.json.deflate"));
-const PURRR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/purrr.json.deflate"));
-const IGRAPH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/igraph.json.deflate"));
-const RECIPES_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/recipes.json.deflate"));
-const BENCH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bench.json.deflate"));
-const BOX_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/box.json.deflate"));
-const PATRICK_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/patrick.json.deflate"));
-const REX_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rex.json.deflate"));
-const RLIST_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rlist.json.deflate"));
-const MIRAI_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mirai.json.deflate"));
-const SURVIVAL_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/survival.json.deflate"));
-const BRMS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/brms.json.deflate"));
-const POSTERIOR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/posterior.json.deflate"));
-const LOO_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loo.json.deflate"));
-const BAYESPLOT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bayesplot.json.deflate"));
-const CMDSTANR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/cmdstanr.json.deflate"));
-const ZEALLOT_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zeallot.json.deflate"));
-const FUTURE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/future.json.deflate"));
-const FOREACH_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/foreach.json.deflate"));
-const HTMLTOOLS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/htmltools.json.deflate"));
-const SHINY_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shiny.json.deflate"));
-const WITHR_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/withr.json.deflate"));
-const R6_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/R6.json.deflate"));
-const S7_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/S7.json.deflate"));
-const RLANG_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/rlang.json.deflate"));
-const CLI_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/cli.json.deflate"));
-const VCTRS_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vctrs.json.deflate"));
-const GRID_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/grid.json.deflate"));
-const GGPLOT2_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ggplot2.json.deflate"));
 
 /// One embedded non-base package: its name, its deflated vendored JSON,
 /// a process-wide parse cache for the parsed [`Typeshed`], and a
@@ -380,47 +341,8 @@ impl PackageSpec {
     }
 }
 
-/// Single source of truth for embedded non-base packages, in signature
-/// resolution order. Every package maps one-to-one to its vendored file.
-/// A `static` array (not a `const` slice): the per-package caches are
-/// shared state that must have a single address.
-static PACKAGE_SPECS: [PackageSpec; 35] = [
-    PackageSpec::new("dplyr", DPLYR_JSON),
-    PackageSpec::new("dbplyr", DBPLYR_JSON),
-    PackageSpec::new("tidyr", TIDYR_JSON),
-    PackageSpec::new("tidyselect", TIDYSELECT_JSON),
-    PackageSpec::new("purrr", PURRR_JSON),
-    PackageSpec::new("igraph", IGRAPH_JSON),
-    PackageSpec::new("recipes", RECIPES_JSON),
-    PackageSpec::new("bench", BENCH_JSON),
-    PackageSpec::new("box", BOX_JSON),
-    PackageSpec::new("patrick", PATRICK_JSON),
-    PackageSpec::new("rex", REX_JSON),
-    PackageSpec::new("rlist", RLIST_JSON),
-    PackageSpec::new("mirai", MIRAI_JSON),
-    PackageSpec::new("survival", SURVIVAL_JSON),
-    PackageSpec::new("testthat", TESTTHAT_JSON),
-    PackageSpec::new("tinytest", TINYTEST_JSON),
-    PackageSpec::new("Rcpp", RCPP_JSON),
-    PackageSpec::new("brms", BRMS_JSON),
-    PackageSpec::new("posterior", POSTERIOR_JSON),
-    PackageSpec::new("loo", LOO_JSON),
-    PackageSpec::new("bayesplot", BAYESPLOT_JSON),
-    PackageSpec::new("cmdstanr", CMDSTANR_JSON),
-    PackageSpec::new("zeallot", ZEALLOT_JSON),
-    PackageSpec::new("future", FUTURE_JSON),
-    PackageSpec::new("foreach", FOREACH_JSON),
-    PackageSpec::new("htmltools", HTMLTOOLS_JSON),
-    PackageSpec::new("shiny", SHINY_JSON),
-    PackageSpec::new("withr", WITHR_JSON),
-    PackageSpec::new("R6", R6_JSON),
-    PackageSpec::new("S7", S7_JSON),
-    PackageSpec::new("rlang", RLANG_JSON),
-    PackageSpec::new("cli", CLI_JSON),
-    PackageSpec::new("vctrs", VCTRS_JSON),
-    PackageSpec::new("grid", GRID_JSON),
-    PackageSpec::new("ggplot2", GGPLOT2_JSON),
-];
+// packages.txt fixes signature resolution order; each cache has one static address.
+include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
     PACKAGE_SPECS.iter().map(|spec| spec.name)

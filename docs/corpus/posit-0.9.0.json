@@ -3,7 +3,7 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "3b86cf1c561929aa665eb4cac567ebfe6f94c3dec800c67b2b12b8b924141040",
+  "source_sha256": "a2f80bd0712056f9da28f910db7b4378df36c4e643217c1b284fc87140759477",
   "ry_commit": "776fe2216f55ccfa96aa3c24159ed6ebe4df6e05",
   "reconciliation": "hermetic",
   "packages": [
@@ -173,7 +173,7 @@
       "repo": "r-lib/styler",
       "stars": 770,
       "commit": "d3d7854df2d73f539b6cb2286dbf5dddaf3e58f6",
-      "diagnostics": 6
+      "diagnostics": 5
     },
     {
       "name": "glue",
@@ -3918,15 +3918,6 @@
       "audit_group": "test-fixture"
     },
     {
-      "package": "styler",
-      "code": "RY033",
-      "path": "R/rules-line-breaks.R",
-      "line": 364,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
       "package": "tensorflow",
       "code": "RY032",
       "path": "R/install.R",
@@ -4397,12 +4388,12 @@
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 402,
+    "false_positive": 401,
     "uncertain": 0
   },
   "audit_group_counts": {
     "manual-audit": 184,
-    "data-masking-nse": 2,
+    "data-masking-nse": 1,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 19,
@@ -4416,6 +4407,7 @@
   },
   "notes": [
     "Call-position-aware forwarding removes four reviewed renv false positives: RY001 at R/snapshot.R:1153:7 and :1158:7, and RY070 at R/package.R:367:12 and :370:25. The callers replace their NULL defaults before the wrapped or loop-nested calls: type comes from snapshot settings and callback becomes a function. These defaults no longer describe the forwarded values. The full pinned comparison adds no identities and retains all 37 true positives.",
+    "Union subset precision removes the reviewed styler RY033 false positive at R/rules-line-breaks.R:364:9. first_arg is a scalar subset index, so lag(pd$token)[first_arg] is not a proven vector condition. Runtime and checker controls cover a union scalar comparison and retain a genuine two-element condition error. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
     "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",

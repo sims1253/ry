@@ -18,6 +18,7 @@ mod fixpoint;
 pub mod format;
 mod higher_order;
 mod infer;
+mod literal_values;
 mod nse;
 pub mod project;
 mod reference_facts;
@@ -309,6 +310,8 @@ pub struct Scope {
     pub(crate) effects_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
+    pub(crate) literal_values_unknown: bool,
+    pub(crate) known_strings: FxMap<String, Arc<str>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
     pub bindings: FxMap<String, RType>,
@@ -349,6 +352,8 @@ impl Clone for Scope {
             effects_unknown: self.effects_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             literal_functions: self.literal_functions.clone(),
+            known_strings: self.known_strings.clone(),
+            literal_values_unknown: self.literal_values_unknown,
             plain_ops_vectors: self.plain_ops_vectors.clone(),
             reference_provenance: self.reference_provenance.clone(),
             bindings: self.bindings.clone(),
@@ -374,6 +379,7 @@ impl Scope {
     pub(crate) fn independent_execution_scope(&self) -> Self {
         let mut scope = self.clone();
         scope.loop_frame = None;
+        scope.known_strings.clear();
         scope.unreachable = false;
         scope
     }
@@ -381,6 +387,7 @@ impl Scope {
     /// Unknown code may mutate values or install active bindings. Keep names,
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
+        self.clear_known_strings();
         if self.snapshot_depth > 0 {
             let names: HashSet<_> = self
                 .bindings
@@ -417,6 +424,7 @@ impl Scope {
     }
 
     pub(crate) fn invalidate_ops_environment(&mut self) {
+        self.clear_known_strings();
         self.clear_ops_facts();
         self.ops_environment_unknown = true;
     }
@@ -427,6 +435,7 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        self.clear_known_string(&name);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
         }

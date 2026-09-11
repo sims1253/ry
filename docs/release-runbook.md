@@ -100,18 +100,18 @@ v{version}  (e.g. v0.9.2)
 
    A tag push alone does not start this workflow. The dispatch builds and
    publishes the GitHub Release. **cargo-dist** produces:
-   - Six platform binaries (x86_64/aarch64 × linux/macOS/windows)
+   - Nine platform binaries, one for each target in `dist-workspace.toml`
    - SHA-256 sidecar files for each archive
-   - Six executable `.bin.sha256` sidecars from the checksum hook
+   - Nine executable `.bin.sha256` sidecars from the checksum hook
    - GitHub Release with all assets attached
 7. Verify: download each archive and its `.sha256` sidecar, run
    `sha256sum -c archive.sha256`, extract, and run `ry version`.
 
 ### Artifact verification checklist
 
-- [ ] Six platform archives exist in the GitHub release
+- [ ] Nine platform archives exist in the GitHub release
 - [ ] Each archive has a matching `.sha256` sidecar
-- [ ] All six `ry-cli-<target>.bin.sha256` executable sidecars exist
+- [ ] All nine `ry-cli-<target>.bin.sha256` executable sidecars exist
 - [ ] `sha256sum -c` passes for every archive
 - [ ] `ry version` reports the correct version on each platform
 - [ ] `ry check` runs successfully on a simple test file

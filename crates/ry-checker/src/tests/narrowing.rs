@@ -1393,3 +1393,17 @@ fn compound_guard_oracle_has_no_atomic_access_errors() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn compound_guards_refine_assertions_and_positive_conjunctions() {
+    for body in [
+        "stopifnot(!is.character(x) && !is.null(x)); x$field",
+        "if (is.list(x) && !is.null(x)) x$field else 1L",
+    ] {
+        let diagnostics = check(&format!("f <- function(x = 'default') {{ {body} }}; f()"));
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{body}: {diagnostics:?}"
+        );
+    }
+}

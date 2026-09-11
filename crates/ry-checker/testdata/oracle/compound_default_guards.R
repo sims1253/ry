@@ -13,3 +13,10 @@ for (f in list(first, second)) {
   stopifnot(inherits(error, "error"))
   stopifnot(identical(conditionMessage(error), "$ operator is invalid for atomic vectors"))
 }
+asserted <- function(x = "default") {
+  stopifnot(!is.character(x) && !is.null(x))
+  x$field
+}
+stopifnot(asserted(list(field = 3L)) == 3L)
+rejected_default <- tryCatch(asserted(), error = identity)
+stopifnot(inherits(rejected_default, "error"))

@@ -29,6 +29,9 @@ All notable changes to ry are documented in this file.
 - Report failed top-level calls even when a later function definition has the
   same name. Preserve outward package lookup and deferred function bodies
   (#410).
+- Bind named data arguments before checking data-mask and tidy-select
+  expressions, regardless of their position in a call. Quoting helpers without
+  a data argument keep an unknown mask (#417).
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`

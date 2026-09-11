@@ -1503,22 +1503,22 @@ impl Checker {
         }
     }
 
-    /// The diagnostic decision for a bare symbol call head (#381).
-    /// Uncertainty is decided first and cannot be overridden by the
-    /// callable-inventory approximation below: an attached package
-    /// without a stub (or an unenumerable data mask) can export any
-    /// name, so a would-be RY070 stays silent. The existing S7 carveout
-    /// is retained as a known approximation, not a proof: the
-    /// whole-project callable inventory has no execution-order
-    /// information, so at the top level a concrete value still yields
-    /// the diagnostic (`err_s7_callable_future_assignment`), and a
-    /// frame-local value above a live generator can be over-diagnosed.
-    /// `Suppress` likewise is not a proven function: it inherits
-    /// `has_function_anywhere`'s conservatism, which treats externally
-    /// supplied names as possible functions.
+    /// A bare call skips non-functions while searching outward. An open
+    /// package search path or data mask can still supply the function.
+    /// Eager top-level calls use source order; deferred bodies retain the
+    /// project inventory while their enclosing-frame lookup remains partial.
     fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
         if scope.search_path_unknown || scope.data_mask_unknown {
             return CallHeadFunctionEvidence::Uncertain;
+        }
+        // An eager top-level call sees the binding installed so far. The
+        // project inventory also contains later or overwritten functions.
+        if !self.discarding && self.enclosing_formals.is_empty() {
+            return if self.has_external_function(name) {
+                CallHeadFunctionEvidence::Suppress
+            } else {
+                CallHeadFunctionEvidence::Diagnose
+            };
         }
         if !self.has_function_anywhere(name) {
             return CallHeadFunctionEvidence::Diagnose;

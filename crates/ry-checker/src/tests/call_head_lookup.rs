@@ -224,3 +224,46 @@ fn open_search_path_silences_bare_dataset_head() {
         "the bare dataset-value stage must stay silent under uncertainty: {diagnostics:?}"
     );
 }
+
+#[test]
+fn future_top_level_function_does_not_hide_an_earlier_failed_call() {
+    for source in [
+        "x <- 1L; x(); x <- function() 2L",
+        "x <- function() 2L; x <- 1L; x()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn outward_base_functions_and_deferred_bodies_keep_function_lookup() {
+    for source in [
+        "mean <- 1L; mean(c(1, 2)); mean <- function(x) x",
+        "g <- function() { x <- 1L; x() }; x <- function() 2L; g()",
+        "x <- 1L; library(notastubbedpkg); x(); x <- function() 2L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn deferred_function_lookup_keeps_return_type_information() {
+    let diagnostics =
+        check("x <- function() 2L; g <- function() { x <- 1L; x() }; result <- g(); result$field");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
+    );
+}

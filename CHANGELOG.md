@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Report failed top-level calls even when a later function definition has the
+  same name. Preserve outward package lookup and deferred function bodies
+  (#410).
+
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

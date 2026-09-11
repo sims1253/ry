@@ -19,6 +19,7 @@ impl Checker {
         let environment_known_before_call = !scope.ops_environment_unknown;
         let pure = ops_chooser::pure_literal_constructor(self, func, args, scope);
         if !pure {
+            scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);

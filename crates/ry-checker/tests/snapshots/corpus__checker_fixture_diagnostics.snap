@@ -1051,7 +1051,7 @@ expression: snapshots
 - diagnostics:
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 4
         end: 126
@@ -1287,7 +1287,7 @@ expression: snapshots
 - diagnostics:
     - code: RY001
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 6
         end: 61
@@ -1307,7 +1307,7 @@ expression: snapshots
 - diagnostics:
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 419
@@ -1315,7 +1315,7 @@ expression: snapshots
         start: 416
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 445
@@ -1323,7 +1323,7 @@ expression: snapshots
         start: 439
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 468
@@ -1331,7 +1331,7 @@ expression: snapshots
         start: 465
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 492
@@ -1339,7 +1339,7 @@ expression: snapshots
         start: 488
     - code: RY001
       message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 514
@@ -1347,7 +1347,7 @@ expression: snapshots
         start: 512
     - code: RY001
       message: "`if` condition is `character<len=2>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 552
@@ -1355,7 +1355,7 @@ expression: snapshots
         start: 534
     - code: RY001
       message: "`if` condition is `character<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 584
@@ -1363,7 +1363,7 @@ expression: snapshots
         start: 572
     - code: RY001
       message: "`if` condition is `list<len=1>{[[1]]:logical<len=1>}`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 614
@@ -1371,7 +1371,7 @@ expression: snapshots
         start: 604
     - code: RY001
       message: "`if` condition is `complex<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 654
@@ -1379,7 +1379,7 @@ expression: snapshots
         start: 634
     - code: RY001
       message: "`if` condition is `complex<len=2>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 9
         end: 694
@@ -1389,7 +1389,7 @@ expression: snapshots
 - diagnostics:
     - code: RY001
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-      severity: error
+      severity: warning
       span:
         column: 6
         end: 74

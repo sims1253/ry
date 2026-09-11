@@ -14,8 +14,19 @@ use sha2::{Digest, Sha256};
 
 use crate::{check, dump, facts_types, pipeline};
 
+fn format_sha256(digest: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity("sha256:".len() + digest.len() * 2);
+    text.push_str("sha256:");
+    for &byte in digest {
+        text.push(HEX[usize::from(byte >> 4)] as char);
+        text.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    text
+}
+
 fn digest(bytes: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(bytes))
+    format_sha256(&Sha256::digest(bytes))
 }
 
 fn executable_digest() -> Result<String> {
@@ -30,7 +41,7 @@ fn executable_digest() -> Result<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    Ok(format_sha256(&hasher.finalize()))
 }
 
 fn json_digest(value: &Value) -> String {
@@ -454,6 +465,18 @@ pub(crate) fn run_dump_facts(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sha256_facts_keep_their_versioned_text_encoding() {
+        assert_eq!(
+            super::digest(b""),
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            super::digest(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
     use super::*;
     use ry_checker::Scope;
     use ry_core::{RParser, RType};

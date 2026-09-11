@@ -55,7 +55,7 @@ Before starting any release:
    Check both product changelogs and the comparison links.
 
 5. **Version bumped:** core workspace `Cargo.toml` to the target version
-   (e.g. `0.9.2`). Editor extension versions are independent.
+   (e.g. `0.10.0`). Editor extension versions are independent.
 
 6. **Zed binary integrity verified:** confirm the core release includes
    executable `ry-cli-<target>.bin.sha256` sidecars for all nine targets.
@@ -71,7 +71,7 @@ Before starting any release:
 ### Tag format
 
 ```
-v{version}  (e.g. v0.9.2)
+v{version}  (e.g. v0.10.0)
 ```
 
 ### Steps
@@ -142,15 +142,15 @@ The `registry` dispatch input defaults to `both`; select `marketplace` or
 ### Steps
 
 1. Dispatch `release-vscode.yml` from the reviewed extension source ref with:
-   - `version`: extension SemVer (e.g. `0.9.2`)
-   - `core-tag`: the core binary tag (e.g. `v0.9.2`)
+   - `version`: extension SemVer (e.g. `0.10.0`)
+   - `core-tag`: the core binary tag (e.g. `v0.10.0`)
    - `pre-release`: true/false
 
-   For a stable 0.9.2 extension built from the matching core release commit:
+   For a stable 0.10.0 extension built from the matching core release commit:
 
    ```bash
-   gh workflow run release-vscode.yml --ref v0.9.2 \
-     -f version=0.9.2 -f core-tag=v0.9.2 -F pre-release=false
+   gh workflow run release-vscode.yml --ref v0.10.0 \
+     -f version=0.10.0 -f core-tag=v0.10.0 -F pre-release=false
    ```
 
    This command publishes to both registries; it is not a packaging dry run.
@@ -276,7 +276,13 @@ runtime check on platforms that were not exercised automatically.
 ## Version policy
 
 - Core and editor extension versions are **independent**.
-- Core uses SemVer (e.g. `0.9.2`).
+- Core uses SemVer (e.g. `0.10.0`).
+- Rust crates exposing the public `Scope` collections must start at 0.10.0
+  or newer. The `FxMap`/`FxSet` field types are incompatible with the earlier
+  standard-library collections; do not publish that change as 0.9.x (#432).
+  This release prepares CLI and editor artifacts. Crates.io publication also
+  needs publishable dependency metadata, including the internal workspace
+  crates and the pinned parser dependency.
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
 - Each VS Code extension release records the exact core tag it packages.

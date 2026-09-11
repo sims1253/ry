@@ -270,11 +270,14 @@ impl Checker {
                 // declarations, since a user-defined list-returning
                 // function marks its binding too.
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
-                let known_string = (ops_chooser::ordinary_assignment(self, target, value)
-                    && !ops_chooser::operator_rebound(self, "<-", scope)
-                    && !ops_chooser::operator_rebound(self, "=", scope))
-                .then(|| condition_string_literal(value, scope).map(Arc::<str>::from))
-                .flatten();
+                let known_string = condition_string_literal(value, scope)
+                    .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                    .filter(|_| {
+                        ops_chooser::ordinary_assignment(self, target, value)
+                            && !ops_chooser::operator_rebound(self, "<-", scope)
+                            && !ops_chooser::operator_rebound(self, "=", scope)
+                    })
+                    .map(Arc::<str>::from);
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
@@ -1978,11 +1981,14 @@ impl Checker {
                     }
                     let class_write = self.prepare_class_attribute(lhs, rhs, scope);
                     let rt = self.infer(rhs, scope);
-                    let known_string = (*op == BinOpKind::Assign
-                        && !ops_chooser::operator_rebound(self, "<-", scope)
-                        && !ops_chooser::operator_rebound(self, "=", scope))
-                    .then(|| condition_string_literal(rhs, scope).map(Arc::<str>::from))
-                    .flatten();
+                    let known_string = condition_string_literal(rhs, scope)
+                        .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                        .filter(|_| {
+                            *op == BinOpKind::Assign
+                                && !ops_chooser::operator_rebound(self, "<-", scope)
+                                && !ops_chooser::operator_rebound(self, "=", scope)
+                        })
+                        .map(Arc::<str>::from);
                     if self.try_assign_value(lhs, rt.clone(), class_write, scope)
                         && let Some(name) = binding_name(lhs)
                         && let Some(value) = known_string

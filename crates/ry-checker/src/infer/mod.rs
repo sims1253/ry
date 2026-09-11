@@ -439,7 +439,7 @@ impl Checker {
         span: Span,
         scope: &Scope,
     ) {
-        let mut fn_scope = scope.independent_execution_scope();
+        let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
@@ -1057,7 +1057,7 @@ impl Checker {
     ) -> Option<RType> {
         let prev_discarding = self.discarding;
         self.discarding = true;
-        let mut scope = captured_scope.independent_execution_scope();
+        let mut scope = captured_scope.function_execution_scope();
         scope.invalidate_ops_environment();
         bind_params(&mut scope);
         // Simulate each statement's scope effect in source order so the

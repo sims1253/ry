@@ -159,32 +159,48 @@ fn top_level_overwrite_before_frame_call_keeps_error() {
 }
 
 #[test]
-fn constructor_in_outer_function_frame_is_a_known_gap() {
-    // KNOWN GAP, pinned: R finds the outer-frame generator and calls it,
-    // so this RY070 over-claims. Nested constructor bindings are
-    // invisible to the collection pass, and modeling frame identity is
-    // deliberately out of scope for this change. If a later refinement
-    // silences this, update this pin.
+fn constructor_in_outer_function_frame_remains_callable() {
     let diagnostics = check(
         "outer <- function() { Gen <- S7::new_class(\"Gen\"); inner <- function() { Gen <- 5; Gen() }; inner() }\nouter()\n",
     );
     assert!(
-        diagnostics.iter().any(|d| d.code == "RY070"),
-        "current behavior: nested generators are not modeled (documented over-claim): {diagnostics:?}"
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
     );
 }
 
 #[test]
-fn unknown_outward_binding_with_known_inner_value_is_a_known_gap() {
-    // KNOWN GAP, pinned: the outward `Gen <- get("x")` binding is
-    // opaque, so R's outcome depends on runtime values and this RY070
-    // can over-claim. The flat scope cannot see the shadowed outward
-    // type. Pinned to keep the boundary visible; not a correctness
-    // control.
+fn unknown_outward_binding_can_supply_a_function() {
     let diagnostics = check("Gen <- get(\"x\")\ng <- function() { Gen <- 5; Gen() }\ng()\n");
     assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn outward_parameter_and_multiple_frames_keep_function_uncertainty() {
+    for source in [
+        "outer <- function(f = 1L) { inner <- function() { f <- 2L; f() }; inner() }",
+        "outer <- function() { f <- get(\"callback\"); middle <- function() { f <- 1L; inner <- function() { f <- 2L; f() }; inner() }; middle() }",
+        "f <- if (getOption(\"choice\")) function() 1L else 2L; inner <- function() { f <- 3L; f() }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn known_non_function_outward_frames_keep_the_call_error() {
+    let diagnostics = check(
+        "outer <- function() { f <- 1L; inner <- function() { f <- 2L; f() }; inner() }; outer()",
+    );
+    assert!(
         diagnostics.iter().any(|d| d.code == "RY070"),
-        "current behavior: shadowed outward types are not modeled (documented over-claim): {diagnostics:?}"
+        "{diagnostics:?}"
     );
 }
 
@@ -264,6 +280,26 @@ fn deferred_function_lookup_keeps_return_type_information() {
     );
     assert!(
         diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn eager_callbacks_use_current_outward_bindings() {
+    for source in [
+        "x <- function() 2L; lapply(1:3, function(i) { x <- 1L; x() })",
+        "Gen <- S7::new_class('Gen'); lapply(1:3, function(i) { Gen <- 1L; Gen() })",
+        "x <- get('callback'); lapply(1:3, function(i) { x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("lapply(1:3, function(i) { x <- 1L; x() }); x <- function() 2L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY070"),
         "{diagnostics:?}"
     );
 }

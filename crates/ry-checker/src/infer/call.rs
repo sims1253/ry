@@ -1505,10 +1505,13 @@ impl Checker {
 
     /// A bare call skips non-functions while searching outward. An open
     /// package search path or data mask can still supply the function.
-    /// Eager top-level calls use source order; deferred bodies retain the
-    /// project inventory while their enclosing-frame lookup remains partial.
+    /// Eager calls use source order. Deferred bodies retain enclosing-frame
+    /// evidence and the project inventory, since they may run later.
     fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
-        if scope.search_path_unknown || scope.data_mask_unknown {
+        if scope.search_path_unknown
+            || scope.data_mask_unknown
+            || scope.has_possible_outward_function(name)
+        {
             return CallHeadFunctionEvidence::Uncertain;
         }
         // An eager top-level call sees the binding installed so far. The
@@ -1781,7 +1784,7 @@ impl Checker {
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
             Expr::Function { params, body, .. } => {
-                let mut inner = scope.independent_execution_scope();
+                let mut inner = scope.function_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
                 }
@@ -1915,14 +1918,9 @@ fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
 }
 
-/// The diagnostic decision for a bare symbol call head under the
-/// checker's current outward-lookup model, mirroring R's function-mode
-/// call lookup (non-function bindings are skipped in every frame). The
-/// variants are decisions, not proofs: `Diagnose` includes the retained
-/// callable-inventory approximation documented on
-/// [`Checker::call_head_function_evidence`], and `Suppress` inherits
-/// `has_function_anywhere`'s conservatism (externally supplied names are
-/// treated as possible functions).
+/// The diagnostic decision for a bare symbol call head. Eager calls use
+/// current bindings and external functions. Deferred bodies also consult
+/// the project inventory; that inventory does not prove call-time identity.
 enum CallHeadFunctionEvidence {
     /// A function binding is modeled reachable outward; the call head
     /// resolves to it, the local value is skipped, and no RY070 fires.

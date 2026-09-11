@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Preserve possible function bindings from enclosing frames when an inner
+  assignment uses the same name. This avoids RY070 for outer constructors,
+  parameters, and unknown values that may be callable (#381).
+
 - Report failed top-level calls even when a later function definition has the
   same name. Preserve outward package lookup and deferred function bodies
   (#410).

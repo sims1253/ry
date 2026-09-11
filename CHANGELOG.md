@@ -11,6 +11,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Bundle set6 and dictionar6 export inventories so wholesale imports resolve
+  their R6 objects and functions without installed copies of those packages
+  (#366). Keep unrelated unknown names reportable.
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

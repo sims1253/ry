@@ -1714,8 +1714,9 @@ impl Checker {
         let mut found_lexical = false;
         let mut unresolved = false;
         if scope.is_parameter(name) || scope.get(name).is_none() {
-            // Forcing a promise can mutate the method environment.
+            // Forcing a promise can mutate methods or install active bindings.
             scope.invalidate_ops_environment();
+            scope.invalidate_literal_values();
         }
         let result = (|| match scope.get(name) {
             Some(t) => {

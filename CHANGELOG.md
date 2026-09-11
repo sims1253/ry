@@ -120,6 +120,10 @@ reading serialized package data.
 
 ### Added
 
+- Explain source discovery with `ry check --explain-files`. Use
+  `include-build-ignored` in `ry.toml` to include selected build-ignored files
+  in both CLI checks and editor indexing (#363).
+
 - Embed verified ggplot2 signatures for 498 functions, 145 exported values, and
   11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;
   ordinary helpers such as `aes_string` no longer suppress unbound arguments.

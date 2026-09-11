@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "db2a3a35b79cd0a5aaea86e3661519843ee5bedff404bf126130da394cc5b50f",
-  "ry_commit": "70c424772499e1d96216f30236006ebea7ffa9c6",
+  "source_sha256": "a2f80bd0712056f9da28f910db7b4378df36c4e643217c1b284fc87140759477",
+  "ry_commit": "01a255cf6d69d9e1b88770f3490b7e8d3e4311a0",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -89,7 +89,7 @@
       "repo": "rstudio/renv",
       "stars": 1160,
       "commit": "a3f8952cf8f4b9cd6e676805431cb81ca5a24b64",
-      "diagnostics": 53
+      "diagnostics": 49
     },
     {
       "name": "tinytex",
@@ -2750,24 +2750,6 @@
     {
       "package": "renv",
       "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1153,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1158,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
       "path": "R/utils.R",
       "line": 90,
       "column": 9,
@@ -3196,24 +3178,6 @@
       "column": 9,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 367,
-      "column": 12,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 370,
-      "column": 25,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "reticulate",
@@ -4424,7 +4388,7 @@
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 405,
+    "false_positive": 401,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -4438,10 +4402,12 @@
     "reassign-scope": 9,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 61,
+    "type-narrowing": 57,
     "upstream-package": 27
   },
   "notes": [
+    "Combined #438 and #440 retain 438 findings: 37 true positives and 401 false positives. The merged reports remove exactly the five reviewed false positives from the fixed main baseline fd48562; no identities are added.",
+    "Call-position-aware forwarding removes four reviewed renv false positives: RY001 at R/snapshot.R:1153:7 and :1158:7, and RY070 at R/package.R:367:12 and :370:25. The callers replace their NULL defaults before the wrapped or loop-nested calls: type comes from snapshot settings and callback becomes a function. These defaults no longer describe the forwarded values. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Union subset precision removes the reviewed styler RY033 false positive at R/rules-line-breaks.R:364:9. first_arg is a scalar subset index, so lag(pd$token)[first_arg] is not a proven vector condition. Runtime and checker controls cover a union scalar comparison and retain a genuine two-element condition error. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",

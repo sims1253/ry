@@ -2358,24 +2358,6 @@
       "severity": "warning",
       "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
-    "renv::RY001::R/snapshot.R:1153:7": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1153,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "renv::RY001::R/snapshot.R:1158:7": {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1158,
-      "column": 7,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
     "renv::RY001::R/utils.R:90:9": {
       "package": "renv",
       "code": "RY001",
@@ -2807,24 +2789,6 @@
       "column": 9,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "renv::RY070::R/package.R:367:12": {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 367,
-      "column": 12,
-      "severity": "error",
-      "message": "could not find function `callback` (bound here as `NULL`)"
-    },
-    "renv::RY070::R/package.R:370:25": {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 370,
-      "column": 25,
-      "severity": "error",
-      "message": "could not find function `callback` (bound here as `NULL`)"
     },
     "reticulate::RY001::R/py_require.R:579:7": {
       "package": "reticulate",

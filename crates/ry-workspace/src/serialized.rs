@@ -45,6 +45,7 @@ fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
     }
     #[cfg(unix)]
     {
+        const MAX_CACHED_INVENTORIES: usize = 1024;
         type Stamp = (u64, i64, i64, u64, u64, u64);
         use std::{collections::VecDeque, path::PathBuf};
         type Entry = (PathBuf, Stamp, SerializedInventory);
@@ -80,7 +81,7 @@ fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
         let inventory = serialized_inventory_uncached(&key, cap);
         let mut entries = lock();
         entries.retain(|(path, _, _)| path != &key);
-        if entries.len() == 1024 {
+        if entries.len() == MAX_CACHED_INVENTORIES {
             entries.pop_front();
         }
         entries.push_back((key, stamp, inventory.clone()));

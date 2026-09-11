@@ -38,6 +38,9 @@ output-format    = "full"     # full | concise | json | github | gitlab | junit
 # gitignore-style patterns, relative to this ry.toml's directory.
 exclude = ["renv", "tests/snaps/**"]
 
+# Check these source files even when .Rbuildignore excludes them.
+include-build-ignored = ["vignettes/benchmark.R"]
+
 # Include R fixture data nested under package tests/ directories.
 check-test-fixtures = false
 
@@ -54,6 +57,15 @@ max-files      = 20000   # files discovered per root (default: 20,000)
 max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
 ```
+
+`include-build-ignored` contains glob patterns relative to `ry.toml`. It
+lets CLI discovery and editor indexing check selected files excluded by
+`.Rbuildignore`. It does not override `exclude`, fixture settings, symlink
+rules, hidden or generated directories, or resource limits.
+
+Run `ry check . --explain-files` to see included files and skipped paths on
+stderr. A skipped directory represents its whole subtree; ry does not scan it
+to count the files inside. Diagnostic output, including JSON, stays on stdout.
 
 Serialized R data files are inventoried by decoding at most
 `max-serialized-bytes` bytes; one further byte is read to detect overflow. The

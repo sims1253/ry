@@ -112,6 +112,7 @@ pub(crate) fn run_check(
         color,
         watch,
         statistics,
+        explain_files,
         write_baseline,
         baseline,
         min_confidence,
@@ -182,7 +183,13 @@ pub(crate) fn run_check(
     } else {
         paths
     };
-    let mut all_paths = rescan(&search_roots, config_root.as_deref(), &cfg, true);
+    let mut all_paths = rescan(
+        &search_roots,
+        config_root.as_deref(),
+        &cfg,
+        true,
+        explain_files,
+    );
 
     if all_paths.is_empty() {
         // An empty discovery result still needs a complete machine-readable report.
@@ -240,7 +247,7 @@ pub(crate) fn run_check(
         // Re-scan for new/deleted files via shared bounded discovery.
         // Truncation was already reported on the initial scan, so the
         // poll keeps stderr quiet.
-        let current_paths = rescan(&search_roots, config_root.as_deref(), &cfg, false);
+        let current_paths = rescan(&search_roots, config_root.as_deref(), &cfg, false, false);
 
         // Check for any file modification or file set change.
         let mut changed = current_paths != all_paths;
@@ -697,11 +704,26 @@ fn rescan(
     config_root: Option<&std::path::Path>,
     cfg: &config::Config,
     report: bool,
+    explain: bool,
 ) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for root in search_roots {
         let result =
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
+        if explain {
+            for file in &result.files {
+                eprintln!("ry: include {}", file.display());
+            }
+            for (path, reason) in &result.skipped.entries {
+                eprintln!("ry: skip {} ({reason})", path.display());
+            }
+            if result.skipped.omitted > 0 {
+                eprintln!(
+                    "ry: {} more skipped paths omitted from explanation",
+                    result.skipped.omitted
+                );
+            }
+        }
         paths.extend(result.files);
         if report {
             report_truncation(&result.truncated, root);

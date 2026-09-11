@@ -76,6 +76,60 @@ impl TruncationReport {
     }
 }
 
+/// Paths pruned during discovery. A directory entry covers its whole subtree.
+#[derive(Clone, Debug, Default)]
+pub struct SkippedPaths {
+    pub entries: Vec<(PathBuf, &'static str)>,
+    /// Additional entries omitted when the report reached `index.max-files`.
+    pub omitted: usize,
+}
+
+impl SkippedPaths {
+    fn record(&mut self, path: &Path, directory: bool, reason: &'static str, limit: usize) {
+        if !directory && !is_source_path(path) {
+            return;
+        }
+        if self.entries.len() < limit {
+            self.entries.push((path.to_path_buf(), reason));
+        } else {
+            self.omitted += 1;
+        }
+    }
+}
+
+struct BuildIgnoredIncludes {
+    root: PathBuf,
+    patterns: Vec<glob::Pattern>,
+}
+
+impl BuildIgnoredIncludes {
+    fn matches(&self, path: &Path) -> bool {
+        let Ok(path) = std::path::absolute(path) else {
+            return false;
+        };
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        self.patterns.iter().any(|pattern| {
+            pattern.matches_with(
+                &relative,
+                glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                },
+            )
+        })
+    }
+}
+
+fn is_source_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("R" | "r" | "S" | "s" | "q")
+    )
+}
+
 /// Result of a bounded directory discovery.
 #[derive(Clone, Debug, Default)]
 pub struct DiscoveryResult {
@@ -83,6 +137,7 @@ pub struct DiscoveryResult {
     pub files: Vec<PathBuf>,
     /// Structured cap report. Empty when no limit was reached.
     pub truncated: TruncationReport,
+    pub skipped: SkippedPaths,
 }
 
 /// Discover all eligible R source files under `walk_root`, applying the
@@ -107,7 +162,7 @@ pub fn discover_r_files(
     if walk_root.is_file() {
         return DiscoveryResult {
             files: vec![walk_root.to_path_buf()],
-            truncated: TruncationReport::default(),
+            ..Default::default()
         };
     }
     let limits = DiscoveryLimits::from_config(config);
@@ -115,6 +170,16 @@ pub fn discover_r_files(
     let has_excludes = !excludes.is_empty();
     let mut files = Vec::new();
     let mut truncated = TruncationReport::default();
+    let mut skipped = SkippedPaths::default();
+    let include_root = exclude_root.unwrap_or(walk_root);
+    let includes = BuildIgnoredIncludes {
+        root: std::path::absolute(include_root).unwrap_or_else(|_| include_root.to_path_buf()),
+        patterns: config
+            .include_build_ignored
+            .iter()
+            .filter_map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")).ok())
+            .collect(),
+    };
     let package_root = walk_root
         .ancestors()
         .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
@@ -127,6 +192,9 @@ pub fn discover_r_files(
         walk_root,
         &mut files,
         &mut truncated,
+        &mut skipped,
+        &includes,
+        false,
         package_root.as_deref(),
         &buildignore,
         check_test_fixtures,
@@ -138,7 +206,12 @@ pub fn discover_r_files(
     );
     files.sort();
     files.dedup();
-    DiscoveryResult { files, truncated }
+    skipped.entries.sort_by(|a, b| a.0.cmp(&b.0));
+    DiscoveryResult {
+        files,
+        truncated,
+        skipped,
+    }
 }
 
 /// Whether `path` is test data under a package's `tests/` tree rather than
@@ -207,6 +280,9 @@ fn discover_recursive(
     dir: &Path,
     out: &mut Vec<PathBuf>,
     truncated: &mut TruncationReport,
+    skipped: &mut SkippedPaths,
+    includes: &BuildIgnoredIncludes,
+    inherited_buildignore: bool,
     package_root: Option<&Path>,
     buildignore: &[glob::Pattern],
     check_test_fixtures: bool,
@@ -226,19 +302,32 @@ fn discover_recursive(
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
+        let path = entry.path();
+        let directory = file_type.is_dir();
         if file_type.is_symlink() {
+            skipped.record(&path, false, "symlink", limits.max_files);
             continue;
         }
-        let path = entry.path();
         // Apply ry.toml exclude patterns (relative to the config root).
         if has_excludes
             && let Some(anchor) = exclude_root
             && !is_file_eligible_with_excludes(&path, anchor, excludes)
         {
+            skipped.record(&path, directory, "ry.toml exclude", limits.max_files);
             continue;
         }
         // Apply .Rbuildignore patterns (relative to the package root).
-        if package_root.is_some_and(|root| is_rbuildignored(root, &path, buildignore)) {
+        let build_ignored = inherited_buildignore
+            || package_root.is_some_and(|root| {
+                path.ancestors()
+                    .take_while(|p| *p != root)
+                    .any(|ancestor| is_rbuildignored(root, ancestor, buildignore))
+            });
+        if build_ignored
+            && ((directory && includes.patterns.is_empty())
+                || (!directory && !includes.matches(&path)))
+        {
+            skipped.record(&path, directory, ".Rbuildignore", limits.max_files);
             continue;
         }
         if path.is_dir() {
@@ -249,9 +338,16 @@ fn discover_recursive(
                     || (name == "renv" && package_root.is_some())
                     || name.ends_with(".Rcheck"))
             {
+                skipped.record(
+                    &path,
+                    true,
+                    "hidden or generated directory",
+                    limits.max_files,
+                );
                 continue;
             }
             if package_root.is_some_and(|root| is_excluded_package_directory(root, &path)) {
+                skipped.record(&path, true, "package support directory", limits.max_files);
                 continue;
             }
             // depth cap prunes further descent.
@@ -268,6 +364,9 @@ fn discover_recursive(
                 &path,
                 out,
                 truncated,
+                skipped,
+                includes,
+                build_ignored,
                 nested_package_root.as_deref(),
                 &nested_buildignore,
                 check_test_fixtures,
@@ -277,11 +376,11 @@ fn discover_recursive(
                 has_excludes,
                 exclude_root,
             );
-        } else if matches!(
-            path.extension().and_then(|e| e.to_str()),
-            Some("R") | Some("r") | Some("S") | Some("s") | Some("q")
-        ) && (check_test_fixtures || !is_test_fixture(&path))
-        {
+        } else if is_source_path(&path) {
+            if !check_test_fixtures && is_test_fixture(&path) {
+                skipped.record(&path, false, "test fixture", limits.max_files);
+                continue;
+            }
             // max-files cap.
             if out.len() >= limits.max_files {
                 truncated.max_files_hit = true;
@@ -907,6 +1006,96 @@ mod shared_tests {
                 root.join("tests/testthat/test-package.R"),
             ]
         );
+    }
+
+    #[test]
+    fn build_ignored_includes_are_narrow_and_explained() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+        std::fs::write(root.join(".Rbuildignore"), "^vignettes$\n").unwrap();
+        for relative in [
+            "R/main.R",
+            "vignettes/keep.R",
+            "vignettes/drop.R",
+            "vignettes/nested/helper.R",
+            "vignettes/nested/other.R",
+            "vignettes/.hidden/keep.R",
+        ] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "x <- 1L\n").unwrap();
+        }
+        let baseline = discover_r_files(root, Some(root), &ry_config::Config::default(), false);
+        assert_eq!(baseline.files, vec![root.join("R/main.R")]);
+        assert!(
+            baseline
+                .skipped
+                .entries
+                .contains(&(root.join("vignettes"), ".Rbuildignore"))
+        );
+        let config = ry_config::Config {
+            include_build_ignored: vec![
+                "vignettes/keep.R".into(),
+                "vignettes/nested/*.R".into(),
+                "vignettes/.hidden/keep.R".into(),
+            ],
+            exclude: vec!["vignettes/nested/other.R".into()],
+            ..Default::default()
+        };
+        let selected = discover_r_files(root, Some(root), &config, false);
+        assert_eq!(
+            selected.files,
+            vec![
+                root.join("R/main.R"),
+                root.join("vignettes/keep.R"),
+                root.join("vignettes/nested/helper.R")
+            ]
+        );
+        assert!(
+            selected
+                .skipped
+                .entries
+                .contains(&(root.join("vignettes/drop.R"), ".Rbuildignore"))
+        );
+        assert!(
+            selected
+                .skipped
+                .entries
+                .contains(&(root.join("vignettes/nested/other.R"), "ry.toml exclude"))
+        );
+    }
+
+    #[test]
+    fn include_does_not_clear_ignored_ancestor_at_a_nested_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("DESCRIPTION"), "Package: outer\n").unwrap();
+        std::fs::write(root.join(".Rbuildignore"), "^examples$\n").unwrap();
+        let nested = root.join("examples/package");
+        std::fs::create_dir_all(nested.join("R")).unwrap();
+        std::fs::write(nested.join("DESCRIPTION"), "Package: inner\n").unwrap();
+        std::fs::write(nested.join("R/keep.R"), "x <- 1L\n").unwrap();
+        std::fs::write(nested.join("R/drop.R"), "x <- 1L\n").unwrap();
+        let config = ry_config::Config {
+            include_build_ignored: vec!["examples/package/R/keep.R".into()],
+            ..Default::default()
+        };
+        let result = discover_r_files(root, Some(root), &config, false);
+        assert_eq!(result.files, vec![nested.join("R/keep.R")]);
+    }
+
+    #[test]
+    fn skipped_path_report_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [".a", ".b", ".c"] {
+            std::fs::create_dir(dir.path().join(name)).unwrap();
+        }
+        let mut config = ry_config::Config::default();
+        config.index.max_files = 1;
+        let result = discover_r_files(dir.path(), None, &config, false);
+        assert_eq!(result.skipped.entries.len(), 1);
+        assert_eq!(result.skipped.omitted, 2);
     }
 
     #[test]

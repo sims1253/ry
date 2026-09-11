@@ -131,6 +131,9 @@ struct CheckArgs {
     /// `--statistics`). Useful for corpus research and triage.
     #[arg(long)]
     statistics: bool,
+    /// Explain included files and skipped paths on stderr before checking.
+    #[arg(long)]
+    explain_files: bool,
     /// Write the current diagnostics as a line-number-free JSON baseline.
     #[arg(long, value_name = "PATH", conflicts_with = "baseline")]
     write_baseline: Option<PathBuf>,
@@ -156,6 +159,7 @@ impl Default for CheckArgs {
             color: ColorChoice::default(),
             watch: false,
             statistics: false,
+            explain_files: false,
             write_baseline: None,
             baseline: None,
             min_confidence: ConfidenceChoice::default(),

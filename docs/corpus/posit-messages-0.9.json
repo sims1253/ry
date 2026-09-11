@@ -3564,15 +3564,6 @@
       "severity": "warning",
       "message": "variable `x` is not bound in this scope"
     },
-    "styler::RY033::R/rules-line-breaks.R:364:9": {
-      "package": "styler",
-      "code": "RY033",
-      "path": "R/rules-line-breaks.R",
-      "line": 364,
-      "column": 9,
-      "severity": "warning",
-      "message": "comparing `logical` with `character`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
     "tensorflow::RY032::R/install.R:428:6": {
       "package": "tensorflow",
       "code": "RY032",

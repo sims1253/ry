@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Return RY001 warnings from the checker API, matching the rule table and CLI.
+  Keep RY002 length warnings when the condition also contains RY100 (#415).
+
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

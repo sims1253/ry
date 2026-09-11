@@ -1951,3 +1951,36 @@ fn quoted_symbol_existence_does_not_invent_distinct_bindings() {
         );
     }
 }
+
+#[test]
+fn condition_severities_match_the_rule_registry() {
+    for source in [
+        "if (NULL) 1L",
+        "if (c(TRUE, FALSE)) 1L",
+        "while (list(TRUE)) break",
+    ] {
+        let diagnostics = check(source);
+        let condition = diagnostics
+            .iter()
+            .find(|d| matches!(d.code, "RY001" | "RY002"))
+            .unwrap();
+        assert_eq!(
+            condition.severity,
+            crate::rules::find(condition.code).unwrap().default_severity,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn logical_condition_length_survives_nested_math_warning() {
+    let diagnostics = check("if (abs(c(1, 2) > 0) > 0) 1L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY100"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY002"),
+        "{diagnostics:?}"
+    );
+}

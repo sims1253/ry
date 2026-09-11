@@ -1,0 +1,11 @@
+# oracle: must-pass
+d <- data.frame(x = 1L)
+changed <- dplyr::mutate(new = x + 1L, .data = d)
+stopifnot(identical(changed$new, 2L))
+selected <- dplyr::select(x, .data = d)
+stopifnot(identical(selected, d))
+stopifnot(with(expr = x + 1L, data = d) == 2L)
+joined <- dplyr::left_join(y = data.frame(x = 1L, z = 2L), x = d, by = "x")
+stopifnot(identical(joined$z, 2L))
+quoted <- dplyr::vars(1L, .data$column)
+stopifnot(length(quoted) == 2L)

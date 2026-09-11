@@ -1470,3 +1470,79 @@ fn escaped_names_of_all_capture_helpers_add_no_eager_wrapper_diagnostic() {
     // existing diagnostics, without adding RY010 at the valid wrapper call.
     assert_eq!(codes, ["RY090", "RY091"]);
 }
+
+#[test]
+fn named_data_arguments_supply_masks_in_any_position() {
+    for call in [
+        "dplyr::mutate(new = .data$missing, .data = d)",
+        "dplyr::select(.data$missing, .data = d)",
+        "dplyr::transmute(new = .data$missing, .data = d)",
+        "tidyr::pivot_longer(cols = .data$missing, data = d)",
+    ] {
+        let diagnostics = check(&format!("d <- data.frame(x = 1L)\n{call}\n"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+        let valid = call.replace("missing", "x");
+        let diagnostics = check(&format!("d <- data.frame(x = 1L)\n{valid}\n"));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| !matches!(d.code, "RY010" | "RY060" | "RY061")),
+            "{valid}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn tidyselect_without_a_data_formal_keeps_an_unknown_mask() {
+    let diagnostics = check("dplyr::vars(1L, .data$column)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, "RY060" | "RY061")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn data_arguments_are_checked_once_in_the_caller_scope() {
+    for call in [
+        "dplyr::select(missing_data, column)",
+        "dplyr::select(column, .data = missing_data)",
+        "dplyr::transmute(column, .data = missing_data)",
+    ] {
+        let diagnostics = check(call);
+        let unbound: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY010").collect();
+        assert_eq!(unbound.len(), 1, "{call}: {diagnostics:?}");
+        assert!(
+            unbound[0].message.contains("missing_data"),
+            "{diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn named_data_arguments_preserve_result_schemas_and_values() {
+    let (diagnostics, scope) = check_with_scope(
+        "d <- data.frame(x = 1L)\n\
+         changed <- dplyr::mutate(new = x + 1L, .data = d)\n\
+         value <- with(expr = x + 1L, data = d)\n\
+         joined <- dplyr::left_join(y = data.frame(x = 1L, z = 2L), x = d, by = \"x\")\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, "RY010" | "RY060" | "RY061")),
+        "{diagnostics:?}"
+    );
+    assert_eq!(scope.get("value").unwrap().mode, Mode::Integer);
+    for (binding, column) in [("changed", "new"), ("joined", "z")] {
+        let columns = scope.get(binding).unwrap().columns.as_ref().unwrap();
+        assert!(
+            columns.columns.iter().any(|(name, _)| name == column),
+            "{binding}: {columns:?}"
+        );
+    }
+}

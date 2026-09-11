@@ -17,19 +17,20 @@ impl Checker {
     ) -> Option<RType> {
         let sig = self.resolve_schema_sig(name)?;
         let effect = sig.schema_effect?;
-        let first = args.first()?;
-        let data_type = self.infer(&first.value, scope);
+        let data_index = data_mask_source_arg(&sig, args)?;
+        let data_type = self.infer(&args[data_index].value, scope);
         let user_dispatch = self.resolve_user_s3_inherited_sig(name).is_some()
             || self.resolves_user_s3_dispatch(name, &data_type);
-        let mut arg_types = Vec::with_capacity(args.len());
-        arg_types.push(data_type.clone());
+        let mut arg_types = vec![RType::unknown(); args.len()];
+        arg_types[data_index] = data_type.clone();
         if matches!(effect, SchemaEffect::Join) {
-            arg_types.extend(
-                args.iter()
-                    .skip(1)
-                    .map(|argument| self.infer(&argument.value, scope)),
-            );
-            return Some(infer_dplyr_join(&arg_types));
+            for (index, argument) in args.iter().enumerate() {
+                if index != data_index {
+                    arg_types[index] = self.infer(&argument.value, scope);
+                }
+            }
+            let matched = match_args_to_params(&sig.params, args, &arg_types);
+            return Some(infer_dplyr_join(&matched));
         }
 
         let mut local = self.dplyr_data_mask_scope(scope, &data_type);
@@ -38,7 +39,10 @@ impl Checker {
         }
         let mut named_results = Vec::new();
         let mut tidy_args = Vec::new();
-        for (index, argument) in args.iter().enumerate().skip(1) {
+        for (index, argument) in args.iter().enumerate() {
+            if index == data_index {
+                continue;
+            }
             let mode = argument_eval_mode(&sig, args, index).unwrap_or(EvalMode::Normal);
             let injection = argument_supports_injection(&sig, args, index);
             let inferred = match mode {
@@ -71,7 +75,7 @@ impl Checker {
                     named_results.push((column, inferred.clone()));
                 }
             }
-            arg_types.push(inferred);
+            arg_types[index] = inferred;
         }
 
         let result = match effect {
@@ -90,9 +94,10 @@ impl Checker {
                 }
                 result
             }
-            SchemaEffect::ExpressionValue => {
-                arg_types.get(1).cloned().unwrap_or_else(RType::unknown)
-            }
+            SchemaEffect::ExpressionValue => match_args_to_params(&sig.params, args, &arg_types)
+                .get(1)
+                .cloned()
+                .unwrap_or_else(RType::unknown),
             SchemaEffect::Join => unreachable!("joins return before data-mask evaluation"),
             SchemaEffect::Pivot => RType::new(Mode::List, Length::Unknown)
                 .with_class(ClassVector::single("data.frame")),

@@ -1094,9 +1094,8 @@ impl Checker {
         let inherited_sig = self.resolve_user_s3_inherited_sig(lookup_name);
         let inherited_s3_metadata = inherited_sig.is_some();
         let resolved_sig = self.resolve_typeshed_sig(semantic_name).or(inherited_sig);
-        // Formula interfaces can name a later `data` argument as the source
-        // of their data mask. Infer it once up front so earlier `weights`,
-        // `subset`, and similar arguments see the right scope.
+        // Bind and infer data once before visiting masked expressions. R's
+        // named arguments can put the data source after those expressions.
         let supplied_data_mask_source = resolved_sig.as_ref().and_then(|signature| {
             data_mask_source_arg(signature, args).map(|argument_index| {
                 (
@@ -1148,8 +1147,10 @@ impl Checker {
                 .and_then(|(signature, bindings)| eval_mode_for_arg(signature, bindings, index));
             let user_dispatch = inherited_s3_metadata
                 || user_function.is_some()
-                || arg_types
-                    .first()
+                || supplied_data_mask_source
+                    .as_ref()
+                    .map(|(_, data)| data)
+                    .or_else(|| arg_types.first())
                     .is_some_and(|first| self.resolves_user_s3_dispatch(lookup_name, first));
             // The user formal this actual bound to (directly or through
             // `...`), looked up once for both the defusing and quoting
@@ -1216,42 +1217,8 @@ impl Checker {
                     }
                     EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
                     EvalMode::DataMask => {
-                        // A declared source is conditional: without a
-                        // supplied `data` argument, formula extras evaluate
-                        // normally in the caller environment.
-                        // Classify by the first argument's OWN binding, not
-                        // `eval_mode_for_arg`: its `...` fallback would also
-                        // mark a leading data argument masked. Signatures such
-                        // as dplyr `transmute(.data, ...)` declare no eval
-                        // entry on the data formal, only on `...`, and their
-                        // first argument is the data frame at every real call
-                        // site -- the schema mask must survive. A named formal
-                        // counts as masked only through its own entry; an
-                        // argument absorbed by `...` counts through the dots
-                        // entry (ggplot2 `aes()`, tidyr `nesting()`).
-                        let leading_argument_is_masked =
-                            declared_binding
-                                .as_ref()
-                                .is_some_and(|(signature, bindings)| {
-                                    let own_formal = bindings
-                                        .param_for_arg
-                                        .first()
-                                        .and_then(|parameter| {
-                                            parameter.and_then(|index| signature.params.get(index))
-                                        })
-                                        .map(|param| param.name.as_str());
-                                    let own_mode = own_formal
-                                        .and_then(|name| signature.eval.get(name))
-                                        .or_else(|| {
-                                            own_formal
-                                                .is_none()
-                                                .then(|| signature.eval.get("..."))
-                                                .flatten()
-                                        });
-                                    own_mode.is_some_and(|mode| {
-                                        matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
-                                    })
-                                });
+                        // Formula extras evaluate in the caller when their
+                        // declared data argument is absent.
                         let Some(data) = supplied_data_mask_source
                             .as_ref()
                             .map(|(_, data)| data.clone())
@@ -1259,23 +1226,7 @@ impl Checker {
                                 resolved_sig
                                     .as_ref()
                                     .is_some_and(|signature| signature.data_mask_source.is_none())
-                                    .then(|| {
-                                        if leading_argument_is_masked {
-                                            // A signature that data-masks its own
-                                            // leading formals (ggplot2 `aes()`,
-                                            // `vars()`, tidyr `nesting()`) has no
-                                            // data argument at the call site: the
-                                            // mask is unknown and `.data` stays
-                                            // opaque instead of adopting a sibling
-                                            // argument's atomic type.
-                                            RType::unknown()
-                                        } else {
-                                            arg_types
-                                                .first()
-                                                .cloned()
-                                                .unwrap_or_else(RType::unknown)
-                                        }
-                                    })
+                                    .then(RType::unknown)
                             })
                         else {
                             arg_types.push(self.infer_with_injection(&a.value, scope, injection));
@@ -1289,7 +1240,10 @@ impl Checker {
                         self.infer_with_injection(&a.value, &mut local, injection)
                     }
                     EvalMode::TidySelect => {
-                        let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+                        let data = supplied_data_mask_source
+                            .as_ref()
+                            .map(|(_, data)| data.clone())
+                            .unwrap_or_else(RType::unknown);
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
                         if user_dispatch {
                             local = local.with_unknown_data_mask();

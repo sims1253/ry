@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Bind named data arguments before checking data-mask and tidy-select
+  expressions, regardless of their position in a call. Quoting helpers without
+  a data argument keep an unknown mask (#417).
+
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

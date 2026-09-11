@@ -45,7 +45,8 @@ fn accepted_literals_and_invalidated_values_stay_silent() {
 
 #[test]
 fn branch_literal_values_do_not_leak_into_sibling_branches() {
-    let source = "d <- 'TRUE'; if (flag) { d <- 'hello'; if (d) 1L } else { if (d) 1L }";
+    let source =
+        "flag <- TRUE; d <- 'TRUE'; if (flag) { d <- 'hello'; if (d) 1L } else { if (d) 1L }";
     let diagnostics = check(source);
     let invalid: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY001").collect();
     assert_eq!(invalid.len(), 1, "{diagnostics:?}");
@@ -96,4 +97,19 @@ fn method_and_replacement_effects_block_later_literal_claims() {
         diagnostics.iter().any(|d| d.code == "RY001"),
         "{diagnostics:?}"
     );
+}
+
+#[test]
+fn forced_promises_block_later_literal_claims() {
+    for source in [
+        "f <- function(x) { x; e <- 'hello'; if (e) 1L }",
+        "unknown_value; e <- 'hello'; if (e) 1L",
+        include_str!("../../testdata/oracle/literal_conditions_after_promises.R"),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
 }

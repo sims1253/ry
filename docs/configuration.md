@@ -63,6 +63,9 @@ lets CLI discovery and editor indexing check selected files excluded by
 `.Rbuildignore`. It does not override `exclude`, fixture settings, symlink
 rules, hidden or generated directories, or resource limits.
 
+Use `vignettes/**` to include source files throughout that directory;
+`vignettes` alone matches only the directory, not its files.
+
 Run `ry check . --explain-files` to see included files and skipped paths on
 stderr. A skipped directory represents its whole subtree; ry does not scan it
 to count the files inside. Diagnostic output, including JSON, stays on stdout.

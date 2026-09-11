@@ -190,6 +190,7 @@ pub fn discover_r_files(
         .unwrap_or_default();
     discover_recursive(
         walk_root,
+        walk_root,
         &mut files,
         &mut truncated,
         &mut skipped,
@@ -278,6 +279,7 @@ pub(super) fn is_testthat_code_name(name: &str) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn discover_recursive(
     dir: &Path,
+    walk_root: &Path,
     out: &mut Vec<PathBuf>,
     truncated: &mut TruncationReport,
     skipped: &mut SkippedPaths,
@@ -320,7 +322,7 @@ fn discover_recursive(
         let build_ignored = inherited_buildignore
             || package_root.is_some_and(|root| {
                 path.ancestors()
-                    .take_while(|p| *p != root)
+                    .take_while(|p| *p != root && *p != walk_root)
                     .any(|ancestor| is_rbuildignored(root, ancestor, buildignore))
             });
         if build_ignored
@@ -362,6 +364,7 @@ fn discover_recursive(
             };
             discover_recursive(
                 &path,
+                walk_root,
                 out,
                 truncated,
                 skipped,

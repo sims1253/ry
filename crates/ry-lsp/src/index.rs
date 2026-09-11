@@ -10,7 +10,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
+use rayon::prelude::*;
 use ry_config::Config;
 use ry_core::{RParser, SourceFile};
 
@@ -38,21 +40,94 @@ pub(crate) fn index_workspace(root: &Path, config: &Config) -> IndexOutcome {
     }
 }
 
+/// Upper bound on index parse parallelism (see [`index_pool`]).
+const MAX_INDEX_THREADS: usize = 8;
+
+/// Reuse at most eight workers so indexing leaves room for the editor.
+/// If thread creation fails, parse inline instead.
+fn index_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|&threads| threads > 0)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+            .min(MAX_INDEX_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("ry-index-{i}"))
+            .build()
+            .inspect_err(|error| {
+                tracing::warn!(%error, threads, "failed to build index pool; indexing serially");
+            })
+            .ok()
+    })
+    .as_ref()
+}
+
+/// Parse every discovered path on the lazily built [`index_pool`], in
+/// parallel when the pool is available and serially when it is not.
+///
+/// Error tolerance is unchanged from the previous serial loop: a file
+/// that cannot be read or parsed is skipped, never fatal to the index.
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
-    let mut parsed = HashMap::new();
-    let mut parser = match RParser::new() {
-        Ok(p) => p,
-        Err(_) => return parsed,
+    parse_paths_with(paths, index_pool())
+}
+
+/// Parse `paths` with an explicit pool (or `None` to parse inline), so
+/// the serial fallback is exercisable without thread exhaustion.
+///
+/// Mirrors the CLI's `ry-cli::pipeline::parse_files`: each worker reuses
+/// a thread-local `RParser` (tree-sitter parsers are Send but neither
+/// Sync nor cheap to construct, so one per worker is the right
+/// granularity). When no pool could be built, the same per-file logic
+/// runs inline.
+fn parse_paths_with(
+    paths: &[PathBuf],
+    pool: Option<&rayon::ThreadPool>,
+) -> HashMap<String, Arc<SourceFile>> {
+    let parse_one = |path: &PathBuf| {
+        let source = ry_workspace::read_r_source(path).ok()?;
+        let path_str = path.to_string_lossy().into_owned();
+        let file = parse_with_worker_parser(&path_str, &source)?;
+        Some((path_str, Arc::new(file)))
     };
-    for path in paths {
-        let Ok(source) = ry_workspace::read_r_source(path) else {
-            continue;
-        };
-        if let Ok(file) = parser.parse(&path.to_string_lossy(), &source) {
-            parsed.insert(path.to_string_lossy().into_owned(), Arc::new(file));
-        }
+    match pool {
+        Some(pool) => pool.install(|| paths.par_iter().filter_map(parse_one).collect()),
+        None => paths.iter().filter_map(parse_one).collect(),
     }
-    parsed
+}
+
+/// Parse one file with this worker thread's cached parser, constructing
+/// it on first use. A construction failure skips this file (and leaves
+/// the slot empty so the next file retries) rather than failing the
+/// whole index.
+fn parse_with_worker_parser(path: &str, source: &str) -> Option<SourceFile> {
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<RParser>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    PARSER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        let parser = match slot.as_mut() {
+            Some(parser) => parser,
+            None => match RParser::new() {
+                Ok(parser) => slot.insert(parser),
+                Err(error) => {
+                    tracing::warn!(path, %error, "index parser init failed; skipping file");
+                    return None;
+                }
+            },
+        };
+        match parser.parse(path, source) {
+            Ok(file) => Some(file),
+            Err(error) => {
+                tracing::debug!(path, %error, "index parse failed; skipping file");
+                None
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -147,6 +222,58 @@ mod tests {
             !paths.iter().any(|p| p.ends_with("skip.R")),
             "target/ must be skipped"
         );
+    }
+
+    /// The serial fallback used when no index pool can be built must
+    /// still land every parseable file in the map.
+    #[test]
+    fn serial_index_without_pool_parses_every_file() {
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
+        let paths: Vec<PathBuf> = (0..5)
+            .map(|i| {
+                let path = dir.join(format!("s{i}.R"));
+                std::fs::write(&path, format!("y_{i} <- {i}\n")).unwrap();
+                path
+            })
+            .collect();
+
+        let files = parse_paths_with(&paths, None);
+
+        assert_eq!(files.len(), paths.len(), "every file must be indexed");
+        for path in &paths {
+            assert!(
+                files.contains_key(&path.to_string_lossy().into_owned()),
+                "{} missing",
+                path.display()
+            );
+        }
+    }
+
+    /// Parallel parsing on the bounded pool must land every parseable
+    /// file in the map regardless of how rayon splits the work across
+    /// workers (each worker owns its own thread-local parser).
+    #[test]
+    fn parallel_index_parses_every_file() {
+        let fixture = ry_testkit::FixtureProject::empty().unwrap();
+        let dir = fixture.root();
+        let count = 33;
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:02}.R")), format!("x_{i} <- {i}\n")).unwrap();
+        }
+        let config = Config::default();
+        let outcome = index_workspace(dir, &config);
+        assert_eq!(outcome.files.len(), count, "every file must be indexed");
+        for i in 0..count {
+            assert!(
+                outcome.files.contains_key(
+                    &dir.join(format!("f{i:02}.R"))
+                        .to_string_lossy()
+                        .into_owned()
+                ),
+                "f{i:02}.R missing"
+            );
+        }
     }
 
     /// Truncated state must be exposed to tests.

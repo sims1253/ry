@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "292fe6ae95b1ee8a2c67b1f9d6290ae119e2c109f768fd9d2e542a41e241a1ed",
-  "ry_commit": "c974a96fd4bc9e1f5d354c590105b327af9b6a4e",
+  "source_sha256": "a2f80bd0712056f9da28f910db7b4378df36c4e643217c1b284fc87140759477",
+  "ry_commit": "01a255cf6d69d9e1b88770f3490b7e8d3e4311a0",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -12,7 +12,7 @@
       "repo": "tidyverse/ggplot2",
       "stars": 6982,
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 45
+      "diagnostics": 42
     },
     {
       "name": "shiny-r",
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 87
+      "diagnostics": 10
     },
     {
       "name": "blogdown",
@@ -89,7 +89,7 @@
       "repo": "rstudio/renv",
       "stars": 1160,
       "commit": "a3f8952cf8f4b9cd6e676805431cb81ca5a24b64",
-      "diagnostics": 57
+      "diagnostics": 49
     },
     {
       "name": "tinytex",
@@ -124,7 +124,7 @@
       "repo": "r-lib/usethis",
       "stars": 919,
       "commit": "5f60819dc5dee7071d6e67cfa1fd934bb665466c",
-      "diagnostics": 8
+      "diagnostics": 7
     },
     {
       "name": "keras3",
@@ -166,14 +166,14 @@
       "repo": "r-lib/pkgdown",
       "stars": 772,
       "commit": "179cfaee3d4e17eaa9e7d7c700b1269dc62e4d46",
-      "diagnostics": 9
+      "diagnostics": 6
     },
     {
       "name": "styler",
       "repo": "r-lib/styler",
       "stars": 770,
       "commit": "d3d7854df2d73f539b6cb2286dbf5dddaf3e58f6",
-      "diagnostics": 6
+      "diagnostics": 5
     },
     {
       "name": "glue",
@@ -229,7 +229,7 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 12
+      "diagnostics": 11
     },
     {
       "name": "torch",
@@ -1552,15 +1552,6 @@
     },
     {
       "package": "ggplot2",
-      "code": "RY001",
-      "path": "R/bin.R",
-      "line": 101,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "reassign-scope"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY010",
       "path": "R/facet-.R",
       "line": 1074,
@@ -1903,24 +1894,6 @@
     },
     {
       "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 164,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY061",
-      "path": "R/geom-boxplot.R",
-      "line": 166,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY100",
       "path": "tests/testthat/test-axis-secondary.R",
       "line": 36,
@@ -1976,704 +1949,11 @@
     {
       "package": "gt",
       "code": "RY010",
-      "path": "R/data_color.R",
-      "line": 1520,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/data_color.R",
-      "line": 1520,
-      "column": 35,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
       "path": "R/dt_summary.R",
       "line": 176,
       "column": 59,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 166,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 167,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 167,
-      "column": 31,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 184,
-      "column": 21,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 184,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 214,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 215,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 216,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 254,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 254,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 277,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 277,
-      "column": 26,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 296,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 296,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 312,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 312,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 332,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 332,
-      "column": 35,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 353,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 353,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 375,
-      "column": 38,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 394,
-      "column": 3,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 409,
-      "column": 10,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 409,
-      "column": 37,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/fmt.R",
-      "line": 503,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 5399,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 5400,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 5403,
-      "column": 18,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 5405,
-      "column": 32,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9078,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9079,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9558,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9559,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9560,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 9561,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/format_data.R",
-      "line": 10832,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/helpers.R",
-      "line": 747,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/helpers.R",
-      "line": 750,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/helpers.R",
-      "line": 760,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/helpers.R",
-      "line": 761,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/helpers.R",
-      "line": 762,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 494,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 497,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 594,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 743,
-      "column": 29,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 743,
-      "column": 60,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 746,
-      "column": 12,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 943,
-      "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 1083,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 1100,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 1112,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/info_tables.R",
-      "line": 1650,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/opts.R",
-      "line": 121,
-      "column": 49,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/opts.R",
-      "line": 131,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/render_as_i_html.R",
-      "line": 928,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/render_as_i_html.R",
-      "line": 928,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 441,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 442,
-      "column": 18,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 471,
-      "column": 24,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 475,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 476,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 479,
-      "column": 31,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 483,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 484,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 493,
-      "column": 31,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 497,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 499,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 499,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 636,
-      "column": 24,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 640,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 642,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 645,
-      "column": 31,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 650,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 651,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "gt",
-      "code": "RY010",
-      "path": "R/utils.R",
-      "line": 651,
-      "column": 42,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "gt",
@@ -3392,35 +2672,8 @@
       "path": "R/templates.R",
       "line": 57,
       "column": 5,
-      "label": "true_positive",
+      "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 24,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 25,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "pkgdown",
-      "code": "RY070",
-      "path": "tests/testthat/helper.R",
-      "line": 26,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "pkgdown",
@@ -3488,24 +2741,6 @@
     {
       "package": "renv",
       "code": "RY001",
-      "path": "R/bootstrap.R",
-      "line": 800,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/cache.R",
-      "line": 538,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
       "path": "R/parse.R",
       "line": 3,
       "column": 7,
@@ -3515,47 +2750,11 @@
     {
       "package": "renv",
       "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1153,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "R/snapshot.R",
-      "line": 1158,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
       "path": "R/utils.R",
       "line": 90,
       "column": 9,
       "label": "false_positive",
       "audit_group": "delayed-assign"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 16,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "renv",
-      "code": "RY001",
-      "path": "inst/resources/activate.R",
-      "line": 960,
-      "column": 9,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
     },
     {
       "package": "renv",
@@ -3981,24 +3180,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 367,
-      "column": 12,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "renv",
-      "code": "RY070",
-      "path": "R/package.R",
-      "line": 370,
-      "column": 25,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "reticulate",
       "code": "RY001",
       "path": "R/py_require.R",
@@ -4141,15 +3322,6 @@
       "column": 28,
       "label": "false_positive",
       "audit_group": "test-fixture"
-    },
-    {
-      "package": "rlang",
-      "code": "RY070",
-      "path": "tests/testthat/helper-locale.R",
-      "line": 134,
-      "column": 5,
-      "label": "true_positive",
-      "audit_group": "manual-audit"
     },
     {
       "package": "rlang",
@@ -4746,15 +3918,6 @@
       "audit_group": "test-fixture"
     },
     {
-      "package": "styler",
-      "code": "RY033",
-      "path": "R/rules-line-breaks.R",
-      "line": 364,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "data-masking-nse"
-    },
-    {
       "package": "tensorflow",
       "code": "RY032",
       "path": "R/install.R",
@@ -5169,15 +4332,6 @@
       "audit_group": "manual-audit"
     },
     {
-      "package": "usethis",
-      "code": "RY092",
-      "path": "R/utils-github.R",
-      "line": 131,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "dbplyr",
       "code": "RY091",
       "path": "tests/testthat/test-backend-.R",
@@ -5233,36 +4387,46 @@
     }
   ],
   "classification": {
-    "true_positive": 43,
-    "false_positive": 489,
+    "true_positive": 37,
+    "false_positive": 401,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 262,
-    "data-masking-nse": 2,
+    "manual-audit": 184,
+    "data-masking-nse": 1,
     "delayed-assign": 15,
     "function-shadowing": 3,
     "local-closure-forward-ref": 19,
     "namespace-on-load": 46,
     "numeric-if-idiom": 3,
-    "reassign-scope": 10,
+    "reassign-scope": 9,
     "s3-method-dispatch": 3,
     "test-fixture": 71,
-    "type-narrowing": 67,
-    "upstream-package": 31
+    "type-narrowing": 57,
+    "upstream-package": 27
   },
   "notes": [
+    "Combined #438 and #440 retain 438 findings: 37 true positives and 401 false positives. The merged reports remove exactly the five reviewed false positives from the fixed main baseline fd48562; no identities are added.",
+    "Call-position-aware forwarding removes four reviewed renv false positives: RY001 at R/snapshot.R:1153:7 and :1158:7, and RY070 at R/package.R:367:12 and :370:25. The callers replace their NULL defaults before the wrapped or loop-nested calls: type comes from snapshot settings and callback becomes a function. These defaults no longer describe the forwarded values. The full pinned comparison adds no identities and retains all 37 true positives.",
+    "Union subset precision removes the reviewed styler RY033 false positive at R/rules-line-breaks.R:364:9. first_arg is a scalar subset index, so lag(pd$token)[first_arg] is not a proven vector condition. Runtime and checker controls cover a union scalar comparison and retain a genuine two-element condition error. The full pinned comparison adds no identities and retains all 37 true positives.",
     "Hermetic moving 0.9 ledger, regenerated after the RY032 cleanup from the exact full 62-package run with RY_NO_INSTALLED_LIBRARIES=1.",
     "The RY032 cleanup produced a zero diagnostic identity delta from the measured starting-tree baseline. Later intentional behavior changes must update this ledger with a reviewed identity diff.",
     "Every identity has a retained or manually audited label; this strict ledger is a CI gate, not an audit transcript.",
     "The sole force-contract identity delta removes gt RY098 at R/cols_align.R:198:17, retaining its existing reviewed false-positive classification. This is a conservative coverage reduction for the col_classes default after opaque names()/index selection, not a runtime disproof of recursion when that default is omitted. Full hermetic regeneration preserves every other finding; stale per-package summary counts were recomputed from the same reports.",
-    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829\u2013832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged.",
+    "Constructor provenance guards remove four previously reviewed RY061 false positives in rlang tests/testthat/test-nse-defuse.R:829–832. The custom S3 result stays unknown when the class constructor cannot be proved; the rest of the CI identity set is unchanged.",
     "The grid export inventory removes four ggplot2 RY010 false positives: is.unit at R/guide-axis-stack.R:35:25 and R/guide-custom.R:44:23 and :45:24, and is.grob at R/guide-custom.R:43:22. These callback names resolve through the package NAMESPACE import(grid). All other reviewed identities, including all 43 true positives, are unchanged.",
     "Unproven factor/new calls now discard downstream facts because the callee or skipped arguments may change caller bindings. This reduces coverage by ten previously audited dplyr identities: RY002 test-mutate.R:793 and test-summarise.R:321/331; RY040 test-count-tally.R:139/173/214/245 and test-mutate.R:408/410; RY060 test-mutate.R:794 (all under tests/testthat/). These are conservative coverage losses after uncertain bare factor calls, not ten individually corrected false positives. Their existing false-positive labels are unchanged; all 43 required true positives remain covered.",
     "Conservative switch provenance and selected-effect handling removes 31 previously audited false-positive identities: bslib 12, cli 6, shinydashboard 5, pak 3, rlang 3, gt 1, and rmarkdown 1. These are coverage changes where switch selection or caller effects cannot be proved, not 31 individually established semantic corrections. The exact pinned 62-package parent comparison adds no findings and preserves all 43 required true positives.",
     "Registered S3 methods no longer lend return types to receivers without a matching class; uncertain registered dispatch stays opaque instead of falling through to a scalar default. The full pinned comparison removes three previously reviewed false-positive identities: broom RY061 at R/gmm.R:96:11 and lintr RY060 at tests/testthat/test-linter_tags.R:172:24 and :178:15. No identities are added and all 43 true positives remain. The existing rlang RY001 at R/trace.R:531:7 retains its identity with an opaque rather than logical condition mode in its message.",
     "Truthful polymorphic regmatches returns remove seven reviewed RY105 false positives: bookdown R/html.R:878:9, :965:9, :1069:9, :1138:9 and R/utils.R:441:9; flexdashboard R/flex_dashboard.R:633:9; rmarkdown R/html_dependencies.R:245:9. These guards inspect variable-length character vectors from gregexpr/regexec match lists, not known scalar strings. Runtime oracle controls cover empty and multiple-match elements; all required true positives remain covered.",
-    "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43\u201355 and 58\u201372, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes.",
-    "Verified htmltools tags and the identical shiny re-export remove 87 RY010 false positives under explicit namespace/import lookup: bslib 53, shinydashboard 31, shiny-r 2, and flexdashboard 1. The source values are lists of tag constructors; no ambient global or constructor-result schema is added. The full pinned comparison adds no findings and preserves all 43 true positives."
+    "The verified grep contract removes 29 reviewed RY033 false positives: recipes tests/testthat/test-skipping.R lines 43–55 and 58–72, and styler R/roxygen-examples-add-remove.R:57:25. Each compares character values returned by grep(value = TRUE). The full pinned comparison adds no identities and retains all 43 true positives. The same source sync includes truthful fold and confint contracts and ggplot2 injection metadata, which add no other Posit identity changes.",
+    "Verified htmltools tags and the identical shiny re-export remove 87 RY010 false positives under explicit namespace/import lookup: bslib 53, shinydashboard 31, shiny-r 2, and flexdashboard 1. The source values are lists of tag constructors; no ambient global or constructor-result schema is added. The full pinned comparison adds no findings and preserves all 43 true positives.",
+    "The condition-coercion audit corrects four renv RY001 identities previously labeled true_positive in upstream-package: R/bootstrap.R:800:7, R/cache.R:538:7, and inst/resources/activate.R:16:7 and :960:9, at pin a3f8952cf8f4b9cd6e676805431cb81ca5a24b64. Each tests a scalar Sys.getenv result with unset=\"FALSE\" or \"TRUE\". R accepts these strings in if conditions; an unknown user value is not proof of an invalid condition. Exact pinned assignment/condition probes accept defaults and TRUE/FALSE while garbage raises the expected error. The four labels were therefore false positives under the uncertainty policy, not unconditional runtime errors. This rule does not guarantee arbitrary environment values are valid. Full pinned comparison removes exactly these four identities, adds none, and retains every other finding. Proven invalid literals remain tested by the condition-coercion fixtures.",
+    "The bounded default-parameter false-branch refinement removes two reviewed ggplot2 RY061 false positives at R/geom-boxplot.R:164:19 and :166:7. Only a default-derived type wholly excluded by a false mode predicate is relaxed; explicit class predicates are excluded and reassignment clears the marker. The pinned corpus comparison removes exactly these two identities and adds none; all true-positive identities remain unchanged.",
+    "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved.",
+    "Function-mode call-head lookup removes four RY070 identities. rlang tests/testthat/helper-locale.R:134:5 called skip() past a local logical skip; R resolves the head to testthat::skip (probe: with testthat attached the call raises testthat's skip control condition, never an error), so the prior true_positive label -- assigned in the audit batch documented in docs/corpus/pre-governance-measurement.md with the ordinary-lookup rationale \"a local logical skip shadows the function\" -- was a mislabel and the finding was a false positive. pkgdown tests/testthat/helper.R:24-26 called path() past the NULL formal of local_pkgdown_site; pkgdown's NAMESPACE import(fs) binds fs::path, and R's function-mode lookup skips the NULL formal (probe: fs::path runs); their recorded false_positive labels were correct. All other identities are unchanged, including pkgdown R/templates.R:57:5, which still fires because import(fs) is not enumerable hermetically (fs ships no stub; issue #366); its true_positive label was assigned with the same shadowing rationale and is flagged to the maintainers for review under function-mode semantics, not relabeled here. Remaining RY070 messages gain the function-mode wording.",
+    "Audit correction: pkgdown R/templates.R:57:5 RY070 was labeled true_positive in the pre-governance audit batch with the ordinary-lookup rationale 'a local path <- NULL shadows the function'. R's call-head lookup is function-mode: in a namespace-faithful evaluation of the exact pinned function (pkgdown 179cfaee3d4e, templates_dir), with NAMESPACE import(fs) bindings and template.path/template.package unset, line 57 resolves past the local NULL binding to fs::path and returns an fs_path; a base-only negative control errors 'could not find function path' (R 4.6.1; evidence scripts in the review record). The finding is a false positive at package runtime. The diagnostic still fires hermetically because fs ships no embedded stub (issue #366); the record, audit group, reports, and messages are unchanged and the finding remains emitted - only the label and derived classification counts change (true_positive 42->41, false_positive 486->487; totals, identities, and source_sha256 unchanged).",
+    "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved."
   ]
 }

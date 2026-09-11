@@ -2,7 +2,7 @@
   "name": "ry-checker",
   "displayName": "ry - R Type Checker",
   "description": "Static type checker for R.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "publisher": "scholzmx",
   "license": "MIT",
   "homepage": "https://github.com/sims1253/ry",
@@ -58,7 +58,8 @@
     "compile-tests": "tsc -p tsconfig.test.json --outDir out",
     "test": "node test/installed.cjs",
     "pretest": "npm run compile-tests && npm run compile",
-    "vscode:prepublish": "npm run compile",
+    "compile:production": "node esbuild.js --production",
+    "vscode:prepublish": "npm run compile:production",
     "vsce-package": "vsce package -o ry.vsix --no-dependencies"
   },
   "contributes": {

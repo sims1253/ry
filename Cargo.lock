@@ -1262,7 +1262,7 @@ dependencies = [
 [[package]]
 name = "rds2rust"
 version = "0.2.0"
-source = "git+https://github.com/sims1253/rds2rust?rev=5376fded908444695bf0193f41f7759a98fa953e#5376fded908444695bf0193f41f7759a98fa953e"
+source = "git+https://github.com/sims1253/rds2rust?rev=6d4014b316e465024d99fe30c0e8b424ce11cca1#6d4014b316e465024d99fe30c0e8b424ce11cca1"
 dependencies = [
  "byteorder",
  "flate2",
@@ -1357,7 +1357,7 @@ dependencies = [
 
 [[package]]
 name = "ry-checker"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "criterion",
  "hashbrown 0.17.1",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "ry-cli"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "ry-config"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "glob",
  "miette",
@@ -1416,7 +1416,7 @@ dependencies = [
 
 [[package]]
 name = "ry-core"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "serde",
  "thiserror",
@@ -1427,9 +1427,10 @@ dependencies = [
 
 [[package]]
 name = "ry-lsp"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "proptest",
+ "rayon",
  "ry-checker",
  "ry-config",
  "ry-core",
@@ -1446,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "ry-testkit"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1457,8 +1458,9 @@ dependencies = [
 
 [[package]]
 name = "ry-typeshed"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
+ "flate2",
  "serde",
  "serde_json",
  "tempfile",
@@ -1467,7 +1469,7 @@ dependencies = [
 
 [[package]]
 name = "ry-workspace"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "bzip2",
  "flate2",

@@ -142,6 +142,26 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "failed version probes are retried, never cached",
+  async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-failprobe-"));
+    try {
+      const binary = path.join(dir, "ry");
+      // A spawn that fails (non-zero exit) must not pin an unknown
+      // version for the binary's lifetime: the next restart retries.
+      fs.writeFileSync(binary, `#!/bin/sh\necho run >> "$0.marker"\nexit 1\n`, {
+        mode: 0o755,
+      });
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
 it("returns an unknown version when the executable is missing", async () => {
   expect(
     await Effect.runPromise(getRyVersion("/nonexistent/ry")),
@@ -162,23 +182,43 @@ it("keeps process failures in the typed error channel", async () => {
 });
 
 it.skipIf(process.platform === "win32")(
-  "CLI effects are lazy and reusable",
+  "CLI effects are lazy and reusable, with cached version probes",
   async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
     try {
       const binary = path.join(dir, "ry");
-      const marker = path.join(dir, "invocations");
       fs.writeFileSync(
         binary,
         `#!/bin/sh\necho run >> "$0.marker"\necho '{"version":"0.9.0"}'\n`,
         { mode: 0o755 },
       );
+      fs.utimesSync(binary, 1_700_000_000, 1_700_000_000);
       const probe = getRyVersion(binary);
       expect(fs.existsSync(binary + ".marker")).toBe(false);
       await Effect.runPromise(probe);
-      await Effect.runPromise(probe);
-      fs.renameSync(binary + ".marker", marker);
-      expect(fs.readFileSync(marker, "utf8")).toBe("run\nrun\n");
+      expect(await Effect.runPromise(probe)).toEqual({
+        major: 0,
+        minor: 9,
+        patch: 0,
+      });
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\n");
+      const stats = fs.statSync(binary);
+      const replacement = binary + ".new";
+      fs.writeFileSync(
+        replacement,
+        fs.readFileSync(binary, "utf8").replace("0.9.0", "0.9.1"),
+        { mode: 0o755 },
+      );
+      fs.utimesSync(replacement, stats.atime, stats.mtime);
+      fs.renameSync(replacement, binary);
+      expect(fs.statSync(binary).size).toBe(stats.size);
+      expect(fs.statSync(binary).mtimeMs).toBe(stats.mtimeMs);
+      expect(await Effect.runPromise(probe)).toEqual({
+        major: 0,
+        minor: 9,
+        patch: 1,
+      });
+      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

@@ -1027,6 +1027,59 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 }
 
 #[test]
+fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
+    // Generated from two distinct self-referential R environments wrapped
+    // in pairlists. The decoder must not compare their cyclic graphs in dedup.
+    // Regenerate in tests/fixtures/ with R:
+    // a <- new.env(parent = emptyenv()); a$self <- a
+    // b <- new.env(parent = emptyenv()); b$self <- b
+    // x <- pairlist(a); y <- pairlist(b)
+    // save(x, y, file = "cyclic-pairlists.rda", version = 2, compress = FALSE)
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(
+        pkg.join("DESCRIPTION"),
+        "Package: cycleprobe\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::create_dir(pkg.join("R")).unwrap();
+    fs::create_dir(pkg.join("data")).unwrap();
+    fs::write(pkg.join("R/probe.R"), "x\ny\nnot_a_bound_cycle_symbol\n").unwrap();
+    fs::write(
+        pkg.join("data/cyclic-pairlists.rda"),
+        include_bytes!("fixtures/cyclic-pairlists.rda"),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args([
+            "check",
+            pkg.to_str().unwrap(),
+            "--output-format",
+            "json",
+            "--exit-zero",
+        ])
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "checker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "RY010");
+    assert_eq!(diagnostics[0]["line"], 3);
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not_a_bound_cycle_symbol")
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("degraded scope"));
+}
+
+#[test]
 fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
     // Over-cap end-to-end: an over-cap serialized data file must (1) fall
     // back to its file-stem binding instead of disabling RY010 project-wide,

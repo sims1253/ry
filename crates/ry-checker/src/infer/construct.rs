@@ -363,27 +363,18 @@ impl Checker {
             return RType::new(Mode::Null, Length::Zero);
         }
         let mut mode = Mode::Null;
-        let mut total_len: usize = 0;
-        // A union arg would win the coerce-rank ladder and leave `mode ==
-        // Union`, which `RType::new` then turns into a malformed union.
-        // Track it and degrade to opaque at the end.
-        let mut saw_union = false;
+        let mut total_len = Some(0usize);
         for t in arg_types {
-            if matches!(t.mode, Mode::Union) {
-                saw_union = true;
-                continue;
-            }
-            mode = mode.combine_result(t.mode);
-            total_len = total_len.saturating_add(match t.length {
-                Length::Zero => 0,
-                Length::One => 1,
-                Length::Known(n) => n,
-                Length::Unknown => {
-                    return RType::new(
-                        if saw_union { Mode::Opaque } else { mode },
-                        Length::Unknown,
-                    );
-                }
+            mode = mode.combine_result(if t.mode == Mode::Union {
+                Mode::Opaque
+            } else {
+                t.mode
+            });
+            total_len = total_len.and_then(|total| match t.length {
+                Length::Zero => Some(total),
+                Length::One => total.checked_add(1),
+                Length::Known(n) => total.checked_add(n),
+                Length::Unknown => None,
             });
         }
         let length = if args
@@ -392,9 +383,14 @@ impl Checker {
         {
             Length::Unknown
         } else {
-            Length::Known(total_len)
+            total_len.map_or(Length::Unknown, Length::Known)
         };
-        RType::new(if saw_union { Mode::Opaque } else { mode }, length)
+        let result = RType::new(mode, length);
+        if mode == Mode::Opaque {
+            result.with_class(ClassVector::unknown())
+        } else {
+            result
+        }
     }
 
     /// Infer the type of `list(...)`: a list whose length equals the
@@ -758,6 +754,12 @@ impl Checker {
                 )
                 .unwrap_or(length);
                 let mut result = RType::new(mode, length);
+                if c.class.is_empty() && mode == Mode::Opaque {
+                    // An opaque return without a class entry knows nothing
+                    // about the class; absent metadata must not read as a
+                    // proven-empty class vector (see `json_rtype_scalar`).
+                    result.class = ClassVector::unknown();
+                }
                 if !c.class.is_empty() {
                     let refs: Vec<&str> = c.class.iter().map(String::as_str).collect();
                     result = result.with_class(ClassVector::from_slice(&refs));

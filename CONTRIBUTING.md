@@ -77,6 +77,8 @@ Stubs live in the standalone
 runs the auditing and stub generation.
 `scripts/sync_typeshed.sh <checkout>` vendors a snapshot into
 `crates/ry-typeshed/vendor` and validates it with `ry typeshed validate`.
+Register new packages in `crates/ry-typeshed/packages.txt`; its order controls
+signature lookup.
 
 ## Editor extensions
 

@@ -756,6 +756,12 @@ impl Checker {
         }
         self.available_package_names()
             .find_map(|pkg| {
+                // Cheap prefilter: an embedded stub that ships no S3
+                // methods cannot match, and skipping it avoids parsing
+                // the package on this scan.
+                if !self.package_may_declare_s3(pkg) {
+                    return None;
+                }
                 self.package_typeshed(pkg)
                     .and_then(|typeshed| typeshed.s3_methods.get(&key))
                     .cloned()
@@ -795,6 +801,10 @@ impl Checker {
                 || self.typeshed.s3_methods.contains_key(&default_key)
                 || self.external_s3_methods.contains(&default_key)
                 || self.available_package_names().into_iter().any(|pkg| {
+                    // Cheap prefilter: same S3 gate as `s3_lookup_method`.
+                    if !self.package_may_declare_s3(pkg) {
+                        return false;
+                    }
                     self.package_typeshed(pkg)
                         .is_some_and(|typeshed| typeshed.s3_methods.contains_key(&default_key))
                 })

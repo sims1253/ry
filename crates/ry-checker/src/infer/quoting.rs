@@ -1,54 +1,96 @@
 //! Forwarded promises and guaranteed evaluation of lazy defaults.
 
 use super::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt};
 use std::ops::ControlFlow;
 
-/// Walk `stmts` collecting calls inside `caller`'s body that forward its
-/// `params` to nested calls. Skips nested function bodies: a nested
-/// function has its own formals and is collected separately when it has
-/// a binding.
+/// Collect forwarded parameters, pruning nested function bodies.
 pub(crate) fn collect_forwarded_calls_in_stmts(
     caller: &str,
     params: &[Param],
     stmts: &[Stmt],
     calls: &mut Vec<ForwardedCall>,
 ) {
-    let _ = walk_stmts(
-        stmts,
-        Walk {
-            fn_bodies: false,
-            ..Walk::ALL
-        },
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-                && let Expr::Ident { name, .. } = func.as_ref()
-                && args.iter().any(|argument| {
-                    matches!(&argument.value, Expr::Ident { name, .. }
-                        if params.iter().any(|parameter| parameter.name == *name))
-                })
-            {
-                let callee = crate::semantic_lists::bare_name(name);
-                calls.push(ForwardedCall {
-                    caller: caller.to_string(),
-                    callee: callee.to_string(),
-                    stub_callee: name.clone(),
-                    caller_params: params.to_vec(),
-                    arguments: args
-                        .iter()
-                        .map(|argument| {
-                            let forwarded = match &argument.value {
-                                Expr::Ident { name, .. } => Some(name.clone()),
-                                _ => None,
-                            };
-                            (argument.name.clone(), forwarded)
-                        })
-                        .collect(),
-                });
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
+    for statement in stmts {
+        let _ = walk_stmt(
+            statement,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::Call { func, args, span }) = node
+                    && let Expr::Ident { name, .. } = func.as_ref()
+                    && args.iter().any(|argument| {
+                        matches!(&argument.value, Expr::Ident { name, .. }
+                            if params.iter().any(|parameter| semantic_argument_name(&parameter.name) == semantic_argument_name(name)))
+                    })
+                {
+                    let callee = crate::semantic_lists::bare_name(name);
+                    calls.push(ForwardedCall {
+                        caller: caller.to_string(),
+                        callee: callee.to_string(),
+                        stub_callee: name.clone(),
+                        caller_params: params.to_vec(),
+                        arguments: args
+                            .iter()
+                            .map(|argument| {
+                                let forwarded = match &argument.value {
+                                    Expr::Ident { name, .. } => Some(name.clone()),
+                                    _ => None,
+                                };
+                                (argument.name.clone(), forwarded)
+                            })
+                            .collect(),
+                        call_start: span.start,
+                    });
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+    }
+}
+
+/// A preceding local write may replace the default. Source order excludes writes
+/// after the call, but does not prove execution or model deferred forcing.
+pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: usize) -> bool {
+    fn target_name(mut target: &Expr) -> Option<&str> {
+        loop {
+            target = match target {
+                Expr::Ident { name, .. } => return Some(semantic_argument_name(name)),
+                Expr::Index { base, .. } => base,
+                Expr::Call { args, .. } => &args.first()?.value,
+                _ => return None,
+            };
+        }
+    }
+    let source = semantic_argument_name(source);
+    body.iter().any(|statement| {
+        walk_stmt(statement, Walk { fn_bodies: false, ..Walk::ALL }, |node, _| {
+            let assigned = match node {
+                AstNode::Stmt(Stmt::Assign { target, value, span }) if span.end <= call_start => {
+                    // A statement-level superassignment carries a marker with
+                    // the whole statement's span. An inner marker, as in
+                    // `bins <- (other <<- 1L)`, still leaves a local write.
+                    if matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, span: marker_span, .. } if marker_span == span) {
+                        None
+                    } else {
+                        target_name(target)
+                    }
+                }
+                AstNode::Expr(Expr::BinOp { op: BinOpKind::Assign, lhs, span, .. }) if span.end <= call_start => target_name(lhs),
+                AstNode::Stmt(Stmt::For { name, iter, .. }) if span_of(iter).end <= call_start => Some(semantic_argument_name(name)),
+                AstNode::Expr(Expr::Call { func, args, span }) if span.end <= call_start
+                    && matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(crate::semantic_lists::bare_name(name), "assign" | "delayedAssign")) => {
+                    args.iter().find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some("x"))
+                        .or_else(|| args.iter().find(|arg| arg.name.is_none()))
+                        .and_then(|arg| match &arg.value { Expr::String(name, _) => Some(name.as_str()), _ => None })
+                }
+                _ => None,
+            };
+            if assigned == Some(source) { ControlFlow::Break(()) } else { ControlFlow::Continue(Descend::Into) }
+        }).is_break()
+    })
 }
 
 impl Checker {

@@ -63,11 +63,60 @@ impl ConditionContext {
     }
 }
 
+/// R's `if`/`while` coercion accepts more than logical scalars: numeric
+/// and raw values coerce numerically, a complex scalar coerces by OR
+/// over its real and imaginary components, and a character scalar
+/// coerces only when its text is one of the eight accepted literals
+/// (see `r_condition_string_is_accepted`). A scalar of these modes whose
+/// value is not statically known MAY therefore be a valid condition, so
+/// the type alone does not prove it invalid — this is an uncertainty
+/// boundary, not a validity claim: the untracked value may equally be a
+/// runtime error (non-literal character text, or NA values such as
+/// `NA_complex_`, which `if` rejects in the "not interpretable" family;
+/// the logical-`NA` condition error is #354 and stays out of scope).
+/// Proven-wrong lengths stay wrong regardless of mode: a zero-length
+/// condition errors ("argument is of length zero") and a known length
+/// above one errors ("the condition has length > 1").
+fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
+    matches!(t.mode, Mode::Character | Mode::Complex | Mode::Raw)
+        && matches!(t.length, Length::One | Length::Unknown)
+}
+
+/// The decoded text of a direct string-literal condition, or `None` for
+/// any other shape. The parser decodes escapes and raw strings when it
+/// builds `Expr::String`, so `"\x54RUE"`, `"\124RUE"`, and `r"(TRUE)"`
+/// all compare as `"TRUE"` — matching R, which decodes the literal
+/// before coercion. The parser drops redundant parentheses, so
+/// `(("TRUE"))` still reaches this helper as a direct literal.
+fn condition_string_literal(cond: &Expr) -> Option<&str> {
+    match cond {
+        Expr::String(value, _) => Some(value),
+        _ => None,
+    }
+}
+
+/// Whether R's `if`/`while` coercion accepts this character text. The
+/// runtime path matches exactly these eight spellings; every other
+/// string — including `"NA"`, `"1"`, `""`, and whitespace-padded
+/// variants — errors with "argument is not interpretable as logical".
+/// Note the `"NA"` boundary: `as.logical("NA")` itself returns `NA`
+/// without error, and it is USING that logical `NA` as a condition that
+/// errors with "missing value where TRUE/FALSE needed" (#354, out of
+/// scope here). The `if`/`while` coercion path rejects the `"NA"`
+/// string before any of that happens, so it stays in this rule's
+/// proven-invalid set.
+fn r_condition_string_is_accepted(value: &str) -> bool {
+    matches!(
+        value,
+        "T" | "TRUE" | "true" | "True" | "F" | "FALSE" | "false" | "False"
+    )
+}
+
 /// Classify a condition without losing the member-level information carried
 /// by unions. In particular, `integer | double` is numeric truthiness, while
-/// `integer | character` can still fail at runtime and is invalid.
+/// `integer | list` is invalid.
 pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
-    if matches!(t.length, Length::Zero) {
+    if matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1) {
         return Some(ConditionDiagnostic::Invalid);
     }
 
@@ -79,6 +128,11 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
             let members = t.members.as_ref()?;
             let mut numeric = false;
             let mut invalid = false;
+            // A coercible scalar branch (character, complex, raw) with an
+            // untracked value: its runtime story may differ from numeric
+            // truthiness (character literal gate, complex component-OR,
+            // raw byte truthiness).
+            let mut coercible_member = false;
             for member in members.iter() {
                 match condition_diagnostic(member) {
                     Some(ConditionDiagnostic::Invalid) => {
@@ -90,15 +144,28 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
                     // unions. An opaque branch is unknown for the same
                     // reason.
                     None if matches!(member.mode, Mode::Logical | Mode::Opaque) => return None,
+                    // A coercible scalar branch is not itself invalid, but
+                    // it does not silence the union either: a sibling
+                    // member that R provably rejects (a list, zero length,
+                    // or a length above one) still flags the condition, and
+                    // paired with a numeric member the RY003 message would
+                    // misdescribe the coercible case, so the union goes
+                    // quiet instead.
+                    None if is_coercible_scalar_condition_mode(member) => {
+                        coercible_member = true;
+                    }
                     None => {}
                 }
             }
             if invalid {
                 Some(ConditionDiagnostic::Invalid)
+            } else if numeric && coercible_member {
+                None
             } else {
                 numeric.then_some(ConditionDiagnostic::Numeric)
             }
         }
+        _ if is_coercible_scalar_condition_mode(t) => None,
         _ => Some(ConditionDiagnostic::Invalid),
     }
 }
@@ -435,7 +502,8 @@ impl Checker {
     /// class-equality operand check runs first, then the condition's own
     /// inference, and `diagnostic_start` bounds exactly the diagnostics
     /// that inference produced — which is what lets an RY100 reported
-    /// inside the condition suppress the RY001/RY003/RY002 family. All
+    /// inside the condition suppress the RY001 and RY003 arms below (the
+    /// RY002 length rule is not gated on it). All
     /// three condition contexts (`if` statements, loop conditions, `if`
     /// expressions) route through here so they cannot drift apart.
     fn infer_condition(&mut self, cond: &Expr, scope: &mut Scope, ctx: ConditionContext) {
@@ -515,7 +583,8 @@ impl Checker {
     ///
     /// `diagnostic_start` is the `diagnostics` length captured before that
     /// inference. An RY100 reported inside the condition already covers the
-    /// same span, so it suppresses this family.
+    /// same span, so it suppresses the RY001 and RY003 arms below (RY002's
+    /// length rule is not gated on it).
     ///
     /// RY002 fires for `ConditionContext::If` only. The rule table scopes that
     /// code to `if` conditions, and the `while` arm has never carried it.
@@ -531,13 +600,42 @@ impl Checker {
             .iter()
             .any(|diagnostic| diagnostic.code == "RY100");
         let condition = condition_diagnostic(&ct);
-        if matches!(condition, Some(ConditionDiagnostic::Invalid)) && !has_ry100 {
+        // A character literal condition is decidable where the type is
+        // not: R's coercion accepts exactly eight string spellings, and
+        // every other string errors with "argument is not interpretable
+        // as logical". The scalar character type alone no longer proves
+        // this (the value may be an accepted literal), so a proven
+        // non-coercible literal re-establishes the diagnostic here.
+        let invalid_string_literal = matches!(ct.mode, Mode::Character)
+            && matches!(ct.length, Length::One)
+            && condition_string_literal(cond)
+                .is_some_and(|value| !r_condition_string_is_accepted(value));
+        // Preserve the established if-only logical-vector RY002 rule.
+        // Other proven multi-value conditions use RY001, never RY003.
+        if ctx.allows_length_rule()
+            && matches!(ct.mode, Mode::Logical)
+            && let Length::Known(n) = ct.length
+            && n > 1
+        {
+            self.emit(
+                Severity::Warning,
+                span_of(cond),
+                "RY002",
+                format!(
+                    "`if` condition has length {}; R requires a length-1 condition",
+                    n
+                ),
+            );
+        } else if (matches!(condition, Some(ConditionDiagnostic::Invalid))
+            || invalid_string_literal)
+            && !has_ry100
+        {
             self.emit(
                 Severity::Error,
                 span_of(cond),
                 "RY001",
                 format!(
-                    "{} condition is `{}`, expected length-1 logical",
+                    "{} condition is `{}`, expected length-1 logical (or a value R coerces to logical)",
                     ctx.noun(),
                     ct
                 ),
@@ -554,20 +652,6 @@ impl Checker {
                     "{} condition is `{}`; R coerces nonzero to TRUE",
                     ctx.noun(),
                     ct.mode
-                ),
-            );
-        } else if ctx.allows_length_rule()
-            && matches!(ct.mode, Mode::Logical)
-            && let Length::Known(n) = ct.length
-            && n > 1
-        {
-            self.emit(
-                Severity::Warning,
-                span_of(cond),
-                "RY002",
-                format!(
-                    "`if` condition has length {}; R requires a length-1 condition",
-                    n
                 ),
             );
         }
@@ -1072,10 +1156,9 @@ impl Checker {
         // A default is selected only when the argument is omitted. An observed
         // omitted call proves that execution path even when other calls supply
         // the argument; without such evidence, the parameter stays opaque.
-        let Some(index) = parameters
-            .iter()
-            .position(|candidate| candidate.name == parameter.name)
-        else {
+        let Some(index) = parameters.iter().position(|candidate| {
+            semantic_argument_name(&candidate.name) == semantic_argument_name(&parameter.name)
+        }) else {
             return RType::unknown();
         };
         let Some(call_sites) = self.fn_table.call_sites.get(function) else {
@@ -1085,10 +1168,9 @@ impl Checker {
             return RType::unknown();
         }
         let omitted_somewhere = call_sites.iter().any(|arguments| {
-            let exact = arguments
-                .iter()
-                .flatten()
-                .any(|name| name == &parameter.name);
+            let exact = arguments.iter().flatten().any(|name| {
+                semantic_argument_name(name) == semantic_argument_name(&parameter.name)
+            });
             let positional = arguments.iter().filter(|name| name.is_none()).count() > index;
             !exact && !positional
         });
@@ -1110,13 +1192,16 @@ impl Checker {
         index: usize,
     ) -> Option<RType> {
         self.fn_table.forwarded_calls.iter().find_map(|call| {
-            if call.callee != function {
+            if semantic_argument_name(&call.callee) != semantic_argument_name(function) {
                 return None;
             }
             let argument = call
                 .arguments
                 .iter()
-                .find(|(name, _)| name.as_deref() == Some(parameter))
+                .find(|(name, _)| {
+                    name.as_deref().map(semantic_argument_name)
+                        == Some(semantic_argument_name(parameter))
+                })
                 .or_else(|| {
                     call.arguments
                         .iter()
@@ -1124,15 +1209,25 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
-            let (source_index, source_parameter) = call
-                .caller_params
-                .iter()
-                .enumerate()
-                .find(|(_, candidate)| candidate.name == source)?;
+            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+                && may_rebind_source_before(&caller_fn.body, source, call.call_start)
+            {
+                return None;
+            }
+            let (source_index, source_parameter) =
+                call.caller_params
+                    .iter()
+                    .enumerate()
+                    .find(|(_, candidate)| {
+                        semantic_argument_name(&candidate.name) == semantic_argument_name(source)
+                    })?;
             let source_default = source_parameter.default.as_ref()?;
             let caller_sites = self.fn_table.call_sites.get(&call.caller)?;
             let omitted = caller_sites.iter().any(|arguments| {
-                let exact = arguments.iter().flatten().any(|name| name == source);
+                let exact = arguments
+                    .iter()
+                    .flatten()
+                    .any(|name| semantic_argument_name(name) == semantic_argument_name(source));
                 let positional =
                     arguments.iter().filter(|name| name.is_none()).count() > source_index;
                 !exact && !positional

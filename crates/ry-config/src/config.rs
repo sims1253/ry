@@ -27,8 +27,15 @@ pub const DEFAULT_OUTPUT_FORMAT: &str = "full";
 /// The on-disk filename ry looks for.
 pub const CONFIG_FILENAME: &str = "ry.toml";
 
-/// Default cap on serialized artifacts (workspace caches).
-const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 2 * 1024 * 1024;
+/// Default cap on decoded serialized R data (`.rda`/`.RData` inventories and
+/// `load()` targets). Must sit above real package `R/sysdata.rda` sizes so
+/// binding enumeration runs without per-project configuration (gt ships an
+/// ~8 MB decoded sysdata); reading stops at the cap plus one overflow-detection
+/// byte, and files past it degrade to a file-stem binding with a user-visible
+/// note instead of unbounded decoding. Explicit `max-serialized-bytes` values,
+/// including small ones, always win.
+const DEFAULT_MAX_SERIALIZED_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_SERIALIZED_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Defaults for bounded directory discovery.
 const DEFAULT_INDEX_MAX_FILES: u64 = 20_000;
@@ -236,18 +243,26 @@ impl Config {
         {
             *baseline = root.join(&*baseline);
         }
-        cfg.validate().map_err(|field| ConfigError::InvalidIndex {
-            path: path.to_path_buf(),
-            field,
+        cfg.validate().map_err(|field| {
+            if field == "max-serialized-bytes" {
+                ConfigError::InvalidSerializedLimit {
+                    path: path.to_path_buf(),
+                }
+            } else {
+                ConfigError::InvalidIndex {
+                    path: path.to_path_buf(),
+                    field,
+                }
+            }
         })?;
         Ok(cfg)
     }
 
-    /// Validate that bounded discovery limits are positive integers.
-    /// Zero is a configuration error rather than an undocumented
-    /// "unlimited" sentinel. Returns the offending
-    /// field name on failure.
+    /// Return the first invalid resource limit.
     pub fn validate(&self) -> Result<(), &'static str> {
+        if !(1..=MAX_SERIALIZED_BYTES).contains(&self.max_serialized_bytes) {
+            return Err("max-serialized-bytes");
+        }
         if self.index.max_files == 0 {
             return Err("index.max-files");
         }
@@ -454,6 +469,10 @@ pub enum ConfigError {
         "config file {path} has invalid value for {field}: bounded discovery limits must be positive integers, zero is not permitted"
     )]
     InvalidIndex { path: PathBuf, field: &'static str },
+    #[error(
+        "config file {path} has invalid max-serialized-bytes: expected 1..=268435456 (256 MiB)"
+    )]
+    InvalidSerializedLimit { path: PathBuf },
     #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
     InvalidEnvironmentPattern {
         path: PathBuf,
@@ -566,6 +585,19 @@ paths = ["inst/shiny/**"]
         assert_eq!(cfg.environments[0].name, "shiny-server");
         assert_eq!(cfg.environments[0].bindings, ["input", "output", "session"]);
         assert_eq!(cfg.environments[0].paths, ["inst/shiny/**"]);
+    }
+
+    #[test]
+    fn default_serialized_byte_cap_enumerates_real_sysdata_inventories() {
+        // gt's R/sysdata.rda decodes to ~8 MB, so the default cap must sit
+        // above real package sysdata for tag enumeration to run without
+        // per-project configuration. Explicit caps, including small ones,
+        // always take precedence.
+        assert_eq!(
+            Config::default().max_serialized_bytes,
+            16 * 1024 * 1024,
+            "the default cap must cover real R/sysdata.rda sizes"
+        );
     }
 
     #[test]
@@ -871,39 +903,36 @@ paths = ["inst/shiny/**"]
     }
 
     #[test]
-    fn index_zero_max_files_is_config_error() {
+    fn resource_limits_are_validated_when_loading_config() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join(CONFIG_FILENAME), "[index]\nmax-files = 0\n").unwrap();
-        let err = Config::load_from_dir(tmp.path()).unwrap_err();
-        assert!(
-            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-files"),
-            "expected InvalidIndex for max-files=0, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn index_zero_max_file_bytes_is_config_error() {
-        let tmp = TempDir::new().unwrap();
-        fs::write(
-            tmp.path().join(CONFIG_FILENAME),
-            "[index]\nmax-file-bytes = 0\n",
-        )
-        .unwrap();
-        let err = Config::load_from_dir(tmp.path()).unwrap_err();
-        assert!(
-            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-file-bytes"),
-            "expected InvalidIndex for max-file-bytes=0, got {err:?}"
-        );
-    }
-
-    #[test]
-    fn index_zero_max_depth_is_config_error() {
-        let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join(CONFIG_FILENAME), "[index]\nmax-depth = 0\n").unwrap();
-        let err = Config::load_from_dir(tmp.path()).unwrap_err();
-        assert!(
-            matches!(err, ConfigError::InvalidIndex { field, .. } if field == "index.max-depth"),
-            "expected InvalidIndex for max-depth=0, got {err:?}"
-        );
+        let path = tmp.path().join(CONFIG_FILENAME);
+        for field in ["max-files", "max-file-bytes", "max-depth"] {
+            fs::write(&path, format!("[index]\n{field} = 0\n")).unwrap();
+            let error = Config::load_file(&path).unwrap_err();
+            assert!(
+                matches!(error, ConfigError::InvalidIndex { .. }),
+                "{error:?}"
+            );
+            assert!(error.to_string().contains(field));
+        }
+        for value in [
+            0,
+            1,
+            DEFAULT_MAX_SERIALIZED_BYTES,
+            MAX_SERIALIZED_BYTES,
+            MAX_SERIALIZED_BYTES + 1,
+            i64::MAX as u64,
+        ] {
+            fs::write(&path, format!("max-serialized-bytes = {value}\n")).unwrap();
+            let result = Config::load_file(&path);
+            if (1..=MAX_SERIALIZED_BYTES).contains(&value) {
+                assert_eq!(result.unwrap().max_serialized_bytes, value);
+            } else {
+                assert!(
+                    matches!(result, Err(ConfigError::InvalidSerializedLimit { .. })),
+                    "{result:?}"
+                );
+            }
+        }
     }
 }

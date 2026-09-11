@@ -516,6 +516,47 @@ fn bare_data_pronoun_inside_mask_is_silent() {
 }
 
 #[test]
+fn union_subset_does_not_keep_source_lengths() {
+    // A members-agree union keeps neither a single length nor a usable
+    // subsetting contract: `x[1L]` is index-shaped, so the condition on
+    // it must not see the source members' lengths (2 and 3). Mirror
+    // the opaque sibling's index shapes, including the multi-arg form.
+    for index in ["1L", "choice", "1L, drop = TRUE"] {
+        let source = format!(
+            "f <- function(p, choice) {{\n\
+             x <- if (p) c(\"a\", \"b\") else c(\"a\", \"b\", \"c\")\n\
+             y <- x[{index}]\n\
+             if (y == \"a\") 1L\n\
+             }}\n"
+        );
+        let diags = check(&source);
+        assert!(
+            diags.is_empty(),
+            "{index}: union subset result must not keep source lengths: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn opaque_subset_does_not_keep_source_length() {
+    for index in ["1L", "choice", "1L, drop = TRUE"] {
+        let source = format!(
+            "f <- function(flag, choice) {{\n\
+             choices <- c(if (flag) \"a\", \"b\", \"c\")\n\
+             if (choices[{index}] == \"a\") 1L\n\
+             }}\n"
+        );
+        let diagnostics = check(&source);
+        assert!(diagnostics.is_empty(), "{index}: {diagnostics:?}");
+    }
+    let diagnostics =
+        check("f <- function(flag) { x <- c(if (flag) 1L, 2L, 3L); x[undefined_index] }\n");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == "RY010" && diagnostic.message.contains("undefined_index")
+    }));
+}
+
+#[test]
 fn scalar_string_subset_of_atomic_vector_has_length_one() {
     let (diags, scope) = check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[\"first\"]\n");
     assert!(diags.is_empty(), "{diags:?}");

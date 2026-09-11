@@ -149,15 +149,18 @@ jobs:
           npm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
 
       - name: Package Marketplace VSIX
+        if: inputs.registry != 'openvsx'
         working-directory: editors/code
         run: bunx @vscode/vsce package --target ${{ matrix.code-target }} --no-dependencies ${{ inputs.pre-release && '--pre-release' || '' }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: inputs.registry != 'openvsx'
         with:
           name: ry-vscode-marketplace-${{ matrix.code-target }}
           path: editors/code/*.vsix
 
       - name: Package Open VSX VSIX
+        if: inputs.registry != 'marketplace'
         working-directory: editors/code
         run: |
           # Preserve the already-published Open VSX identity.
@@ -166,6 +169,7 @@ jobs:
           bunx @vscode/vsce package --target ${{ matrix.code-target }} --no-dependencies ${{ inputs.pre-release && '--pre-release' || '' }} --out openvsx/ry-${{ matrix.code-target }}.vsix
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: inputs.registry != 'marketplace'
         with:
           name: ry-vscode-openvsx-${{ matrix.code-target }}
           path: editors/code/openvsx/*.vsix

@@ -4,7 +4,7 @@
 //! these helpers so their file sets, resolution roots, and workspace
 //! models cannot drift apart.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -67,6 +67,37 @@ pub(crate) enum FailureAction {
     Abort,
 }
 
+/// Size rayon's global pool before the first parallel work starts
+/// (all CLI parallelism funnels through [`parse_files`]). The check
+/// pipeline alternates parallel phases (parsing, diagnostic emission)
+/// with serial ones (workspace resolution, fixpoint refinement), so a
+/// worker per core spends the serial phases spinning and waking: on a
+/// 24-core machine the default pool burns ~4x the system time of a
+/// 12-worker pool for the same wall time. Capping at 12 keeps
+/// throughput flat while cutting CPU and system time on large machines;
+/// an explicit `RAYON_NUM_THREADS` still wins.
+///
+/// Called lazily so subcommands that never touch rayon (`--version`,
+/// `--help`, completions) do not pay for spawning workers. Idempotent:
+/// rayon's global registry is process-wide and `build_global` fails on
+/// a second attempt, so a `Once` guards the (warning-free) first call.
+fn size_rayon_pool() {
+    use rayon::ThreadPoolBuilder;
+    use std::sync::Once;
+    static SIZED: Once = Once::new();
+    SIZED.call_once(|| {
+        if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+            return;
+        }
+        let workers = std::thread::available_parallelism()
+            .map_or(8, std::num::NonZeroUsize::get)
+            .min(12);
+        if let Err(error) = ThreadPoolBuilder::new().num_threads(workers).build_global() {
+            eprintln!("ry: warning: could not size the thread pool: {error}");
+        }
+    });
+}
+
 /// Parse every path in parallel on rayon's pool, in input order.
 ///
 /// Each rayon thread reuses an `RParser` across files and runs to avoid
@@ -82,6 +113,7 @@ pub(crate) fn parse_files(
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     use rayon::prelude::*;
+    size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path) {
@@ -114,13 +146,24 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     let path_str = path.to_string_lossy().to_string();
     let file = PARSER.with(|cell| {
         let mut slot = cell.borrow_mut();
-        let parser = slot
-            .get_or_insert_with(|| ry_core::RParser::new().expect("parser init (thread-local)"));
-        parser.parse(&path_str, &src)
+        let parser = match slot.as_mut() {
+            Some(parser) => parser,
+            None => match ry_core::RParser::new() {
+                Ok(parser) => slot.insert(parser),
+                // A worker whose parser cannot initialize must not panic the
+                // whole check: report the file as unparseable and leave the
+                // slot empty so the next file retries, matching the LSP's
+                // index tolerance.
+                Err(error) => return Err(error.to_string()),
+            },
+        };
+        parser
+            .parse(&path_str, &src)
+            .map_err(|message| message.to_string())
     });
     file.map(Arc::new).map_err(|message| ParseFailure {
         path: path.to_path_buf(),
-        error: ParseError::Parse(message.to_string()),
+        error: ParseError::Parse(message),
     })
 }
 
@@ -146,11 +189,18 @@ where
     I: IntoIterator<Item = &'a str>,
 {
     let mut groups: BTreeMap<Option<PathBuf>, Vec<usize>> = BTreeMap::new();
+    // The ancestor DESCRIPTION walk is identical for every file in one
+    // directory, so run it once per distinct directory instead of once
+    // per file.
+    let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
     for (index, path) in paths.into_iter().enumerate() {
-        groups
-            .entry(enclosing_package_root(Path::new(path)))
-            .or_default()
-            .push(index);
+        let path = Path::new(path);
+        let key = path.parent();
+        let root = root_cache
+            .entry(key)
+            .or_insert_with(|| enclosing_package_root(path))
+            .clone();
+        groups.entry(root).or_default().push(index);
     }
     groups
 }

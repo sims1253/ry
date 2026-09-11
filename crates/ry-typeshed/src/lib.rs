@@ -8,6 +8,7 @@ use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -275,85 +276,76 @@ pub struct HigherOrderSpec {
 }
 
 pub const SOURCE: &str = include_str!("../vendor/SOURCE");
-const BASE_JSON: &str = include_str!("../vendor/base/base.json");
-const DPLYR_JSON: &str = include_str!("../vendor/dplyr/dplyr.json");
-const DBPLYR_JSON: &str = include_str!("../vendor/dbplyr/dbplyr.json");
-const TIDYR_JSON: &str = include_str!("../vendor/tidyr/tidyr.json");
-const TIDYSELECT_JSON: &str = include_str!("../vendor/tidyselect/tidyselect.json");
-const TESTTHAT_JSON: &str = include_str!("../vendor/testthat/testthat.json");
-const TINYTEST_JSON: &str = include_str!("../vendor/tinytest/tinytest.json");
-const RCPP_JSON: &str = include_str!("../vendor/rcpp/Rcpp.json");
-const PURRR_JSON: &str = include_str!("../vendor/purrr/purrr.json");
-const IGRAPH_JSON: &str = include_str!("../vendor/igraph/igraph.json");
-const RECIPES_JSON: &str = include_str!("../vendor/recipes/recipes.json");
-const BENCH_JSON: &str = include_str!("../vendor/bench/bench.json");
-const BOX_JSON: &str = include_str!("../vendor/box/box.json");
-const PATRICK_JSON: &str = include_str!("../vendor/patrick/patrick.json");
-const REX_JSON: &str = include_str!("../vendor/rex/rex.json");
-const RLIST_JSON: &str = include_str!("../vendor/rlist/rlist.json");
-const MIRAI_JSON: &str = include_str!("../vendor/mirai/mirai.json");
-const SURVIVAL_JSON: &str = include_str!("../vendor/survival/survival.json");
-const BRMS_JSON: &str = include_str!("../vendor/brms/brms.json");
-const POSTERIOR_JSON: &str = include_str!("../vendor/posterior/posterior.json");
-const LOO_JSON: &str = include_str!("../vendor/loo/loo.json");
-const BAYESPLOT_JSON: &str = include_str!("../vendor/bayesplot/bayesplot.json");
-const CMDSTANR_JSON: &str = include_str!("../vendor/cmdstanr/cmdstanr.json");
-const ZEALLOT_JSON: &str = include_str!("../vendor/zeallot/zeallot.json");
-const FUTURE_JSON: &str = include_str!("../vendor/future/future.json");
-const FOREACH_JSON: &str = include_str!("../vendor/foreach/foreach.json");
-const HTMLTOOLS_JSON: &str = include_str!("../vendor/htmltools/htmltools.json");
-const SHINY_JSON: &str = include_str!("../vendor/shiny/shiny.json");
-const WITHR_JSON: &str = include_str!("../vendor/withr/withr.json");
-const R6_JSON: &str = include_str!("../vendor/R6/R6.json");
-const S7_JSON: &str = include_str!("../vendor/s7/S7.json");
-const RLANG_JSON: &str = include_str!("../vendor/rlang/rlang.json");
-const CLI_JSON: &str = include_str!("../vendor/cli/cli.json");
-const VCTRS_JSON: &str = include_str!("../vendor/vctrs/vctrs.json");
-const GRID_JSON: &str = include_str!("../vendor/grid/grid.json");
-const GGPLOT2_JSON: &str = include_str!("../vendor/ggplot2/ggplot2.json");
+// Stubs stay uncompressed in vendor/ and inflate lazily at runtime.
+const BASE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/base.json.deflate"));
 
-/// Single source of truth for embedded non-base packages, in signature
-/// resolution order. Every package maps one-to-one to its vendored file.
-const PACKAGE_SPECS: &[(&str, &str)] = &[
-    ("dplyr", DPLYR_JSON),
-    ("dbplyr", DBPLYR_JSON),
-    ("tidyr", TIDYR_JSON),
-    ("tidyselect", TIDYSELECT_JSON),
-    ("purrr", PURRR_JSON),
-    ("igraph", IGRAPH_JSON),
-    ("recipes", RECIPES_JSON),
-    ("bench", BENCH_JSON),
-    ("box", BOX_JSON),
-    ("patrick", PATRICK_JSON),
-    ("rex", REX_JSON),
-    ("rlist", RLIST_JSON),
-    ("mirai", MIRAI_JSON),
-    ("survival", SURVIVAL_JSON),
-    ("testthat", TESTTHAT_JSON),
-    ("tinytest", TINYTEST_JSON),
-    ("Rcpp", RCPP_JSON),
-    ("brms", BRMS_JSON),
-    ("posterior", POSTERIOR_JSON),
-    ("loo", LOO_JSON),
-    ("bayesplot", BAYESPLOT_JSON),
-    ("cmdstanr", CMDSTANR_JSON),
-    ("zeallot", ZEALLOT_JSON),
-    ("future", FUTURE_JSON),
-    ("foreach", FOREACH_JSON),
-    ("htmltools", HTMLTOOLS_JSON),
-    ("shiny", SHINY_JSON),
-    ("withr", WITHR_JSON),
-    ("R6", R6_JSON),
-    ("S7", S7_JSON),
-    ("rlang", RLANG_JSON),
-    ("cli", CLI_JSON),
-    ("vctrs", VCTRS_JSON),
-    ("grid", GRID_JSON),
-    ("ggplot2", GGPLOT2_JSON),
-];
+/// One embedded non-base package: its name, its deflated vendored JSON,
+/// a process-wide parse cache for the parsed [`Typeshed`], and a
+/// process-wide cache for the conservative prefilter flags.
+///
+/// `OnceLock::new` is `const`, so the spec table below stays a plain
+/// const-initialized static while each package parses lazily on first
+/// request instead of all-at-once.
+struct PackageSpec {
+    name: &'static str,
+    blob: &'static [u8],
+    cache: std::sync::OnceLock<Typeshed>,
+    flags: std::sync::OnceLock<StubFlags>,
+}
+
+/// Substring-level facts about a package's stub, used as conservative
+/// prefilters so checker scans can skip packages whose JSON provably
+/// lacks the relevant fields without forcing a parse.
+struct StubFlags {
+    injects: bool,
+    captures_promise: bool,
+    s3_methods: bool,
+}
+
+impl PackageSpec {
+    const fn new(name: &'static str, blob: &'static [u8]) -> Self {
+        Self {
+            name,
+            blob,
+            cache: std::sync::OnceLock::new(),
+            flags: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Parse this package on first use and cache it for the life of the
+    /// process. The embedded JSON always parses; a failure here is a
+    /// build-time data bug, not a runtime condition, so panicking during
+    /// first access is acceptable. Concurrent first callers block in
+    /// `get_or_init` until one parse wins and is shared by all.
+    fn load(&self) -> &Typeshed {
+        self.cache.get_or_init(|| {
+            let json = inflate_embedded(self.blob, self.name);
+            parse_typeshed(&json, Path::new(self.name))
+                .expect("embedded package typeshed must parse")
+        })
+    }
+
+    /// Compute the prefilter flags on first use: one inflate pass, three
+    /// substring checks, then the inflated text is dropped. The flags are
+    /// conservative (a `false` is a guarantee, a `true` may be a false
+    /// alarm that only costs one later parse).
+    fn flags(&self) -> &StubFlags {
+        self.flags.get_or_init(|| {
+            let json = inflate_embedded(self.blob, self.name);
+            StubFlags {
+                injects: json.contains("\"injects\""),
+                captures_promise: json.contains("\"captures_promise\""),
+                s3_methods: json.contains("\"s3_methods\""),
+            }
+        })
+    }
+}
+
+// packages.txt fixes signature resolution order; each cache has one static address.
+include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
-    PACKAGE_SPECS.iter().map(|&(name, _)| name)
+    PACKAGE_SPECS.iter().map(|spec| spec.name)
 }
 
 #[derive(Debug, Error)]
@@ -613,8 +605,24 @@ struct RawS3Method {
     signature: FunctionSig,
 }
 
+/// Inflate one build-time-deflated embedded stub (see `build.rs`).
+///
+/// The blobs are produced by this crate's own build script, so a
+/// decompression failure is a build bug rather than a runtime
+/// condition; panicking mirrors the existing contract that embedded
+/// stubs always parse.
+fn inflate_embedded(data: &[u8], name: &str) -> String {
+    let mut json = Vec::new();
+    flate2::read::DeflateDecoder::new(data)
+        .read_to_end(&mut json)
+        .unwrap_or_else(|error| panic!("embedded typeshed `{name}` must inflate: {error}"));
+    String::from_utf8(json)
+        .unwrap_or_else(|error| panic!("embedded typeshed `{name}` must be UTF-8: {error}"))
+}
+
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
-    parse_typeshed(BASE_JSON, Path::new("<embedded base>"))
+    let json = inflate_embedded(BASE_JSON, "<embedded base>");
+    parse_typeshed(&json, Path::new("<embedded base>"))
 }
 
 /// Reject duplicate JSON keys before they can overwrite a signature.
@@ -736,26 +744,18 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
 /// i.e. opaque). The known packages are those in `PACKAGE_SPECS`; each
 /// maps one-to-one to a vendored JSON file.
 ///
-/// Results are cached for the life of the process (the JSON documents
-/// are compile-time-embedded and never change), so repeated lookups are
+/// Packages parse lazily and independently: requesting one package
+/// parses only that package's JSON, never the others. Each result is
+/// cached for the life of the process (the JSON documents are
+/// compile-time-embedded and never change), so repeated lookups are
 /// cheap.
 pub fn load_package(name: &str) -> Option<&'static Typeshed> {
-    if !is_known_package(name) {
-        return None;
-    }
-    static PACKAGES: std::sync::OnceLock<std::collections::BTreeMap<&'static str, Typeshed>> =
-        std::sync::OnceLock::new();
-    let packages = PACKAGES.get_or_init(|| {
-        PACKAGE_SPECS
-            .iter()
-            .map(|&(name, json)| {
-                let typeshed = parse_typeshed(json, Path::new(name))
-                    .expect("embedded package typeshed must parse");
-                (name, typeshed)
-            })
-            .collect()
-    });
-    packages.get(name)
+    PACKAGE_SPECS
+        .iter()
+        .find(|spec| spec.name == name)
+        // The specs live in a `static`, so the parsed reference is
+        // `'static` for the caller.
+        .map(PackageSpec::load)
 }
 
 /// Whether a package name is known to ry's embedded typeshed. Used by
@@ -763,7 +763,49 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// signatures (unknown packages are still recorded as loaded for NSE
 /// gating, e.g. `tidyverse`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
-    PACKAGE_SPECS.iter().any(|&(known, _)| known == name)
+    PACKAGE_SPECS.iter().any(|spec| spec.name == name)
+}
+
+/// Whether the embedded stub for `name` matches a prefilter selector.
+/// Inflates the stub once per package per process (the blobs are stored
+/// deflated); unknown packages return `false`.
+fn embedded_stub_flags(name: &str) -> Option<&'static StubFlags> {
+    PACKAGE_SPECS
+        .iter()
+        .find(|spec| spec.name == name)
+        .map(PackageSpec::flags)
+}
+
+/// Conservative prefilter for cross-package injection scans: whether
+/// the embedded stub for `name` mentions an `injects` field at all.
+///
+/// `false` guarantees that no signature in the package declares
+/// injected names, so callers can skip the package without parsing it
+/// (keeping [`load_package`] lazy). `true` may be a false alarm — the
+/// mention could be an empty list — which only costs one unnecessary
+/// parse. Unknown packages return `false`. User-supplied stubs are not
+/// consulted; callers that resolve through their own stubs must check
+/// those separately.
+pub fn package_has_injects(name: &str) -> bool {
+    embedded_stub_flags(name).is_some_and(|flags| flags.injects)
+}
+
+/// Conservative prefilter for promise-capture scans: whether the
+/// embedded stub for `name` mentions the evaluation mode
+/// `captures_promise`. Same contract as [`package_has_injects`]:
+/// `false` guarantees no signature in the package carries that mode,
+/// `true` may be a false alarm, unknown packages return `false`.
+pub fn package_has_captures_promise(name: &str) -> bool {
+    embedded_stub_flags(name).is_some_and(|flags| flags.captures_promise)
+}
+
+/// Conservative prefilter for S3 method scans: whether the embedded
+/// stub for `name` mentions an `s3_methods` field. Same contract as
+/// [`package_has_injects`]: `false` guarantees the package ships no
+/// S3 methods, `true` may be a false alarm, unknown packages return
+/// `false`.
+pub fn package_has_s3_methods(name: &str) -> bool {
+    embedded_stub_flags(name).is_some_and(|flags| flags.s3_methods)
 }
 
 /// Load stub files from a user-supplied directory. Both flat
@@ -1928,6 +1970,59 @@ mod tests {
     }
 
     #[test]
+    fn stub_prefilters_never_miss_a_declaration() {
+        // The substring prefilters back lazy loading: a gated scan skips
+        // exactly the packages for which they return `false`, so a
+        // `false` next to a real declaration would silently drop data.
+        // Parse every stub and hold them to that guarantee.
+        for name in known_packages() {
+            let typeshed = load_package(name).expect("vendored stub parses");
+            let declares_injects = typeshed
+                .functions
+                .values()
+                .chain(typeshed.s3_methods.values())
+                .any(|signature| !signature.injects.is_empty());
+            assert!(
+                !declares_injects || package_has_injects(name),
+                "{name}: declares injects but the prefilter misses it"
+            );
+            let declares_capture = typeshed
+                .functions
+                .values()
+                .chain(typeshed.s3_methods.values())
+                .any(|signature| {
+                    signature
+                        .eval
+                        .values()
+                        .any(|mode| *mode == EvalMode::CapturesPromise)
+                });
+            assert!(
+                !declares_capture || package_has_captures_promise(name),
+                "{name}: declares captures_promise but the prefilter misses it"
+            );
+            assert!(
+                typeshed.s3_methods.is_empty() || package_has_s3_methods(name),
+                "{name}: declares s3_methods but the prefilter misses it"
+            );
+        }
+        // Pin the current inventory so a data change that flips a
+        // prefilter is a deliberate one.
+        for name in ["R6", "S7", "withr"] {
+            assert!(package_has_injects(name), "{name} declares injects");
+        }
+        for name in ["rlang", "ggplot2"] {
+            assert!(package_has_captures_promise(name), "{name} captures");
+        }
+        assert!(package_has_s3_methods("survival"));
+        assert!(!package_has_injects("dplyr"));
+        assert!(!package_has_captures_promise("dplyr"));
+        assert!(!package_has_s3_methods("dplyr"));
+        assert!(!package_has_injects("doesnotexist"));
+        assert!(!package_has_captures_promise("doesnotexist"));
+        assert!(!package_has_s3_methods("doesnotexist"));
+    }
+
+    #[test]
     fn literal_lengths_are_not_limited_to_the_vendored_inventory() {
         for length in [0, 1, 10, 999_999, usize::MAX] {
             assert_eq!(
@@ -2019,6 +2114,17 @@ mod tests {
     #[test]
     fn load_package_unknown_returns_none() {
         assert!(load_package("doesnotexist").is_none());
+    }
+
+    #[test]
+    fn load_package_returns_the_cached_instance_per_package() {
+        // Parsing is cached per package: repeated loads hand out the same
+        // instance, and looking up one package does not require touching
+        // any other package's JSON.
+        assert!(std::ptr::eq(
+            load_package("dplyr").expect("dplyr is known"),
+            load_package("dplyr").expect("dplyr is known"),
+        ));
     }
 
     #[test]

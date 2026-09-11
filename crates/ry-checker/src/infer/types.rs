@@ -419,27 +419,32 @@ pub(crate) fn json_length_to_length(spec: Option<JsonLength>) -> Length {
 
 pub(crate) fn json_rtype_scalar(jt: &JsonRType) -> RType {
     let length = json_length_to_length(JsonLength::parse(&jt.length));
+    let scalar = |mode| {
+        let class = if !jt.class.is_empty() {
+            let refs: Vec<_> = jt.class.iter().map(String::as_str).collect();
+            ClassVector::from_slice(&refs)
+        } else if mode == Mode::Opaque {
+            ClassVector::unknown()
+        } else {
+            ClassVector::empty()
+        };
+        RType::new(mode, length).with_class(class)
+    };
     if matches!(JsonMode::parse(&jt.mode), Some(JsonMode::Union)) {
-        let members: Vec<RType> = jt
+        let members: Vec<_> = jt
             .members
             .iter()
             .filter_map(|member| concrete_json_mode(member))
-            .map(|mode| RType::new(mode, length))
+            .map(scalar)
             .collect();
-        return if members.is_empty() {
+        if members.is_empty() {
             RType::unknown()
         } else {
             RType::union(Arc::from(members))
-        };
-    }
-    let mode = concrete_json_mode(&jt.mode).unwrap_or(Mode::Opaque);
-    let class = if jt.class.is_empty() {
-        ClassVector::empty()
+        }
     } else {
-        let refs: Vec<&str> = jt.class.iter().map(|s| s.as_str()).collect();
-        ClassVector::from_slice(&refs)
-    };
-    RType::new(mode, length).with_class(class)
+        scalar(concrete_json_mode(&jt.mode).unwrap_or(Mode::Opaque))
+    }
 }
 
 /// Map a typeshed mode string to the concrete `Mode` it names. Returns

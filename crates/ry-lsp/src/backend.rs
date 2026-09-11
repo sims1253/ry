@@ -544,6 +544,7 @@ impl Backend {
             serde_json::json!({"globPattern": "**/ry.toml"}),
             serde_json::json!({"globPattern": "**/DESCRIPTION"}),
             serde_json::json!({"globPattern": "**/NAMESPACE"}),
+            serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
             serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
         ];
         for path in &paths {

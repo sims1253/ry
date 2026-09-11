@@ -22,6 +22,13 @@ All notable changes to ry are documented in this file.
 - Widen parameter defaults on the paths proved by compound `&&` and `||`
   type guards. This avoids false atomic `$` errors for caller-supplied lists
   while preserving errors on paths the guard does not prove (#408).
+- Preserve possible function bindings from enclosing frames when an inner
+  assignment uses the same name. This avoids RY070 for outer constructors,
+  parameters, and unknown values that may be callable (#381).
+
+- Report failed top-level calls even when a later function definition has the
+  same name. Preserve outward package lookup and deferred function bodies
+  (#410).
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`

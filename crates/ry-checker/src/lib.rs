@@ -292,9 +292,17 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
     }
 }
 
+#[derive(Debug)]
+struct FunctionLookupFrame {
+    possible_functions: FxSet<String>,
+    parent: Option<Arc<FunctionLookupFrame>>,
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Default)]
 pub struct Scope {
+    // Enclosing-frame evidence survives assignments in the current frame.
+    outward_functions: Option<Arc<FunctionLookupFrame>>,
     // Sticky evidence for raw escaped slot names supplied directly to a scope.
     // It records possible masks, never absence of dynamically created bindings.
     pub(crate) has_escaped_slot_names: bool,
@@ -347,6 +355,7 @@ pub struct Scope {
 impl Clone for Scope {
     fn clone(&self) -> Self {
         Self {
+            outward_functions: self.outward_functions.clone(),
             has_escaped_slot_names: self.has_escaped_slot_names,
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
@@ -382,6 +391,37 @@ impl Scope {
         scope.known_strings.clear();
         scope.unreachable = false;
         scope
+    }
+
+    /// Enter a lexical function frame while retaining outward call-head evidence.
+    pub(crate) fn function_execution_scope(&self) -> Self {
+        let mut scope = self.independent_execution_scope();
+        let possible_functions = self
+            .bindings
+            .iter()
+            .filter(|(name, ty)| {
+                self.is_parameter(name)
+                    || matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+            })
+            .map(|(name, _)| infer::semantic_argument_name(name).to_string())
+            .collect();
+        scope.outward_functions = Some(Arc::new(FunctionLookupFrame {
+            possible_functions,
+            parent: self.outward_functions.clone(),
+        }));
+        scope
+    }
+
+    pub(crate) fn has_possible_outward_function(&self, name: &str) -> bool {
+        let name = infer::semantic_argument_name(name);
+        let mut frame = self.outward_functions.as_deref();
+        while let Some(current) = frame {
+            if current.possible_functions.contains(name) {
+                return true;
+            }
+            frame = current.parent.as_deref();
+        }
+        false
     }
 
     /// Unknown code may mutate values or install active bindings. Keep names,

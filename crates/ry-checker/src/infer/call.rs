@@ -1504,22 +1504,25 @@ impl Checker {
         }
     }
 
-    /// The diagnostic decision for a bare symbol call head (#381).
-    /// Uncertainty is decided first and cannot be overridden by the
-    /// callable-inventory approximation below: an attached package
-    /// without a stub (or an unenumerable data mask) can export any
-    /// name, so a would-be RY070 stays silent. The existing S7 carveout
-    /// is retained as a known approximation, not a proof: the
-    /// whole-project callable inventory has no execution-order
-    /// information, so at the top level a concrete value still yields
-    /// the diagnostic (`err_s7_callable_future_assignment`), and a
-    /// frame-local value above a live generator can be over-diagnosed.
-    /// `Suppress` likewise is not a proven function: it inherits
-    /// `has_function_anywhere`'s conservatism, which treats externally
-    /// supplied names as possible functions.
+    /// A bare call skips non-functions while searching outward. An open
+    /// package search path or data mask can still supply the function.
+    /// Eager calls use source order. Deferred bodies retain enclosing-frame
+    /// evidence and the project inventory, since they may run later.
     fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
-        if scope.search_path_unknown || scope.data_mask_unknown {
+        if scope.search_path_unknown
+            || scope.data_mask_unknown
+            || scope.has_possible_outward_function(name)
+        {
             return CallHeadFunctionEvidence::Uncertain;
+        }
+        // An eager top-level call sees the binding installed so far. The
+        // project inventory also contains later or overwritten functions.
+        if !self.discarding && self.enclosing_formals.is_empty() {
+            return if self.has_external_function(name) {
+                CallHeadFunctionEvidence::Suppress
+            } else {
+                CallHeadFunctionEvidence::Diagnose
+            };
         }
         if !self.has_function_anywhere(name) {
             return CallHeadFunctionEvidence::Diagnose;
@@ -1782,7 +1785,7 @@ impl Checker {
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
             Expr::Function { params, body, .. } => {
-                let mut inner = scope.independent_execution_scope();
+                let mut inner = scope.function_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
                 }
@@ -1916,14 +1919,9 @@ fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
 }
 
-/// The diagnostic decision for a bare symbol call head under the
-/// checker's current outward-lookup model, mirroring R's function-mode
-/// call lookup (non-function bindings are skipped in every frame). The
-/// variants are decisions, not proofs: `Diagnose` includes the retained
-/// callable-inventory approximation documented on
-/// [`Checker::call_head_function_evidence`], and `Suppress` inherits
-/// `has_function_anywhere`'s conservatism (externally supplied names are
-/// treated as possible functions).
+/// The diagnostic decision for a bare symbol call head. Eager calls use
+/// current bindings and external functions. Deferred bodies also consult
+/// the project inventory; that inventory does not prove call-time identity.
 enum CallHeadFunctionEvidence {
     /// A function binding is modeled reachable outward; the call head
     /// resolves to it, the local value is skipped, and no RY070 fires.

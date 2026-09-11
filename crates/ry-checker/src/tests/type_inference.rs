@@ -1956,13 +1956,14 @@ fn quoted_symbol_existence_does_not_invent_distinct_bindings() {
 fn condition_severities_match_the_rule_registry() {
     for source in [
         "if (NULL) 1L",
+        "if (1L) 1L",
         "if (c(TRUE, FALSE)) 1L",
         "while (list(TRUE)) break",
     ] {
         let diagnostics = check(source);
         let condition = diagnostics
             .iter()
-            .find(|d| matches!(d.code, "RY001" | "RY002"))
+            .find(|d| matches!(d.code, "RY001" | "RY002" | "RY003"))
             .unwrap();
         assert_eq!(
             condition.severity,

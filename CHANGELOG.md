@@ -4,6 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Release binaries and VS Code extensions for 32-bit ARM Linux and Alpine Linux
+  on x64 and ARM64. The release matrix now covers nine platforms.
+
 ### Fixed
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,

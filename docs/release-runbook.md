@@ -58,7 +58,7 @@ Before starting any release:
    (e.g. `0.9.2`). Editor extension versions are independent.
 
 6. **Zed binary integrity verified:** confirm the core release includes
-   executable `ry-cli-<target>.bin.sha256` sidecars for all six targets.
+   executable `ry-cli-<target>.bin.sha256` sidecars for all nine targets.
    Run `cargo test --manifest-path editors/zed/Cargo.toml` and
    `python3 -m unittest discover -s scripts/release -p 'test_*.py'` to check
    download verification and sidecar generation. Archive `.sha256` files
@@ -87,9 +87,9 @@ v{version}  (e.g. v0.9.2)
    gh workflow run release.yml --ref <release-branch> -f tag=dry-run
    ```
 
-   Record the run's commit SHA. Require all six platform builds and
+   Record the run's commit SHA. Require all nine platform builds and
    `custom-binary-checksums` to succeed, with `host` skipped. Inspect the
-   `artifacts-binary-checksums` artifact for six `.bin.sha256` files.
+   `artifacts-binary-checksums` artifact for nine `.bin.sha256` files.
 4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
 6. Dispatch the release explicitly against the tag:
@@ -100,18 +100,18 @@ v{version}  (e.g. v0.9.2)
 
    A tag push alone does not start this workflow. The dispatch builds and
    publishes the GitHub Release. **cargo-dist** produces:
-   - Six platform binaries (x86_64/aarch64 × linux/macOS/windows)
+   - Nine platform binaries, one for each target in `dist-workspace.toml`
    - SHA-256 sidecar files for each archive
-   - Six executable `.bin.sha256` sidecars from the checksum hook
+   - Nine executable `.bin.sha256` sidecars from the checksum hook
    - GitHub Release with all assets attached
 7. Verify: download each archive and its `.sha256` sidecar, run
    `sha256sum -c archive.sha256`, extract, and run `ry version`.
 
 ### Artifact verification checklist
 
-- [ ] Six platform archives exist in the GitHub release
+- [ ] Nine platform archives exist in the GitHub release
 - [ ] Each archive has a matching `.sha256` sidecar
-- [ ] All six `ry-cli-<target>.bin.sha256` executable sidecars exist
+- [ ] All nine `ry-cli-<target>.bin.sha256` executable sidecars exist
 - [ ] `sha256sum -c` passes for every archive
 - [ ] `ry version` reports the correct version on each platform
 - [ ] `ry check` runs successfully on a simple test file
@@ -198,7 +198,7 @@ run after correcting the cause. It reuses the packaged artifacts, and
    crate in `editors/zed/Cargo.toml` has a separate version.
 2. Verify WASM build: `cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2`.
 3. Verify tests: `cargo test --manifest-path editors/zed/Cargo.toml`.
-4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all six
+4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all nine
    targets. The cargo-dist checksum hook verifies each archive before hashing
    its executable, then uploads the sidecars with the release. A failed hook
    blocks publication. Reproduce generation with
@@ -206,7 +206,7 @@ run after correcting the cause. It reuses the packaged artifacts, and
    Before publishing, run
    `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
    Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
-   artifact contains all six `.bin.sha256` sidecars. Confirm the `host` publication
+   artifact contains all nine `.bin.sha256` sidecars. Confirm the `host` publication
    job is skipped; `dry-run` builds artifacts without creating a release.
 5. Submit to the Zed extension gallery after the server release is available.
    Automatic downloads require executable sidecars, published from 0.9.0 onward.

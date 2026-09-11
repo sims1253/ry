@@ -44,6 +44,6 @@ The remaining work in [#372](https://github.com/sims1253/ry/issues/372) needs
 callee provenance, class and dispatch facts, and invalidation after effects.
 The flow work in [#351](https://github.com/sims1253/ry/issues/351) also needs
 length facts that survive assertions, aliases, and loop joins. Both remain
-outside the 0.10.0 implementation scope under the milestone's rule for work
+outside this milestone's implementation scope under the milestone's rule for work
 that requires broader analysis changes. Existing guards should stay in
 place while these cases remain unresolved.

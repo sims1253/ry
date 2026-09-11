@@ -712,7 +712,7 @@ impl Checker {
     ) {
         let mut narrowed = HashSet::new();
         let mark = scope.begin_snapshot();
-        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
+        for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
         for statement in then {
@@ -721,7 +721,7 @@ impl Checker {
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
-        if let Some(name) = apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
+        for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Else) {
             narrowed.insert(name.to_string());
         }
         if let Some(statements) = else_ {

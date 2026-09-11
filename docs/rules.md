@@ -48,3 +48,8 @@ explanation for one rule.
 RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example
 `warn = ["RY003"]`).
+
+RY032 also has a parameter-pattern heuristic. See
+[scalar guards](scalar-guards.md) for its package, assertion, and alias/loop
+limits, and for the distinction
+between a possible vector input and a failure on a valid scalar input.

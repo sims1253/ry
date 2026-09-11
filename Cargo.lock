@@ -1276,8 +1276,8 @@ dependencies = [
 
 [[package]]
 name = "rds2rust"
-version = "0.2.0"
-source = "git+https://github.com/sims1253/rds2rust?rev=6d4014b316e465024d99fe30c0e8b424ce11cca1#6d4014b316e465024d99fe30c0e8b424ce11cca1"
+version = "0.2.1"
+source = "git+https://github.com/sims1253/rds2rust?rev=77c6b0f65ef76fcb0bb27a63ed09f37cc679b8ea#77c6b0f65ef76fcb0bb27a63ed09f37cc679b8ea"
 dependencies = [
  "byteorder",
  "flate2",
@@ -1706,7 +1706,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",

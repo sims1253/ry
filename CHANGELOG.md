@@ -32,6 +32,11 @@ All notable changes to ry are documented in this file.
 - Bind named data arguments before checking data-mask and tidy-select
   expressions, regardless of their position in a call. Quoting helpers without
   a data argument keep an unknown mask (#417).
+- Bound serialized-data parser nesting and materialized collection storage,
+  including metadata loaded in lazy mode. Keep cycle-safe deduplication and
+  the static liblzma build while updating the pinned parser to its 0.2.1 base
+  (#412, #433). Unsupported or limited inventories still produce degraded
+  scope notices.
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`

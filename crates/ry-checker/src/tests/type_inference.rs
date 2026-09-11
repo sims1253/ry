@@ -175,6 +175,11 @@ fn forwarded_default_survives_writes_that_cannot_precede_the_call() {
             );
         }
     }
+    let diagnostics = check(include_str!(
+        "../../testdata/oracle/forwarded_rebinding_after_call.R"
+    ));
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, "RY001");
 }
 
 #[test]

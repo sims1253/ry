@@ -22,3 +22,9 @@ looped <- function(bins = NULL) {
 }
 stopifnot(assigned() == 1L, wrapped() == 1L, returned() == 1L, delayed() == 1L)
 looped()
+invoke <- function(callback = NULL) callback("ok")
+visit <- function(callback = NULL) {
+  callback <- function(value) value
+  for (i in 1:2) invoke(callback)
+}
+visit()

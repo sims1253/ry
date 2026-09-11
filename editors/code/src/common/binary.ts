@@ -103,15 +103,9 @@ const decodeVersion = Schema.decodeUnknown(
   Schema.parseJson(Schema.Struct({ version: Schema.String })),
 );
 
-/**
- * Version probes cached by binary identity (mtime + size) so restarts do
- * not respawn `ry version` for a binary that has not changed. A replaced
- * binary gets a new mtime or size and is probed again.
- */
 interface VersionProbe {
-  mtimeMs: number;
-  size: number;
-  version: VersionInfo | undefined;
+  stats: fs.Stats;
+  version: VersionInfo;
 }
 
 const versionProbes = new Map<string, VersionProbe>();
@@ -129,11 +123,13 @@ export const getRyVersion = (binaryPath: string) =>
     const cached = stats && versionProbes.get(binaryPath);
     if (
       cached &&
-      cached.mtimeMs === stats.mtimeMs &&
-      cached.size === stats.size
+      (["dev", "ino", "ctimeMs", "mtimeMs", "size"] as const).every(
+        (key) => cached.stats[key] === stats[key],
+      )
     ) {
       return cached.version;
     }
+    versionProbes.delete(binaryPath);
     const version = yield* runBinary(binaryPath, [
       "version",
       "--output-format",
@@ -143,15 +139,9 @@ export const getRyVersion = (binaryPath: string) =>
       Effect.map(({ version }) => versionFromString(version)),
       Effect.catchAll(() => Effect.succeed(undefined)),
     );
-    // Cache only successful probes: a failed spawn (resource pressure, an
-    // AV lock on a freshly-replaced binary) must be retried on the next
-    // restart rather than pinning an unknown version for the session.
+    // Retry failed probes on the next restart.
     if (stats && version !== undefined) {
-      versionProbes.set(binaryPath, {
-        mtimeMs: stats.mtimeMs,
-        size: stats.size,
-        version,
-      });
+      versionProbes.set(binaryPath, { stats, version });
     }
     return version;
   });

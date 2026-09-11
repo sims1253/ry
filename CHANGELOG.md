@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Widen parameter defaults on the paths proved by compound `&&` and `||`
+  type guards. This avoids false atomic `$` errors for caller-supplied lists
+  while preserving errors on paths the guard does not prove (#408).
+
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

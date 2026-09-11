@@ -1262,7 +1262,8 @@ impl Checker {
         scope: &mut Scope,
     ) -> bool {
         if binding_name(target).is_none() {
-            // Replacement functions may mutate a method or its environment.
+            // Replacement functions may install bindings in the caller.
+            scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
 
@@ -1930,6 +1931,12 @@ impl Checker {
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
+                if !scope.literal_values_unknown {
+                    let symbol = op_symbol(*op);
+                    if self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope) {
+                        scope.invalidate_literal_values();
+                    }
+                }
                 if let Some(result) = self.infer_custom_operator(*op, scope) {
                     return result;
                 }
@@ -2067,6 +2074,7 @@ impl Checker {
                     return RType::unknown();
                 }
                 let t = self.infer(expr, scope);
+                scope.invalidate_literal_values_for_dispatch(&t);
                 // Base R's `Math.data.frame`/`Ops.data.frame` apply unary
                 // operators column-wise. Preserve the frame rather than
                 // treating its list storage mode as primitive evidence.
@@ -2166,6 +2174,7 @@ impl Checker {
                 );
                 scope.invalidate_ops_environment();
                 let bt = self.infer(base, scope);
+                scope.invalidate_literal_values_for_dispatch(&bt);
                 self.infer_index(bt, *kind, args, *span, default_null_receiver, scope)
             }
             Expr::Function { params, body, .. } => {

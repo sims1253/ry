@@ -77,3 +77,23 @@ fn assigned_character_condition_oracle_retains_the_warning() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn method_and_replacement_effects_block_later_literal_claims() {
+    for source in [
+        "`+.flag` <- function(a, b) { makeActiveBinding('e', function(value) 'TRUE', globalenv()); a }; d <- 1L; class(d) <- 'flag'; x <- d + 1L; e <- 'hello'; if (e) 1L",
+        "`activate<-` <- function(x, value) { makeActiveBinding('e', function(value) 'TRUE', globalenv()); x }; d <- 1L; activate(d) <- 1L; e <- 'hello'; if (e) 1L",
+        "`+.flag` <- function(a, b) { makeActiveBinding('e', function(value) 'TRUE', globalenv()); a }; d <- base::structure(1L, class = 'flag'); x <- d + 1L; e <- 'hello'; if (e) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("d <- 1L; x <- d + 1L; e <- 'hello'; if (e) 1L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "{diagnostics:?}"
+    );
+}

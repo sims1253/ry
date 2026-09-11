@@ -8,6 +8,15 @@ impl Scope {
         self.literal_values_unknown = true;
     }
 
+    pub(crate) fn invalidate_literal_values_for_dispatch(&mut self, value: &RType) {
+        if value.class.is_unknown()
+            || value.class.has_known_class()
+            || matches!(value.mode, Mode::Opaque | Mode::Union)
+        {
+            self.invalidate_literal_values();
+        }
+    }
+
     pub(crate) fn known_string(&self, name: &str) -> Option<&str> {
         self.known_strings
             .get(semantic_argument_name(name))

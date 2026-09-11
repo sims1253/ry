@@ -18,6 +18,8 @@ impl Checker {
         operand_proof: OperandEvidence,
         scope: &mut Scope,
     ) -> RType {
+        scope.invalidate_literal_values_for_dispatch(&lt);
+        scope.invalidate_literal_values_for_dispatch(&rt);
         let OperandEvidence {
             known_null: known_null_is_actionable,
             plain_vectors,

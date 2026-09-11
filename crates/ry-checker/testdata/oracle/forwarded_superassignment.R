@@ -1,4 +1,4 @@
-# oracle: must-warn RY001
+# oracle: must-flag
 bins <- 0L
 callee <- function(bins = 30L) if (bins == 1L) 1L else 2L
 statement <- function(bins = NULL) {
@@ -40,3 +40,4 @@ expect_length_error(rightward())
 expect_length_error(right_condition())
 expect_length_error(right_indexed())
 stopifnot(identical(bins, 1L))
+statement()

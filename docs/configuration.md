@@ -77,6 +77,11 @@ file above the cap falls back to a file-stem binding. The CLI and LSP report
 these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 (256 MiB); zero does not mean unlimited.
 
+The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
+materialized element storage per collection, including metadata read in lazy
+mode. These are separate from the decoded-file cap and are not a total memory
+budget. A parser limit also yields a degraded scope notice.
+
 Use an environment profile for bindings supplied only to selected files:
 
 ```toml

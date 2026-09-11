@@ -4,6 +4,22 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-12
+
+This release adds three Linux targets, improves package and function lookup,
+and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
+
+### Changed
+
+- Use a minor-version boundary for the public `Scope` collection types
+  (`FxMap`/`FxSet`). Rust consumers assigning standard maps directly must
+  convert their entries with `into_iter().collect()` or use the exposed types
+  (#432). No affected Rust crate was published as 0.9.x.
+- Update sha2, serde, toml, and flate2 while retaining tree-sitter 0.26 and the
+  Rust 1.88 minimum. The tree-sitter 0.27 update remains separate (#404).
+- Document the remaining [scalar-guard limits](docs/scalar-guards.md). The
+  package guard and assertion/alias/loop work remains open (#372, #351).
+
 ### Added
 
 - Release binaries and VS Code extensions for 32-bit ARM Linux and Alpine Linux
@@ -15,8 +31,8 @@ All notable changes to ry are documented in this file.
   their R6 objects and functions without installed copies of those packages
   (#366). Keep unrelated unknown names reportable.
 - Report invalid character conditions through literal assignments and aliases.
-  Discard literal facts across calls, writes, loops, and branch merges (#425).
-
+  Discard literal facts across calls, forced promises, method effects, writes,
+  loops, and branch merges (#425).
 - Return RY001 warnings from the checker API, matching the rule table and CLI.
   Keep RY002 length warnings when the condition also contains RY100 (#415).
 - Widen parameter defaults on the paths proved by compound `&&` and `||`
@@ -25,7 +41,6 @@ All notable changes to ry are documented in this file.
 - Preserve possible function bindings from enclosing frames when an inner
   assignment uses the same name. This avoids RY070 for outer constructors,
   parameters, and unknown values that may be callable (#381).
-
 - Report failed top-level calls even when a later function definition has the
   same name. Preserve outward package lookup and deferred function bodies
   (#410).
@@ -39,8 +54,7 @@ All notable changes to ry are documented in this file.
   scope notices.
 - Read literal C and C++ routine registration tables so registered symbols
   also resolve through wrappers such as cleancall. Unknown registration forms
-  keep the existing fallback (#379).
-
+  keep the existing fallback (#379). Refresh editor bindings when registration sources change.
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently
@@ -1389,7 +1403,8 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/sims1253/ry/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/sims1253/ry/compare/v0.9.0...v0.9.2
 [0.9.0]: https://github.com/sims1253/ry/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sims1253/ry/compare/v0.7.1...v0.8.0

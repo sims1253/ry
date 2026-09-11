@@ -457,11 +457,32 @@ pub(crate) fn argument_eval_mode(
     eval_mode_for_arg(sig, &match_params(&sig.params, args), index)
 }
 
-/// Locate the supplied argument named by a signature's data-mask source.
-/// Formula APIs place `data` after their quoted formula, and some calls put it
-/// after mask-evaluated arguments, so callers must not assume argument zero.
+/// Find the data argument by formal binding, including named arguments.
+/// Without an explicit source, only an unmasked first formal supplies data.
+/// Quoting helpers such as `vars(...)` have no data argument.
 pub(crate) fn data_mask_source_arg(sig: &FunctionSig, args: &[Arg]) -> Option<usize> {
-    let source = sig.data_mask_source.as_deref()?;
+    let source = if let Some(source) = sig.data_mask_source.as_deref() {
+        source
+    } else {
+        if sig.schema_effect != Some(SchemaEffect::Join)
+            && !sig
+                .eval
+                .values()
+                .any(|mode| matches!(mode, EvalMode::DataMask | EvalMode::TidySelect))
+        {
+            return None;
+        }
+        let first = sig.params.first()?;
+        if first.name == "..."
+            || sig
+                .eval
+                .get(&first.name)
+                .is_some_and(|mode| *mode != EvalMode::Normal)
+        {
+            return None;
+        }
+        &first.name
+    };
     let bindings = match_params(&sig.params, args);
     bound_argument_index_matched(&sig.params, &bindings, source)
 }

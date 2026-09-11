@@ -402,9 +402,8 @@ pub(crate) fn is_non_negative_scalar_index(expr: &Expr) -> bool {
     }
 }
 
-/// Numeric subsetting preserves index length only when every index value is
-/// provably positive and non-zero. The AST currently retains concrete values
-/// for literals and `c(...)`; identifiers carry mode and length but no sign.
+/// Whether literals, their `c(...)` concatenation, or a colon range are all
+/// positive. Identifiers retain no sign information.
 fn positive_numeric_index(expr: &Expr) -> bool {
     match expr {
         Expr::Integer(index, _) => *index > 0,

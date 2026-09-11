@@ -1,9 +1,11 @@
 //! Enumerate serialized R bindings without evaluating R code.
 
 use super::file_stem_binding;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
 
 /// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
 /// are the enumerated object names, or a single file-stem fallback when
@@ -26,50 +28,64 @@ pub(super) struct SerializedInventory {
 /// binding set is reduced to a single file-stem fallback ([`file_stem_binding`])
 /// so unbound-variable analysis (RY010) stays live.
 pub(super) fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
-    /// What the cached inventory was derived from. A mismatch on any field
-    /// means the entry is stale. `cap` is part of it because raising
-    /// `max-serialized-bytes` must re-enumerate a file that was previously
-    /// reduced to its stem.
-    type Stamp = (u64, u128, u64);
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<HashMap<PathBuf, (Stamp, SerializedInventory)>>,
-    > = std::sync::OnceLock::new();
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return SerializedInventory {
-            bindings: HashSet::new(),
-            degraded: false,
-        };
-    };
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    let stamp: Stamp = (metadata.len(), modified, cap);
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    // A panic in another thread poisons this mutex. The cache guards no
-    // invariant, so recover the map instead of cascading the panic into
-    // the LSP.
-    if let Some(inventory) = cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(path)
-        .filter(|(cached, _)| *cached == stamp)
-        .map(|(_, inventory)| inventory.clone())
-    {
-        return inventory;
+    let mut inventory =
+        cached_inventory(path, cap).unwrap_or_else(|| serialized_inventory_uncached(path, cap));
+    if inventory.degraded {
+        inventory.bindings = file_stem_binding(path);
     }
-    let inventory = serialized_inventory_uncached(path, cap);
-    // Keyed on the path, not on (path, stamp): a long-lived LSP session
-    // re-checks the same data files after every edit, and keying on the
-    // stamp would retain one binding set per historical version forever.
-    // Replacing the entry bounds the cache by the number of distinct files.
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(path.to_path_buf(), (stamp, inventory.clone()));
     inventory
+}
+
+fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
+    // Without a change-time stamp, re-read rather than trust a preserved mtime.
+    #[cfg(not(unix))]
+    {
+        let _ = (path, cap);
+        None
+    }
+    #[cfg(unix)]
+    {
+        type Stamp = (u64, i64, i64, u64, u64, u64);
+        use std::{collections::VecDeque, path::PathBuf};
+        type Entry = (PathBuf, Stamp, SerializedInventory);
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<VecDeque<Entry>>> =
+            std::sync::OnceLock::new();
+        let key = path.canonicalize().ok()?;
+        let metadata = std::fs::metadata(&key).ok()?;
+        let stamp = (
+            metadata.len(),
+            metadata.ctime(),
+            metadata.ctime_nsec(),
+            metadata.dev(),
+            metadata.ino(),
+            cap,
+        );
+        let cache = CACHE.get_or_init(Default::default);
+        let lock = || {
+            cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        };
+        {
+            let mut entries = lock();
+            if let Some(index) = entries.iter().position(|(path, _, _)| path == &key) {
+                let entry = entries.remove(index)?;
+                if entry.1 == stamp {
+                    let inventory = entry.2.clone();
+                    entries.push_back(entry);
+                    return Some(inventory);
+                }
+            }
+        }
+        let inventory = serialized_inventory_uncached(&key, cap);
+        let mut entries = lock();
+        entries.retain(|(path, _, _)| path != &key);
+        if entries.len() == 1024 {
+            entries.pop_front();
+        }
+        entries.push_back((key, stamp, inventory.clone()));
+        Some(inventory)
+    }
 }
 
 fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
@@ -164,6 +180,7 @@ fn decode_capped(decoder: impl std::io::Read, cap: u64) -> Decoded {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::path::PathBuf;
 
     struct TinyReads<'a> {
         bytes: &'a [u8],
@@ -352,6 +369,57 @@ mod tests {
         let inventory = serialized_inventory(&path, 1 << 20);
         assert!(!inventory.degraded);
         assert!(inventory.bindings.is_empty());
+    }
+
+    #[test]
+    fn inventory_cache_tracks_caps_aliases_and_replacements() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.rda");
+        let first = rda_v2_workspace(&[("first", ProbeValue::Doubles(1))]);
+        let second = rda_v2_workspace(&[("other", ProbeValue::Doubles(1))]);
+        assert_eq!(first.len(), second.len());
+        std::fs::write(&path, &first).unwrap();
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        assert!(serialized_inventory(&path, 1).degraded);
+        assert!(serialized_inventory(&path, 4096).bindings.contains("first"));
+        let replacement = dir.path().join("new.rda");
+        std::fs::write(&replacement, second).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), time);
+        assert_eq!(
+            serialized_inventory(&path, 4096).bindings,
+            HashSet::from(["other".into()])
+        );
+        #[cfg(unix)]
+        {
+            let alias = dir.path().join("alias.rda");
+            std::os::unix::fs::symlink(&path, &alias).unwrap();
+            assert!(
+                serialized_inventory(&alias, 4096)
+                    .bindings
+                    .contains("other")
+            );
+            assert_eq!(
+                serialized_inventory(&alias, 1).bindings,
+                HashSet::from(["alias".into()])
+            );
+            assert_eq!(
+                serialized_inventory(&path, 1).bindings,
+                HashSet::from(["data".into()])
+            );
+        }
     }
 
     #[test]

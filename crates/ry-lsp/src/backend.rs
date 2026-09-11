@@ -1171,6 +1171,15 @@ impl Backend {
                     }
                 }
                 state.initial_index_pending = false;
+                drop(state);
+                for (_, context) in &contexts {
+                    for (path, reason) in &context.degraded_scopes {
+                        self.client.log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
+                        ).await;
+                    }
+                }
                 if cap_hit {
                     let _ = self
                         .client

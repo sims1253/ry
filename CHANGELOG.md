@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Explain source discovery with `ry check --explain-files`. Use
+  `include-build-ignored` in `ry.toml` to include selected build-ignored files
+  in both CLI checks and editor indexing (#363).
+
 ### Fixed
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,
@@ -92,10 +98,6 @@ reading serialized package data.
 ## [0.9.0] - 2026-09-07
 
 ### Added
-
-- Explain source discovery with `ry check --explain-files`. Use
-  `include-build-ignored` in `ry.toml` to include selected build-ignored files
-  in both CLI checks and editor indexing (#363).
 
 - Embed verified ggplot2 signatures for 498 functions, 145 exported values, and
   11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;

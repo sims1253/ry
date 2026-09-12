@@ -24,6 +24,9 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 
 - Release binaries and VS Code extensions for 32-bit ARM Linux and Alpine Linux
   on x64 and ARM64. The release matrix now covers nine platforms.
+- Explain source discovery with `ry check --explain-files`. Use
+  `include-build-ignored` in `ry.toml` to include selected build-ignored files
+  in both CLI checks and editor indexing (#363).
 
 ### Fixed
 
@@ -54,7 +57,8 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
   scope notices.
 - Read literal C and C++ routine registration tables so registered symbols
   also resolve through wrappers such as cleancall. Unknown registration forms
-  keep the existing fallback (#379). Refresh editor bindings when registration sources change.
+  keep the existing fallback (#379). Refresh editor bindings when registration
+  sources change.
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently
@@ -141,10 +145,6 @@ reading serialized package data.
 ## [0.9.0] - 2026-09-07
 
 ### Added
-
-- Explain source discovery with `ry check --explain-files`. Use
-  `include-build-ignored` in `ry.toml` to include selected build-ignored files
-  in both CLI checks and editor indexing (#363).
 
 - Embed verified ggplot2 signatures for 498 functions, 145 exported values, and
   11 lazy datasets. Curated capture metadata now owns aesthetic evaluation;

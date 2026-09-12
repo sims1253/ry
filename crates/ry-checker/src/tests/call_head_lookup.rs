@@ -303,3 +303,40 @@ fn eager_callbacks_use_current_outward_bindings() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn local_foreach_and_data_masks_keep_outward_callables() {
+    for source in [
+        "x <- function() 1L; local({ x <- 1L; x() })",
+        "x <- function() 1L; base::local(expr = { x <- 1L; x() })",
+        "x <- function() 1L; foreach(i = 1:3) %dopar% { x <- 1L; x() }",
+        "x <- function() 1L; with(data.frame(x = 1L), x())",
+        "x <- function() 1L; local({ x <- 1L; x() }, envir = new.env())",
+        "library(foreach); x <- function() 1L; local({ x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    for source in [
+        "x <- function() 1L; foreach(i = 1:3) %do% { x <- 1L; x() }",
+        "local({ missing_callable_xyz <- 1L; missing_callable_xyz() })",
+        "foreach(i = 1:3) %do% { missing_callable_xyz <- 1L; missing_callable_xyz() }",
+        "x <- function() 1L; local({ x <- 1L; x() }, envir = environment())",
+        "local <- function(expr) expr; x <- function() 1L; local({ x <- 1L; x() })",
+        "x <- function() 1L; evalq({ x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("x <- list(field = 1L); local({ x <- 1L }); x$field");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+}

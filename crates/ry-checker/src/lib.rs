@@ -393,7 +393,7 @@ impl Scope {
         scope
     }
 
-    /// Enter a lexical function frame while retaining outward call-head evidence.
+    /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
         let possible_functions = self

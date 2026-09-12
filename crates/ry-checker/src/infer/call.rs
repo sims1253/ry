@@ -434,15 +434,19 @@ impl Checker {
         match self.special_call_provenance(name, func, semantic_name, "local", "base", scope) {
             SpecialCallProvenance::Ordinary => return None,
             SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
-                // An uncertain callee may force arguments in the caller or
-                // evaluate them in a child. Keep the ordinary argument walk,
-                // with possible outward callables for the child-frame case.
-                let outward = scope.outward_functions.clone();
-                scope.outward_functions = scope.function_execution_scope().outward_functions;
+                // The callee may force arguments in the caller or evaluate
+                // them in a child. Only names written by the arguments lose
+                // their caller-side value facts.
+                let mut child = scope.function_execution_scope();
+                let mark = child.begin_snapshot();
                 for argument in args {
-                    self.infer(&argument.value, scope);
+                    self.infer(&argument.value, &mut child);
                 }
-                scope.outward_functions = outward;
+                let delta = child.finish_snapshot(mark, Default::default());
+                scope.effects_unknown |= delta.effects_unknown;
+                for name in delta.changed.into_keys() {
+                    scope.insert(name, RType::unknown());
+                }
                 return Some(RType::unknown());
             }
             SpecialCallProvenance::Proven => {}

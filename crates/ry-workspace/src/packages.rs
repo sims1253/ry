@@ -65,14 +65,13 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                         .filter_map(|arg| static_name(&arg.value))
                         .filter(|prefix| !prefix.is_empty()),
                 );
-                metadata.native_registration |= args.iter().any(|arg| {
+                let registered = args.iter().any(|arg| {
                     arg.name.as_deref() == Some(".registration")
                         && matches!(&arg.value, Expr::Logical(true, _))
                 });
-                if args.iter().any(|arg| {
-                    arg.name.as_deref() == Some(".registration")
-                        && matches!(&arg.value, Expr::Logical(true, _))
-                }) && let Some(library) = args.first().and_then(|arg| static_name(&arg.value))
+                metadata.native_registration |= registered;
+                if registered
+                    && let Some(library) = args.first().and_then(|arg| static_name(&arg.value))
                 {
                     let prefix = args
                         .iter()

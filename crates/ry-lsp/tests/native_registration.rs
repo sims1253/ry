@@ -35,11 +35,22 @@ fn native_registration_edits_refresh_open_document_bindings() {
             let root = file_uri(fixture.root()).unwrap();
             let uri = file_uri(&fixture.path("R/main.R")).unwrap();
             let id = client.request("initialize", json!({
-                "processId": null, "rootUri": root, "capabilities": {},
+                "processId": null, "rootUri": root, "capabilities": {
+                    "workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}
+                },
                 "workspaceFolders": [{"uri": root, "name": "example"}]
             })).await.unwrap();
             client.receive_until(|message| message["id"] == id, 20).await.unwrap();
             client.notify("initialized", json!({})).await.unwrap();
+            let watchers = client.receive_until(|message| {
+                message["method"] == "client/registerCapability"
+            }, 20).await.unwrap();
+            client.send(&json!({"jsonrpc": "2.0", "id": watchers["id"], "result": null})).await.unwrap();
+            assert!(watchers["params"]["registrations"].as_array().unwrap().iter().any(|registration| {
+                registration["registerOptions"]["watchers"].as_array().is_some_and(|watchers| {
+                    watchers.iter().any(|watcher| watcher["globPattern"] == "**/src/*.{c,cc,cpp,cxx}")
+                })
+            }), "{watchers}");
             client.notify("textDocument/didOpen", json!({"textDocument": {
                 "uri": uri, "languageId": "r", "version": 1, "text": source
             }})).await.unwrap();

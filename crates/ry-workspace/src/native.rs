@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
     Word(String),
+    RegistrationMacro,
     String(String),
     Punct(char),
     Barrier,
@@ -191,27 +192,40 @@ fn strip_comments(source: &str) -> Option<String> {
     Some(clean)
 }
 
-fn source_tokens(source: &str) -> (Vec<Token>, HashSet<String>) {
+fn append_code_tokens(code: &mut String, macros: &HashSet<String>, tokens: &mut Vec<Token>) {
+    tokens.extend(lex(code).into_iter().map(|token| {
+        if token.word().is_some_and(|name| macros.contains(name)) {
+            Token::RegistrationMacro
+        } else {
+            token
+        }
+    }));
+    code.clear();
+}
+
+fn source_tokens(source: &str) -> Vec<Token> {
     let joined = source.replace("\\\r\n", "").replace("\\\n", "");
     let Some(joined) = strip_comments(&joined) else {
-        return (Vec::new(), HashSet::new());
+        return Vec::new();
     };
     let mut macros = HashSet::new();
     let mut conditional_depth = 0usize;
     let mut code = String::new();
+    let mut output = Vec::new();
     // Comment stripping preserves strings and directive line boundaries.
     for line in joined.lines() {
         let trimmed = line.trim_start();
         if let Some(directive) = trimmed.strip_prefix('#') {
+            append_code_tokens(&mut code, &macros, &mut output);
             let tokens = lex(directive);
             let kind = tokens.first().and_then(Token::word);
             match kind {
                 Some("if" | "ifdef" | "ifndef") => conditional_depth += 1,
                 Some("endif") => conditional_depth = conditional_depth.saturating_sub(1),
-                Some("define") if conditional_depth == 0 => {
+                Some("define") => {
                     if let Some(name) = tokens.get(1).and_then(Token::word) {
                         macros.remove(name);
-                        if registration_macro(&tokens[2..]) {
+                        if conditional_depth == 0 && registration_macro(&tokens[2..]) {
                             macros.insert(name.to_string());
                         }
                     }
@@ -231,7 +245,8 @@ fn source_tokens(source: &str) -> (Vec<Token>, HashSet<String>) {
         }
         code.push('\n');
     }
-    (lex(&code), macros)
+    append_code_tokens(&mut code, &macros, &mut output);
+    output
 }
 
 /// Accept only the common two-parameter `#name, (DL_FUNC)&name, count` macro.
@@ -269,7 +284,7 @@ fn balanced_end(tokens: &[Token], start: usize, open: char, close: char) -> Opti
     None
 }
 
-fn table_symbols(tokens: &[Token], macros: &HashSet<String>) -> HashSet<String> {
+fn table_symbols(tokens: &[Token]) -> HashSet<String> {
     let mut found = HashSet::new();
     let mut index = 0;
     while index < tokens.len() {
@@ -289,10 +304,7 @@ fn table_symbols(tokens: &[Token], macros: &HashSet<String>) -> HashSet<String> 
                 found.insert(name.clone());
             }
             index = end + 1;
-        } else if tokens[index]
-            .word()
-            .is_some_and(|name| macros.contains(name))
-        {
+        } else if tokens[index] == Token::RegistrationMacro {
             if let Some(
                 [
                     Token::Punct('('),
@@ -317,7 +329,7 @@ fn table_symbols(tokens: &[Token], macros: &HashSet<String>) -> HashSet<String> 
 }
 
 fn source_symbols(source: &str, library: &str) -> HashSet<String> {
-    let (tokens, macros) = source_tokens(source);
+    let tokens = source_tokens(source);
     let mut tables = HashMap::new();
     let mut brace_depth = 0usize;
     for (index, token) in tokens.iter().enumerate() {
@@ -349,10 +361,7 @@ fn source_symbols(source: &str, library: &str) -> HashSet<String> {
         };
         let start = index + 5;
         if let Some(end) = balanced_end(&tokens, start, '{', '}') {
-            tables.insert(
-                name.clone(),
-                table_symbols(&tokens[start + 1..end], &macros),
-            );
+            tables.insert(name.clone(), table_symbols(&tokens[start + 1..end]));
         }
     }
     let init = format!("R_init_{}", library.replace('.', "_"));
@@ -433,6 +442,31 @@ mod tests {
             HashSet::from(["alias".into(), "entry".into()])
         );
         assert!(source_symbols(&source, "other").is_empty());
+    }
+
+    #[test]
+    fn macro_definitions_apply_at_each_table_row() {
+        let source = r#"
+#define CALLDEF(name, n) { #name, (DL_FUNC)&name, n }
+static const R_CallMethodDef calls[] = {
+    CALLDEF(before, 1),
+#undef CALLDEF
+    CALLDEF(after_undef, 1),
+#define CALLDEF(name, n) { #name, (DL_FUNC)&name, n }
+    CALLDEF(redefined, 1),
+#if UNKNOWN
+#define CALLDEF(name, n) custom(name, n)
+#endif
+    CALLDEF(after_conditional, 1),
+    {NULL, NULL, 0}
+};
+void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, NULL); }
+#undef CALLDEF
+"#;
+        assert_eq!(
+            source_symbols(source, "example"),
+            HashSet::from(["before".into(), "redefined".into()])
+        );
     }
 
     #[test]

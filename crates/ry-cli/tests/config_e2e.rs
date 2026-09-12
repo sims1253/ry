@@ -1303,3 +1303,55 @@ fn excluded_sources_still_emit_json_document() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value, serde_json::json!([]));
 }
+
+#[test]
+fn c_registration_inventory_resolves_wrapper_arguments_and_keeps_typos() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+    fs::create_dir(root.join("R")).unwrap();
+    fs::create_dir(root.join("src")).unwrap();
+    fs::write(root.join("src/init.c"), r#"
+#define CALLDEF(name, n) { #name, (DL_FUNC)&name, n }
+static const R_CallMethodDef calls[] = { CALLDEF(entry, 1), {"native_alias_xyz", (DL_FUNC)&implementation, 0}, {NULL, NULL, 0} };
+void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, NULL); }
+"#).unwrap();
+    fs::write(root.join("R/wrapper.R"), "wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(C_entry); wrapper(C_native_alias_xyz); wrapper(C_typo); wrapper(other_missing) }\n").unwrap();
+    fs::write(
+        root.join("NAMESPACE"),
+        "useDynLib(example, .registration = TRUE, .fixes = 'C_')\n",
+    )
+    .unwrap();
+    let declared = ry_check(root);
+    let stdout = String::from_utf8_lossy(&declared.stdout);
+    assert!(
+        !stdout.contains("`C_entry`") && !stdout.contains("`C_native_alias_xyz`"),
+        "{stdout}"
+    );
+    // Prefix handling has its own existing fallback; use an unrelated name
+    // as the control that wrapper arguments remain ordinary value reads.
+    assert!(stdout.contains("other_missing"), "{stdout}");
+    fs::write(
+        root.join("NAMESPACE"),
+        "useDynLib(example, .registration = TRUE)\n",
+    )
+    .unwrap();
+    fs::write(root.join("R/wrapper.R"), "wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(entry); wrapper(native_alias_xyz); wrapper(typo); wrapper(other_missing) }\n").unwrap();
+    let declared = ry_check(root);
+    let stdout = String::from_utf8_lossy(&declared.stdout);
+    assert!(
+        !stdout.contains("`entry`") && !stdout.contains("`native_alias_xyz`"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("`typo`") && stdout.contains("other_missing"),
+        "{stdout}"
+    );
+    fs::write(root.join("NAMESPACE"), "useDynLib(example)\n").unwrap();
+    let undeclared = ry_check(root);
+    let stdout = String::from_utf8_lossy(&undeclared.stdout);
+    assert!(
+        stdout.contains("`entry`") && stdout.contains("`native_alias_xyz`"),
+        "{stdout}"
+    );
+}

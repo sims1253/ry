@@ -6,6 +6,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Read literal C and C++ routine registration tables so registered symbols
+  also resolve through wrappers such as cleancall. Unknown registration forms
+  keep the existing fallback (#379).
+
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

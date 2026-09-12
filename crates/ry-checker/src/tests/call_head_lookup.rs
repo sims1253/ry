@@ -356,3 +356,26 @@ fn uncertain_local_calls_preserve_argument_diagnostics() {
         }
     }
 }
+
+#[test]
+fn uncertain_local_calls_join_possible_caller_writes() {
+    for source in [
+        "library(dplyr); x <- function() 1L; local({ x <- 1L }); x()",
+        "local <- 1L; x <- function() 1L; local({ x <- 1L }); x()",
+        "f <- function(local) { x <- 1L; local({ x <- list(field = 1L) }); x$field }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY070" && d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics =
+        check("local <- function(expr) expr; x <- function() 1L; local({ x <- 1L }); x()");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY070"),
+        "{diagnostics:?}"
+    );
+}

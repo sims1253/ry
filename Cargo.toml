@@ -17,7 +17,7 @@ members = [
 exclude = ["editors/zed", "fuzz"]
 
 [workspace.package]
-version = "0.9.2"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -37,7 +37,7 @@ clap_complete = "4.6.7"
 # misc
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = "1"
@@ -50,9 +50,10 @@ proptest = "1.7"
 # parallelism (Project::check pass 3 + CLI parsing)
 rayon = "1"
 # Static inventory of R serialized data files (never evaluates R code).
-# rds2rust 0.2.0 with liblzma and cycle-safe composite deduplication.
-# Replace this fork pin when a registry release includes both fixes.
-rds2rust = { git = "https://github.com/sims1253/rds2rust", rev = "6d4014b316e465024d99fe30c0e8b424ce11cca1" }
+# rds2rust 0.2.1 plus cycle-safe deduplication and parser resource limits.
+# Upstream PRs: andrewwbutler/rds2rust#6 and #7. Keep an exact revision
+# until a registry release contains both fixes (tracking issue #433).
+rds2rust = { git = "https://github.com/sims1253/rds2rust", rev = "77c6b0f65ef76fcb0bb27a63ed09f37cc679b8ea" }
 bzip2 = "0.6"
 flate2 = "1"
 liblzma = { version = "0.4.8", default-features = false, features = ["static"] }

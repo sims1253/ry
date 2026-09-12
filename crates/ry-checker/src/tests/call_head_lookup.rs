@@ -159,32 +159,48 @@ fn top_level_overwrite_before_frame_call_keeps_error() {
 }
 
 #[test]
-fn constructor_in_outer_function_frame_is_a_known_gap() {
-    // KNOWN GAP, pinned: R finds the outer-frame generator and calls it,
-    // so this RY070 over-claims. Nested constructor bindings are
-    // invisible to the collection pass, and modeling frame identity is
-    // deliberately out of scope for this change. If a later refinement
-    // silences this, update this pin.
+fn constructor_in_outer_function_frame_remains_callable() {
     let diagnostics = check(
         "outer <- function() { Gen <- S7::new_class(\"Gen\"); inner <- function() { Gen <- 5; Gen() }; inner() }\nouter()\n",
     );
     assert!(
-        diagnostics.iter().any(|d| d.code == "RY070"),
-        "current behavior: nested generators are not modeled (documented over-claim): {diagnostics:?}"
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
     );
 }
 
 #[test]
-fn unknown_outward_binding_with_known_inner_value_is_a_known_gap() {
-    // KNOWN GAP, pinned: the outward `Gen <- get("x")` binding is
-    // opaque, so R's outcome depends on runtime values and this RY070
-    // can over-claim. The flat scope cannot see the shadowed outward
-    // type. Pinned to keep the boundary visible; not a correctness
-    // control.
+fn unknown_outward_binding_can_supply_a_function() {
     let diagnostics = check("Gen <- get(\"x\")\ng <- function() { Gen <- 5; Gen() }\ng()\n");
     assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn outward_parameter_and_multiple_frames_keep_function_uncertainty() {
+    for source in [
+        "outer <- function(f = 1L) { inner <- function() { f <- 2L; f() }; inner() }",
+        "outer <- function() { f <- get(\"callback\"); middle <- function() { f <- 1L; inner <- function() { f <- 2L; f() }; inner() }; middle() }",
+        "f <- if (getOption(\"choice\")) function() 1L else 2L; inner <- function() { f <- 3L; f() }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn known_non_function_outward_frames_keep_the_call_error() {
+    let diagnostics = check(
+        "outer <- function() { f <- 1L; inner <- function() { f <- 2L; f() }; inner() }; outer()",
+    );
+    assert!(
         diagnostics.iter().any(|d| d.code == "RY070"),
-        "current behavior: shadowed outward types are not modeled (documented over-claim): {diagnostics:?}"
+        "{diagnostics:?}"
     );
 }
 
@@ -222,5 +238,158 @@ fn open_search_path_silences_bare_dataset_head() {
     assert!(
         diagnostics.iter().all(|d| d.code != "RY070"),
         "the bare dataset-value stage must stay silent under uncertainty: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn future_top_level_function_does_not_hide_an_earlier_failed_call() {
+    for source in [
+        "x <- 1L; x(); x <- function() 2L",
+        "x <- function() 2L; x <- 1L; x()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn outward_base_functions_and_deferred_bodies_keep_function_lookup() {
+    for source in [
+        "mean <- 1L; mean(c(1, 2)); mean <- function(x) x",
+        "g <- function() { x <- 1L; x() }; x <- function() 2L; g()",
+        "x <- 1L; library(notastubbedpkg); x(); x <- function() 2L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn deferred_function_lookup_keeps_return_type_information() {
+    let diagnostics =
+        check("x <- function() 2L; g <- function() { x <- 1L; x() }; result <- g(); result$field");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn eager_callbacks_use_current_outward_bindings() {
+    for source in [
+        "x <- function() 2L; lapply(1:3, function(i) { x <- 1L; x() })",
+        "Gen <- S7::new_class('Gen'); lapply(1:3, function(i) { Gen <- 1L; Gen() })",
+        "x <- get('callback'); lapply(1:3, function(i) { x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("lapply(1:3, function(i) { x <- 1L; x() }); x <- function() 2L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn local_foreach_and_data_masks_keep_outward_callables() {
+    for source in [
+        "x <- function() 1L; local({ x <- 1L; x() })",
+        "x <- function() 1L; base::local(expr = { x <- 1L; x() })",
+        "x <- function() 1L; foreach(i = 1:3) %dopar% { x <- 1L; x() }",
+        "x <- function() 1L; with(data.frame(x = 1L), x())",
+        "x <- function() 1L; local({ x <- 1L; x() }, envir = new.env())",
+        "library(foreach); x <- function() 1L; local({ x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    for source in [
+        "x <- function() 1L; foreach(i = 1:3) %do% { x <- 1L; x() }",
+        "local({ missing_callable_xyz <- 1L; missing_callable_xyz() })",
+        "foreach(i = 1:3) %do% { missing_callable_xyz <- 1L; missing_callable_xyz() }",
+        "x <- function() 1L; local({ x <- 1L; x() }, envir = environment())",
+        "local <- function(expr) expr; x <- function() 1L; local({ x <- 1L; x() })",
+        "x <- function() 1L; evalq({ x <- 1L; x() })",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("x <- list(field = 1L); local({ x <- 1L }); x$field");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn uncertain_local_calls_preserve_argument_diagnostics() {
+    for source in [
+        "local <- 1L; local({ missing_xyz; list(\"field\" <- 1L) })",
+        "library(foreach); local({ missing_xyz; list(\"field\" <- 1L) })",
+    ] {
+        let diagnostics = check(source);
+        for code in ["RY010", "RY102"] {
+            assert!(
+                diagnostics.iter().any(|d| d.code == code),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn uncertain_local_calls_join_possible_caller_writes() {
+    for source in [
+        "library(dplyr); x <- function() 1L; local({ x <- 1L }); x()",
+        "local <- 1L; x <- function() 1L; local({ x <- 1L }); x()",
+        "f <- function(local) { x <- 1L; local({ x <- list(field = 1L) }); x$field }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY070" && d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    let diagnostics =
+        check("local <- function(expr) expr; x <- function() 1L; local({ x <- 1L }); x()");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY070"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn local_nonlocal_writes_invalidate_caller_facts() {
+    let diagnostics = check("x <- 1L; local({ x <<- list(field = 1L) }); x$field");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+    let diagnostics = check("x <- 1L; local({ x <- list(field = 1L) }); x$field");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
     );
 }

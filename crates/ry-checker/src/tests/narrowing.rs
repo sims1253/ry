@@ -1315,3 +1315,95 @@ fn diverging_branch_does_not_reintroduce_prior_nonfunction_type() {
         );
     }
 }
+
+#[test]
+fn compound_guards_reject_default_modes_on_the_proven_path() {
+    for (condition, body) in [
+        ("is.character(x) || is.null(x)", "1L else x$field"),
+        ("!is.character(x) && !is.null(x)", "x$field else 1L"),
+        ("is.null(x) || is.character(x)", "1L else x$field"),
+        (
+            "base::is.character(x) || base::is.null(x)",
+            "1L else x$field",
+        ),
+        ("!(is.character(x) || is.null(x))", "x$field else 1L"),
+        (
+            "is.character(x) || is.null(x) || is.logical(x)",
+            "1L else x$field",
+        ),
+    ] {
+        let source = format!("f <- function(x = 'default') {{ if ({condition}) {body} }}\nf()\n");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn compound_guards_do_not_widen_unproved_paths_or_local_values() {
+    for source in [
+        "f <- function(x = 'default') { if (is.character(x) || is.null(x)) x$field }; f()",
+        "f <- function(x = 'default') { if (is.character(x) && is.null(x)) 1L else x$field }; f()",
+        "f <- function(x = 'default') { x <- 'rebound'; if (is.list(x) || is.null(x)) 1L else x$field }; f()",
+        "f <- function(x = 'default') { if (is.data.frame(x) || is.null(x)) 1L else x$field }; f()",
+        "f <- function(x = 'default') { is.character <- function(x) FALSE; if (is.character(x) || is.null(x)) 1L else x$field }; f()",
+        "f <- function(x = 'default') { if (is.character(x) || { x <- 'rebound'; FALSE }) 1L else x$field }; f()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY061"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn compound_guard_refinements_cover_each_parameter_and_stay_in_the_branch() {
+    let source = "f <- function(x = 'x', y = 'y') { if (is.character(x) || is.character(y)) 1L else { x$field; y$field }; x$field }; f()";
+    let diagnostics = check(source);
+    let dollars: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY061").collect();
+    assert_eq!(dollars.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        &source[dollars[0].span.start..dollars[0].span.end],
+        "x$field"
+    );
+    assert_eq!(dollars[0].span.start, source.rfind("x$field").unwrap());
+}
+
+#[test]
+fn compound_guard_alias_mask_keeps_the_atomic_error() {
+    let diagnostics = check(
+        "is.character <- is.null\nf <- function(x = 'default') { if (is.character(x) || is.null(x)) 1L else x$field }; f()",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn compound_guard_oracle_has_no_atomic_access_errors() {
+    let diagnostics = check(include_str!(
+        "../../testdata/oracle/compound_default_guards.R"
+    ));
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn compound_guards_refine_assertions_and_positive_conjunctions() {
+    for body in [
+        "stopifnot(!is.character(x) && !is.null(x)); x$field",
+        "if (is.list(x) && !is.null(x)) x$field else 1L",
+    ] {
+        let diagnostics = check(&format!("f <- function(x = 'default') {{ {body} }}; f()"));
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY061"),
+            "{body}: {diagnostics:?}"
+        );
+    }
+}

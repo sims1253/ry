@@ -677,7 +677,7 @@ impl Checker {
         // function's body is walked (in_parallel is type-transparent).
         let cb = self.unwrap_callback_identity(cb);
         if let Expr::Function { params, body, .. } = cb {
-            let mut fn_scope = scope.independent_execution_scope();
+            let mut fn_scope = scope.function_execution_scope();
             for (i, p) in params.iter().enumerate() {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);

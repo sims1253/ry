@@ -38,6 +38,9 @@ output-format    = "full"     # full | concise | json | github | gitlab | junit
 # gitignore-style patterns, relative to this ry.toml's directory.
 exclude = ["renv", "tests/snaps/**"]
 
+# Check these source files even when .Rbuildignore excludes them.
+include-build-ignored = ["vignettes/benchmark.R"]
+
 # Include R fixture data nested under package tests/ directories.
 check-test-fixtures = false
 
@@ -55,12 +58,29 @@ max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
 ```
 
+`include-build-ignored` contains glob patterns relative to `ry.toml`. It
+lets CLI discovery and editor indexing check selected files excluded by
+`.Rbuildignore`. It does not override `exclude`, fixture settings, symlink
+rules, hidden or generated directories, or resource limits.
+
+Use `vignettes/**` to include source files throughout that directory;
+`vignettes` alone matches only the directory, not its files.
+
+Run `ry check . --explain-files` to see included files and skipped paths on
+stderr. A skipped directory represents its whole subtree; ry does not scan it
+to count the files inside. Diagnostic output, including JSON, stays on stdout.
+
 Serialized R data files are inventoried by decoding at most
 `max-serialized-bytes` bytes; one further byte is read to detect overflow. The
 16 MiB default covers real package sysdata such as gt's ~8 MB table bundle. A
 file above the cap falls back to a file-stem binding. The CLI and LSP report
 these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 (256 MiB); zero does not mean unlimited.
+
+The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
+materialized element storage per collection, including metadata read in lazy
+mode. These are separate from the decoded-file cap and are not a total memory
+budget. A parser limit also yields a degraded scope notice.
 
 Use an environment profile for bindings supplied only to selected files:
 

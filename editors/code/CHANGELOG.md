@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-12
+
+- Bundle ry 0.10.0 with improved package imports, enclosing-function lookup,
+  named data-mask arguments, and condition diagnostics.
+- Add packages for 32-bit ARM Linux and Alpine Linux on x64 and ARM64.
+- Let `include-build-ignored` in `ry.toml` add selected build-ignored files
+  to editor indexing. Existing file and resource limits still apply.
+- Bound serialized-data parser nesting and collection storage; limited
+  inventories appear in the language-server log.
+
 - Refresh the binary version check after replacements that preserve file size
   and modification time (#429).
 

@@ -55,10 +55,10 @@ Before starting any release:
    Check both product changelogs and the comparison links.
 
 5. **Version bumped:** core workspace `Cargo.toml` to the target version
-   (e.g. `0.9.2`). Editor extension versions are independent.
+   (e.g. `0.10.0`). Editor extension versions are independent.
 
 6. **Zed binary integrity verified:** confirm the core release includes
-   executable `ry-cli-<target>.bin.sha256` sidecars for all six targets.
+   executable `ry-cli-<target>.bin.sha256` sidecars for all nine targets.
    Run `cargo test --manifest-path editors/zed/Cargo.toml` and
    `python3 -m unittest discover -s scripts/release -p 'test_*.py'` to check
    download verification and sidecar generation. Archive `.sha256` files
@@ -71,7 +71,7 @@ Before starting any release:
 ### Tag format
 
 ```
-v{version}  (e.g. v0.9.2)
+v{version}  (e.g. v0.10.0)
 ```
 
 ### Steps
@@ -87,9 +87,9 @@ v{version}  (e.g. v0.9.2)
    gh workflow run release.yml --ref <release-branch> -f tag=dry-run
    ```
 
-   Record the run's commit SHA. Require all six platform builds and
+   Record the run's commit SHA. Require all nine platform builds and
    `custom-binary-checksums` to succeed, with `host` skipped. Inspect the
-   `artifacts-binary-checksums` artifact for six `.bin.sha256` files.
+   `artifacts-binary-checksums` artifact for nine `.bin.sha256` files.
 4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
 6. Dispatch the release explicitly against the tag:
@@ -100,18 +100,18 @@ v{version}  (e.g. v0.9.2)
 
    A tag push alone does not start this workflow. The dispatch builds and
    publishes the GitHub Release. **cargo-dist** produces:
-   - Six platform binaries (x86_64/aarch64 × linux/macOS/windows)
+   - Nine platform binaries, one for each target in `dist-workspace.toml`
    - SHA-256 sidecar files for each archive
-   - Six executable `.bin.sha256` sidecars from the checksum hook
+   - Nine executable `.bin.sha256` sidecars from the checksum hook
    - GitHub Release with all assets attached
 7. Verify: download each archive and its `.sha256` sidecar, run
    `sha256sum -c archive.sha256`, extract, and run `ry version`.
 
 ### Artifact verification checklist
 
-- [ ] Six platform archives exist in the GitHub release
+- [ ] Nine platform archives exist in the GitHub release
 - [ ] Each archive has a matching `.sha256` sidecar
-- [ ] All six `ry-cli-<target>.bin.sha256` executable sidecars exist
+- [ ] All nine `ry-cli-<target>.bin.sha256` executable sidecars exist
 - [ ] `sha256sum -c` passes for every archive
 - [ ] `ry version` reports the correct version on each platform
 - [ ] `ry check` runs successfully on a simple test file
@@ -142,15 +142,15 @@ The `registry` dispatch input defaults to `both`; select `marketplace` or
 ### Steps
 
 1. Dispatch `release-vscode.yml` from the reviewed extension source ref with:
-   - `version`: extension SemVer (e.g. `0.9.2`)
-   - `core-tag`: the core binary tag (e.g. `v0.9.2`)
+   - `version`: extension SemVer (e.g. `0.10.0`)
+   - `core-tag`: the core binary tag (e.g. `v0.10.0`)
    - `pre-release`: true/false
 
-   For a stable 0.9.2 extension built from the matching core release commit:
+   For a stable 0.10.0 extension built from the matching core release commit:
 
    ```bash
-   gh workflow run release-vscode.yml --ref v0.9.2 \
-     -f version=0.9.2 -f core-tag=v0.9.2 -F pre-release=false
+   gh workflow run release-vscode.yml --ref v0.10.0 \
+     -f version=0.10.0 -f core-tag=v0.10.0 -F pre-release=false
    ```
 
    This command publishes to both registries; it is not a packaging dry run.
@@ -198,7 +198,7 @@ run after correcting the cause. It reuses the packaged artifacts, and
    crate in `editors/zed/Cargo.toml` has a separate version.
 2. Verify WASM build: `cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2`.
 3. Verify tests: `cargo test --manifest-path editors/zed/Cargo.toml`.
-4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all six
+4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all nine
    targets. The cargo-dist checksum hook verifies each archive before hashing
    its executable, then uploads the sidecars with the release. A failed hook
    blocks publication. Reproduce generation with
@@ -206,7 +206,7 @@ run after correcting the cause. It reuses the packaged artifacts, and
    Before publishing, run
    `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
    Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
-   artifact contains all six `.bin.sha256` sidecars. Confirm the `host` publication
+   artifact contains all nine `.bin.sha256` sidecars. Confirm the `host` publication
    job is skipped; `dry-run` builds artifacts without creating a release.
 5. Submit to the Zed extension gallery after the server release is available.
    Automatic downloads require executable sidecars, published from 0.9.0 onward.
@@ -276,7 +276,13 @@ runtime check on platforms that were not exercised automatically.
 ## Version policy
 
 - Core and editor extension versions are **independent**.
-- Core uses SemVer (e.g. `0.9.2`).
+- Core uses SemVer (e.g. `0.10.0`).
+- Rust crates exposing the public `Scope` collections must start at 0.10.0
+  or newer. The `FxMap`/`FxSet` field types are incompatible with the earlier
+  standard-library collections; do not publish that change as 0.9.x (#432).
+  This release prepares CLI and editor artifacts. Crates.io publication also
+  needs publishable dependency metadata, including the internal workspace
+  crates and the pinned parser dependency.
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
 - Each VS Code extension release records the exact core tag it packages.

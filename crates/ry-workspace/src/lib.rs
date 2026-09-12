@@ -6,8 +6,8 @@
 
 mod discovery;
 pub use discovery::{
-    DiscoveryLimits, DiscoveryResult, TruncationReport, discover_r_files, is_file_eligible,
-    rbuildignore_pattern,
+    DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
+    is_file_eligible, rbuildignore_pattern,
 };
 use discovery::{is_r_source_name, is_testthat_code_name};
 

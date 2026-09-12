@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Explain source discovery with `ry check --explain-files`. Use
+  `include-build-ignored` in `ry.toml` to include selected build-ignored files
+  in both CLI checks and editor indexing (#363).
+
 ### Fixed
 
 - Discard forwarded-default facts after writes before wrapped or nested calls,

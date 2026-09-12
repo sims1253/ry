@@ -137,7 +137,7 @@ impl Checker {
             // A braced magrittr RHS is a unary lambda whose `.` pronoun is
             // bound to the LHS (`x %>% { .$field == value }`).
             Expr::Block { body, .. } => {
-                let mut inner = scope.independent_execution_scope();
+                let mut inner = scope.function_execution_scope();
                 inner.insert(".", lhs_t);
                 let Some((last, prefix)) = body.split_last() else {
                     return RType::new(Mode::Null, Length::Zero);

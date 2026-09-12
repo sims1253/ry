@@ -16,3 +16,7 @@ f <- function(local) {
   x$field
 }
 stopifnot(identical(f(identity), 1L))
+
+y <- 1L
+base::local({ y <<- list(field = 1L) })
+stopifnot(identical(y$field, 1L))

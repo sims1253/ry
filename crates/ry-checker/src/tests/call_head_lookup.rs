@@ -379,3 +379,17 @@ fn uncertain_local_calls_join_possible_caller_writes() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn local_nonlocal_writes_invalidate_caller_facts() {
+    let diagnostics = check("x <- 1L; local({ x <<- list(field = 1L) }); x$field");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY061"),
+        "{diagnostics:?}"
+    );
+    let diagnostics = check("x <- 1L; local({ x <- list(field = 1L) }); x$field");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY061"),
+        "{diagnostics:?}"
+    );
+}

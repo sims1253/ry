@@ -340,3 +340,19 @@ fn local_foreach_and_data_masks_keep_outward_callables() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn uncertain_local_calls_preserve_argument_diagnostics() {
+    for source in [
+        "local <- 1L; local({ missing_xyz; list(\"field\" <- 1L) })",
+        "library(foreach); local({ missing_xyz; list(\"field\" <- 1L) })",
+    ] {
+        let diagnostics = check(source);
+        for code in ["RY010", "RY102"] {
+            assert!(
+                diagnostics.iter().any(|d| d.code == code),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+}

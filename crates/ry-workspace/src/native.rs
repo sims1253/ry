@@ -241,6 +241,7 @@ fn source_tokens(source: &str) -> Vec<Token> {
         } else if conditional_depth == 0 {
             code.push_str(line);
         } else {
+            output.push(Token::Barrier);
             code.push_str(" ; ");
         }
         code.push('\n');
@@ -302,6 +303,9 @@ fn table_symbols(tokens: &[Token]) -> HashSet<String> {
                 && !rest.is_empty()
             {
                 found.insert(name.clone());
+            } else {
+                // A null name ends registration. An unknown name may be null.
+                break;
             }
             index = end + 1;
         } else if tokens[index] == Token::RegistrationMacro {
@@ -321,6 +325,8 @@ fn table_symbols(tokens: &[Token]) -> HashSet<String> {
             } else {
                 index += 1;
             }
+        } else if tokens[index] == Token::Barrier {
+            break;
         } else {
             index += 1;
         }
@@ -377,6 +383,21 @@ fn source_symbols(source: &str, library: &str) -> HashSet<String> {
         let Some(body_end) = balanced_end(&tokens, body_start, '{', '}') else {
             continue;
         };
+        let shadowed_tables: HashSet<_> = tokens[body_start + 1..body_end]
+            .windows(2)
+            .filter(|pair| {
+                matches!(
+                    pair[0].word(),
+                    Some(
+                        "R_CallMethodDef"
+                            | "R_CMethodDef"
+                            | "R_FortranMethodDef"
+                            | "R_ExternalMethodDef"
+                    )
+                )
+            })
+            .filter_map(|pair| pair[1].word())
+            .collect();
         let mut position = body_start + 1;
         while position < body_end {
             // Only direct statements in this initializer establish inventory.
@@ -407,7 +428,9 @@ fn source_symbols(source: &str, library: &str) -> HashSet<String> {
                 && call == "R_registerRoutines"
             {
                 for table in [c, call_table, fortran, external] {
-                    if let Some(names) = tables.get(table) {
+                    if !shadowed_tables.contains(table.as_str())
+                        && let Some(names) = tables.get(table)
+                    {
                         found.extend(names.iter().cloned());
                     }
                 }
@@ -467,6 +490,38 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
             source_symbols(source, "example"),
             HashSet::from(["before".into(), "redefined".into()])
         );
+    }
+
+    #[test]
+    fn terminated_or_uncertain_rows_stop_registration() {
+        for row in [
+            "{NULL, NULL, 0}",
+            "{0, 0, 0}",
+            "{nullptr, nullptr, 0}",
+            "{dynamic_name, (DL_FUNC)&entry, 0}",
+            "\n#if UNKNOWN\n{NULL, NULL, 0},\n#endif\n",
+        ] {
+            let source = source(
+                &format!(
+                    "{{\"before\", (DL_FUNC)&entry, 0}}, {row}, {{\"after\", (DL_FUNC)&entry, 0}}"
+                ),
+                "R_registerRoutines(dll, NULL, calls, NULL, NULL);",
+            );
+            assert_eq!(
+                source_symbols(&source, "example"),
+                HashSet::from(["before".into()]),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_table_does_not_resolve_through_a_shadowed_global_table() {
+        let source = source(
+            "{\"global_entry\", (DL_FUNC)&entry, 0}",
+            "const R_CallMethodDef calls[] = { {NULL, NULL, 0} }; R_registerRoutines(dll, NULL, calls, NULL, NULL);",
+        );
+        assert!(source_symbols(&source, "example").is_empty());
     }
 
     #[test]
@@ -608,9 +663,9 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
     }
 
     #[test]
-    fn conditional_rows_do_not_hide_unconditional_registration() {
+    fn conditional_rows_preserve_prior_proven_registration() {
         let source = source(
-            "\n#ifdef ENABLE\n{\"optional\", (DL_FUNC)&optional, 0},\n#endif\n{\"always\", (DL_FUNC)&always, 0}",
+            "{\"always\", (DL_FUNC)&always, 0},\n#ifdef ENABLE\n{\"optional\", (DL_FUNC)&optional, 0},\n#endif\n{\"later\", (DL_FUNC)&later, 0}",
             "R_registerRoutines(dll, NULL, calls, NULL, NULL);",
         );
         assert_eq!(

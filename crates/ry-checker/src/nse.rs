@@ -246,7 +246,7 @@ fn infer_dplyr_join(arg_types: &[RType]) -> RType {
 }
 
 fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
-    let mut scope = base_scope.independent_execution_scope();
+    let mut scope = base_scope.function_execution_scope();
     for (name, ty) in &schema.columns {
         scope.insert(name.clone(), ty.clone());
         scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());

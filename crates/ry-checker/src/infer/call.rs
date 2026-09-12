@@ -75,6 +75,13 @@ impl Checker {
             crate::semantic_lists::bare_name(&semantic_name).to_string()
         };
 
+        if lookup_name == "local"
+            && let Some(result) =
+                self.infer_local_environment_call(&name, func, &semantic_name, args, scope)
+        {
+            return result;
+        }
+
         // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with each
         // named iteration argument bound. Must run before the unknown-infix
         // quoting stage below, or an unrecognized `%do%`/`%dopar%` would
@@ -413,6 +420,51 @@ impl Checker {
         RType::unknown()
     }
 
+    /// Base `local` evaluates `expr` in a fresh environment by default.
+    fn infer_local_environment_call(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        use crate::resolve::SpecialCallProvenance;
+        match self.special_call_provenance(name, func, semantic_name, "local", "base", scope) {
+            SpecialCallProvenance::Ordinary => return None,
+            SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
+                let mut child = scope.independent_execution_scope();
+                child.invalidate_unknown_effects();
+                for argument in args {
+                    self.infer(&argument.value, &mut child);
+                }
+                scope.invalidate_unknown_effects();
+                return Some(RType::unknown());
+            }
+            SpecialCallProvenance::Proven => {}
+        }
+        let bindings = match_arguments(&["expr", "envir"], args);
+        if bindings.param_for_arg.iter().any(Option::is_none) {
+            return None;
+        }
+        let expression = bindings.arg_for_param(0)?;
+        let mut child = scope.function_execution_scope();
+        if let Some(environment) = bindings.arg_for_param(1) {
+            let value = &args[environment].value;
+            let caller_environment = matches!(value, Expr::Call { func, args, .. }
+                if args.is_empty() && callee_name(func).is_some_and(|name|
+                    crate::semantic_lists::bare_name(&name) == "environment"
+                    && self.resolves_to_base(&name, scope)));
+            self.infer(value, scope);
+            if caller_environment {
+                return Some(self.infer(&args[expression].value, scope));
+            }
+            // An explicit environment can have unrelated bindings and parents.
+            child.invalidate_unknown_effects();
+        }
+        Some(self.infer(&args[expression].value, &mut child))
+    }
+
     /// `foreach(iter = xs, ...) %op% { ... }`: infer the RHS with each
     /// named iteration argument bound. The foreach-shaped LHS is
     /// recognized rather than a fixed `%do%`/`%dopar%` spelling; `%:%`
@@ -428,7 +480,13 @@ impl Checker {
         }
         let bindings = foreach_iteration_bindings(&args[0].value)?;
         let _ = self.infer(&args[0].value, scope);
-        let mut local = scope.independent_execution_scope();
+        // Sequential `%do%` writes into the caller's frame. Other backends
+        // may use a child environment with access to the caller's functions.
+        let mut local = if semantic_name == "%do%" {
+            scope.independent_execution_scope()
+        } else {
+            scope.function_execution_scope()
+        };
         for binding in bindings {
             local.insert(binding, RType::unknown());
         }
@@ -535,7 +593,7 @@ impl Checker {
                 arg_types.push(self.infer(&argument.value, scope));
                 continue;
             }
-            let mut child = scope.independent_execution_scope();
+            let mut child = scope.function_execution_scope();
             let injects_fixed_names = specs.iter().any(|spec| !spec.names.is_empty());
             for spec in specs {
                 for source in &spec.strings_from {

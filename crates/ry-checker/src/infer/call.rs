@@ -470,7 +470,35 @@ impl Checker {
             // An explicit environment can have unrelated bindings and parents.
             child.invalidate_unknown_effects();
         }
-        Some(self.infer(&args[expression].value, &mut child))
+        let effects_were_unknown = child.effects_unknown;
+        let result = self.infer(&args[expression].value, &mut child);
+        if child.effects_unknown && !effects_were_unknown {
+            // Eager nonlocal writes can reach the caller from this child.
+            scope.invalidate_unknown_effects();
+        }
+        let _ = walk_expr(
+            &args[expression].value,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node, _| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) = node
+                {
+                    if let Some(name) = binding_name(lhs) {
+                        scope.insert(name.to_string(), RType::unknown());
+                    } else {
+                        scope.invalidate_unknown_effects();
+                    }
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        Some(result)
     }
 
     /// `foreach(iter = xs, ...) %op% { ... }`: infer the RHS with each

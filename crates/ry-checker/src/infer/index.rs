@@ -251,7 +251,7 @@ impl Checker {
                             .map(|(_, ty)| ty.clone()),
                         _ => None,
                     };
-                    self.infer_args_for_diagnostics(args, scope);
+                    let _ = self.infer_subscript_args(args, &bt, scope);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -280,7 +280,7 @@ impl Checker {
                         Expr::String(column, _) => Some(column),
                         _ => None,
                     }) {
-                        self.infer_args_for_diagnostics(args, scope);
+                        let _ = self.infer_subscript_args(args, &bt, scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
                                 return column_type;
@@ -297,10 +297,7 @@ impl Checker {
                 // masks select by their TRUE count, and numeric indices may
                 // exclude or select nothing, so retain a length only when R's
                 // index mode makes that length provable.
-                let index_types: Vec<_> = args
-                    .iter()
-                    .map(|argument| self.infer(&argument.value, scope))
-                    .collect();
+                let index_types = self.infer_subscript_args(args, &bt, scope);
                 if let Some(members) = &bt.members {
                     if args.len() != 1
                         || members
@@ -354,6 +351,110 @@ impl Checker {
                 col, available
             ),
         );
+    }
+
+    /// Infer every `[` subscript argument, recording the receiver's type
+    /// and each argument's effective `[.data.table` role on the scope so
+    /// the unary-operator diagnostics can recognize data.table select
+    /// forms (`dt[, -c("col")]`, `dt[, !c("col")]`, `dt[!"key"]`,
+    /// `dt[!list()]`; issue #367). The role comes from the argument's
+    /// name when given (`j = `, `.SDcols = `) and from its positional
+    /// slot otherwise. The previous context is saved and restored around
+    /// every argument, so nested subscripts inside a selector do not
+    /// leak their receiver into sibling arguments.
+    fn infer_subscript_args(
+        &mut self,
+        args: &[Arg],
+        receiver: &RType,
+        scope: &mut Scope,
+    ) -> Vec<RType> {
+        let mut types = Vec::with_capacity(args.len());
+        for (slot, argument) in args.iter().enumerate() {
+            let previous = scope.select_subscript.take();
+            scope.select_subscript = Some(SelectSubscript {
+                receiver: receiver.clone(),
+                role: SelectSlotRole::resolve(slot, argument.name.as_deref()),
+            });
+            let ty = self.infer(&argument.value, scope);
+            scope.select_subscript = previous;
+            types.push(ty);
+        }
+        types
+    }
+}
+
+/// Whether a unary operator applied to `operand` inside a `[` subscript
+/// argument is a documented data.table select form rather than a base-R
+/// operand error (issue #367).
+///
+/// `[.data.table` interprets `-<character>` and `!<character>` in the
+/// column-selector (`j`) argument as column drops, `!<character>` /
+/// `!<list>` in the row-filter (`i`) argument as key exclusion /
+/// not-join, and both `-<character>` and `!<character>` on `.SDcols` as
+/// selection inversion. Base R has no negative or negated character
+/// subscript: `v[-c("a")]` and `v[!"a"]` error with "invalid argument
+/// to unary operator" / "invalid argument type" (oracle-verified), so
+/// the forms are admitted only when the receiver is not provably a base
+/// object — data.table ships no stubs, so its receivers are opaque to
+/// inference, as are parameters flowing into package code.
+pub(crate) fn select_subscript_form(
+    context: Option<&SelectSubscript>,
+    op: UnaryOpKind,
+    operand: Mode,
+) -> bool {
+    let Some(context) = context else {
+        return false;
+    };
+    if base_subscript_receiver(&context.receiver) {
+        return false;
+    }
+    match (op, context.role) {
+        // `-<character>` is a documented column drop in `j` and a
+        // documented `.SDcols` inversion; data.table gives it no select
+        // meaning in `i` or any other argument.
+        (UnaryOpKind::Neg, SelectSlotRole::J | SelectSlotRole::Sdcols) => {
+            operand == Mode::Character
+        }
+        // `!<character>` / `!<list>` selects keys/rows in `i` and drops
+        // columns in `j`; `.SDcols` takes the same character inversion
+        // but no list form.
+        (UnaryOpKind::Not, SelectSlotRole::I | SelectSlotRole::J) => {
+            matches!(operand, Mode::Character | Mode::List)
+        }
+        (UnaryOpKind::Not, SelectSlotRole::Sdcols) => operand == Mode::Character,
+        _ => false,
+    }
+}
+
+/// Whether `receiver` is provably an object whose `[` follows base R
+/// subscript rules and therefore cannot interpret data.table select
+/// forms: a classless atomic vector or list, or a plain `data.frame`.
+/// Anything else stays quiet — opaque values, unions with a non-base
+/// member, and any classed receiver other than a plain `data.frame`:
+/// a known class such as `Date` has no modeled `[` method here, and an
+/// unmodeled class dispatch may give `-`/`!` subscripts their own
+/// meaning.
+fn base_subscript_receiver(receiver: &RType) -> bool {
+    if receiver.class.contains("data.table") {
+        return false;
+    }
+    let classless = receiver.class.known && receiver.class.len == 0;
+    match receiver.mode {
+        Mode::Integer
+        | Mode::Double
+        | Mode::Logical
+        | Mode::Complex
+        | Mode::Raw
+        | Mode::Character => classless,
+        // Plain lists and base data.frames: a negative or negated
+        // character subscript is an error in R.
+        Mode::List => classless || receiver.class == ClassVector::single("data.frame"),
+        // NULL and functions are never data.table receivers.
+        Mode::Null | Mode::Function => true,
+        Mode::Opaque => false,
+        Mode::Union => receiver.members.as_ref().is_some_and(|members| {
+            !members.is_empty() && members.iter().all(base_subscript_receiver)
+        }),
     }
 }
 

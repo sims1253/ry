@@ -2094,12 +2094,23 @@ impl Checker {
                             t.mode,
                             Mode::Character | Mode::Raw | Mode::List | Mode::Function
                         ) {
-                            self.emit(
-                                Severity::Error,
-                                *span,
-                                "RY020",
-                                format!("cannot apply unary `-` to `{}`", t.mode),
-                            );
+                            // `[.data.table` reads `-<character>` in a `[`
+                            // column-selector slot as a documented column
+                            // drop (issue #367). Receivers that are provably
+                            // base objects still error, and the diagnostic is
+                            // unaffected outside subscripts.
+                            if !select_subscript_form(
+                                scope.select_subscript.as_ref(),
+                                UnaryOpKind::Neg,
+                                t.mode,
+                            ) {
+                                self.emit(
+                                    Severity::Error,
+                                    *span,
+                                    "RY020",
+                                    format!("cannot apply unary `-` to `{}`", t.mode),
+                                );
+                            }
                             RType::unknown()
                         } else {
                             let mode = match t.mode {
@@ -2110,7 +2121,17 @@ impl Checker {
                         }
                     }
                     UnaryOpKind::Not => {
-                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
+                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function)
+                            // data.table reads `!<character>` / `!<list>` in
+                            // the `i` slot as key exclusion / not-join and in
+                            // the `j` slot as a column drop (issue #367);
+                            // provably base receivers still error.
+                            && !select_subscript_form(
+                                scope.select_subscript.as_ref(),
+                                UnaryOpKind::Not,
+                                t.mode,
+                            )
+                        {
                             self.emit(
                                 Severity::Error,
                                 *span,

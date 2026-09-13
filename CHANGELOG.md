@@ -4,12 +4,33 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Explain source discovery with `ry check --explain-files`. Use
+  `include-build-ignored` in `ry.toml` to include selected build-ignored files
+  in both CLI checks and editor indexing (#363).
+
 ### Fixed
 
 - Bind named data arguments before checking data-mask and tidy-select
   expressions, regardless of their position in a call. Quoting helpers without
   a data argument keep an unknown mask (#417).
-
+- Preserve possible function bindings from enclosing frames when an inner
+  assignment uses the same name. This avoids RY070 for outer constructors,
+  parameters, and unknown values that may be callable (#381).
+- Report failed top-level calls even when a later function definition has the
+  same name. Preserve outward package lookup and deferred function bodies
+  (#410).
+- Widen parameter defaults on the paths proved by compound `&&` and `||`
+  type guards. This avoids false atomic `$` errors for caller-supplied lists
+  while preserving errors on paths the guard does not prove (#408).
+- Report invalid character conditions through literal assignments and aliases.
+  Discard literal facts across calls, writes, loops, and branch merges (#425).
+- Return RY001 warnings from the checker API, matching the rule table and CLI.
+  Keep RY002 length warnings when the condition also contains RY100 (#415).
+- Bundle set6 and dictionar6 export inventories so wholesale imports resolve
+  their R6 objects and functions without installed copies of those packages
+  (#366). Keep unrelated unknown names reportable.
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

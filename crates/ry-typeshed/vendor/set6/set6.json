@@ -1,0 +1,997 @@
+{
+  "schema_version": "2",
+  "package": "set6",
+  "version": "0.0.1",
+  "functions": {
+    "%-%": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%inset%": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.FuzzyMultiset": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.FuzzySet": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.FuzzyTuple": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Interval": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Multiset": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Set": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Tuple": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertClosed": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertClosedAbove": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertClosedBelow": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertConditionalSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertContains": {
+      "params": [
+        "object",
+        "elements",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertCountablyFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertCrisp": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertEmpty": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFuzzy": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFuzzyMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFuzzySet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFuzzyTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertInterval": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertSetList": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertSubset": {
+      "params": [
+        "object",
+        "sets",
+        "proper",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkClosed": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkClosedAbove": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkClosedBelow": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkConditionalSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkContains": {
+      "params": [
+        "object",
+        "elements",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkCountablyFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkCrisp": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkEmpty": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFuzzy": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFuzzyMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFuzzySet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFuzzyTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkInterval": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkSetList": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkSubset": {
+      "params": [
+        "object",
+        "sets",
+        "proper",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "listSpecialSets": {
+      "params": [
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "powerset": {
+      "params": [
+        "x",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set6News": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setcomplement": {
+      "params": [
+        "x",
+        "y",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setintersect": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setpower": {
+      "params": [
+        "x",
+        "power",
+        "simplify",
+        "nest"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setproduct": {
+      "params": [
+        "...",
+        "simplify",
+        "nest"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setsymdiff": {
+      "params": [
+        "x",
+        "y",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "setunion": {
+      "params": [
+        "...",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testClosed": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testClosedAbove": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testClosedBelow": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testConditionalSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testContains": {
+      "params": [
+        "object",
+        "elements",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testCountablyFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testCrisp": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testEmpty": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFinite": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFuzzy": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFuzzyMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFuzzySet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFuzzyTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testInterval": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testMultiset": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testSet": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testSetList": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testSubset": {
+      "params": [
+        "object",
+        "sets",
+        "proper",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testTuple": {
+      "params": [
+        "object",
+        "errormsg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "useUnicode": {
+      "params": [
+        "use"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "ComplementSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Complex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ConditionalSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ExponentSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ExtendedReals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FuzzyMultiset": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FuzzySet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "FuzzyTuple": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Integers": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Interval": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Logicals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "LogicalSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Multiset": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Naturals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "NegIntegers": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "NegRationals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "NegReals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PosIntegers": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PosNaturals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PosRationals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PosReals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "PowersetSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ProductSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Rationals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Reals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Set": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Tuple": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "UnionSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Universal": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "UniversalSet": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

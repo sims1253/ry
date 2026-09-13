@@ -137,7 +137,7 @@ impl Checker {
             // A braced magrittr RHS is a unary lambda whose `.` pronoun is
             // bound to the LHS (`x %>% { .$field == value }`).
             Expr::Block { body, .. } => {
-                let mut inner = scope.independent_execution_scope();
+                let mut inner = scope.function_execution_scope();
                 inner.insert(".", lhs_t);
                 let Some((last, prefix)) = body.split_last() else {
                     return RType::new(Mode::Null, Length::Zero);
@@ -286,17 +286,26 @@ impl Checker {
                 child.ops_environment_unknown,
                 child.effects_unknown,
                 child.unreachable,
+                child.literal_values_unknown,
             )
         };
-        let (then_t, then_ops, then_effects, then_unreachable) =
+        let (then_t, then_ops, then_effects, then_unreachable, then_literals) =
             infer_arm(then, NarrowingBranch::Then);
-        let (else_t, else_ops, else_effects, else_unreachable) = match else_ {
+        let (else_t, else_ops, else_effects, else_unreachable, else_literals) = match else_ {
             Some(e) => infer_arm(e, NarrowingBranch::Else),
-            None => (RType::new(Mode::Null, Length::Zero), false, false, false),
+            None => (
+                RType::new(Mode::Null, Length::Zero),
+                false,
+                false,
+                false,
+                false,
+            ),
         };
         scope.clear_ops_facts();
+        scope.clear_known_strings();
         scope.ops_environment_unknown |= then_ops || else_ops;
         scope.effects_unknown |= then_effects || else_effects;
+        scope.literal_values_unknown |= then_literals || else_literals;
         scope.unreachable |= then_unreachable && else_unreachable;
         match (then_unreachable, else_unreachable) {
             (true, false) => else_t,

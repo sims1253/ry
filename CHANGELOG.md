@@ -4,17 +4,19 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-09-12
+## [0.10.0] - 2026-09-13
 
 This release adds three Linux targets, improves package and function lookup,
 and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 
 ### Changed
 
-- Use a minor-version boundary for the public `Scope` collection types
-  (`FxMap`/`FxSet`). Rust consumers assigning standard maps directly must
-  convert their entries with `into_iter().collect()` or use the exposed types
-  (#432). No affected Rust crate was published as 0.9.x.
+- Treat 0.10.0 as the crates.io-publication boundary for the public `Scope`
+  collection types (`FxMap`/`FxSet`), first changed at 0.9.2 (#340): no ry
+  crate has been published to crates.io at all, so no released consumer has
+  seen the `HashMap`/`HashSet` spellings. Rust consumers assigning standard
+  maps directly must convert their entries with `into_iter().collect()` or
+  use the exposed types (#432).
 - Update sha2, serde, toml, and flate2 while retaining tree-sitter 0.26 and the
   Rust 1.88 minimum. The tree-sitter 0.27 update remains separate (#404).
 - Document the remaining [scalar-guard limits](docs/scalar-guards.md). The

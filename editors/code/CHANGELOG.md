@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-09-12
+## [0.10.0] - 2026-09-13
 
 - Bundle ry 0.10.0 with improved package imports, enclosing-function lookup,
   named data-mask arguments, and condition diagnostics.
@@ -11,7 +11,6 @@
   to editor indexing. Existing file and resource limits still apply.
 - Bound serialized-data parser nesting and collection storage; limited
   inventories appear in the language-server log.
-
 - Refresh the binary version check after replacements that preserve file size
   and modification time (#429).
 

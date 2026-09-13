@@ -962,6 +962,64 @@ fn package_namespace_whole_import_binds_installed_exports() {
 }
 
 #[test]
+fn bundled_set6_imports_bind_exports_without_hiding_misspellings() {
+    for (namespace, unbound) in [
+        ("import(set6)\nimport(dictionar6)\n", vec!["Reaals"]),
+        (
+            "importFrom(set6, Set)\nimportFrom(dictionar6, Dictionary)\n",
+            vec!["Reals", "Interval", "as.Set", "dct", "Reaals"],
+        ),
+        (
+            "",
+            vec![
+                "Set",
+                "Reals",
+                "Interval",
+                "Dictionary",
+                "as.Set",
+                "dct",
+                "Reaals",
+            ],
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("R")).unwrap();
+        fs::write(
+            tmp.path().join("DESCRIPTION"),
+            "Package: inventoryfixture\nVersion: 0.0.1\nImports: set6, dictionar6\n",
+        )
+        .unwrap();
+        fs::write(tmp.path().join("NAMESPACE"), namespace).unwrap();
+        fs::write(
+            tmp.path().join("R/use.R"),
+            "values <- list(Set, Reals, Interval, Dictionary, as.Set, dct, Reaals)\n",
+        )
+        .unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["check", "--output-format", "json"])
+            .arg(tmp.path())
+            .env("RY_NO_INSTALLED_LIBRARIES", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                assert_eq!(diagnostic["code"], "RY010", "{diagnostic}");
+                diagnostic["message"].as_str().unwrap()
+            })
+            .collect();
+        let expected: Vec<_> = unbound
+            .iter()
+            .map(|name| format!("variable `{name}` is not bound in this scope"))
+            .collect();
+        assert_eq!(messages, expected, "NAMESPACE: {namespace:?}");
+    }
+}
+
+#[test]
 fn ry_toml_packages_enables_dplyr_nse() {
     // A `packages = ["dplyr"]` in ry.toml makes a bare
     // `filter(df, mpg > 0)` resolve as dplyr's NSE verb, so the column

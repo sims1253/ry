@@ -1254,3 +1254,155 @@ fn narrowed_binding_keeps_list_origin_marker() {
         "a plain rebinding clears list origin"
     );
 }
+
+// testthat block environments (#368). test_that(), describe(), and it()
+// all route through test_code(), which evaluates the captured body via
+// eval(code, new.env(parent = caller_env)) (verified in R): bindings
+// created inside one block never reach a sibling block or the file top
+// level, the parent chain stays readable, and `<<-` climbs past the
+// fresh environment. The contract is callee-specific — an ordinary
+// braced argument still evaluates in the caller (#350).
+
+/// The issue's shape: a loop variable bound in one `test_that()` block
+/// must not shadow a call head used in a different block.
+#[test]
+fn sibling_testthat_blocks_do_not_share_bindings() {
+    let source = "prob <- function(x) sum(x)\n\
+                  test_that(\"block A\", {\n\
+                    for (prob in list(1, 2)) NULL\n\
+                  })\n\
+                  test_that(\"block B\", {\n\
+                    prob(1:2)\n\
+                  })\n";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "a loop variable in one test_that block must not poison a call head in another: {diagnostics:?}"
+    );
+    // The file-level function still resolves through the parent chain.
+    assert!(
+        diagnostics.is_empty(),
+        "the second block reads the file-level function: {diagnostics:?}"
+    );
+}
+
+/// With testthat attached the callee identity is not proven; the
+/// conservative write-through uncertainty leaves the loop variable as an
+/// unknown file-level binding, which R's function-mode call-head lookup
+/// skips in favor of the file-level function.
+#[test]
+fn attached_testthat_blocks_keep_sibling_call_heads_resolvable() {
+    let source = "prob <- function(x) sum(x)\n\
+                  test_that(\"block A\", {\n\
+                    for (prob in list(1, 2)) NULL\n\
+                  })\n\
+                  test_that(\"block B\", {\n\
+                    prob(1:2)\n\
+                  })\n";
+    let diagnostics = check_with(source, |c| {
+        c.set_bare_loaded(HashSet::from(["testthat".to_string()]));
+    });
+    assert!(
+        diagnostics.is_empty(),
+        "an attached testthat must not flatten sibling blocks: {diagnostics:?}"
+    );
+}
+
+/// A same-block binding is the value at call time (R errors
+/// "could not find function"): isolation must not mask real shadowing.
+#[test]
+fn same_block_shadowing_keeps_the_call_error() {
+    let diagnostics = check("test_that(\"a\", {\n  shadowed <- 1\n  shadowed(2)\n})\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY070"),
+        "shadowing inside one test_that block is a real error: {diagnostics:?}"
+    );
+}
+
+/// Verified in R: `identity({x <- 1})` changes the outer `x` (#350).
+/// Braced arguments of ordinary calls keep caller evaluation, so the
+/// isolation above must stay keyed to the specific callees.
+#[test]
+fn ordinary_braced_argument_still_writes_through() {
+    let diagnostics = check("identity({ x <- 1L })\nx + \"s\"\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "a plain braced argument writes through to the caller: {diagnostics:?}"
+    );
+}
+
+/// Verified in R: `<<-` climbs past the per-test environment into the
+/// file scope. The binding exists afterwards; only its type is unknown.
+#[test]
+fn superassignment_escapes_the_testthat_block() {
+    let (diagnostics, scope) = check_with_scope("test_that(\"a\", {\n  esc <<- 1L\n})\nesc\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert!(
+        scope.get("esc").is_some(),
+        "a superassigned name must exist at the file level"
+    );
+}
+
+/// A project-local `test_that` definition keeps the ordinary argument
+/// path: its braced argument is an ordinary promise evaluated in the
+/// caller, so block bindings survive.
+#[test]
+fn project_local_test_that_keeps_caller_argument_flow() {
+    let diagnostics = check(
+        "test_that <- function(desc, code) NULL\n\
+         test_that(\"a\", {\n  zz <- 1L\n})\n\
+         zz + \"s\"\n",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "a project-local test_that must keep caller argument flow: {diagnostics:?}"
+    );
+}
+
+/// `describe`/`it` route through the same `test_code` engine: a binding
+/// in one `it()` block does not exist in its sibling. Mirrors
+/// `sibling_testthat_blocks_do_not_share_bindings` through the BDD
+/// verbs, so deleting the `describe`/`it` arms fails here too.
+#[test]
+fn describe_and_it_blocks_isolate_sibling_bindings() {
+    let diagnostics = check(
+        "inner <- function(x) sum(x)\n\
+         describe(\"d\", {\n\
+           it(\"one\", {\n\
+             for (inner in list(1, 2)) NULL\n\
+           })\n\
+           it(\"two\", {\n\
+             inner(1:2)\n\
+           })\n\
+         })\n",
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "a loop variable in one it() block must not poison a call head in another: {diagnostics:?}"
+    );
+    // The file-level function still resolves through the parent chain.
+    assert!(
+        diagnostics.is_empty(),
+        "the second it() block reads the file-level function: {diagnostics:?}"
+    );
+}
+
+/// Sequencing inside one test body is unchanged: local assignments stay
+/// visible to later expectations in the same block.
+#[test]
+fn within_block_bindings_stay_visible_to_later_expectations() {
+    let diagnostics = check(include_str!("../../testdata/ok_testthat_block_scope.R"));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+/// The runtime-verified oracle: sibling isolation, same-block shadowing,
+/// parent-chain reads, and `<<-` escape, with the exact surviving
+/// diagnostics pinned.
+#[test]
+fn testthat_block_environment_oracle() {
+    let diagnostics = check(include_str!(
+        "../../testdata/oracle/testthat_block_environment.R"
+    ));
+    let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec!["RY070", "RY040"], "{diagnostics:?}");
+}

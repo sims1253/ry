@@ -2934,6 +2934,24 @@
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
     },
+    "rlang::RY040::tests/testthat/test-cnd-message.R:481:8": {
+      "package": "rlang",
+      "code": "RY040",
+      "path": "tests/testthat/test-cnd-message.R",
+      "line": 481,
+      "column": 8,
+      "severity": "error",
+      "message": "cannot apply arithmetic op to `character` and `character`"
+    },
+    "rlang::RY040::tests/testthat/test-trace.R:587:28": {
+      "package": "rlang",
+      "code": "RY040",
+      "path": "tests/testthat/test-trace.R",
+      "line": 587,
+      "column": 28,
+      "severity": "error",
+      "message": "cannot apply arithmetic op to `double` and `character`"
+    },
     "rlang::RY091::tests/testthat/test-trace.R:325:5": {
       "package": "rlang",
       "code": "RY091",

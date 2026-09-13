@@ -14,6 +14,10 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Isolate the bodies of testthat's `test_that()`, `describe()`, and `it()`
+  blocks in their own scope, matching their per-test evaluation
+  environment. Bindings in one block no longer shadow call heads in
+  sibling blocks, removing RY070 false positives in test files (#368).
 - Suppress RY020/RY021 for data.table select subscripts such as
   `dt[, -c("col")]` and not-join forms like `dt[!"key"]` or `dt[!list()]`
   when the receiver is not provably a base object. The selector role

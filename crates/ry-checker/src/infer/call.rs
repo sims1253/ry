@@ -83,6 +83,15 @@ impl Checker {
             return result;
         }
 
+        // testthat's block verbs evaluate their body in a fresh child
+        // environment (#368). Must run before the argument-inference stage
+        // below, whose eager walk would flatten the block into the caller.
+        if let Some(result) =
+            self.infer_testthat_block_call(&name, func, &semantic_name, &lookup_name, args, scope)
+        {
+            return result;
+        }
+
         // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with each
         // named iteration argument bound. Must run before the unknown-infix
         // quoting stage below, or an unrecognized `%do%`/`%dopar%` would
@@ -499,6 +508,105 @@ impl Checker {
             },
         );
         Some(result)
+    }
+
+    /// testthat's block verbs — `test_that(desc, code)` plus the
+    /// `describe`/`it` blocks built on the same `test_code` engine —
+    /// evaluate the body through `eval(code, new.env(parent =
+    /// caller_env))`. Bindings created inside one block never reach a
+    /// sibling block or the file top level (#368), so a loop variable in
+    /// one `test_that()` must not shadow a package symbol called in
+    /// another. The body therefore walks a function-execution child
+    /// scope: only `<<-` writes and unknown effects flow back.
+    ///
+    /// The evaluation contract belongs to these callees, not to braced
+    /// arguments in general (#350): `identity({x <- 1})` writes through
+    /// to the caller and keeps the ordinary argument path below.
+    fn infer_testthat_block_call(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        let formals = match lookup_name {
+            "test_that" => &["desc", "code"][..],
+            "describe" | "it" => &["description", "code"][..],
+            _ => return None,
+        };
+        use crate::resolve::SpecialCallProvenance;
+        match self.special_call_provenance(
+            name,
+            func,
+            semantic_name,
+            lookup_name,
+            "testthat",
+            scope,
+        ) {
+            SpecialCallProvenance::Ordinary => return None,
+            SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
+                // The callee may be another package's same-named verb
+                // whose block runs in the caller. Only names written by
+                // the arguments lose their caller-side value facts.
+                let mut child = scope.function_execution_scope();
+                let mark = child.begin_snapshot();
+                for argument in args {
+                    self.infer(&argument.value, &mut child);
+                }
+                let delta = child.finish_snapshot(mark, Default::default());
+                scope.effects_unknown |= delta.effects_unknown;
+                for changed in delta.changed.into_keys() {
+                    scope.insert(changed, RType::unknown());
+                }
+                return Some(RType::unknown());
+            }
+            SpecialCallProvenance::Proven => {}
+        }
+        let bindings = match_arguments(formals, args);
+        if bindings.param_for_arg.iter().any(Option::is_none) {
+            return None;
+        }
+        // The description promise is forced in the caller's frame.
+        if let Some(description) = bindings.arg_for_param(0) {
+            self.infer(&args[description].value, scope);
+        }
+        // The body's value is discarded; test_that returns its own
+        // (invisible) logical outcome, which no caller pattern relies on.
+        let Some(code) = bindings.arg_for_param(1) else {
+            return Some(RType::unknown());
+        };
+        let mut child = scope.function_execution_scope();
+        let effects_were_unknown = child.effects_unknown;
+        self.infer(&args[code].value, &mut child);
+        if child.effects_unknown && !effects_were_unknown {
+            // Eager nonlocal writes can reach the caller from this child.
+            scope.invalidate_unknown_effects();
+        }
+        let _ = walk_expr(
+            &args[code].value,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node, _| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) = node
+                {
+                    if let Some(name) = binding_name(lhs) {
+                        scope.insert(name.to_string(), RType::unknown());
+                    } else {
+                        scope.invalidate_unknown_effects();
+                    }
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        Some(RType::unknown())
     }
 
     /// `foreach(iter = xs, ...) %op% { ... }`: infer the RHS with each

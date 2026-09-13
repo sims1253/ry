@@ -1,6 +1,6 @@
 # ry
 
-<img src="assets/branding/ry-logo.png" alt="ry logo: a watercolor r and rye stalk inside a golden hexagon" width="240" height="240">
+<img src="assets/branding/ry-logo.webp" alt="ry logo: a watercolor r and rye stalk inside a golden hexagon" width="240" height="240">
 
 [![CI](https://github.com/sims1253/ry/actions/workflows/ci.yml/badge.svg)](https://github.com/sims1253/ry/actions/workflows/ci.yml)
 

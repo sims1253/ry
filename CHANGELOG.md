@@ -75,8 +75,8 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Bound serialized-data parser nesting and materialized collection storage,
   including metadata loaded in lazy mode. Keep cycle-safe deduplication and
   the static liblzma build while updating the pinned parser to its 0.2.1 base
-  (#412, #433). Unsupported or limited inventories still produce degraded
-  scope notices.
+  (#412, #433). Over-cap inventories still produce degraded scope notices;
+  unsupported or parser-limited files return empty, unflagged inventories.
 - Read literal C and C++ routine registration tables so registered symbols
   also resolve through wrappers such as cleancall. Unknown registration forms
   keep the existing fallback (#379). Refresh editor bindings when registration

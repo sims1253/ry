@@ -354,12 +354,14 @@ impl Checker {
     }
 
     /// Infer every `[` subscript argument, recording the receiver's type
-    /// and each argument's positional slot on the scope so the
-    /// unary-operator diagnostics can recognize data.table select forms
-    /// (`dt[, -c("col")]`, `dt[, !c("col")]`, `dt[!"key"]`,
-    /// `dt[!list()]`; issue #367). The previous context is saved and
-    /// restored around every argument, so nested subscripts inside a
-    /// selector do not leak their receiver into sibling arguments.
+    /// and each argument's effective `[.data.table` role on the scope so
+    /// the unary-operator diagnostics can recognize data.table select
+    /// forms (`dt[, -c("col")]`, `dt[, !c("col")]`, `dt[!"key"]`,
+    /// `dt[!list()]`; issue #367). The role comes from the argument's
+    /// name when given (`j = `, `.SDcols = `) and from its positional
+    /// slot otherwise. The previous context is saved and restored around
+    /// every argument, so nested subscripts inside a selector do not
+    /// leak their receiver into sibling arguments.
     fn infer_subscript_args(
         &mut self,
         args: &[Arg],
@@ -371,7 +373,7 @@ impl Checker {
             let previous = scope.select_subscript.take();
             scope.select_subscript = Some(SelectSubscript {
                 receiver: receiver.clone(),
-                slot,
+                role: SelectSlotRole::resolve(slot, argument.name.as_deref()),
             });
             let ty = self.infer(&argument.value, scope);
             scope.select_subscript = previous;
@@ -386,14 +388,15 @@ impl Checker {
 /// operand error (issue #367).
 ///
 /// `[.data.table` interprets `-<character>` and `!<character>` in the
-/// column-selector (`j`) slot as column drops, and `!<character>` /
-/// `!<list>` in the row-filter (`i`) slot as key exclusion / not-join.
-/// Base R has no negative or negated character subscript: `v[-c("a")]`
-/// and `v[!"a"]` error with "invalid argument to unary operator" /
-/// "invalid argument type" (oracle-verified), so the forms are admitted
-/// only when the receiver is not provably a base object — data.table
-/// ships no stubs, so its receivers are opaque to inference, as are
-/// parameters flowing into package code.
+/// column-selector (`j`) argument as column drops, `!<character>` /
+/// `!<list>` in the row-filter (`i`) argument as key exclusion /
+/// not-join, and both `-<character>` and `!<character>` on `.SDcols` as
+/// selection inversion. Base R has no negative or negated character
+/// subscript: `v[-c("a")]` and `v[!"a"]` error with "invalid argument
+/// to unary operator" / "invalid argument type" (oracle-verified), so
+/// the forms are admitted only when the receiver is not provably a base
+/// object — data.table ships no stubs, so its receivers are opaque to
+/// inference, as are parameters flowing into package code.
 pub(crate) fn select_subscript_form(
     context: Option<&SelectSubscript>,
     op: UnaryOpKind,
@@ -405,18 +408,32 @@ pub(crate) fn select_subscript_form(
     if base_subscript_receiver(&context.receiver) {
         return false;
     }
-    match op {
-        UnaryOpKind::Neg => operand == Mode::Character && context.slot >= 1,
-        UnaryOpKind::Not => matches!(operand, Mode::Character | Mode::List) && context.slot <= 1,
+    match (op, context.role) {
+        // `-<character>` is a documented column drop in `j` and a
+        // documented `.SDcols` inversion; data.table gives it no select
+        // meaning in `i` or any other argument.
+        (UnaryOpKind::Neg, SelectSlotRole::J | SelectSlotRole::Sdcols) => {
+            operand == Mode::Character
+        }
+        // `!<character>` / `!<list>` selects keys/rows in `i` and drops
+        // columns in `j`; `.SDcols` takes the same character inversion
+        // but no list form.
+        (UnaryOpKind::Not, SelectSlotRole::I | SelectSlotRole::J) => {
+            matches!(operand, Mode::Character | Mode::List)
+        }
+        (UnaryOpKind::Not, SelectSlotRole::Sdcols) => operand == Mode::Character,
+        _ => false,
     }
 }
 
 /// Whether `receiver` is provably an object whose `[` follows base R
 /// subscript rules and therefore cannot interpret data.table select
 /// forms: a classless atomic vector or list, or a plain `data.frame`.
-/// Anything else — opaque values, unknown or non-base classes, unions
-/// with a non-base member — may be a data.table (or another class with
-/// its own `[` method) and stays quiet.
+/// Anything else stays quiet — opaque values, unions with a non-base
+/// member, and any classed receiver other than a plain `data.frame`:
+/// a known class such as `Date` has no modeled `[` method here, and an
+/// unmodeled class dispatch may give `-`/`!` subscripts their own
+/// meaning.
 fn base_subscript_receiver(receiver: &RType) -> bool {
     if receiver.class.contains("data.table") {
         return false;

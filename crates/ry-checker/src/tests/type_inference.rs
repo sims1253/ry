@@ -1468,6 +1468,81 @@ fn negative_character_double_subscript_still_flags() {
 }
 
 #[test]
+fn named_j_argument_selects_the_j_role() {
+    // `j = -c("a")` at the first positional slot is still the column
+    // selector: the tag, not the position, carries the role (R-verified:
+    // `dt[j = -c("a")]` drops the column).
+    let diags = check("f <- function(dt) dt[j = -c(\"a\")]\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY020"),
+        "named j drop flagged, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn named_non_selector_argument_still_flags() {
+    // `drop = -c("a")` passes data.table's unused `drop` formal, not the
+    // column selector, so the operand keeps its ordinary eager-argument
+    // diagnostic — the same stance as any unused lazy formal (R-verified:
+    // data.table warns the ignored argument will become an error).
+    let diags = check("f <- function(dt) dt[, drop = -c(\"a\")]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY020"),
+        "named drop argument treated as a selector, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn sdcols_inversion_forms_stay_quiet() {
+    // data.table documents `.SDcols = !cols` and `.SDcols = -cols` as
+    // equivalent selection inversions, at any positional slot (R-verified).
+    for src in [
+        "f <- function(dt) dt[, .SD, .SDcols = !c(\"a\")]\n",
+        "f <- function(dt) dt[, .SD, .SDcols = -c(\"a\")]\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY020" && d.code != "RY021"),
+            "`.SDcols` inversion flagged: {src}got {:?}",
+            diags
+        );
+    }
+}
+
+#[test]
+fn positional_third_subscript_argument_still_flags() {
+    // Positional slot 2 binds `by`, where data.table gives `-`/`!` no
+    // select meaning and both operators error (R-verified).
+    for src in [
+        "f <- function(dt) dt[, .N, -c(\"a\")]\n",
+        "f <- function(dt) dt[, .N, !c(\"a\")]\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().any(|d| d.code == "RY020" || d.code == "RY021"),
+            "positional `by` negation not flagged: {src}got {:?}",
+            diags
+        );
+    }
+}
+
+#[test]
+fn subscript_context_does_not_leak_into_callback_bodies() {
+    // A function literal executed inside a subscript argument runs in
+    // its own frame; `-` on its parameter is an ordinary operand error
+    // even when the literal appears in `j` (R-verified: errors at
+    // runtime, unlike the syntactic `-c(...)` select form).
+    let diags = check("f <- function(dt) dt[, sapply(c(\"a\"), function(s) -s)]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY020"),
+        "callback body inherited the subscript context, got {:?}",
+        diags
+    );
+}
+
+#[test]
 fn neg_preserves_na_flag_and_mode() {
     // `-NA_integer_` must remain an NA integer (negation does not
     // change mode or clear the NA flag). This guards that the

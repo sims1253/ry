@@ -140,15 +140,16 @@ impl Checker {
         result
     }
 
-    /// Build the mask for `x[i, j]` index arguments on a table-shaped
-    /// receiver (a data.frame, or the opaque value a data.table call
-    /// types as). Reuses the dplyr mask machinery so both mask families
-    /// resolve free names the same way: a known schema's columns shadow
-    /// lexical bindings and scope functions, and an unenumerable schema
-    /// keeps bare symbols opaque instead of borrowing a scope function's
-    /// type (#369). On top of the shared pronouns, data.table's j
-    /// position also binds `.SD` and friends; `.SD`'s columns depend on
-    /// `by` and `.SDcols`, so only the table shape is retained.
+    /// Build the mask for `x[i, j]` index arguments on a data.table-shaped
+    /// receiver (a `data.table` class, or the opaque value a data.table
+    /// call types as; see `table_index_receiver`). Reuses the dplyr mask
+    /// machinery so both mask families resolve free names the same way: a
+    /// known schema's columns shadow lexical bindings and scope functions,
+    /// and an unenumerable schema keeps bare symbols opaque instead of
+    /// borrowing a scope function's type (#369). On top of the shared
+    /// pronouns, data.table's j position also binds `.SD` and friends;
+    /// `.SD`'s columns depend on `by` and `.SDcols`, so only the table
+    /// shape is retained.
     ///
     /// When the schema cannot prove a name absent (unknown, incomplete,
     /// or an opaque receiver), the columns-first sentinel marks bare

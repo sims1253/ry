@@ -1,20 +1,20 @@
 use super::*;
 
-/// `x[i]` / `x[i, j]` on a table-shaped receiver are data-mask positions:
-/// free symbols resolve against the receiver's columns before scope
-/// functions (#369). A column named like a function (`month`, `table`,
-/// `count`) is data at runtime, so the function interpretation must not
-/// drive comparison diagnostics. The same name outside a mask keeps its
-/// function typing and diagnostics.
+/// `x[i]` / `x[i, j]` on a data.table-shaped receiver are data-mask
+/// positions: free symbols resolve against the receiver's columns
+/// before scope functions (#369). A column named like a function
+/// (`month`, `table`, `count`) is data at runtime, so the function
+/// interpretation must not drive comparison diagnostics. The same name
+/// outside a mask keeps its function typing and diagnostics.
 #[test]
 fn table_index_columns_shadow_scope_functions() {
     let masked = check(
         "month <- function(x) format(x)\n\
-         flights <- data.frame(month = 1:12, day = 1:12, dep_time = 401:412)\n\
-         june_i <- flights[month == 6L]\n\
-         june_ij <- flights[month == 6L, .(dep_time)]\n\
-         june_rows <- flights[month == 6L, ]\n\
-         june_col <- flights[month == 6L, \"dep_time\"]\n",
+         dat <- data.table::as.data.table(data.frame(month = 1:12, day = 1:12, dep_time = 401:412))\n\
+         june_i <- dat[month == 6L]\n\
+         june_ij <- dat[month == 6L, .(dep_time)]\n\
+         june_rows <- dat[month == 6L, ]\n\
+         june_col <- dat[month == 6L, \"dep_time\"]\n",
     );
     assert!(
         masked
@@ -30,10 +30,39 @@ fn table_index_columns_shadow_scope_functions() {
     );
 }
 
+/// Base R does not data-mask `[`: `[.data.frame` evaluates `i`/`j` as
+/// ordinary promises in the calling frame, so a closure named like a
+/// column keeps its comparison error there (R: "comparison (==) is
+/// possible only for atomic and list types"; oracle-verified). The
+/// fix for a base data.frame is `flights$month == 6L`, `with()`, or
+/// `subset()`, whose masks do resolve columns first.
+#[test]
+fn base_data_frame_index_arguments_stay_eager() {
+    let eager = check(
+        "month <- function(x) format(x)\n\
+         flights <- data.frame(month = 1:12, dep_time = 401:412)\n\
+         june <- flights[month == 6L]\n",
+    );
+    assert!(
+        eager.iter().any(|diagnostic| diagnostic.code == "RY030"),
+        "a base data.frame's `[` arguments are eager expressions: {eager:?}"
+    );
+
+    let masked_verbs = check(
+        "flights <- data.frame(month = 1:12)\n\
+         a <- subset(flights, month == 6L)\n\
+         b <- with(flights, month == 6L)\n",
+    );
+    assert!(
+        masked_verbs.is_empty(),
+        "subset()/with() do data-mask base data.frames: {masked_verbs:?}"
+    );
+}
+
 /// The corpus shape from the issue: the same-named function lives in a
-/// sibling file, the receiver is a column-carrying data frame built in
-/// this file. The project-wide function table must not win inside the
-/// mask.
+/// sibling file, the receiver is the opaque value an unstubbed
+/// data.table call types as. The project-wide function table must not
+/// win inside the mask.
 #[test]
 fn project_functions_do_not_shadow_masked_columns() {
     let mut project = Project::new();
@@ -45,7 +74,7 @@ fn project_functions_do_not_shadow_masked_columns() {
         "use.R".to_string(),
         parse_file(
             "use.R",
-            "flights <- data.frame(month = 1:12, dep_time = 401:412)\njune <- flights[month == 6L]\n",
+            "flights <- data.table::fread(\"flights.csv\")\njune <- flights[month == 6L]\n",
         ),
     );
     let diagnostics: Vec<_> = project
@@ -222,13 +251,26 @@ fn atomic_receivers_keep_eager_index_diagnostics() {
 #[test]
 fn masked_index_arguments_keep_type_diagnostics() {
     let diagnostics = check(
-        "flights <- data.frame(month = 1:12, dep_time = 401:412)\n\
-         bad <- flights[month == 6L, \"a\" + 1L]\n",
+        "dat <- data.table::as.data.table(data.frame(month = 1:12, dep_time = 401:412))\n\
+         bad <- dat[month == 6L, \"a\" + 1L]\n",
     );
     assert!(
         diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "RY040"),
         "masked arguments must still be inferred: {diagnostics:?}"
+    );
+}
+
+/// `:=` is not defined outside data.table (`v[x := 1]` errors with
+/// "could not find function \":=\"" in R), so the column-target reading
+/// applies only while a table mask is active: on an atomic receiver the
+/// call keeps its ordinary eager diagnostics (oracle-verified).
+#[test]
+fn table_assign_targets_require_a_mask() {
+    let eager = check("v <- c(1.5, 2.5)\nv[x := 1L]\n");
+    assert!(
+        !eager.is_empty(),
+        "an atomic receiver's `:=` call must keep an eager diagnostic: {eager:?}"
     );
 }

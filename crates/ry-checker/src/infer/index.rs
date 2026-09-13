@@ -10,17 +10,21 @@ fn atomic_mode(member: &RType) -> bool {
 }
 
 /// Whether a `[` receiver is table-shaped, making its index arguments
-/// data-masked positions (data.frame / data.table semantics): free names
-/// resolve against the receiver's columns before scope functions, and a
+/// data-masked positions (data.table semantics): free names resolve
+/// against the receiver's columns before scope functions, and a
 /// receiver without usable column knowledge keeps bare names opaque
-/// rather than borrowing a scope function's type (#369). A data.frame's
-/// class marks it directly; plain lists share the column-mask machinery;
-/// an opaque receiver could be a data.table built by unstubbed calls.
-/// Atomic vectors and matrices evaluate their indices eagerly in the
-/// calling frame, so they stay outside the mask.
+/// rather than borrowing a scope function's type (#369). Only
+/// data.table's `[` masks its arguments: a receiver classed
+/// `data.table`, or an opaque value — data.table ships no stubs, so
+/// runtime data.tables built by `as.data.table()` / `fread()` / package
+/// data type as opaque (#369's corpus shape). Base R does not data-mask
+/// `[`: `[.data.frame` evaluates `i`/`j` as ordinary promises in the
+/// calling frame (R-lang §2.1.8), so class-`data.frame` receivers,
+/// plain lists, atomic vectors, and matrices evaluate their indices
+/// eagerly and keep the eager diagnostics — `flights[month == 6L]` on a
+/// base data.frame errors at runtime when `month` is a closure.
 fn table_index_receiver(bt: &RType) -> bool {
-    !bt.class.contains("matrix")
-        && (bt.class.contains("data.frame") || matches!(bt.mode, Mode::List | Mode::Opaque))
+    !bt.class.contains("matrix") && (bt.class.contains("data.table") || bt.mode == Mode::Opaque)
 }
 
 /// A light table mask: the receiver is opaque without column knowledge,
@@ -246,13 +250,16 @@ impl Checker {
                 conservative_element_type(&bt)
             }
             IndexKind::Single => {
-                // `x[i]` / `x[i, j]` on a table-shaped receiver evaluates
-                // its index arguments in a data mask over the receiver's
-                // columns (#369): a column named like a scope function
-                // (`month`, `table`, `count`) resolves as a column, and a
-                // receiver without usable column knowledge keeps bare
-                // names opaque rather than borrowing a scope function's
-                // type. Atomic receivers keep eager index evaluation.
+                // `x[i]` / `x[i, j]` on a data.table-shaped receiver (a
+                // `data.table` class or the opaque value an unstubbed
+                // data.table call types as) evaluates its index arguments
+                // in a data mask over the receiver's columns (#369): a
+                // column named like a scope function (`month`, `table`,
+                // `count`) resolves as a column, and a receiver without
+                // usable column knowledge keeps bare names opaque rather
+                // than borrowing a scope function's type. Base data.frame
+                // receivers, plain lists, and atomic receivers keep eager
+                // index evaluation — base R does not data-mask `[`.
                 let mut table_mask =
                     table_index_receiver(&bt).then(|| self.table_index_mask_scope(scope, &bt));
                 let index_scope: &mut Scope = match table_mask.as_mut() {
@@ -426,17 +433,20 @@ impl Checker {
     /// `c()` of names, or named arguments in the functional
     /// `` `:=`(col = value) `` form -- so those names denote columns to
     /// create or replace. They are targets, not references: they must
-    /// not resolve to scope functions or fire RY010 (#369). A named
-    /// argument of a light mask belongs to a table method's controls
-    /// (`by`, `.SDcols`, `drop`, ...); base-vector subsetting has none,
-    /// so its value resolves through an unenumerable mask. Every other
-    /// argument is an ordinary expression of the surrounding mask.
+    /// not resolve to scope functions or fire RY010 (#369). `:=` is not
+    /// defined outside data.table, so this reading applies only while a
+    /// table mask is active. A named argument of a light mask belongs to
+    /// a table method's controls (`by`, `.SDcols`, `drop`, ...);
+    /// base-vector subsetting has none, so its value resolves through an
+    /// unenumerable mask. Every other argument is an ordinary expression
+    /// of the surrounding mask.
     fn infer_table_index_argument(&mut self, argument: &Arg, scope: &mut Scope) -> RType {
         if let Expr::Call { func, args, .. } = &argument.value
             && matches!(
                 func.as_ref(),
                 Expr::Ident { name, .. } if name == ":=" || name == "`:=`"
             )
+            && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
         {
             // Infix shape `target := value`, also spelled `` `:=`(target, value) ``.
             if args.len() == 2 && args.iter().all(|operand| operand.name.is_none()) {

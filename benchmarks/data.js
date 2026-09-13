@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789336677457,
+  "lastUpdate": 1789337025540,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -18644,6 +18644,184 @@ window.BENCHMARK_DATA = {
             "range": "544.51–634.86",
             "unit": "ms",
             "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 544.5094350000145, 566.4705560000148, 581.6897900000331, 619.8332069999888, 634.8594929999672"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bb00f99e4ad774c5a8c53427e5cdb48b51bbe39e",
+          "message": "fix(checker): isolate sibling test_that block scopes (#454)\n\n* fix(checker): isolate sibling test_that block scopes\n\ntest_that(), describe(), and it() route their braced body through\ntest_code(), which evaluates it via eval(code, new.env(parent =\ncaller_env)). Walk the body in a function-execution child scope so\nbindings created in one block no longer shadow call heads in sibling\nblocks (RY070 false positives in test files, #368). Only proven\ncallees isolate exactly; under ambient uncertainty names written by\nthe block survive as unknown bindings, and ordinary braced arguments\nsuch as identity({x <- 1}) keep caller evaluation (#350).\n\n* test(checker): reconcile testthat block-scope corpus findings\n\nBlock scoping (#368) makes sibling test_that blocks reachable after a\nmid-test `return()`, which the flattened analysis previously treated as\nterminating the whole file. Two rlang RY040s surface from behind that\nunreachability; both reviewed as test-fixture false positives:\n\n- tests/testthat/test-cnd-message.R:481:8 quotes its operand through\n  `enexpr()` and never forces the promise (eager-argument analysis);\n- tests/testthat/test-trace.R:587:28 is a deliberate caught-error\n  fixture (`identity(1 + \"\")` on the error path under `catch_cnd`),\n  matching the existing dplyr/cli test-conditions precedent.\n\nBoth corpora regenerate deterministically: posit ledger gains the two\nreviewed identities (438 -> 440 findings, rlang 11 -> 13, test-fixture\n71 -> 73), and the hermetic reports plus summaries record the same two\nrows for the tidyverse corpus's rlang pin. All 37 true positives are\nretained.\n\n* test(checker): register the testthat oracle fixture with CI\n\nReview follow-up for #368:\n\n- Tag `testthat_block_environment.R` `# oracle: must-flag` (R errors at\n  the same-block shadowing call; verified) and load `library(testthat)`\n  so `fixture_packages` registers the dependency; add `any::testthat`\n  to the oracle job's install and importability-verification steps so\n  the fixture runs in CI instead of being silently skipped.\n- Strengthen `describe_and_it_blocks_isolate_sibling_bindings` to\n  mirror the sibling test_that repro through the BDD verbs: with\n  `infer/call.rs` reverted to base it now fails with the RY070\n  poisoning, so the `describe`/`it` arms are pinned.",
+          "timestamp": "2026-09-13T23:56:00+02:00",
+          "tree_id": "a0001e54e0a0f56c191d3448edeb0e4d892bdbea",
+          "url": "https://github.com/sims1253/ry/commit/bb00f99e4ad774c5a8c53427e5cdb48b51bbe39e"
+        },
+        "date": 1789337025464,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 1390344.856067769,
+            "range": "1387957.09–1393110.12",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 497913.0475194405,
+            "range": "496322.47–499982.03",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 5070694.199550628,
+            "range": "5051718.65–5092181.03",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 718084.5397789507,
+            "range": "717011.45–719022.60",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 9170997.126837078,
+            "range": "9106824.03–9255258.55",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1223108.1198723454,
+            "range": "1217940.75–1232016.49",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 12232303.799603615,
+            "range": "12149918.17–12349509.44",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 6629887.173151993,
+            "range": "6616002.11–6645626.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1394921.3840128272,
+            "range": "1383910.20–1414947.50",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 2581342.2600265024,
+            "range": "2555803.86–2613886.84",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 885508.3576302065,
+            "range": "884802.66–886351.78",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 6613673.258847928,
+            "range": "6604932.28–6623333.38",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1387102.2731215553,
+            "range": "1385461.87–1388735.90",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 76970494.15,
+            "range": "76000787.33–77843929.71",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 11203943.124648975,
+            "range": "11168067.80–11242854.87",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5783208.73253548,
+            "range": "5755041.36–5821263.96",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 11359698.613294233,
+            "range": "11313667.33–11412917.07",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4323934.171279875,
+            "range": "4288197.21–4366405.18",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 13626139.378874823,
+            "range": "13542469.96–13754687.96",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 2710346.616786492,
+            "range": "2685043.58–2741009.79",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 9062472,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 754996,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 366571,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 394760,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 223.84371400001692,
+            "range": "211.33–301.44",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 211.33254699996905, 215.27556899999036, 223.84371400001692, 279.1032819999964, 301.4397379999864"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 596.0173000000068,
+            "range": "552.95–666.79",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 552.945430999971, 580.0078410000424, 596.0173000000068, 609.4520229999907, 666.7887099999934"
           }
         ]
       }

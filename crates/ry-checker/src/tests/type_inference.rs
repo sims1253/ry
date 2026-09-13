@@ -1543,6 +1543,20 @@ fn subscript_context_does_not_leak_into_callback_bodies() {
 }
 
 #[test]
+fn subscript_context_does_not_leak_into_deferred_bodies() {
+    // The same holds for deferred bodies that bypass function frames:
+    // a foreach `%do%` body evaluates its expression eagerly in its own
+    // iteration environment, so `-c("a")` there errors in R rather than
+    // reading as a data.table select form.
+    let diags = check("f <- function(dt) dt[, foreach(i = 1:2) %do% -c(\"a\")]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY020"),
+        "foreach body inherited the subscript context, got {:?}",
+        diags
+    );
+}
+
+#[test]
 fn neg_preserves_na_flag_and_mode() {
     // `-NA_integer_` must remain an NA integer (negation does not
     // change mode or clear the NA flag). This guards that the

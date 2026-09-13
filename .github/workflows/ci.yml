@@ -112,10 +112,11 @@ jobs:
             any::dplyr
             any::ggplot2
             any::rlang
+            any::data.table
       - name: Verify oracle R packages are importable
         # Missing fixture packages must not silently reduce CI coverage.
         run: |
-          Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"), requireNamespace("ggplot2"), requireNamespace("rlang"))'
+          Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"), requireNamespace("ggplot2"), requireNamespace("rlang"), requireNamespace("data.table"))'
       # Typeshed auditing and stub generation moved to the r-typeshed
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite

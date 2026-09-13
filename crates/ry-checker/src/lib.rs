@@ -298,6 +298,21 @@ struct FunctionLookupFrame {
     parent: Option<Arc<FunctionLookupFrame>>,
 }
 
+/// Inference context for one `[` subscript argument: the receiver's
+/// inferred type and the argument's positional slot (0 = `i`, 1 = `j`,
+/// 2 = `drop`/`...`). The scope carries it only while subscript
+/// arguments are being inferred, so the unary-operator diagnostics can
+/// recognize data.table select forms (`dt[, -c("col")]` column drops,
+/// `dt[!"key"]` key exclusion, `dt[!list()]` not-join) instead of
+/// reporting base-R operand errors there (issue #367).
+#[derive(Debug, Clone)]
+pub(crate) struct SelectSubscript {
+    /// Type of the `[` receiver.
+    pub(crate) receiver: RType,
+    /// Positional slot of the subscript argument being inferred.
+    pub(crate) slot: usize,
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Default)]
 pub struct Scope {
@@ -346,6 +361,9 @@ pub struct Scope {
     pub(crate) lexical_functions: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) tidy_injection: Option<InjectionMode>,
+    /// The `[` subscript argument currently being inferred, if any.
+    /// See [`SelectSubscript`].
+    pub(crate) select_subscript: Option<SelectSubscript>,
     pub search_path_unknown: bool,
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
@@ -374,6 +392,7 @@ impl Clone for Scope {
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
+            select_subscript: self.select_subscript.clone(),
             search_path_unknown: self.search_path_unknown,
             unreachable: self.unreachable,
             undo: Vec::new(),

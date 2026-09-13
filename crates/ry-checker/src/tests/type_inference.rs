@@ -1354,6 +1354,119 @@ fn neg_on_character_emits_ry020() {
     );
 }
 
+// ---- data.table select subscripts (issue #367) ----
+//
+// `[.data.table` reads `-<character>` / `!<character>` in the `j` slot
+// as column drops, and `!<character>` / `!<list>` in the `i` slot as key
+// exclusion / not-join. data.table ships no stubs, so its receivers are
+// opaque to inference (parameters, `data.table::` calls). Base R has no
+// negative or negated character subscript, so provably base receivers
+// and non-subscript positions keep the diagnostics. R semantics verified
+// by the `testdata/oracle/` fixtures for this issue.
+
+#[test]
+fn negative_character_j_subscript_on_opaque_receiver_is_a_datatable_drop() {
+    // The corpus shape from issue #367: the receiver is a parameter that
+    // may be a data.table, so `-c(...)` in `j` is a documented drop.
+    let diags = check("f <- function(design) design[, -c(\"dob\", \"eol\")]\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY020"),
+        "data.table column drop flagged, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn negative_character_j_subscript_on_datatable_classed_receiver_is_quiet() {
+    let diags = check(
+        "dt <- structure(list(a = 1), class = c(\"data.table\", \"data.frame\"))\nu <- dt[, -c(\"a\")]\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY020"), "got {:?}", diags);
+}
+
+#[test]
+fn datatable_not_forms_on_opaque_receivers_stay_quiet() {
+    for src in [
+        "f <- function(dt) dt[!\"key\"]\n",
+        "f <- function(dt) dt[!list(k = \"a\")]\n",
+        "f <- function(dt) dt[, !c(\"a\")]\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY021"),
+            "data.table not-form flagged: {src}got {:?}",
+            diags
+        );
+    }
+}
+
+#[test]
+fn negative_character_subscript_in_package_mode_stays_quiet() {
+    // The corpus sites live in packages importing data.table; the same
+    // subscript shape must stay quiet there (importing data.table alone
+    // is not what licenses the form -- the opaque receiver is).
+    let diags = check_with(
+        "drop_cols <- function(design) {\n  design[, -c(\"dob\", \"eol\")]\n}\n",
+        |checker| checker.set_loaded(HashSet::from(["data.table".to_string()])),
+    );
+    assert!(diags.iter().all(|d| d.code != "RY020"), "got {:?}", diags);
+}
+
+#[test]
+fn negative_character_subscript_on_base_vector_still_flags() {
+    let diags = check("v <- c(\"x\", \"y\")\nu <- v[-c(\"x\")]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY020"),
+        "base vector has no negative character subscript, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn negated_character_subscript_on_base_vector_still_flags() {
+    let diags = check("v <- c(\"x\", \"y\")\nu <- v[!\"x\"]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY021"),
+        "base vector has no negated character subscript, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn negative_character_subscript_on_base_data_frame_still_flags() {
+    let diags = check("df <- data.frame(a = 1, b = 2)\nu <- df[, -c(\"a\")]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY020"),
+        "base data.frame requires integer/logical negatives, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn negated_list_subscript_on_base_list_still_flags() {
+    let diags = check("l <- list(a = 1, b = 2)\nu <- l[!list(a = 1)]\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY021"),
+        "base list has no negated list subscript, got {:?}",
+        diags
+    );
+}
+
+#[test]
+fn negative_character_subscript_in_i_slot_still_flags() {
+    // `-<character>` is only a documented drop in the `j` selector slots;
+    // data.table does not interpret it in the row-filter `i` slot.
+    let diags = check("f <- function(dt) dt[-c(\"a\")]\n");
+    assert!(diags.iter().any(|d| d.code == "RY020"), "got {:?}", diags);
+}
+
+#[test]
+fn negative_character_double_subscript_still_flags() {
+    // `[[` has no select semantics; the operand error stays.
+    let diags = check("f <- function(dt) dt[[-c(\"a\")]]\n");
+    assert!(diags.iter().any(|d| d.code == "RY020"), "got {:?}", diags);
+}
+
 #[test]
 fn neg_preserves_na_flag_and_mode() {
     // `-NA_integer_` must remain an NA integer (negation does not

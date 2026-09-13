@@ -14,6 +14,11 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Suppress RY020/RY021 for data.table select subscripts such as
+  `dt[, -c("col")]` and not-join forms like `dt[!"key"]` or `dt[!list()]`
+  when the receiver is not provably a base object. Negative or negated
+  character subscripts on plain vectors, lists, and base data frames, and
+  outside subscript positions, still error (#367).
 - Read literal C and C++ routine registration tables so registered symbols
   also resolve through wrappers such as cleancall. Unknown registration forms
   keep the existing fallback (#379).

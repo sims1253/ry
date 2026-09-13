@@ -1361,3 +1361,70 @@ fn excluded_sources_still_emit_json_document() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value, serde_json::json!([]));
 }
+
+#[test]
+fn explain_files_keeps_json_valid_and_reports_deliberate_reinclusion() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+    fs::write(root.join(".Rbuildignore"), "^vignettes$\n").unwrap();
+    fs::create_dir(root.join("vignettes")).unwrap();
+    fs::write(root.join("vignettes/broken.R"), "x <- )\n").unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(root)
+            .args(["check", ".", "--explain-files", "--output-format", "json"])
+            .output()
+            .unwrap()
+    };
+    let skipped = run();
+    let json: serde_json::Value = serde_json::from_slice(&skipped.stdout).unwrap();
+    assert_eq!(json, serde_json::json!([]));
+    assert!(String::from_utf8_lossy(&skipped.stderr).contains("(.Rbuildignore)"));
+    fs::write(
+        root.join("ry.toml"),
+        "include-build-ignored = ['vignettes/*.R']\n",
+    )
+    .unwrap();
+    let included = run();
+    let json: serde_json::Value = serde_json::from_slice(&included.stdout).unwrap();
+    assert!(
+        json.as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "RY000")
+    );
+    assert!(String::from_utf8_lossy(&included.stderr).contains("include ./vignettes/broken.R"));
+}
+
+#[test]
+fn explicitly_requested_build_ignored_directory_still_gets_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
+    fs::write(root.join(".Rbuildignore"), "^vignettes$\n").unwrap();
+    fs::create_dir(root.join("vignettes")).unwrap();
+    fs::write(root.join("vignettes/doc.R"), "y <- )\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(root)
+        .args([
+            "check",
+            "vignettes",
+            "--explain-files",
+            "--output-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        diagnostics
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "RY000"),
+        "{diagnostics}"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("include vignettes/doc.R"));
+}

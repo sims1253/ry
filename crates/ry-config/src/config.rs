@@ -120,6 +120,9 @@ pub struct Config {
     pub extend_select: Vec<String>,
     /// Exclude patterns (gitignore-style). Default: empty.
     pub exclude: Vec<String>,
+    /// Source globs to include despite `.Rbuildignore`, relative to `ry.toml`.
+    #[serde(alias = "include-build-ignored")]
+    pub include_build_ignored: Vec<String>,
     /// Check R fixture data nested under a package's `tests/` tree.
     /// Default: false.
     #[serde(alias = "check-test-fixtures")]
@@ -164,6 +167,7 @@ impl Default for Config {
             select: None,
             extend_select: Vec::new(),
             exclude: Vec::new(),
+            include_build_ignored: Vec::new(),
             check_test_fixtures: false,
             output_format: DEFAULT_OUTPUT_FORMAT.to_string(),
             verbose: 0,
@@ -232,6 +236,15 @@ impl Config {
                     }
                 })?;
             }
+        }
+        for pattern in &cfg.include_build_ignored {
+            glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                ConfigError::InvalidIncludePattern {
+                    path: path.to_path_buf(),
+                    pattern: pattern.clone(),
+                    source,
+                }
+            })?;
         }
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
@@ -383,6 +396,7 @@ impl Config {
             select: self.select,
             extend_select: self.extend_select,
             exclude: self.exclude,
+            include_build_ignored: self.include_build_ignored,
             check_test_fixtures: self.check_test_fixtures,
             output_format,
             // Saturating add so a config value of 255 plus a CLI flag
@@ -473,6 +487,12 @@ pub enum ConfigError {
         "config file {path} has invalid max-serialized-bytes: expected 1..=268435456 (256 MiB)"
     )]
     InvalidSerializedLimit { path: PathBuf },
+    #[error("config file {path} has invalid include-build-ignored pattern `{pattern}`: {source}")]
+    InvalidIncludePattern {
+        path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
     #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
     InvalidEnvironmentPattern {
         path: PathBuf,
@@ -486,6 +506,17 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn invalid_build_include_globs_are_configuration_errors() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ry.toml");
+        fs::write(&path, "include-build-ignored = ['[']\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidIncludePattern { .. })
+        ));
+    }
 
     #[test]
     fn invalid_environment_globs_are_configuration_errors() {

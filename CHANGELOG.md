@@ -6,6 +6,8 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Return RY001 warnings from the checker API, matching the rule table and CLI.
+  Keep RY002 length warnings when the condition also contains RY100 (#415).
 - Bundle set6 and dictionar6 export inventories so wholesale imports resolve
   their R6 objects and functions without installed copies of those packages
   (#366). Keep unrelated unknown names reportable.

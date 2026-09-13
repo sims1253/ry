@@ -631,7 +631,7 @@ impl Checker {
             && !has_ry100
         {
             self.emit(
-                Severity::Error,
+                Severity::Warning,
                 span_of(cond),
                 "RY001",
                 format!(

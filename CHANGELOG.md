@@ -40,8 +40,9 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
   `dt[, -c("col")]` and not-join forms like `dt[!"key"]` or `dt[!list()]`
   when the receiver is not provably a base object. The selector role
   follows the argument tag (`j = `, `.SDcols = `) rather than the
-  positional slot, and function bodies nested in a subscript argument
-  no longer inherit the select-form license. Negative or negated
+  positional slot, and function or deferred bodies nested in a subscript
+  argument (callbacks, `foreach` bodies, data-mask walks) no longer
+  inherit the select-form license. Negative or negated
   character subscripts on plain vectors, lists, and base data frames,
   on non-selector arguments such as `drop = ` or a positional `by`, and
   outside subscript positions, still error (#367).

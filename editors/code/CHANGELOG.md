@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add an extension icon for VS Code and Positron (#456).
 - Refresh the binary version check after replacements that preserve file size
   and modification time (#429).
 

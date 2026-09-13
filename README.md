@@ -1,8 +1,8 @@
-<img align="right" src="assets/branding/ry-logo.webp" alt="ry logo: a watercolor r and rye stalk inside a golden hexagon" width="160" height="160">
-
 # ry
 
 [![CI](https://github.com/sims1253/ry/actions/workflows/ci.yml/badge.svg)](https://github.com/sims1253/ry/actions/workflows/ci.yml)
+
+<img align="right" src="assets/branding/ry-logo.webp" alt="ry logo: a watercolor r and rye stalk inside a golden hexagon" width="160" height="160">
 
 `ry` is a static checker for R, written in Rust. It checks your project for
 likely bugs before you run it: incompatible types, missing data frame columns,

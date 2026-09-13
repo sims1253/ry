@@ -12,14 +12,17 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Widen parameter defaults on the paths proved by compound `&&` and `||`
+  type guards. This avoids false atomic `$` errors for caller-supplied lists
+  while preserving errors on paths the guard does not prove (#408).
 - Report invalid character conditions through literal assignments and aliases.
   Discard literal facts across calls, writes, loops, and branch merges (#425).
-
 - Return RY001 warnings from the checker API, matching the rule table and CLI.
   Keep RY002 length warnings when the condition also contains RY100 (#415).
 - Bundle set6 and dictionar6 export inventories so wholesale imports resolve
   their R6 objects and functions without installed copies of those packages
   (#366). Keep unrelated unknown names reportable.
+>>>>>>> origin/main
 - Discard forwarded-default facts after writes before wrapped or nested calls,
   including replacement assignments, loop variables, and literal `assign()`
   targets. Match backticked parameter and argument names consistently

@@ -6,6 +6,8 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Release binaries and VS Code extensions for 32-bit ARM Linux and Alpine Linux
+  on x64 and ARM64. The release matrix now covers nine platforms.
 - Explain source discovery with `ry check --explain-files`. Use
   `include-build-ignored` in `ry.toml` to include selected build-ignored files
   in both CLI checks and editor indexing (#363).

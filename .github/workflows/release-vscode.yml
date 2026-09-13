@@ -78,6 +78,12 @@ jobs:
             code-target: linux-x64
           - dist-target: aarch64-unknown-linux-gnu
             code-target: linux-arm64
+          - dist-target: armv7-unknown-linux-gnueabihf
+            code-target: linux-armhf
+          - dist-target: x86_64-unknown-linux-musl
+            code-target: alpine-x64
+          - dist-target: aarch64-unknown-linux-musl
+            code-target: alpine-arm64
           - dist-target: x86_64-apple-darwin
             code-target: darwin-x64
           - dist-target: aarch64-apple-darwin

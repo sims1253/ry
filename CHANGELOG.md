@@ -12,6 +12,9 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Read literal C and C++ routine registration tables so registered symbols
+  also resolve through wrappers such as cleancall. Unknown registration forms
+  keep the existing fallback (#379).
 - Bound serialized-data parser nesting and materialized collection storage,
   including metadata loaded in lazy mode. Keep cycle-safe deduplication and
   the static liblzma build while updating the pinned parser to its 0.2.1 base

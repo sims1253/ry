@@ -441,7 +441,7 @@ fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
                 .await
                 .unwrap();
             let patterns = &request["params"]["registrations"][0]["registerOptions"]["watchers"];
-            let pattern = &patterns[4]["globPattern"];
+            let pattern = &patterns.as_array().unwrap().last().unwrap()["globPattern"];
             if relative {
                 assert_eq!(
                     pattern["baseUri"],
@@ -513,8 +513,9 @@ fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
                 .respond_to_request("client/registerCapability", json!(null))
                 .await
                 .unwrap();
-            let pattern = &registration["params"]["registrations"][0]["registerOptions"]["watchers"]
-                [4]["globPattern"];
+            let watchers =
+                &registration["params"]["registrations"][0]["registerOptions"]["watchers"];
+            let pattern = &watchers.as_array().unwrap().last().unwrap()["globPattern"];
             if relative {
                 assert_eq!(
                     pattern["baseUri"],

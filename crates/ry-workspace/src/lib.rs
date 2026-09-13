@@ -5,6 +5,7 @@
 //! checker bindings.
 
 mod discovery;
+mod native;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible, rbuildignore_pattern,
@@ -142,6 +143,7 @@ pub fn resolve_workspace_context<'a>(
     let mut export_cache: HashMap<String, HashSet<String>> = HashMap::new();
     let mut dataset_cache: HashMap<PathBuf, DataInventory> = HashMap::new();
     let mut source_binding_cache: HashMap<PathBuf, SourceBindings> = HashMap::new();
+    let mut native_inventory_cache = HashMap::new();
     // A package root is visited once per file in it, so cache the
     // DESCRIPTION read like the sibling namespace/dataset caches.
     let mut description_cache: HashMap<PathBuf, DescriptionPackages> = HashMap::new();
@@ -221,12 +223,24 @@ pub fn resolve_workspace_context<'a>(
             let metadata = namespace_cache
                 .entry(root.clone())
                 .or_insert_with(|| read_namespace(&root.join("NAMESPACE")));
-            // `useDynLib(pkg, .registration = TRUE)` binds every routine in
-            // the package's `R_registerRoutines` table into the namespace.
-            // ry does not read `src/`, so the witness set collected above --
-            // names this package itself passes as an FFI entry point -- is
-            // the evidence that a name is one of them. Without the
-            // declaration the same names are ordinary unbound reads.
+            // Literal registered tables also cover symbols passed through
+            // wrappers. Keep the existing direct-call witnesses for sources
+            // whose build-time registration cannot be enumerated.
+            let native_inventory =
+                native_inventory_cache
+                    .entry(root.clone())
+                    .or_insert_with(|| {
+                        metadata
+                            .registered_native_libraries
+                            .iter()
+                            .flat_map(|(library, prefix)| {
+                                native::registered_symbols(&root, library)
+                                    .into_iter()
+                                    .map(move |name| format!("{prefix}{name}"))
+                            })
+                            .collect::<HashSet<_>>()
+                    });
+            file_bindings.extend(native_inventory.iter().cloned());
             if metadata.native_registration {
                 file_bindings.extend(source_bindings.native_symbols.iter().cloned());
                 file_bindings.extend(metadata.native_routines.iter().cloned());

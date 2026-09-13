@@ -1,0 +1,26 @@
+{
+  "schema_version": "2",
+  "package": "dictionar6",
+  "version": "0.0.1",
+  "functions": {
+    "dct": {
+      "params": [
+        "...",
+        "x",
+        "types"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "Dictionary": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

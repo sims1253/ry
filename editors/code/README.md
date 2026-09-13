@@ -1,5 +1,7 @@
 # ry: static checker for R
 
+<img src="images/icon.png" alt="ry logo" width="128" height="128">
+
 [ry](https://github.com/sims1253/ry) checks R code as you type. The extension
 provides project diagnostics, inlay hints for inferred types, and code actions
 to insert suppression comments. Hints and code actions apply to open documents.

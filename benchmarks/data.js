@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789340080578,
+  "lastUpdate": 1789342770709,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -19000,6 +19000,184 @@ window.BENCHMARK_DATA = {
             "range": "536.22–656.13",
             "unit": "ms",
             "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 536.2226960000116, 541.2533979999716, 609.0381049999851, 625.4292370000039, 656.1254440000048"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "563066c85ee17bdf33c65d356815a48dac34268b",
+          "message": "fix(checker): close post-merge review follow-ups (#458)\n\n* fix(checker): clear the subscript license in independent scopes\n\nFollow-up to the #453 review: `independent_execution_scope` still\npropagated the select-subscript license into deferred bodies that do\nnot pass through `function_execution_scope` — probed `f <- function(dt)\ndt[, foreach(i = 1:2) %do% -c(\"a\")]` stayed quiet though the `%do%`\nbody evaluates `-c(\"a\")` eagerly and errors in R, and the dplyr\ndata-mask fallback path (nse.rs) is the same class.\n\nMove the `select_subscript` clear from `function_execution_scope` into\n`independent_execution_scope` (the former calls the latter, so coverage\nis a superset). The light-mask control scope in\n`infer_table_index_argument` isolates name resolution only — the named\nargument's value is still the syntactic operand of the in-flight `[`\ncall (`.SDcols = !c(\"a\")` keeps its select form) — so it re-carries\nthe context explicitly. `dt[, -c(\"a\")]`, the `.SDcols` inversions,\nand the branch-nesting license (`dt[, if (x) -c(\"a\") else 2]`, via\nplain `Clone`) all survive; rlang corpus reports at both pinned\ncommits are byte-identical.\n\n* docs(corpus): refresh the posit ledger provenance\n\nFollow-up to the #454 review: after regenerating the hermetic reports,\n`source_sha256` still held main's pre-regeneration digest and\n`ry_commit` still named the prior reconciliation. Recompute the digest\nover the committed posit.*.root.txt files per docs/corpus/README.md and\npoint `ry_commit` at bb00f99, the merged commit whose checker produced\nthe reports.\n\n* docs: name deferred bodies in the 0.10.0 select-form bullet",
+          "timestamp": "2026-09-14T01:34:08+02:00",
+          "tree_id": "5bf4fbefbdd1d259280f3e8fac574da3ecb7ce2c",
+          "url": "https://github.com/sims1253/ry/commit/563066c85ee17bdf33c65d356815a48dac34268b"
+        },
+        "date": 1789342770652,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 1375252.562216844,
+            "range": "1369809.29–1382927.72",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 474258.85327778134,
+            "range": "473701.14–474908.21",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 4973930.951588733,
+            "range": "4968212.24–4980530.34",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 710689.4613108026,
+            "range": "709283.10–712334.17",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 8797106.530346205,
+            "range": "8790262.02–8805384.89",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1215449.2834424754,
+            "range": "1214329.41–1216561.69",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 12109983.270891104,
+            "range": "12083984.09–12135665.89",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 6556184.727213069,
+            "range": "6546831.18–6566165.92",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1392104.2590234291,
+            "range": "1389570.82–1395096.64",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 2557880.62120179,
+            "range": "2549187.66–2571321.93",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 887798.1349897772,
+            "range": "877131.72–907979.50",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 6558743.628988307,
+            "range": "6544299.86–6577857.94",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1399432.3153115732,
+            "range": "1396753.45–1403920.21",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 68247110.13333333,
+            "range": "67809637.41–68689819.95",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 11285406.572002243,
+            "range": "11252105.77–11315245.45",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5786398.416983097,
+            "range": "5751219.68–5841516.01",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 11331743.986099266,
+            "range": "11313134.13–11357783.33",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4259170.159474996,
+            "range": "4244542.40–4278359.02",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 13576225.829554746,
+            "range": "13555004.90–13606187.13",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 2704422.721362862,
+            "range": "2693168.28–2716747.93",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 9064296,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 754996,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 366900,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 394760,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 194.49811899999622,
+            "range": "183.28–218.34",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 183.28054100001464, 189.97877500002505, 194.49811899999622, 212.28387199999997, 218.34496099996613"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 553.1110150000313,
+            "range": "531.91–595.54",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 531.9142839999986, 535.8974090000265, 553.1110150000313, 557.6329469999764, 595.5363329999964"
           }
         ]
       }

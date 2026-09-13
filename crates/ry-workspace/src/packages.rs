@@ -17,8 +17,8 @@ pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 
 /// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
 /// The registered entry points are declared in `src/`'s `R_registerRoutines`
-/// table, which ry does not read, so the flag instead licenses bare symbols in
-/// native-call argument position.
+/// table. This flag also retains call-position support when source tables
+/// cannot be enumerated.
 pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
 
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
@@ -31,6 +31,8 @@ pub struct NamespaceMetadata {
     /// Whether `useDynLib(..., .registration = TRUE)` enables registered
     /// symbols in native-call positions without enumerating C sources.
     pub native_registration: bool,
+    /// Literal DLL names and binding prefixes with registration enabled.
+    pub registered_native_libraries: Vec<(String, String)>,
     /// Names introduced by `importFrom(package, name, ...)`.
     pub imported_bindings: HashSet<String>,
     /// Exact package provenance for `importFrom(package, name, ...)` names.
@@ -63,10 +65,23 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                         .filter_map(|arg| static_name(&arg.value))
                         .filter(|prefix| !prefix.is_empty()),
                 );
-                metadata.native_registration |= args.iter().any(|arg| {
+                let registered = args.iter().any(|arg| {
                     arg.name.as_deref() == Some(".registration")
                         && matches!(&arg.value, Expr::Logical(true, _))
                 });
+                metadata.native_registration |= registered;
+                if registered
+                    && let Some(library) = args.first().and_then(|arg| static_name(&arg.value))
+                {
+                    let prefix = args
+                        .iter()
+                        .find(|arg| arg.name.as_deref() == Some(".fixes"));
+                    if let Some(prefix) =
+                        prefix.map_or(Some(String::new()), |arg| static_name(&arg.value))
+                    {
+                        metadata.registered_native_libraries.push((library, prefix));
+                    }
+                }
                 metadata.native_routines.extend(
                     args.iter()
                         .skip(1)
@@ -219,6 +234,16 @@ my_library(dplyr)
         assert_eq!(
             metadata.native_routine_prefixes,
             HashSet::from(["pkg_".to_string()])
+        );
+    }
+
+    #[test]
+    fn registered_libraries_keep_their_own_prefixes() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser.parse("NAMESPACE", "useDynLib(example, .registration = TRUE)\nuseDynLib(other, .registration = TRUE, .fixes = 'C_')").unwrap();
+        assert_eq!(
+            namespace_metadata(&file).registered_native_libraries,
+            vec![("example".into(), "".into()), ("other".into(), "C_".into())]
         );
     }
 

@@ -19,6 +19,7 @@ impl Checker {
         let environment_known_before_call = !scope.ops_environment_unknown;
         let pure = ops_chooser::pure_literal_constructor(self, func, args, scope);
         if !pure {
+            scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
@@ -74,6 +75,13 @@ impl Checker {
         } else {
             crate::semantic_lists::bare_name(&semantic_name).to_string()
         };
+
+        if lookup_name == "local"
+            && let Some(result) =
+                self.infer_local_environment_call(&name, func, &semantic_name, args, scope)
+        {
+            return result;
+        }
 
         // `foreach(iter = xs, ...) %op% { ... }` evaluates the RHS with each
         // named iteration argument bound. Must run before the unknown-infix
@@ -413,6 +421,86 @@ impl Checker {
         RType::unknown()
     }
 
+    /// Base `local` evaluates `expr` in a fresh environment by default.
+    fn infer_local_environment_call(
+        &mut self,
+        name: &str,
+        func: &Expr,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        use crate::resolve::SpecialCallProvenance;
+        match self.special_call_provenance(name, func, semantic_name, "local", "base", scope) {
+            SpecialCallProvenance::Ordinary => return None,
+            SpecialCallProvenance::Unknown | SpecialCallProvenance::AmbientUncertainty => {
+                // The callee may force arguments in the caller or evaluate
+                // them in a child. Only names written by the arguments lose
+                // their caller-side value facts.
+                let mut child = scope.function_execution_scope();
+                let mark = child.begin_snapshot();
+                for argument in args {
+                    self.infer(&argument.value, &mut child);
+                }
+                let delta = child.finish_snapshot(mark, Default::default());
+                scope.effects_unknown |= delta.effects_unknown;
+                for name in delta.changed.into_keys() {
+                    scope.insert(name, RType::unknown());
+                }
+                return Some(RType::unknown());
+            }
+            SpecialCallProvenance::Proven => {}
+        }
+        let bindings = match_arguments(&["expr", "envir"], args);
+        if bindings.param_for_arg.iter().any(Option::is_none) {
+            return None;
+        }
+        let expression = bindings.arg_for_param(0)?;
+        let mut child = scope.function_execution_scope();
+        if let Some(environment) = bindings.arg_for_param(1) {
+            let value = &args[environment].value;
+            let caller_environment = matches!(value, Expr::Call { func, args, .. }
+                if args.is_empty() && callee_name(func).is_some_and(|name|
+                    crate::semantic_lists::bare_name(&name) == "environment"
+                    && self.resolves_to_base(&name, scope)));
+            self.infer(value, scope);
+            if caller_environment {
+                return Some(self.infer(&args[expression].value, scope));
+            }
+            // An explicit environment can have unrelated bindings and parents.
+            child.invalidate_unknown_effects();
+        }
+        let effects_were_unknown = child.effects_unknown;
+        let result = self.infer(&args[expression].value, &mut child);
+        if child.effects_unknown && !effects_were_unknown {
+            // Eager nonlocal writes can reach the caller from this child.
+            scope.invalidate_unknown_effects();
+        }
+        let _ = walk_expr(
+            &args[expression].value,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node, _| -> ControlFlow<(), Descend> {
+                if let AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) = node
+                {
+                    if let Some(name) = binding_name(lhs) {
+                        scope.insert(name.to_string(), RType::unknown());
+                    } else {
+                        scope.invalidate_unknown_effects();
+                    }
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        Some(result)
+    }
+
     /// `foreach(iter = xs, ...) %op% { ... }`: infer the RHS with each
     /// named iteration argument bound. The foreach-shaped LHS is
     /// recognized rather than a fixed `%do%`/`%dopar%` spelling; `%:%`
@@ -428,7 +516,13 @@ impl Checker {
         }
         let bindings = foreach_iteration_bindings(&args[0].value)?;
         let _ = self.infer(&args[0].value, scope);
-        let mut local = scope.independent_execution_scope();
+        // Sequential `%do%` writes into the caller's frame. Other backends
+        // may use a child environment with access to the caller's functions.
+        let mut local = if semantic_name == "%do%" {
+            scope.independent_execution_scope()
+        } else {
+            scope.function_execution_scope()
+        };
         for binding in bindings {
             local.insert(binding, RType::unknown());
         }
@@ -535,7 +629,7 @@ impl Checker {
                 arg_types.push(self.infer(&argument.value, scope));
                 continue;
             }
-            let mut child = scope.independent_execution_scope();
+            let mut child = scope.function_execution_scope();
             let injects_fixed_names = specs.iter().any(|spec| !spec.names.is_empty());
             for spec in specs {
                 for source in &spec.strings_from {
@@ -1094,9 +1188,8 @@ impl Checker {
         let inherited_sig = self.resolve_user_s3_inherited_sig(lookup_name);
         let inherited_s3_metadata = inherited_sig.is_some();
         let resolved_sig = self.resolve_typeshed_sig(semantic_name).or(inherited_sig);
-        // Formula interfaces can name a later `data` argument as the source
-        // of their data mask. Infer it once up front so earlier `weights`,
-        // `subset`, and similar arguments see the right scope.
+        // Bind and infer data once before visiting masked expressions. R's
+        // named arguments can put the data source after those expressions.
         let supplied_data_mask_source = resolved_sig.as_ref().and_then(|signature| {
             data_mask_source_arg(signature, args).map(|argument_index| {
                 (
@@ -1148,8 +1241,10 @@ impl Checker {
                 .and_then(|(signature, bindings)| eval_mode_for_arg(signature, bindings, index));
             let user_dispatch = inherited_s3_metadata
                 || user_function.is_some()
-                || arg_types
-                    .first()
+                || supplied_data_mask_source
+                    .as_ref()
+                    .map(|(_, data)| data)
+                    .or_else(|| arg_types.first())
                     .is_some_and(|first| self.resolves_user_s3_dispatch(lookup_name, first));
             // The user formal this actual bound to (directly or through
             // `...`), looked up once for both the defusing and quoting
@@ -1216,42 +1311,8 @@ impl Checker {
                     }
                     EvalMode::QuotedExpression | EvalMode::CapturesPromise => RType::unknown(),
                     EvalMode::DataMask => {
-                        // A declared source is conditional: without a
-                        // supplied `data` argument, formula extras evaluate
-                        // normally in the caller environment.
-                        // Classify by the first argument's OWN binding, not
-                        // `eval_mode_for_arg`: its `...` fallback would also
-                        // mark a leading data argument masked. Signatures such
-                        // as dplyr `transmute(.data, ...)` declare no eval
-                        // entry on the data formal, only on `...`, and their
-                        // first argument is the data frame at every real call
-                        // site -- the schema mask must survive. A named formal
-                        // counts as masked only through its own entry; an
-                        // argument absorbed by `...` counts through the dots
-                        // entry (ggplot2 `aes()`, tidyr `nesting()`).
-                        let leading_argument_is_masked =
-                            declared_binding
-                                .as_ref()
-                                .is_some_and(|(signature, bindings)| {
-                                    let own_formal = bindings
-                                        .param_for_arg
-                                        .first()
-                                        .and_then(|parameter| {
-                                            parameter.and_then(|index| signature.params.get(index))
-                                        })
-                                        .map(|param| param.name.as_str());
-                                    let own_mode = own_formal
-                                        .and_then(|name| signature.eval.get(name))
-                                        .or_else(|| {
-                                            own_formal
-                                                .is_none()
-                                                .then(|| signature.eval.get("..."))
-                                                .flatten()
-                                        });
-                                    own_mode.is_some_and(|mode| {
-                                        matches!(mode, EvalMode::DataMask | EvalMode::TidySelect)
-                                    })
-                                });
+                        // Formula extras evaluate in the caller when their
+                        // declared data argument is absent.
                         let Some(data) = supplied_data_mask_source
                             .as_ref()
                             .map(|(_, data)| data.clone())
@@ -1259,23 +1320,7 @@ impl Checker {
                                 resolved_sig
                                     .as_ref()
                                     .is_some_and(|signature| signature.data_mask_source.is_none())
-                                    .then(|| {
-                                        if leading_argument_is_masked {
-                                            // A signature that data-masks its own
-                                            // leading formals (ggplot2 `aes()`,
-                                            // `vars()`, tidyr `nesting()`) has no
-                                            // data argument at the call site: the
-                                            // mask is unknown and `.data` stays
-                                            // opaque instead of adopting a sibling
-                                            // argument's atomic type.
-                                            RType::unknown()
-                                        } else {
-                                            arg_types
-                                                .first()
-                                                .cloned()
-                                                .unwrap_or_else(RType::unknown)
-                                        }
-                                    })
+                                    .then(RType::unknown)
                             })
                         else {
                             arg_types.push(self.infer_with_injection(&a.value, scope, injection));
@@ -1289,7 +1334,10 @@ impl Checker {
                         self.infer_with_injection(&a.value, &mut local, injection)
                     }
                     EvalMode::TidySelect => {
-                        let data = arg_types.first().cloned().unwrap_or_else(RType::unknown);
+                        let data = supplied_data_mask_source
+                            .as_ref()
+                            .map(|(_, data)| data.clone())
+                            .unwrap_or_else(RType::unknown);
                         let mut local = self.dplyr_data_mask_scope(scope, &data);
                         if user_dispatch {
                             local = local.with_unknown_data_mask();
@@ -1503,22 +1551,25 @@ impl Checker {
         }
     }
 
-    /// The diagnostic decision for a bare symbol call head (#381).
-    /// Uncertainty is decided first and cannot be overridden by the
-    /// callable-inventory approximation below: an attached package
-    /// without a stub (or an unenumerable data mask) can export any
-    /// name, so a would-be RY070 stays silent. The existing S7 carveout
-    /// is retained as a known approximation, not a proof: the
-    /// whole-project callable inventory has no execution-order
-    /// information, so at the top level a concrete value still yields
-    /// the diagnostic (`err_s7_callable_future_assignment`), and a
-    /// frame-local value above a live generator can be over-diagnosed.
-    /// `Suppress` likewise is not a proven function: it inherits
-    /// `has_function_anywhere`'s conservatism, which treats externally
-    /// supplied names as possible functions.
+    /// A bare call skips non-functions while searching outward. An open
+    /// package search path or data mask can still supply the function.
+    /// Eager calls use source order. Deferred bodies retain enclosing-frame
+    /// evidence and the project inventory, since they may run later.
     fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
-        if scope.search_path_unknown || scope.data_mask_unknown {
+        if scope.search_path_unknown
+            || scope.data_mask_unknown
+            || scope.has_possible_outward_function(name)
+        {
             return CallHeadFunctionEvidence::Uncertain;
+        }
+        // An eager top-level call sees the binding installed so far. The
+        // project inventory also contains later or overwritten functions.
+        if !self.discarding && self.enclosing_formals.is_empty() {
+            return if self.has_external_function(name) {
+                CallHeadFunctionEvidence::Suppress
+            } else {
+                CallHeadFunctionEvidence::Diagnose
+            };
         }
         if !self.has_function_anywhere(name) {
             return CallHeadFunctionEvidence::Diagnose;
@@ -1781,7 +1832,7 @@ impl Checker {
     fn infer_injected_expr(&mut self, expr: &Expr, scope: &mut Scope) -> RType {
         match expr {
             Expr::Function { params, body, .. } => {
-                let mut inner = scope.independent_execution_scope();
+                let mut inner = scope.function_execution_scope();
                 for parameter in params {
                     inner.insert_parameter(parameter.name.clone(), RType::unknown());
                 }
@@ -1915,14 +1966,9 @@ fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
 }
 
-/// The diagnostic decision for a bare symbol call head under the
-/// checker's current outward-lookup model, mirroring R's function-mode
-/// call lookup (non-function bindings are skipped in every frame). The
-/// variants are decisions, not proofs: `Diagnose` includes the retained
-/// callable-inventory approximation documented on
-/// [`Checker::call_head_function_evidence`], and `Suppress` inherits
-/// `has_function_anywhere`'s conservatism (externally supplied names are
-/// treated as possible functions).
+/// The diagnostic decision for a bare symbol call head. Eager calls use
+/// current bindings and external functions. Deferred bodies also consult
+/// the project inventory; that inventory does not prove call-time identity.
 enum CallHeadFunctionEvidence {
     /// A function binding is modeled reachable outward; the call head
     /// resolves to it, the local value is skipped, and no RY070 fires.

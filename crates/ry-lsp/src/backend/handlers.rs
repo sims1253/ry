@@ -372,6 +372,14 @@ impl LanguageServer for Backend {
                 let path = change.uri.path();
                 path.ends_with("DESCRIPTION")
                     || path.ends_with("NAMESPACE")
+                    || change.uri.to_file_path().is_ok_and(|path| {
+                        path.parent().and_then(std::path::Path::file_name)
+                            == Some(std::ffi::OsStr::new("src"))
+                            && matches!(
+                                path.extension().and_then(|ext| ext.to_str()),
+                                Some("c" | "cc" | "cpp" | "cxx")
+                            )
+                    })
                     || path.ends_with(".rda")
                     || path.ends_with(".RData")
                     || path.ends_with(".rdata")

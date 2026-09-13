@@ -134,6 +134,8 @@ pub(crate) enum MarkerKind {
 
 #[derive(Debug)]
 pub(crate) enum Undo {
+    KnownString(String, Option<Arc<str>>),
+    KnownStrings(FxMap<String, Arc<str>>),
     Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
@@ -152,6 +154,7 @@ pub(crate) enum Undo {
 }
 
 pub(crate) struct Mark {
+    literal_values_unknown: bool,
     len: usize,
     data_mask_unknown: bool,
     tidy_injection: Option<InjectionMode>,
@@ -168,6 +171,7 @@ pub(crate) type BranchChanges =
     hashbrown::HashMap<String, BindingState, std::collections::hash_map::RandomState>;
 
 pub(crate) struct BranchDelta {
+    pub literal_values_unknown: bool,
     pub changed: BranchChanges,
     pub unreachable: bool,
     pub effects_unknown: bool,
@@ -380,6 +384,7 @@ impl Scope {
     pub(crate) fn begin_snapshot(&mut self) -> Mark {
         self.snapshot_depth += 1;
         Mark {
+            literal_values_unknown: self.literal_values_unknown,
             len: self.undo.len(),
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
@@ -436,10 +441,15 @@ impl Scope {
                         .entry_ref(name.as_str())
                         .or_insert_with(|| BindingState::capture(self, name));
                 }
-                Undo::Provenance(_) | Undo::OpsBinding(..) | Undo::OpsTables(..) => {}
+                Undo::Provenance(_)
+                | Undo::OpsBinding(..)
+                | Undo::OpsTables(..)
+                | Undo::KnownString(..)
+                | Undo::KnownStrings(..) => {}
             }
         }
         let delta = BranchDelta {
+            literal_values_unknown: self.literal_values_unknown,
             effects_unknown: self.effects_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             has_escaped_slot_names: self.has_escaped_slot_names,
@@ -448,6 +458,14 @@ impl Scope {
         };
         while self.undo.len() > mark.len {
             match self.undo.pop().unwrap() {
+                Undo::KnownString(name, previous) => {
+                    if let Some(value) = previous {
+                        self.known_strings.insert(name, value);
+                    } else {
+                        self.known_strings.remove(&name);
+                    }
+                }
+                Undo::KnownStrings(previous) => self.known_strings = previous,
                 Undo::Assignment(name, state) => state.restore(self, name),
                 Undo::Binding(name, state) => state.restore(self, name),
                 Undo::Marker(kind, name, present) => {
@@ -503,6 +521,7 @@ impl Scope {
         self.effects_unknown = mark.effects_unknown;
         self.ops_environment_unknown = mark.ops_environment_unknown;
         self.has_escaped_slot_names = mark.has_escaped_slot_names;
+        self.literal_values_unknown = mark.literal_values_unknown;
         self.data_mask_unknown = mark.data_mask_unknown;
         self.tidy_injection = mark.tidy_injection;
         self.search_path_unknown = mark.search_path_unknown;
@@ -685,6 +704,8 @@ mod tests {
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.function_aliases, right.function_aliases);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
+        assert_eq!(left.known_strings, right.known_strings);
+        assert_eq!(left.literal_values_unknown, right.literal_values_unknown);
         assert_eq!(left.literal_functions.len(), right.literal_functions.len());
         for (name, function) in &left.literal_functions {
             assert_eq!(

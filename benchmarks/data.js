@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789335687390,
+  "lastUpdate": 1789336677457,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -18466,6 +18466,184 @@ window.BENCHMARK_DATA = {
             "range": "492.60–532.34",
             "unit": "ms",
             "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 492.60320500005037, 503.0970710000256, 529.5426999999909, 531.6092269999208, 532.3368269999046"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e735d1e3833e7d8554e07521c56e637842fbff12",
+          "message": "fix(checker): prefer data-mask columns over scope functions (#455)\n\n* fix(checker): prefer data-mask columns over scope functions\n\nResolve x[i, j] index arguments against a table-shaped receiver's\ncolumns before scope functions, closing the corpus false positives\nwhere a column named like a function (month, table, count, penalty)\nborrowed the function's type and fired RY030/RY040 (#369).\n\nThe mask reuses the dplyr data-mask machinery from #447: a known\nschema overlays its columns as bindings, and a schema that cannot\nprove a name absent marks bare value-position symbols as column\ncandidates so scope functions type them opaque instead. data.table\nj positions additionally bind .SD and friends, treat := left-hand\nnames as column targets rather than references, and evaluate named\ncontrols (by, .SDcols) through the mask.\n\nAn opaque receiver may equally be an atomic vector whose type\ndegraded, so its mask stays eager for names: symbols that resolve\nnowhere keep RY010, and atomic and matrix receivers keep eager\nindex evaluation outside the mask entirely.\n\n* fix(checker): scope the table index mask to data.table receivers\n\nReview follow-up for #369: base R does not data-mask `[` —\n`[.data.frame` evaluates `i`/`j` as ordinary promises in the calling\nframe (R-lang §2.1.8), so the previous class-`data.frame` / plain-list\narms silenced true positives (`flights <- data.frame(...)` followed by\n`flights[month == 6L]` errors in R with \"comparison (==) is possible\nonly for atomic and list types\"; oracle-verified).\n\n- `table_index_receiver` now admits only receivers classed\n  `data.table` and opaque values — data.table ships no stubs, so the\n  runtime data.tables behind the #369 corpus findings type as opaque\n  and stay covered. Base data frames, plain lists, atomic vectors, and\n  matrices keep eager index evaluation; `subset()`/`with()` keep\n  their verb masks.\n- Gate the `:=` column-target reading on an active table mask:\n  `v[x := 1]` on an atomic receiver errors in R (\"could not find\n  function \\\":=\\\"\"), so its target keeps ordinary eager\n  diagnostics (oracle-verified).\n- Rework the mask-boundary tests: the data.table shapes move to opaque\n  receivers, and a new test plus a `must-flag` oracle fixture pin the\n  restored base-data.frame true positive.\n- Quote the correct R error (closure-vs-atomic comparison) in the\n  `table_mask_column_precedence` fixture comment.\n\nKnown residual tracked in #457: lexical value bindings (not just\nfunctions) should also demote under the light mask.",
+          "timestamp": "2026-09-13T23:52:22+02:00",
+          "tree_id": "fa3a1eb3ec13acd5b64022d464845fc31e096d4b",
+          "url": "https://github.com/sims1253/ry/commit/e735d1e3833e7d8554e07521c56e637842fbff12"
+        },
+        "date": 1789336677345,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 1393448.6786615388,
+            "range": "1391551.23–1396236.53",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 488240.97804004076,
+            "range": "487599.41–488969.15",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 5123171.472221808,
+            "range": "5108272.18–5139534.04",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 709731.1975814642,
+            "range": "708678.92–710906.04",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 8885938.232046096,
+            "range": "8856016.62–8916073.48",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1216459.1926605343,
+            "range": "1212830.40–1220460.76",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 12294753.559354866,
+            "range": "12057439.72–12583780.39",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 6124471.189197672,
+            "range": "6114717.23–6134357.25",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1332603.7781378673,
+            "range": "1329402.38–1336084.84",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 2371364.4803983127,
+            "range": "2369077.98–2373924.15",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 846066.3907365326,
+            "range": "844033.59–849002.76",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 6159725.590668998,
+            "range": "6147939.97–6172705.42",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1337601.7173208597,
+            "range": "1335062.43–1340548.81",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 76740531.125,
+            "range": "76287968.18–77191363.33",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 11305897.081600884,
+            "range": "11272874.28–11342153.09",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5692989.370095578,
+            "range": "5672902.17–5717262.38",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 11544093.809833141,
+            "range": "11442817.47–11672040.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4275204.807486996,
+            "range": "4257063.75–4294019.12",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 13897247.88278399,
+            "range": "13863835.52–13936331.83",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 2663142.5673977705,
+            "range": "2658113.45–2669111.81",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 9058376,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 754996,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 366571,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 394760,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 217.20746000000509,
+            "range": "211.00–292.33",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 210.99738100002287, 213.576538000023, 217.20746000000509, 235.89623799995752, 292.32995299994946"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 581.6897900000331,
+            "range": "544.51–634.86",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 544.5094350000145, 566.4705560000148, 581.6897900000331, 619.8332069999888, 634.8594929999672"
           }
         ]
       }

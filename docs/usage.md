@@ -75,6 +75,17 @@ under `tests/` are treated as fixture data unless they are runners at
 `tests/` root or `test*`, `helper*`, `setup*`, or `teardown*` files directly
 under `tests/testthat/`; set `check-test-fixtures = true` to check fixture data.
 
+Vignette `.R` files are included unless a discovery rule excludes them.
+Use `ry check . --explain-files` to see those decisions. To check one ignored
+file, pass its path directly. For a persistent CLI and editor setting, add:
+
+```toml
+include-build-ignored = ["vignettes/benchmark.R"]
+```
+
+This setting overrides only `.Rbuildignore`. See
+[configuration](configuration.md) for the other discovery rules.
+
 Typed purrr maps check the callback's return type. For example, save this as
 `parallel.R` and run `ry check parallel.R`:
 

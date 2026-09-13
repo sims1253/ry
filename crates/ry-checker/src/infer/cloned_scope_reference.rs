@@ -59,9 +59,12 @@ impl Checker {
         // Types can compare equal after replacing a literal function. Do not
         // carry its identity or constant result across a branch merge.
         scope.clear_ops_facts();
+        scope.clear_known_strings();
         scope.ops_environment_unknown |=
             then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
         scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
+        scope.literal_values_unknown |=
+            then_scope.literal_values_unknown || else_scope.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
         // A diverging branch contributes no state to the continuation. Treat

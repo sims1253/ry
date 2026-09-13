@@ -362,6 +362,13 @@ impl Checker {
     // binding is skipped at a call site if a same-named function exists
     // somewhere). Mirrors [`resolve_typeshed_sig`] plus the FnTable.
     pub(crate) fn has_function_anywhere(&self, name: &str) -> bool {
+        self.has_external_function(name)
+            || self.fn_table.fns.contains_key(name)
+            || self.fn_table.callable_vars.contains(name)
+    }
+
+    /// Function candidates outside the current project's execution frame.
+    pub(crate) fn has_external_function(&self, name: &str) -> bool {
         // Qualified: check the named package.
         if let Some((pkg, fun)) = split_qualified(name)
             && let Some(t) = self.package_typeshed(pkg)
@@ -393,7 +400,7 @@ impl Checker {
         }) {
             return true;
         }
-        self.fn_table.fns.contains_key(name) || self.fn_table.callable_vars.contains(name)
+        false
     }
 
     pub(crate) fn resolves_user_s3_dispatch(&self, generic: &str, first: &RType) -> bool {

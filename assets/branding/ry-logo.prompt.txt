@@ -7,5 +7,8 @@ Extract this exact watercolor hexagon r and rye logo onto a genuinely TRANSPAREN
 Extension export (run from repository root):
 ffmpeg -hide_banner -loglevel error -i assets/branding/ry-logo.png -vf scale=256:256:flags=lanczos -frames:v 1 editors/code/images/icon.png
 
-Web/README export (480px image displayed at 240px for 2x screens):
+Web/README export (480px image, suitable for display up to 240px on 2x screens):
 ffmpeg -hide_banner -loglevel error -i assets/branding/ry-logo.png -vf scale=480:480:flags=lanczos -c:v libwebp -quality 85 -compression_level 6 -frames:v 1 assets/branding/ry-logo.webp
+
+Extension README export (256px image displayed at 128px):
+ffmpeg -hide_banner -loglevel error -i assets/branding/ry-logo.png -vf scale=256:256:flags=lanczos -c:v libwebp -quality 85 -compression_level 6 -frames:v 1 editors/code/images/icon.webp

@@ -12,6 +12,7 @@ mod ops_fallback;
 mod packages_typeshed;
 mod quoting_data_mask;
 mod scope_resolution;
+mod table_index_masks;
 mod type_inference;
 mod typed_maps;
 

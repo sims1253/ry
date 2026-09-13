@@ -23,6 +23,10 @@ All notable changes to ry are documented in this file.
   character subscripts on plain vectors, lists, and base data frames,
   on non-selector arguments such as `drop = ` or a positional `by`, and
   outside subscript positions, still error (#367).
+- Resolve `x[i, j]` index arguments against a table-shaped receiver's columns
+  before scope functions, covering data.table's `i`/`j`, `:=` targets, `by`,
+  `.SDcols`, and `.SD` pronouns. Unknown columns keep bare names opaque
+  instead of borrowing a function's type (#369).
 - Read literal C and C++ routine registration tables so registered symbols
   also resolve through wrappers such as cleancall. Unknown registration forms
   keep the existing fallback (#379).

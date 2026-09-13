@@ -8,4 +8,6 @@ R/trace.R:1139:16 RY010
 R/trace.R:531:7 RY001
 R/trace.R:540:7 RY001
 tests/testthat/test-cnd-entrace.R:284:28 RY040
+tests/testthat/test-cnd-message.R:481:8 RY040
 tests/testthat/test-trace.R:325:5 RY091
+tests/testthat/test-trace.R:587:28 RY040

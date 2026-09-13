@@ -9,6 +9,34 @@ fn atomic_mode(member: &RType) -> bool {
     ) && member.columns.is_none()
 }
 
+/// Whether a `[` receiver is table-shaped, making its index arguments
+/// data-masked positions (data.table semantics): free names resolve
+/// against the receiver's columns before scope functions, and a
+/// receiver without usable column knowledge keeps bare names opaque
+/// rather than borrowing a scope function's type (#369). Only
+/// data.table's `[` masks its arguments: a receiver classed
+/// `data.table`, or an opaque value — data.table ships no stubs, so
+/// runtime data.tables built by `as.data.table()` / `fread()` / package
+/// data type as opaque (#369's corpus shape). Base R does not data-mask
+/// `[`: `[.data.frame` evaluates `i`/`j` as ordinary promises in the
+/// calling frame (R-lang §2.1.8), so class-`data.frame` receivers,
+/// plain lists, atomic vectors, and matrices evaluate their indices
+/// eagerly and keep the eager diagnostics — `flights[month == 6L]` on a
+/// base data.frame errors at runtime when `month` is a closure.
+fn table_index_receiver(bt: &RType) -> bool {
+    !bt.class.contains("matrix") && (bt.class.contains("data.table") || bt.mode == Mode::Opaque)
+}
+
+/// A light table mask: the receiver is opaque without column knowledge,
+/// so the mask is enumerable-free but keeps names eager (see
+/// [`Checker::table_index_mask_scope`]). Named `[` arguments there can
+/// only be a table method's controls, never base-vector subsetting.
+fn light_table_mask(scope: &Scope) -> bool {
+    !scope.data_mask_unknown
+        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+        && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some()
+}
+
 /// The conservative `$`/`[[` fallback when no schema resolves the access:
 /// for list-like bases return opaque since the element type is unknowable;
 /// for other types return a length-1 value of the base mode. A union base
@@ -222,6 +250,22 @@ impl Checker {
                 conservative_element_type(&bt)
             }
             IndexKind::Single => {
+                // `x[i]` / `x[i, j]` on a data.table-shaped receiver (a
+                // `data.table` class or the opaque value an unstubbed
+                // data.table call types as) evaluates its index arguments
+                // in a data mask over the receiver's columns (#369): a
+                // column named like a scope function (`month`, `table`,
+                // `count`) resolves as a column, and a receiver without
+                // usable column knowledge keeps bare names opaque rather
+                // than borrowing a scope function's type. Base data.frame
+                // receivers, plain lists, and atomic receivers keep eager
+                // index evaluation — base R does not data-mask `[`.
+                let mut table_mask =
+                    table_index_receiver(&bt).then(|| self.table_index_mask_scope(scope, &bt));
+                let index_scope: &mut Scope = match table_mask.as_mut() {
+                    Some(mask) => mask,
+                    None => scope,
+                };
                 // `df[i, j]` selects a column when `j` is scalar and the
                 // default `drop = TRUE` is in effect.  A data frame's own
                 // length is its number of columns, not its row count, so
@@ -251,7 +295,7 @@ impl Checker {
                             .map(|(_, ty)| ty.clone()),
                         _ => None,
                     };
-                    self.infer_args_for_diagnostics(args, scope);
+                    let _ = self.infer_table_index_args(args, &bt, index_scope);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -280,7 +324,7 @@ impl Checker {
                         Expr::String(column, _) => Some(column),
                         _ => None,
                     }) {
-                        self.infer_args_for_diagnostics(args, scope);
+                        let _ = self.infer_table_index_args(args, &bt, index_scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
                                 return column_type;
@@ -297,10 +341,7 @@ impl Checker {
                 // masks select by their TRUE count, and numeric indices may
                 // exclude or select nothing, so retain a length only when R's
                 // index mode makes that length provable.
-                let index_types: Vec<_> = args
-                    .iter()
-                    .map(|argument| self.infer(&argument.value, scope))
-                    .collect();
+                let index_types = self.infer_table_index_args(args, &bt, index_scope);
                 if let Some(members) = &bt.members {
                     if args.len() != 1
                         || members
@@ -354,6 +395,173 @@ impl Checker {
                 col, available
             ),
         );
+    }
+
+    /// Infer every `[` index argument through
+    /// [`Checker::infer_table_index_argument`], recording the receiver's
+    /// type and each argument's effective `[.data.table` role on the
+    /// scope (see [`SelectSubscript`]; issue #367) so the unary-operator
+    /// diagnostics recognize data.table select forms (`dt[, -c("col")]`,
+    /// `dt[, !c("col")]`, `dt[!"key"]`, `dt[!list()]`) while the
+    /// mask-aware argument walk runs. The role comes from the argument's
+    /// name when given (`j = `, `.SDcols = `) and from its positional
+    /// slot otherwise. The previous context is saved and restored around
+    /// every argument, so nested subscripts inside a selector do not
+    /// leak their receiver into sibling arguments.
+    fn infer_table_index_args(
+        &mut self,
+        args: &[Arg],
+        receiver: &RType,
+        scope: &mut Scope,
+    ) -> Vec<RType> {
+        let mut types = Vec::with_capacity(args.len());
+        for (slot, argument) in args.iter().enumerate() {
+            let previous = scope.select_subscript.take();
+            scope.select_subscript = Some(SelectSubscript {
+                receiver: receiver.clone(),
+                role: SelectSlotRole::resolve(slot, argument.name.as_deref()),
+            });
+            let ty = self.infer_table_index_argument(argument, scope);
+            scope.select_subscript = previous;
+            types.push(ty);
+        }
+        types
+    }
+
+    /// Infer one `[` index argument. data.table's `:=` column assignment
+    /// names its targets on the call's left side -- a bare symbol, a
+    /// `c()` of names, or named arguments in the functional
+    /// `` `:=`(col = value) `` form -- so those names denote columns to
+    /// create or replace. They are targets, not references: they must
+    /// not resolve to scope functions or fire RY010 (#369). `:=` is not
+    /// defined outside data.table, so this reading applies only while a
+    /// table mask is active. A named argument of a light mask belongs to
+    /// a table method's controls (`by`, `.SDcols`, `drop`, ...);
+    /// base-vector subsetting has none, so its value resolves through an
+    /// unenumerable mask. Every other argument is an ordinary expression
+    /// of the surrounding mask.
+    fn infer_table_index_argument(&mut self, argument: &Arg, scope: &mut Scope) -> RType {
+        if let Expr::Call { func, args, .. } = &argument.value
+            && matches!(
+                func.as_ref(),
+                Expr::Ident { name, .. } if name == ":=" || name == "`:=`"
+            )
+            && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+        {
+            // Infix shape `target := value`, also spelled `` `:=`(target, value) ``.
+            if args.len() == 2 && args.iter().all(|operand| operand.name.is_none()) {
+                self.check_table_assign_target(&args[0].value, scope);
+                return self.infer(&args[1].value, scope);
+            }
+            // Functional shape `` `:=`(col = value, ...) ``: every formal
+            // name is a column target; only the values are expressions.
+            if !args.is_empty() && args.iter().all(|operand| operand.name.is_some()) {
+                let mut result = RType::unknown();
+                for operand in args {
+                    result = self.infer(&operand.value, scope);
+                }
+                return result;
+            }
+        } else if argument.name.is_some() && light_table_mask(scope) {
+            let mut control = scope.independent_execution_scope().with_unknown_data_mask();
+            return self.infer(&argument.value, &mut control);
+        }
+        self.infer(&argument.value, scope)
+    }
+
+    /// A `:=` target is a column name, not a reference: bare symbols and
+    /// a `c()`/`list()` of string literals name columns directly, while
+    /// any other shape is a computed target that evaluates in the mask.
+    fn check_table_assign_target(&mut self, target: &Expr, scope: &mut Scope) {
+        let names_only = matches!(target, Expr::Ident { .. })
+            || matches!(
+                target,
+                Expr::Call { func, args, .. }
+                    if matches!(
+                        func.as_ref(),
+                        Expr::Ident { name, .. } if name == "c" || name == "list"
+                    ) && args
+                        .iter()
+                        .all(|operand| matches!(operand.value, Expr::String(_, _)))
+            );
+        if !names_only {
+            let _ = self.infer(target, scope);
+        }
+    }
+}
+
+/// Whether a unary operator applied to `operand` inside a `[` subscript
+/// argument is a documented data.table select form rather than a base-R
+/// operand error (issue #367).
+///
+/// `[.data.table` interprets `-<character>` and `!<character>` in the
+/// column-selector (`j`) argument as column drops, `!<character>` /
+/// `!<list>` in the row-filter (`i`) argument as key exclusion /
+/// not-join, and both `-<character>` and `!<character>` on `.SDcols` as
+/// selection inversion. Base R has no negative or negated character
+/// subscript: `v[-c("a")]` and `v[!"a"]` error with "invalid argument
+/// to unary operator" / "invalid argument type" (oracle-verified), so
+/// the forms are admitted only when the receiver is not provably a base
+/// object — data.table ships no stubs, so its receivers are opaque to
+/// inference, as are parameters flowing into package code.
+pub(crate) fn select_subscript_form(
+    context: Option<&SelectSubscript>,
+    op: UnaryOpKind,
+    operand: Mode,
+) -> bool {
+    let Some(context) = context else {
+        return false;
+    };
+    if base_subscript_receiver(&context.receiver) {
+        return false;
+    }
+    match (op, context.role) {
+        // `-<character>` is a documented column drop in `j` and a
+        // documented `.SDcols` inversion; data.table gives it no select
+        // meaning in `i` or any other argument.
+        (UnaryOpKind::Neg, SelectSlotRole::J | SelectSlotRole::Sdcols) => {
+            operand == Mode::Character
+        }
+        // `!<character>` / `!<list>` selects keys/rows in `i` and drops
+        // columns in `j`; `.SDcols` takes the same character inversion
+        // but no list form.
+        (UnaryOpKind::Not, SelectSlotRole::I | SelectSlotRole::J) => {
+            matches!(operand, Mode::Character | Mode::List)
+        }
+        (UnaryOpKind::Not, SelectSlotRole::Sdcols) => operand == Mode::Character,
+        _ => false,
+    }
+}
+
+/// Whether `receiver` is provably an object whose `[` follows base R
+/// subscript rules and therefore cannot interpret data.table select
+/// forms: a classless atomic vector or list, or a plain `data.frame`.
+/// Anything else stays quiet — opaque values, unions with a non-base
+/// member, and any classed receiver other than a plain `data.frame`:
+/// a known class such as `Date` has no modeled `[` method here, and an
+/// unmodeled class dispatch may give `-`/`!` subscripts their own
+/// meaning.
+fn base_subscript_receiver(receiver: &RType) -> bool {
+    if receiver.class.contains("data.table") {
+        return false;
+    }
+    let classless = receiver.class.known && receiver.class.len == 0;
+    match receiver.mode {
+        Mode::Integer
+        | Mode::Double
+        | Mode::Logical
+        | Mode::Complex
+        | Mode::Raw
+        | Mode::Character => classless,
+        // Plain lists and base data.frames: a negative or negated
+        // character subscript is an error in R.
+        Mode::List => classless || receiver.class == ClassVector::single("data.frame"),
+        // NULL and functions are never data.table receivers.
+        Mode::Null | Mode::Function => true,
+        Mode::Opaque => false,
+        Mode::Union => receiver.members.as_ref().is_some_and(|members| {
+            !members.is_empty() && members.iter().all(base_subscript_receiver)
+        }),
     }
 }
 

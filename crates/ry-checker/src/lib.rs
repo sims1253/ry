@@ -298,6 +298,59 @@ struct FunctionLookupFrame {
     parent: Option<Arc<FunctionLookupFrame>>,
 }
 
+/// Inference context for one `[` subscript argument: the receiver's
+/// inferred type and the argument's effective `[.data.table` role. The
+/// scope carries it only while subscript arguments are being inferred,
+/// so the unary-operator diagnostics can recognize data.table select
+/// forms (`dt[, -c("col")]` column drops, `dt[!"key"]` key exclusion,
+/// `dt[!list()]` not-join) instead of reporting base-R operand errors
+/// there (issue #367).
+#[derive(Debug, Clone)]
+pub(crate) struct SelectSubscript {
+    /// Type of the `[` receiver.
+    pub(crate) receiver: RType,
+    /// Effective `[.data.table` role of the subscript argument being
+    /// inferred.
+    pub(crate) role: SelectSlotRole,
+}
+
+/// The `[.data.table` argument role a subscript argument plays, resolved
+/// from the argument's name when given and from its positional slot
+/// otherwise (0 = `i`, 1 = `j`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SelectSlotRole {
+    /// Row-filter (`i`) argument: `!` is key exclusion / not-join.
+    I,
+    /// Column-selector (`j`) argument: `-` and `!` are column drops.
+    J,
+    /// `.SDcols` argument: `-` and `!` invert the column selection.
+    Sdcols,
+    /// Any other argument (`by`, `drop`, `on`, ...): negated character
+    /// values have no data.table select meaning there.
+    Other,
+}
+
+impl SelectSlotRole {
+    /// Resolve the effective role for the argument at `slot`, honoring an
+    /// explicit `i =` / `j =` / `.SDcols =` tag over the positional slot.
+    /// A named argument that is not one of the selector formals can never
+    /// be a selector, however early it appears: `dt[, drop = -c("a")]`
+    /// passes `drop` (unused by data.table), not a column drop.
+    pub(crate) fn resolve(slot: usize, name: Option<&str>) -> Self {
+        match name {
+            Some("i") => Self::I,
+            Some("j") => Self::J,
+            Some(".SDcols") => Self::Sdcols,
+            Some(_) => Self::Other,
+            None => match slot {
+                0 => Self::I,
+                1 => Self::J,
+                _ => Self::Other,
+            },
+        }
+    }
+}
+
 /// A single scope's binding table.
 #[derive(Debug, Default)]
 pub struct Scope {
@@ -346,6 +399,9 @@ pub struct Scope {
     pub(crate) lexical_functions: FxSet<String>,
     pub data_mask_unknown: bool,
     pub(crate) tidy_injection: Option<InjectionMode>,
+    /// The `[` subscript argument currently being inferred, if any.
+    /// See [`SelectSubscript`].
+    pub(crate) select_subscript: Option<SelectSubscript>,
     pub search_path_unknown: bool,
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
@@ -374,6 +430,7 @@ impl Clone for Scope {
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
+            select_subscript: self.select_subscript.clone(),
             search_path_unknown: self.search_path_unknown,
             unreachable: self.unreachable,
             undo: Vec::new(),
@@ -396,6 +453,10 @@ impl Scope {
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
+        // The new frame's code is never the syntactic operand of the
+        // caller's in-flight `[` argument, so data.table select forms
+        // (issue #367) do not apply inside it.
+        scope.select_subscript = None;
         let possible_functions = self
             .bindings
             .iter()

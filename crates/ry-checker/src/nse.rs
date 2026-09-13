@@ -4,6 +4,7 @@ use crate::infer::*;
 pub(crate) const DATA_MASK_ACTIVE: &str = "\0ry_data_mask";
 pub(crate) const DATA_MASK_ENV_PREFIX: &str = "\0ry_data_mask_env:";
 pub(crate) const DATA_MASK_COLUMN_PREFIX: &str = "\0ry_data_mask_column:";
+pub(crate) const DATA_MASK_COLUMNS_FIRST: &str = "\0ry_data_mask_columns_first";
 
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
@@ -137,6 +138,54 @@ impl Checker {
         };
         scope.tidy_injection = previous;
         result
+    }
+
+    /// Build the mask for `x[i, j]` index arguments on a data.table-shaped
+    /// receiver (a `data.table` class, or the opaque value a data.table
+    /// call types as; see `table_index_receiver`). Reuses the dplyr mask
+    /// machinery so both mask families resolve free names the same way: a
+    /// known schema's columns shadow lexical bindings and scope functions,
+    /// and an unenumerable schema keeps bare symbols opaque instead of
+    /// borrowing a scope function's type (#369). On top of the shared
+    /// pronouns, data.table's j position also binds `.SD` and friends;
+    /// `.SD`'s columns depend on `by` and `.SDcols`, so only the table
+    /// shape is retained.
+    ///
+    /// When the schema cannot prove a name absent (unknown, incomplete,
+    /// or an opaque receiver), the columns-first sentinel marks bare
+    /// value-position symbols as column candidates before scope
+    /// functions. A receiver that is opaque without any table evidence
+    /// may equally be an atomic vector whose type degraded
+    /// (`c(if (p) 1L, 2L)`), so its mask additionally stays eager for
+    /// names: symbols that resolve nowhere keep RY010 like ordinary
+    /// vector subsetting.
+    pub(crate) fn table_index_mask_scope(&self, base_scope: &Scope, table: &RType) -> Scope {
+        let mut scope = self.dplyr_data_mask_scope(base_scope, table);
+        scope.insert(
+            ".SD",
+            RType {
+                columns: None,
+                ..table.clone()
+            },
+        );
+        scope.insert(".N", RType::scalar(Mode::Integer));
+        scope.insert(".I", RType::new(Mode::Integer, Length::Unknown));
+        scope.insert(".BY", RType::unknown());
+        scope.insert(".GRP", RType::scalar(Mode::Integer));
+        let schema_proves_absence = table.columns.as_ref().is_some_and(|schema| schema.complete)
+            && (table.class.contains("data.frame") || matches!(table.mode, Mode::List));
+        if !schema_proves_absence {
+            // #369: inside this table `[` mask, a bare value-position
+            // symbol is a column candidate before it is a scope function.
+            scope.insert(DATA_MASK_COLUMNS_FIRST, RType::unknown());
+            let carries_table_evidence = table.class.contains("data.frame")
+                || table.columns.is_some()
+                || matches!(table.mode, Mode::List);
+            if !carries_table_evidence {
+                scope.data_mask_unknown = base_scope.data_mask_unknown;
+            }
+        }
+        scope
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {

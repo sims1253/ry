@@ -1729,7 +1729,14 @@ impl Checker {
                     && scope
                         .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
                         .is_none();
-                if is_lexical_binding_under_unknown_mask {
+                // A table `[` mask over a schema that cannot prove the
+                // name absent resolves it as a column candidate first, so
+                // a same-named lexical function binding is shadowed even
+                // though the mask keeps names eager (#369).
+                let function_shadowed_by_table_mask = t.mode == Mode::Function
+                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
+                if is_lexical_binding_under_unknown_mask || function_shadowed_by_table_mask {
                     RType::unknown()
                 } else {
                     t.clone()
@@ -1748,6 +1755,16 @@ impl Checker {
                 // `base::append`'s function type.
                 let under_unknown_data_mask =
                     scope.data_mask_unknown && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
+                // A table `[` mask (`x[i, j]` on a table-shaped receiver)
+                // resolves its free value-position symbols against the
+                // receiver's columns before scope functions (#369), even
+                // when the mask keeps names eager (an opaque receiver may
+                // be an atomic vector whose type degraded). A column named
+                // like a function (`month`, `table`, `count`) is data
+                // there, so the function-value rungs below are shadowed.
+                let columns_first_mask = scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
+                let functions_shadowed_by_mask = under_unknown_data_mask || columns_first_mask;
                 // Typed package values take precedence over existence-only
                 // import bindings so constants retain their declared type.
                 if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -1773,30 +1790,43 @@ impl Checker {
                 // order call handlers resolve the signature when
                 // the callback is invoked.
                 //
-                // Skipped under an unknown data mask: the mask may
-                // shadow the search path, so the name is unknown
-                // there rather than a base function value.
-                if !under_unknown_data_mask && self.typeshed.functions.contains_key(name) {
-                    return RType::scalar(Mode::Function);
+                // Under a mask the name may be a shadowing column:
+                // an unknown mask cannot enumerate its bindings, and
+                // a table `[` mask resolves columns before scope
+                // functions (#369), so the value is opaque rather
+                // than a function. Genuine call-head uses still
+                // resolve through the call path.
+                if self.typeshed.functions.contains_key(name) {
+                    return if functions_shadowed_by_mask {
+                        RType::unknown()
+                    } else {
+                        RType::scalar(Mode::Function)
+                    };
                 }
                 // A function from a loaded package (e.g. purrr's
                 // `map` used as a value) resolves to a function too.
-                // Equally shadowable by an unknown mask.
-                if !under_unknown_data_mask
-                    && self.bare_loaded.iter().any(|pkg| {
-                        self.package_is_known(pkg)
-                            && self
-                                .package_typeshed(pkg)
-                                .map(|t| t.functions.contains_key(name))
-                                .unwrap_or(false)
-                    })
-                {
-                    return RType::scalar(Mode::Function);
+                // Equally shadowable by a mask.
+                if self.bare_loaded.iter().any(|pkg| {
+                    self.package_is_known(pkg)
+                        && self
+                            .package_typeshed(pkg)
+                            .map(|t| t.functions.contains_key(name))
+                            .unwrap_or(false)
+                }) {
+                    return if functions_shadowed_by_mask {
+                        RType::unknown()
+                    } else {
+                        RType::scalar(Mode::Function)
+                    };
                 }
                 // User-defined function in the FnTable used as a
                 // value? Same treatment.
-                if !under_unknown_data_mask && self.fn_table.fns.contains_key(name) {
-                    return RType::scalar(Mode::Function);
+                if self.fn_table.fns.contains_key(name) {
+                    return if functions_shadowed_by_mask {
+                        RType::unknown()
+                    } else {
+                        RType::scalar(Mode::Function)
+                    };
                 }
                 // Cross-file variable defined in another file of
                 // the project (or a top-level assignment later in
@@ -1810,13 +1840,12 @@ impl Checker {
                 if self.known_vars.contains(name) {
                     return RType::unknown();
                 }
-                if !under_unknown_data_mask
-                    && self
-                        .typeshed
-                        .globals
-                        .ambient_functions
-                        .iter()
-                        .any(|function| function == name)
+                if self
+                    .typeshed
+                    .globals
+                    .ambient_functions
+                    .iter()
+                    .any(|function| function == name)
                 {
                     // Value-position uses of ambient functions are
                     // overwhelmingly legitimate higher-order idioms
@@ -1825,7 +1854,13 @@ impl Checker {
                     // class (`col`, `oldClass` misused as data) is still
                     // caught downstream when the function type flows
                     // into comparisons or arithmetic (RY030/RY033).
-                    return RType::scalar(Mode::Function);
+                    // Under a mask (#369) the value is opaque instead,
+                    // exactly like the rungs above.
+                    return if functions_shadowed_by_mask {
+                        RType::unknown()
+                    } else {
+                        RType::scalar(Mode::Function)
+                    };
                 }
                 // Existence-only standard and ambient globals are a
                 // fallback after typed datasets, functions, and project
@@ -2094,12 +2129,23 @@ impl Checker {
                             t.mode,
                             Mode::Character | Mode::Raw | Mode::List | Mode::Function
                         ) {
-                            self.emit(
-                                Severity::Error,
-                                *span,
-                                "RY020",
-                                format!("cannot apply unary `-` to `{}`", t.mode),
-                            );
+                            // `[.data.table` reads `-<character>` in a `[`
+                            // column-selector slot as a documented column
+                            // drop (issue #367). Receivers that are provably
+                            // base objects still error, and the diagnostic is
+                            // unaffected outside subscripts.
+                            if !select_subscript_form(
+                                scope.select_subscript.as_ref(),
+                                UnaryOpKind::Neg,
+                                t.mode,
+                            ) {
+                                self.emit(
+                                    Severity::Error,
+                                    *span,
+                                    "RY020",
+                                    format!("cannot apply unary `-` to `{}`", t.mode),
+                                );
+                            }
                             RType::unknown()
                         } else {
                             let mode = match t.mode {
@@ -2110,7 +2156,17 @@ impl Checker {
                         }
                     }
                     UnaryOpKind::Not => {
-                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function) {
+                        if matches!(t.mode, Mode::Character | Mode::List | Mode::Function)
+                            // data.table reads `!<character>` / `!<list>` in
+                            // the `i` slot as key exclusion / not-join and in
+                            // the `j` slot as a column drop (issue #367);
+                            // provably base receivers still error.
+                            && !select_subscript_form(
+                                scope.select_subscript.as_ref(),
+                                UnaryOpKind::Not,
+                                t.mode,
+                            )
+                        {
                             self.emit(
                                 Severity::Error,
                                 *span,

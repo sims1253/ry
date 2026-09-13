@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Add an extension icon for VS Code and Positron (#456).
+
 ## [0.10.0] - 2026-09-13
 
 - Bundle ry 0.10.0 with improved package imports, enclosing-function lookup,

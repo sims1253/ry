@@ -4,6 +4,29 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolate the bodies of testthat's `test_that()`, `describe()`, and `it()`
+  blocks in their own scope, matching their per-test evaluation
+  environment. Bindings in one block no longer shadow call heads in
+  sibling blocks, removing RY070 false positives in test files (#368).
+- Suppress RY020/RY021 for data.table select subscripts such as
+  `dt[, -c("col")]` and not-join forms like `dt[!"key"]` or `dt[!list()]`
+  when the receiver is not provably a base object. The selector role
+  follows the argument tag (`j = `, `.SDcols = `) rather than the
+  positional slot, and function bodies nested in a subscript argument
+  no longer inherit the select-form license. Negative or negated
+  character subscripts on plain vectors, lists, and base data frames,
+  on non-selector arguments such as `drop = ` or a positional `by`, and
+  outside subscript positions, still error (#367).
+- Resolve `x[i, j]` index arguments against a data.table receiver's columns
+  before scope functions, covering data.table's `i`/`j`, `:=` targets, `by`,
+  `.SDcols`, and `.SD` pronouns. Unknown columns keep bare names opaque
+  instead of borrowing a function's type. Only data.table's `[` masks its
+  arguments: receivers classed `data.table` and opaque values (where unstubbed
+  data.table calls land). Base data frames, plain lists, and atomic vectors
+  evaluate their `[` arguments eagerly, as in R (#369).
+
 ## [0.10.0] - 2026-09-13
 
 This release adds three Linux targets, improves package and function lookup,

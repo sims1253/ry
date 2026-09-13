@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789334029534,
+  "lastUpdate": 1789335687390,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -18288,6 +18288,184 @@ window.BENCHMARK_DATA = {
             "range": "536.77–612.78",
             "unit": "ms",
             "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 536.765984000056, 552.449525999953, 569.2465079999529, 583.1229810001096, 612.7801580000669"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1550401642b888f6018f7f809c1948906f212647",
+          "message": "fix(checker): allow negative character subscripts in select contexts (#453)\n\n* fix(checker): allow negative character subscripts in select contexts\n\nRY020/RY021 fired on data.table select subscripts because unary `-`/`!`\non a character or list operand is an error in base R. `[.data.table`\ndocuments these forms: `dt[, -c(\"col\")]` and `dt[, !c(\"col\")]` column\ndrops, `dt[!\"key\"]` key exclusion, and `dt[!list()]` not-join. All 57\ncorpus RY020 instances were the drop idiom (100% false positive), plus\nthe `!`-exclusion and not-join families from the issue's triage.\n\nSuppress the diagnostics only while inferring `[` subscript arguments\nwhose receiver is not provably a base object: `-<character>` in the\nj/drop slots, `!<character>`/`!<list>` in the i/j slots. data.table\nships no stubs, so its receivers (parameters, `data.table::` calls,\nloaded packages) are opaque to inference. Plain vectors, plain lists,\nand base data.frames keep the diagnostics -- negative or negated\ncharacter subscripts error there -- as does every non-subscript\nposition, `[[`, and the `i` slot for `-`.\n\nOracle fixtures pin both sides: the data.table forms must pass in R\nand stay quiet in ry; the base-vector forms must error in R and stay\nflagged in ry.\n\n* fix(checker): resolve subscript roles from argument tags\n\nReview follow-up for #367:\n\n- Resolve each `[` argument's effective data.table role from its tag\n  (`i =`, `j =`, `.SDcols =`) rather than the positional slot alone:\n  named `j` selects at the first slot, named `drop` is not a selector,\n  and both `.SDcols` inversion spellings (`!` and `-`) stay quiet at\n  any slot (R-verified; positional slot 2 binds `by`, where both\n  operators error).\n- Clear the in-flight subscript context when entering a function\n  execution scope, so unary operands inside callback bodies nested in\n  a subscript argument keep their ordinary diagnostics (R-verified).\n- Soften the `base_subscript_receiver` doc comment: any classed\n  receiver other than a plain `data.frame` stays quiet, not only\n  unknown or non-base classes.\n- Extend the `datatable_select_forms` oracle fixture with the named\n  `j` and `.SDcols` forms.",
+          "timestamp": "2026-09-13T23:35:24+02:00",
+          "tree_id": "ece1647375f676c14784d61d153d35cbb91aeac7",
+          "url": "https://github.com/sims1253/ry/commit/1550401642b888f6018f7f809c1948906f212647"
+        },
+        "date": 1789335687272,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 1305163.434513931,
+            "range": "1304069.52–1306499.59",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 438991.49720407015,
+            "range": "437917.54–440382.75",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 4990886.96250063,
+            "range": "4986755.07–4995560.56",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 677629.7509389895,
+            "range": "676782.82–678482.05",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 8438380.661401354,
+            "range": "8422980.33–8455289.36",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1167951.582171699,
+            "range": "1166260.07–1170118.27",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 10507605.123483542,
+            "range": "10373087.26–10753342.28",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 5706156.703369805,
+            "range": "5702344.68–5709985.22",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1300727.4523613644,
+            "range": "1293603.41–1308817.26",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 2158861.6782508,
+            "range": "2155614.91–2163489.57",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 786788.8261986295,
+            "range": "784171.40–789863.37",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 5733401.49185427,
+            "range": "5724348.32–5743168.79",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1295213.7420032748,
+            "range": "1291397.55–1299827.08",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 66905275.666666664,
+            "range": "66689108.82–67111254.69",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 9905724.428606782,
+            "range": "9883763.44–9928258.66",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 5385339.064706442,
+            "range": "5363699.04–5405203.08",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 9865723.858603315,
+            "range": "9842253.30–9895454.75",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 3811841.670379651,
+            "range": "3797874.28–3830741.35",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 11747218.307512145,
+            "range": "11718458.76–11783462.90",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 2930135.144942512,
+            "range": "2918182.41–2949002.98",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 9056328,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 754996,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 366571,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 394760,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 180.45656000007875,
+            "range": "167.23–206.04",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 167.22701999999117, 174.08600599993952, 180.45656000007875, 191.17824500007555, 206.0384619999677"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 529.5426999999909,
+            "range": "492.60–532.34",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 492.60320500005037, 503.0970710000256, 529.5426999999909, 531.6092269999208, 532.3368269999046"
           }
         ]
       }

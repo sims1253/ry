@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/sims1253/ry/actions/workflows/ci.yml/badge.svg)](https://github.com/sims1253/ry/actions/workflows/ci.yml)
 
+<img align="right" src="assets/branding/ry-logo.webp" alt="ry logo: a watercolor r and rye stalk inside a golden hexagon" width="160" height="160">
+
 `ry` is a static checker for R, written in Rust. It checks your project for
 likely bugs before you run it: incompatible types, missing data frame columns,
 unbound variables, invalid function calls, and more.
@@ -11,8 +13,7 @@ ry focuses on types and scope. Use it alongside `air` for formatting and
 [tree-sitter-r](https://github.com/r-lib/tree-sitter-r) and takes inspiration
 from [ty](https://github.com/astral-sh/ty).
 
-> [!IMPORTANT]
-> 🤖 ry is mostly a playground for GLM and me. If you'd like to help, I'd love for you to join in.
+<br clear="right">
 
 ## Install
 

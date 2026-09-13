@@ -447,16 +447,18 @@ impl Scope {
         scope.loop_frame = None;
         scope.known_strings.clear();
         scope.unreachable = false;
+        // The new frame's code is never the syntactic operand of the
+        // caller's in-flight `[` argument, so data.table select forms
+        // (issue #367) do not apply inside it — neither for function
+        // bodies nor for deferred bodies reached through the foreach or
+        // dplyr-mask walks.
+        scope.select_subscript = None;
         scope
     }
 
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
-        // The new frame's code is never the syntactic operand of the
-        // caller's in-flight `[` argument, so data.table select forms
-        // (issue #367) do not apply inside it.
-        scope.select_subscript = None;
         let possible_functions = self
             .bindings
             .iter()

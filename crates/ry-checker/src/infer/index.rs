@@ -464,6 +464,11 @@ impl Checker {
             }
         } else if argument.name.is_some() && light_table_mask(scope) {
             let mut control = scope.independent_execution_scope().with_unknown_data_mask();
+            // The control scope isolates name resolution only — the named
+            // argument's value is still the syntactic operand of the
+            // in-flight `[` call (`.SDcols = !c("a")` keeps its select
+            // form), so the subscript context rides along explicitly.
+            control.select_subscript = scope.select_subscript.clone();
             return self.infer(&argument.value, &mut control);
         }
         self.infer(&argument.value, scope)

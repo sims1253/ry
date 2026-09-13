@@ -2,12 +2,13 @@
 
 ## [Unreleased]
 
-- Add an extension icon for VS Code and Positron (#456).
-
 ## [0.10.0] - 2026-09-13
 
 - Bundle ry 0.10.0 with improved package imports, enclosing-function lookup,
-  named data-mask arguments, and condition diagnostics.
+  named data-mask arguments, and condition diagnostics, plus the sibling
+  `test_that` scope, data.table select-subscript, and data-mask column
+  fixes from the post-qualification round (#368, #367, #369).
+- Add an extension icon for VS Code and Positron (#456).
 - Add packages for 32-bit ARM Linux and Alpine Linux on x64 and ARM64.
 - Let `include-build-ignored` in `ry.toml` add selected build-ignored files
   to editor indexing. Existing file and resource limits still apply.

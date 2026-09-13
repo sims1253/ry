@@ -80,7 +80,9 @@ these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
 materialized element storage per collection, including metadata read in lazy
 mode. These are separate from the decoded-file cap and are not a total memory
-budget. A parser limit also yields a degraded scope notice.
+budget. Unlike the decoded-file cap, a parser limit does not report a degraded
+scope: the file's inventory comes back empty and unflagged, and the package's
+bindings resolve through their other sources.
 
 Use an environment profile for bindings supplied only to selected files:
 

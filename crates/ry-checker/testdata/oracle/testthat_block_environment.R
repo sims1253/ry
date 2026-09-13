@@ -1,10 +1,15 @@
-# oracle: verified in R with testthat installed — test_that(), describe(),
-# and it() all route through test_code(), which evaluates the captured
+# oracle: must-flag
+# Verified in R with testthat installed — test_that(), describe(), and
+# it() all route through test_code(), which evaluates the captured
 # body via eval(code, new.env(parent = caller_env)). Bindings created in
 # one block never reach a sibling block or the file top level, while the
 # parent chain stays readable and `<<-` climbs past the fresh
 # environment. Ordinary braced arguments keep R's caller evaluation
-# (#350): identity({x <- 1}) writes through.
+# (#350): identity({x <- 1}) writes through. The script errors at the
+# same-block shadowing call, so the file as a whole is must-flag; ry's
+# pinned diagnostics live in the `testthat_block_environment_oracle`
+# unit test.
+library(testthat)
 
 prob <- function(x) sum(x)
 

@@ -1360,23 +1360,30 @@ fn project_local_test_that_keeps_caller_argument_flow() {
 }
 
 /// `describe`/`it` route through the same `test_code` engine: a binding
-/// in one `it()` block does not exist in its sibling.
+/// in one `it()` block does not exist in its sibling. Mirrors
+/// `sibling_testthat_blocks_do_not_share_bindings` through the BDD
+/// verbs, so deleting the `describe`/`it` arms fails here too.
 #[test]
 fn describe_and_it_blocks_isolate_sibling_bindings() {
     let diagnostics = check(
-        "describe(\"d\", {\n\
+        "inner <- function(x) sum(x)\n\
+         describe(\"d\", {\n\
            it(\"one\", {\n\
-             inner <- 1L\n\
-             NULL\n\
+             for (inner in list(1, 2)) NULL\n\
            })\n\
            it(\"two\", {\n\
-             expect_equal(nchar(\"ab\"), 2L)\n\
+             inner(1:2)\n\
            })\n\
          })\n",
     );
     assert!(
+        diagnostics.iter().all(|d| d.code != "RY070"),
+        "a loop variable in one it() block must not poison a call head in another: {diagnostics:?}"
+    );
+    // The file-level function still resolves through the parent chain.
+    assert!(
         diagnostics.is_empty(),
-        "sibling it() blocks must not share bindings: {diagnostics:?}"
+        "the second it() block reads the file-level function: {diagnostics:?}"
     );
 }
 

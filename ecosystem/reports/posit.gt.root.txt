@@ -1,10 +1,5 @@
 R/dt_summary.R:176:59 RY010
 R/fmt.R:166:7 RY001
-R/opts.R:117:9 RY032
-R/opts.R:121:9 RY032
 R/render_as_i_html.R:922:7 RY032
 R/utils_render_latex.R:2149:47 RY061
 R/utils_render_latex.R:2149:57 RY061
-R/utils_render_latex.R:44:7 RY032
-R/utils_render_rtf.R:795:7 RY032
-R/utils_render_xml.R:744:7 RY032

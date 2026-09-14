@@ -1732,11 +1732,31 @@ impl Checker {
                 // A table `[` mask over a schema that cannot prove the
                 // name absent resolves it as a column candidate first, so
                 // a same-named lexical function binding is shadowed even
-                // though the mask keeps names eager (#369).
+                // though the mask keeps names eager (#369). The
+                // value-binding analogue holds for bindings that existed
+                // when the mask was created (#457): at runtime the
+                // column shadows the enclosing value, so typing against
+                // it emits spurious comparisons. Bindings created inside
+                // the masked expression — callback formals, j-argument
+                // names, the mask pronouns — carry no env snapshot and
+                // keep their typing; a name overlaid as a known column
+                // keeps the overlaid column type.
                 let function_shadowed_by_table_mask = t.mode == Mode::Function
                     && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
                     && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
-                if is_lexical_binding_under_unknown_mask || function_shadowed_by_table_mask {
+                let value_shadowed_by_table_mask = t.mode != Mode::Function
+                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some()
+                    && scope
+                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
+                        .is_some()
+                    && scope
+                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
+                        .is_none();
+                if is_lexical_binding_under_unknown_mask
+                    || function_shadowed_by_table_mask
+                    || value_shadowed_by_table_mask
+                {
                     RType::unknown()
                 } else {
                     t.clone()

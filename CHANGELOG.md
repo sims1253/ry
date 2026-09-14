@@ -20,7 +20,7 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Update sha2, serde, toml, and flate2 while retaining tree-sitter 0.26 and the
   Rust 1.88 minimum. The tree-sitter 0.27 update remains separate (#404).
 - Document the remaining [scalar-guard limits](docs/scalar-guards.md). The
-  package guard and assertion/alias/loop work remains open (#372, #351).
+  assertion/alias/loop flow work remains open (#351).
 
 ### Added
 
@@ -99,6 +99,27 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Link liblzma statically so distributed binaries run without a system liblzma
   library (#431).
 - Build and upload only the selected VSIX registry variant (#419).
+- Keep RY105's dead-guard claims on sound length facts: `file.path()` recycles
+  its arguments instead of always returning one path — and returns an empty
+  vector when any argument has zero length, unlike `paste` (learnr, blogdown,
+  pkgload) — and the result length of `seq_len(n)` is the value of `n` rather
+  than its vector length (brulee). The pak `length(sum(...)) > 0` true
+  positive is retained (#377).
+- Honor `length(x) == 1 && ...` guards inside packages, where the bare
+  `length` symbol resolves through the package search path and the guard
+  exclusion was previously dead code; the 0.9.0 472-package audit measured
+  46 such guard warnings, all false positives, and both committed ecosystem
+  ledgers drop 14 reviewed false-positive identities of this shape. The
+  guard is proven before it is honored: a provably classed parameter, a
+  scalar parameter default (which only describes the omitted-argument call
+  shape), any project-registered, defined, or imported `length.*` S3
+  method, or a reassignment inside the guarded operand keeps the warning
+  (#372).
+- Demote lexical value bindings under the data.table `[` columns-first mask,
+  the value-binding analogue of #369: a column shadows a same-named enclosing
+  value at runtime, so `dat[month == "a"]` no longer types the comparison
+  against the lexical `month`. Callback formals, `j` argument names, and the
+  mask pronouns bind inside the mask and keep their typing (#457).
 
 ## [0.9.2] - 2026-09-10
 

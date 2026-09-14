@@ -221,6 +221,11 @@ pub enum JsonLength {
     Arg1,
     Arg2,
     LongestArg,
+    /// Longest of the arguments' lengths, except that any zero-length
+    /// argument yields a zero-length result (`file.path`, which returns a
+    /// path for every element only when every argument has positive
+    /// length, unlike `paste`).
+    LongestArgOrZero,
     NArgs,
     Test,
     Unknown,
@@ -233,6 +238,7 @@ impl JsonLength {
             "arg1" => Self::Arg1,
             "arg2" => Self::Arg2,
             "longest_arg" => Self::LongestArg,
+            "longest_arg_or_zero" => Self::LongestArgOrZero,
             "n_args" => Self::NArgs,
             "test" => Self::Test,
             "unknown" => Self::Unknown,
@@ -1951,7 +1957,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.17");
+        assert_eq!(t.version, "0.0.18");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

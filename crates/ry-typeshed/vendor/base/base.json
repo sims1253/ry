@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -3988,7 +3988,7 @@
       ],
       "return": {
         "mode": "character",
-        "length": "1",
+        "length": "longest_arg_or_zero",
         "na": false
       }
     },
@@ -6649,8 +6649,13 @@
       ],
       "return": {
         "mode": "integer",
-        "length": "arg0",
+        "length": "unknown",
         "na": false
+      },
+      "return_length": {
+        "kind": "param_value",
+        "param": "length.out",
+        "default_length": 0
       }
     },
     "set.seed": {

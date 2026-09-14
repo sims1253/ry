@@ -524,6 +524,7 @@ impl Checker {
         fn length_guard_parameter<'a>(
             checker: &Checker,
             expr: &'a Expr,
+            guarded_operand: &Expr,
             scope: &Scope,
         ) -> Option<&'a str> {
             if let Some(parameter) = call_on_parameter(expr, &["length"], scope) {
@@ -542,13 +543,30 @@ impl Checker {
                 let Expr::Call { func, .. } = value else {
                     return false;
                 };
-                ident_name(func).is_some_and(|name| checker.resolves_to_base(name, scope))
+                // Lenient resolution: inside a package the bare symbol
+                // resolves through the package search path before base,
+                // and the package would have to define or import its own
+                // `length` for the callee to leave base semantics (#372).
+                ident_name(func).is_some_and(|name| checker.resolves_to_base_lenient(name, scope))
                     && call_on_parameter(value, &["length"], scope).is_some()
             };
             if *op == BinOpKind::Eq
                 && ((is_one(rhs) && base_length(lhs)) || (is_one(lhs) && base_length(rhs)))
             {
-                return None;
+                // The equality guard proves a scalar only when `length`
+                // cannot dispatch to a lying S3 method for the guarded
+                // parameter and the parameter is not reassigned before
+                // its guarded use (docs/scalar-guards.md).
+                let length_side = if is_one(rhs) { lhs } else { rhs };
+                if let Some(parameter) = call_on_parameter(length_side, &["length"], scope)
+                    && checker.equality_length_guard_proves_scalar(
+                        parameter,
+                        guarded_operand,
+                        scope,
+                    )
+                {
+                    return None;
+                }
             }
             call_on_parameter(lhs, &["length"], scope)
                 .or_else(|| call_on_parameter(rhs, &["length"], scope))
@@ -587,7 +605,7 @@ impl Checker {
 
         let guarded = match op {
             BinOpKind::OrOr => call_on_parameter(lhs, &["is.null"], scope),
-            BinOpKind::AndAnd => length_guard_parameter(self, lhs, scope),
+            BinOpKind::AndAnd => length_guard_parameter(self, lhs, rhs, scope),
             _ => None,
         };
         // Both `guarded` and `vector_predicate_parameter` resolve through
@@ -597,6 +615,82 @@ impl Checker {
         guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
             .is_some()
+    }
+
+    /// Whether the `length(x) == 1` guard on `parameter` proves the value
+    /// scalar for `guarded_operand`. The callee is already proven to be
+    /// base `length` modulo search-path shadowing; the remaining two
+    /// requirements are the ones recorded in docs/scalar-guards.md:
+    /// dispatch facts (a `length.<class>` method can report a length that
+    /// is not the storage length) and invalidation after effects (the
+    /// operand must not be reassigned before its guarded use).
+    fn equality_length_guard_proves_scalar(
+        &self,
+        parameter: &str,
+        guarded_operand: &Expr,
+        scope: &Scope,
+    ) -> bool {
+        match scope
+            .get(parameter)
+            .map(|ty| (ty.class.known, ty.class.len))
+        {
+            // A nameable class: refuse outright. An attached package may
+            // hold a `length.<class>` method, so the equality is not
+            // proven to narrow anything.
+            Some((true, n)) if n > 0 => return false,
+            // Proven unclassed: `length` cannot dispatch. A parameter's
+            // default describes only the omitted-argument call shape —
+            // callers can still supply a classed value, the same reason
+            // RY105 refuses `default_parameter_bindings` — so a defaulted
+            // parameter falls through to the unknown-class arm instead.
+            Some((true, 0)) if !scope.default_parameter_bindings.contains(parameter) => {}
+            // Unknown class — the usual case for a parameter, whose value
+            // comes from callers, or unclassed only by a default. The
+            // search path could in principle supply a method for a class
+            // ry cannot name; accept that risk only while neither this
+            // project nor its imports define any `length.*` method, the
+            // same line that `resolves_to_base_lenient` draws for the
+            // callee itself.
+            _ => {
+                if self.project_defines_length_method() {
+                    return false;
+                }
+            }
+        }
+        let mut assigned = HashSet::new();
+        collect_condition_assignment_names(guarded_operand, &mut assigned);
+        !assigned.contains(parameter)
+    }
+
+    /// Whether any `length.<class>` S3 method is registered, defined, or
+    /// imported by the project, so a value of unknown class could
+    /// dispatch `length` away from base semantics.
+    fn project_defines_length_method(&self) -> bool {
+        fn named_length_method(name: &str) -> bool {
+            name.strip_prefix("length.")
+                .is_some_and(|class| !class.is_empty())
+        }
+        self.fn_table
+            .s3_methods
+            .keys()
+            .any(|(generic, _)| generic == "length")
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(generic, _)| generic == "length")
+            || self
+                .fn_table
+                .fns
+                .keys()
+                .any(|name| named_length_method(name))
+            || self
+                .imported_from
+                .keys()
+                .any(|name| named_length_method(name))
+            || self
+                .external_bindings
+                .iter()
+                .any(|name| named_length_method(name))
     }
 }
 

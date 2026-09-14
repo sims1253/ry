@@ -740,6 +740,17 @@ impl Checker {
                     }
                     // Longest of all args' lengths (for paste/paste0/sprintf).
                     Some(JsonLength::LongestArg) => longest_arg_length(arg_types),
+                    // `file.path` family: ?file.path returns a path for
+                    // every element only when all arguments have positive
+                    // length — any zero-length argument makes the result
+                    // empty (unlike paste, which recycles "" for zeros).
+                    Some(JsonLength::LongestArgOrZero) => {
+                        if arg_types.iter().any(|ty| matches!(ty.length, Length::Zero)) {
+                            Length::Zero
+                        } else {
+                            longest_arg_length(arg_types)
+                        }
+                    }
                     // Number of arguments (for list()).
                     Some(JsonLength::NArgs) => Length::Known(args.len()),
                     Some(JsonLength::Test) => first.length,

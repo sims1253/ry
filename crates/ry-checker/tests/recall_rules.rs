@@ -348,6 +348,75 @@ fn ry105_stays_silent_against_a_non_constant_bound() {
     ));
 }
 
+// ---------------------------------------------------------------------------
+// RY105 — recycling constructors and projections keep length facts sound (#377)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ry105_stays_silent_for_a_recycling_file_path() {
+    // learnr R/run.R:290, pkgload R/load-code.R:65. `file.path()` recycles
+    // its arguments, so a vector component propagates to the result; the
+    // result is length 1 only when every argument provably is.
+    assert!(!fires(
+        "f <- function(src_root) if (length(file.path(src_root, \"x\")) > 0L) 1\n",
+        "RY105"
+    ));
+    // ?file.path: any zero-length argument yields an empty character
+    // vector (unlike paste, which recycles "" for zeros), so the
+    // binding-form dead-guard claim must not fire either.
+    assert!(!fires(
+        "paths <- character(0)\np <- file.path(paths, \"x\")\nif (length(p) > 0L) 1\n",
+        "RY105"
+    ));
+    // All-scalar-literal arguments do prove a length-1 result through a
+    // local binding, and that dead guard is still reported.
+    assert!(fires(
+        "p <- file.path(\"a\", \"b\")\nif (length(p) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+}
+
+#[test]
+fn ry105_stays_silent_for_seq_len_of_a_runtime_count() {
+    // brulee R/augment.R:412. The result length of `seq_len(n)` is the
+    // *value* of `n`, which a length-1 argument does not pin down.
+    assert!(!fires(
+        "f <- function(df) {\n  i <- seq_len(nrow(df))\n  if (length(i) > 0L) 1\n}\n",
+        "RY105"
+    ));
+    assert!(!fires(
+        "f <- function(n) if (length(seq_len(n)) > 0L) 1\n",
+        "RY105"
+    ));
+    // A literal count yields the exact length: `seq_len(3)` is never empty,
+    // but it is length 3, not 1, so no length-1 claim is made either way.
+    assert!(!fires("if (length(seq_len(3)) > 0L) 1\n", "RY105"));
+}
+
+#[test]
+fn ry105_projection_lengths_follow_r_null_padding() {
+    // `[` pads out-of-bounds and empty selections for every vector mode,
+    // lists included: `integer(0)[1]` is a length-1 NA and `list()[1]` is
+    // `list(NULL)`, also length 1 — the semantics the 0.9.1 release screen
+    // pinned on #377. The atomic binding form is therefore a true
+    // positive: the guard really is always TRUE.
+    assert!(fires(
+        "x <- character(0)\nfirst <- x[1]\nif (length(first) > 0L) stop(\"unreachable\")\n",
+        "RY105"
+    ));
+    // A list projection is also always length ≥ 1 at runtime, but the
+    // local-binding admission requires an atomic mode, so ry stays silent
+    // rather than claiming through a list-typed binding.
+    assert!(!fires(
+        "items <- list()\nfirst <- items[1]\nif (length(first) > 0L) 1\n",
+        "RY105"
+    ));
+    assert!(!fires(
+        "f <- function(items = list()) {\n  first <- items[1]\n  if (length(first) > 0L) 1\n}\n",
+        "RY105"
+    ));
+}
+
 #[test]
 fn ry105_stays_silent_when_the_comparison_is_true_for_some_lengths() {
     // `length(x) == 1` on a provable scalar is a redundant assertion, not a

@@ -30,6 +30,42 @@ fn table_index_columns_shadow_scope_functions() {
     );
 }
 
+/// #457: the value-binding analogue of the function case. Inside the
+/// light table `[` mask, a lexical *value* binding must not type the
+/// symbol either — at runtime the column shadows the enclosing value
+/// (`dat[month == "a"]` compares the column, whatever `month` holds
+/// outside). Typing the comparison against the lexical `6L` produced
+/// spurious RY033/RY030. The mask's pronouns are exempt: they bind in
+/// the mask itself and can never be columns.
+#[test]
+fn table_index_columns_shadow_lexical_values() {
+    let masked = check(
+        "month <- 6L\n\
+         dat <- data.table::as.data.table(data.frame(month = c(1, 6, 12), x = 1:3))\n\
+         june <- dat[month == \"a\"]\n",
+    );
+    assert!(
+        masked
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic.code, "RY030" | "RY033")),
+        "a column shadows a same-named lexical value inside [i, j]: {masked:?}"
+    );
+
+    let outside = check("month <- 6L\nx <- month == \"a\"\n");
+    assert!(
+        outside.iter().any(|diagnostic| diagnostic.code == "RY033"),
+        "outside a mask the lexical value keeps its typing: {outside:?}"
+    );
+
+    // A callback's own formals are bound inside the masked expression,
+    // not in the frame the mask captured, so they keep their typing.
+    let callback = check("f <- function(dt) dt[, sapply(c(\"a\"), function(s) s == 1L)]\n");
+    assert!(
+        callback.iter().any(|diagnostic| diagnostic.code == "RY033"),
+        "a callback formal is not a column candidate: {callback:?}"
+    );
+}
+
 /// Base R does not data-mask `[`: `[.data.frame` evaluates `i`/`j` as
 /// ordinary promises in the calling frame, so a closure named like a
 /// column keeps its comparison error there (R: "comparison (==) is

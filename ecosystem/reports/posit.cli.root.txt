@@ -8,7 +8,6 @@ R/errors.R:547:20 RY010
 R/errors.R:627:30 RY010
 R/errors.R:671:24 RY010
 R/onload.R:44:22 RY033
-R/rules.R:187:14 RY032
 R/status-bar.R:256:7 RY032
 R/status-bar.R:259:7 RY032
 R/status-bar.R:262:7 RY032

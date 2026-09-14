@@ -37,15 +37,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "blogdown::RY105::R/hugo.R:380:9": {
-      "package": "blogdown",
-      "code": "RY105",
-      "path": "R/hugo.R",
-      "line": 380,
-      "column": 9,
-      "severity": "warning",
-      "message": "`expdir` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
-    },
     "broom::RY030::tests/testthat/test-metafor.R:129:15": {
       "package": "broom",
       "code": "RY030",
@@ -225,15 +216,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "cli::RY032::R/rules.R:187:14": {
-      "package": "cli",
-      "code": "RY032",
-      "path": "R/rules.R",
-      "line": 187,
-      "column": 14,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "cli::RY032::R/status-bar.R:256:7": {
       "package": "cli",
@@ -1566,24 +1548,6 @@
       "severity": "warning",
       "message": "variable `grand_summary_col` is not bound in this scope"
     },
-    "gt::RY032::R/opts.R:117:9": {
-      "package": "gt",
-      "code": "RY032",
-      "path": "R/opts.R",
-      "line": 117,
-      "column": 9,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "gt::RY032::R/opts.R:121:9": {
-      "package": "gt",
-      "code": "RY032",
-      "path": "R/opts.R",
-      "line": 121,
-      "column": 9,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
     "gt::RY032::R/render_as_i_html.R:922:7": {
       "package": "gt",
       "code": "RY032",
@@ -1592,33 +1556,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "gt::RY032::R/utils_render_latex.R:44:7": {
-      "package": "gt",
-      "code": "RY032",
-      "path": "R/utils_render_latex.R",
-      "line": 44,
-      "column": 7,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "gt::RY032::R/utils_render_rtf.R:795:7": {
-      "package": "gt",
-      "code": "RY032",
-      "path": "R/utils_render_rtf.R",
-      "line": 795,
-      "column": 7,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "gt::RY032::R/utils_render_xml.R:744:7": {
-      "package": "gt",
-      "code": "RY032",
-      "path": "R/utils_render_xml.R",
-      "line": 744,
-      "column": 7,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
     "gt::RY061::R/utils_render_latex.R:2149:47": {
       "package": "gt",
@@ -1782,33 +1719,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "leaflet::RY032::R/colors.R:326:7": {
-      "package": "leaflet",
-      "code": "RY032",
-      "path": "R/colors.R",
-      "line": 326,
-      "column": 7,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "leaflet::RY032::R/colors.R:333:14": {
-      "package": "leaflet",
-      "code": "RY032",
-      "path": "R/colors.R",
-      "line": 333,
-      "column": 14,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "leaflet::RY032::R/layers.R:349:13": {
-      "package": "leaflet",
-      "code": "RY032",
-      "path": "R/layers.R",
-      "line": 349,
-      "column": 13,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
     "learnr::RY010::R/question_text.R:122:7": {
       "package": "learnr",
       "code": "RY010",
@@ -1817,15 +1727,6 @@
       "column": 7,
       "severity": "warning",
       "message": "variable `textInput` is not bound in this scope"
-    },
-    "learnr::RY105::R/run.R:290:7": {
-      "package": "learnr",
-      "code": "RY105",
-      "path": "R/run.R",
-      "line": 290,
-      "column": 7,
-      "severity": "warning",
-      "message": "`rmds` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
     },
     "lintr::RY000::inst/example/bad.R:11:1": {
       "package": "lintr",
@@ -3950,15 +3851,6 @@
       "column": 22,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "usethis::RY032::R/utils.R:64:3": {
-      "package": "usethis",
-      "code": "RY032",
-      "path": "R/utils.R",
-      "line": 64,
-      "column": 3,
-      "severity": "warning",
-      "message": "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     }
   }
 }

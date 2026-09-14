@@ -1,2 +1,0 @@
-R/colour-mapping.R:397:7 RY032
-R/colour-mapping.R:410:5 RY032

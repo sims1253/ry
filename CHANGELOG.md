@@ -20,7 +20,7 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Update sha2, serde, toml, and flate2 while retaining tree-sitter 0.26 and the
   Rust 1.88 minimum. The tree-sitter 0.27 update remains separate (#404).
 - Document the remaining [scalar-guard limits](docs/scalar-guards.md). The
-  package guard and assertion/alias/loop work remains open (#372, #351).
+  assertion/alias/loop flow work remains open (#351).
 
 ### Added
 
@@ -99,6 +99,23 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Link liblzma statically so distributed binaries run without a system liblzma
   library (#431).
 - Build and upload only the selected VSIX registry variant (#419).
+- Keep RY105's dead-guard claims on sound length facts: `file.path()` recycles
+  its arguments instead of always returning one path (learnr, pkgload), the
+  result length of `seq_len(n)` is the value of `n` rather than its vector
+  length (brulee), and a projection of a possibly-empty list no longer claims
+  the index length (themis). The pak `length(sum(...)) > 0` true positive is
+  retained (#377).
+- Honor `length(x) == 1 && ...` guards inside packages, where the bare
+  `length` symbol resolves through the package search path and the guard
+  exclusion was previously dead code, silencing 46 corpus false positives. The
+  guard is proven before it is honored: a provably classed parameter, any
+  project-registered, defined, or imported `length.*` S3 method, or a
+  reassignment inside the guarded operand keeps the warning (#372).
+- Demote lexical value bindings under the data.table `[` columns-first mask,
+  the value-binding analogue of #369: a column shadows a same-named enclosing
+  value at runtime, so `dat[month == "a"]` no longer types the comparison
+  against the lexical `month`. Callback formals, `j` argument names, and the
+  mask pronouns bind inside the mask and keep their typing (#457).
 
 ## [0.9.2] - 2026-09-10
 

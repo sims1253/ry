@@ -23,9 +23,7 @@ fn check_package(namespace: &str, source: &str) -> Vec<String> {
     std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
     let code_path = dir.path().join("R").join("code.R");
     let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(code_path.to_str().unwrap(), source)
-        .unwrap();
+    let file = parser.parse(code_path.to_str().unwrap(), source).unwrap();
     let context = ry_workspace::resolve_workspace_context(
         dir.path(),
         &Config::default(),
@@ -75,10 +73,7 @@ fn qualified_and_imported_length_guards_hold_in_package_mode() {
 /// operand for lengths above one, so the warning still fires.
 #[test]
 fn non_equality_length_guards_still_warn_in_package_mode() {
-    let codes = check_package(
-        "",
-        "probe <- function(x) length(x) > 0 && x == \"\"\n",
-    );
+    let codes = check_package("", "probe <- function(x) length(x) > 0 && x == \"\"\n");
     assert!(codes.contains(&"RY032".to_string()), "{codes:?}");
 }
 

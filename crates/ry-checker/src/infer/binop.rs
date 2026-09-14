@@ -547,9 +547,8 @@ impl Checker {
                 // resolves through the package search path before base,
                 // and the package would have to define or import its own
                 // `length` for the callee to leave base semantics (#372).
-                ident_name(func).is_some_and(|name| {
-                    checker.resolves_to_base_lenient(name, scope)
-                }) && call_on_parameter(value, &["length"], scope).is_some()
+                ident_name(func).is_some_and(|name| checker.resolves_to_base_lenient(name, scope))
+                    && call_on_parameter(value, &["length"], scope).is_some()
             };
             if *op == BinOpKind::Eq
                 && ((is_one(rhs) && base_length(lhs)) || (is_one(lhs) && base_length(rhs)))
@@ -560,8 +559,11 @@ impl Checker {
                 // its guarded use (docs/scalar-guards.md).
                 let length_side = if is_one(rhs) { lhs } else { rhs };
                 if let Some(parameter) = call_on_parameter(length_side, &["length"], scope)
-                    && checker
-                        .equality_length_guard_proves_scalar(parameter, guarded_operand, scope)
+                    && checker.equality_length_guard_proves_scalar(
+                        parameter,
+                        guarded_operand,
+                        scope,
+                    )
                 {
                     return None;
                 }
@@ -628,7 +630,10 @@ impl Checker {
         guarded_operand: &Expr,
         scope: &Scope,
     ) -> bool {
-        match scope.get(parameter).map(|ty| (ty.class.known, ty.class.len)) {
+        match scope
+            .get(parameter)
+            .map(|ty| (ty.class.known, ty.class.len))
+        {
             // Proven unclassed: `length` cannot dispatch.
             Some((true, 0)) => {}
             // A nameable class: refuse outright. An attached package may

@@ -59,9 +59,7 @@ fn table_index_columns_shadow_lexical_values() {
 
     // A callback's own formals are bound inside the masked expression,
     // not in the frame the mask captured, so they keep their typing.
-    let callback = check(
-        "f <- function(dt) dt[, sapply(c(\"a\"), function(s) s == 1L)]\n",
-    );
+    let callback = check("f <- function(dt) dt[, sapply(c(\"a\"), function(s) s == 1L)]\n");
     assert!(
         callback.iter().any(|diagnostic| diagnostic.code == "RY033"),
         "a callback formal is not a column candidate: {callback:?}"

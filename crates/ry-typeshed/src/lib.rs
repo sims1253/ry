@@ -1957,7 +1957,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.17");
+        assert_eq!(t.version, "0.0.18");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

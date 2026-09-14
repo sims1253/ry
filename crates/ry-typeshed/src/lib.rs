@@ -218,10 +218,6 @@ impl JsonMode {
 pub enum JsonLength {
     Known(usize),
     Arg0,
-    /// The result length equals the *value* of the first argument, not its
-    /// vector length (`seq_len(n)` returns `1:n`). Only a literal argument
-    /// pins the count down.
-    Arg0Value,
     Arg1,
     Arg2,
     LongestArg,
@@ -239,7 +235,6 @@ impl JsonLength {
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "arg0" => Self::Arg0,
-            "arg0_value" => Self::Arg0Value,
             "arg1" => Self::Arg1,
             "arg2" => Self::Arg2,
             "longest_arg" => Self::LongestArg,

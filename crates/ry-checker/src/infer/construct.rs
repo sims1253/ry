@@ -732,14 +732,6 @@ impl Checker {
                 };
                 let length = match JsonLength::parse(&c.length) {
                     Some(JsonLength::Arg0) => first.length,
-                    // "arg0_value": the result length equals the *value* of
-                    // the first argument (`seq_len(n)` returns `1:n`). Only a
-                    // numeric literal pins the count down; `seq_len(nrow(df))`
-                    // has the row count as its length, not 1.
-                    Some(JsonLength::Arg0Value) => match args.first() {
-                        Some(first_arg) => size_argument_length(Some(&first_arg.value), 0),
-                        None => Length::Unknown,
-                    },
                     Some(JsonLength::Arg1) => {
                         matched.get(1).map(|t| t.length).unwrap_or(Length::Unknown)
                     }

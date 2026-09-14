@@ -6649,8 +6649,13 @@
       ],
       "return": {
         "mode": "integer",
-        "length": "arg0_value",
+        "length": "unknown",
         "na": false
+      },
+      "return_length": {
+        "kind": "param_value",
+        "param": "length.out",
+        "default_length": 0
       }
     },
     "set.seed": {

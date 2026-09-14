@@ -2030,6 +2030,10 @@ fn equality_length_guards_refuse_dispatch_risk_and_reassignment() {
         // A classed parameter default names the class a method could
         // attach to, registered or not.
         "length.disguised <- function(x) 1L\nf <- function(x = structure(c(1L, 2L), class = \"disguised\")) length(x) == 1L && x == 1L\n",
+        // An unclassed default describes only the omitted-argument call
+        // shape; callers can still pass a classed value, so it is not
+        // proven unclassed either.
+        "length.disguised <- function(x) 1L\nf <- function(x = 1L) length(x) == 1L && x == 1L\n",
         // Reassignment inside the guarded operand invalidates the guard
         // before the guarded use.
         "f <- function(x) length(x) == 1L && { x <- c(1, 2); x == 1L }\n",
@@ -2041,9 +2045,15 @@ fn equality_length_guards_refuse_dispatch_risk_and_reassignment() {
         );
     }
     // Without a project `length.*` method and without reassignment the
-    // guard still holds for an unknown-class parameter.
+    // guard still holds for an unknown-class parameter — with or without
+    // a scalar default, under the same accepted-risk line.
     let clean = check("f <- function(x) length(x) == 1L && x == 1L\n");
     assert!(clean.iter().all(|d| d.code != "RY032"), "{clean:?}");
+    let clean_default = check("f <- function(x = 1L) length(x) == 1L && x == 1L\n");
+    assert!(
+        clean_default.iter().all(|d| d.code != "RY032"),
+        "{clean_default:?}"
+    );
 }
 
 #[test]

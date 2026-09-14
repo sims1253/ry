@@ -634,18 +634,23 @@ impl Checker {
             .get(parameter)
             .map(|ty| (ty.class.known, ty.class.len))
         {
-            // Proven unclassed: `length` cannot dispatch.
-            Some((true, 0)) => {}
             // A nameable class: refuse outright. An attached package may
             // hold a `length.<class>` method, so the equality is not
             // proven to narrow anything.
-            Some((true, _)) => return false,
+            Some((true, n)) if n > 0 => return false,
+            // Proven unclassed: `length` cannot dispatch. A parameter's
+            // default describes only the omitted-argument call shape —
+            // callers can still supply a classed value, the same reason
+            // RY105 refuses `default_parameter_bindings` — so a defaulted
+            // parameter falls through to the unknown-class arm instead.
+            Some((true, 0)) if !scope.default_parameter_bindings.contains(parameter) => {}
             // Unknown class — the usual case for a parameter, whose value
-            // comes from callers. The search path could in principle
-            // supply a method for a class ry cannot name; accept that
-            // risk only while neither this project nor its imports
-            // define any `length.*` method, the same line that
-            // `resolves_to_base_lenient` draws for the callee itself.
+            // comes from callers, or unclassed only by a default. The
+            // search path could in principle supply a method for a class
+            // ry cannot name; accept that risk only while neither this
+            // project nor its imports define any `length.*` method, the
+            // same line that `resolves_to_base_lenient` draws for the
+            // callee itself.
             _ => {
                 if self.project_defines_length_method() {
                     return false;

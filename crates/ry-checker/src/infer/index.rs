@@ -588,17 +588,7 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
     }
     let length = match index.mode {
         Mode::Character => index.length,
-        Mode::Integer | Mode::Double if positive_numeric_index(expression) => {
-            // Atomic bases NA-pad: `character(0)[1]` is a length-1 NA.
-            // A list base does not pad — `list()[1]` stays the empty
-            // list — so a possibly-empty list keeps the projection
-            // length unknown instead of claiming the index length.
-            if base.mode == Mode::List && matches!(base.length, Length::Zero | Length::Unknown) {
-                Length::Unknown
-            } else {
-                index.length
-            }
-        }
+        Mode::Integer | Mode::Double if positive_numeric_index(expression) => index.length,
         Mode::Integer | Mode::Double => {
             literal_negative_exclusion_length(base.length, expression).unwrap_or(Length::Unknown)
         }

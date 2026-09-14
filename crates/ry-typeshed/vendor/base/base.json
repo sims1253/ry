@@ -3988,7 +3988,7 @@
       ],
       "return": {
         "mode": "character",
-        "length": "longest_arg",
+        "length": "longest_arg_or_zero",
         "na": false
       }
     },

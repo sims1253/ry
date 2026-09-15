@@ -25,7 +25,7 @@ pub const RULES: &[Rule] = &[
         code: "RY000",
         name: "syntax-error",
         default_severity: Severity::Error,
-        summary: "Unparseable input. tree-sitter could not recover this region, or the source bytes are not valid UTF-8 (R's parser rejects the file); a file with any RY000 reports only its RY000s, because diagnostics derived from the repaired tree are unreliable.",
+        summary: "Unparseable input, or input R's parser rejects: a region tree-sitter could not recover, source bytes that are not valid UTF-8, or syntax base R rejects at parse time (such as an invalid native-pipe right-hand side). A file with any RY000 reports only its RY000s, because diagnostics derived from the repaired or transcoded tree are unreliable.",
     },
     Rule {
         code: "RY001",
@@ -232,6 +232,12 @@ pub const RULES: &[Rule] = &[
         name: "constant-length-comparison",
         default_severity: Severity::Warning,
         summary: "`length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.",
+    },
+    Rule {
+        code: "RY107",
+        name: "any-all-scalar-comparison",
+        default_severity: Severity::Warning,
+        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
     },
 ];
 

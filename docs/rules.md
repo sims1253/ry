@@ -9,7 +9,7 @@ explanation for one rule.
 
 | code  | name                     | severity | summary                                                                                                                                                                                                   |
 | :---- | :----------------------- | :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| RY000 | syntax-error             | error    | Unparseable input. tree-sitter could not recover this region, or the source bytes are not valid UTF-8 (R's parser rejects the file); a file with any RY000 reports only its RY000s, because diagnostics derived from the repaired tree are unreliable. |
+| RY000 | syntax-error             | error    | Unparseable input, or input R's parser rejects: a region tree-sitter could not recover, source bytes that are not valid UTF-8, or syntax base R rejects at parse time (such as an invalid native-pipe right-hand side). A file with any RY000 reports only its RY000s, because diagnostics derived from the repaired or transcoded tree are unreliable. |
 | RY001 | invalid-condition        | warning  | `if` / `while` condition is not a length-1 logical or a value R coerces to one.                                                                                                                                                       |
 | RY002 | condition-length         | warning  | `if` condition has more than one element; R requires a length-1 condition.                                                                                                                      |
 | RY003 | numeric-condition        | info     | `if` / `while` condition is numeric; R coerces nonzero to TRUE. Legal but implicit; prefer an explicit comparison.                                                                                         |
@@ -44,6 +44,7 @@ explanation for one rule.
 | RY102 | named-list-element-arrow | warning | `<-` where `=` was meant inside `list()`/`c()`/`data.frame()`/`structure()`. The element is created without a name and a stray binding is assigned as a side effect.                                        |
 | RY103 | class-equality           | warning | `class(x)` compared with `==`/`!=` in a length-1 logical context. `class()` returns a character vector, so a multi-class object makes `if`/`&&` error. Use `inherits()`.                                    |
 | RY105 | constant-length-comparison | warning | `length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.                                                          |
+| RY107 | any-all-scalar-comparison | warning | `any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal negates it or has a constant result. The comparison usually belongs inside the call (`any(x == 0)`, not `any(x) == 0`). Value-preserving comparisons (`== 1`, `> 0`) are a deliberate idiom and stay quiet. |
 
 RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example

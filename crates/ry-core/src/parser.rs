@@ -81,6 +81,11 @@ impl RParser {
             }
         }
         let parse_errors = collect_parse_errors(root);
+        // Pipe-shape validation is skipped on recovered trees: the ERROR /
+        // MISSING regions already emit RY000, and node shapes inside a
+        // recovered tree cannot be trusted to reflect what R's parser
+        // would have seen.
+        let syntax_violations = collect_syntax_violations(root, src);
         Ok((
             SourceFile {
                 path: path.to_string(),
@@ -93,6 +98,7 @@ impl RParser {
                 // for files it had to transcode.
                 invalid_utf8: Vec::new(),
                 special_operators,
+                syntax_violations,
                 comments,
             },
             tree,
@@ -1082,6 +1088,212 @@ fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
     out
 }
 
+/// Call heads base R's parser refuses to rewrite in a native-pipe (`|>`)
+/// right-hand side, even backquoted (`1 |> `+`(y)`) or spelled as a
+/// string head (`1 |> "+"(y)`: R resolves string heads to symbols before
+/// the pipe check). Every entry was verified against R 4.6.1
+/// (`parse(text = ...)` rejects each one with "function '<name>' not
+/// supported in RHS call of a pipe").
+///
+/// `%`-wrapped user-infix names (`%>%`, `%in%`, `%o%`), `->`, `->>`,
+/// `:=`, the pipe-bind `=>` (gated by `_R_USE_PIPEBIND_` as a token, but
+/// ordinary as a call head: R 4.6.1 accepts `` 1 |> `=>`(x) ``),
+/// `@<-`, replacement names like `names<-`, and the backquoted reserved
+/// words `else` / `in` are ordinary symbols to R's pipe rewrite and stay
+/// accepted, so they are deliberately absent.
+const PIPE_UNSUPPORTED_HEADS: &[&str] = &[
+    // Arithmetic, unary, and sequence operators.
+    "+", "-", "*", "/", "^", "!", "~", "?", ":", // Grouping and blocks.
+    "(", "{", // Extraction and its replacement forms.
+    "[", "[[", "$", "@", "[<-", "[[<-", "$<-", // Namespace qualification.
+    "::", ":::", // Comparison and logic.
+    "==", "!=", "<", "<=", ">", ">=", "&", "|", "&&", "||", // Assignment.
+    "<-", "<<-", "=", // Built-in %-wrapped arithmetic (user-defined ones are fine).
+    "%%", "%/%", "%*%", // Control flow, function definitions, and pipes.
+    "if", "while", "for", "repeat", "function", "next", "break", "return", "|>",
+];
+
+/// R's generic pipe-RHS rejection, used whenever the RHS is not a call
+/// R can rewrite.
+const PIPE_NOT_A_CALL_MESSAGE: &str =
+    "syntax error: the pipe operator requires a function call as RHS";
+
+/// Collect native-pipe (`|>`) right-hand sides that base R rejects at
+/// parse time. R implements `|>` as a syntax transformation and only
+/// rewrites a restricted set of RHS shapes (?`|>`):
+///
+///   * a call whose function is not syntactically special: `x |> f(y)`,
+///     `x |> "f"(y)`, `x |> pkg::f(y)`, `x |> (f)(y)`, `x |> z[[1]](y)`;
+///   * an extraction chain (`$`, `[`, `[[`, `@`) rooted at the `_`
+///     placeholder, added in R 4.3: `x |> _$a`, `x |> _[[i]]`.
+///
+/// Anything else errors in R before evaluation starts: `x |> z[.]`
+/// ("function '[' not supported in RHS call of a pipe"), `x |> sqrt`
+/// and `x |> { ... }` ("The pipe operator requires a function call as
+/// RHS"). tree-sitter's grammar is more permissive and accepts all of
+/// these, so the shapes are validated here and surfaced as RY000 by the
+/// checker. Only demonstrable parse-time rejections are flagged; the
+/// `_` placeholder discipline (unnamed, nested, or repeated `_` inside
+/// the call) is R 4.2+-specific and left to later work.
+fn collect_syntax_violations(
+    root: tree_sitter::Node,
+    src: &str,
+) -> Vec<crate::ast::SyntaxViolation> {
+    if root.has_error() {
+        // A recovered tree's node shapes do not reflect R's parse; the
+        // ERROR/MISSING regions already carry RY000 via parse_errors.
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut stack: Vec<tree_sitter::Node> = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "binary_operator"
+            && text_opt(node.child_by_field_name("operator"), src).as_deref() == Some("|>")
+            && let Some(rhs) = node.child_by_field_name("rhs")
+            && let Some(message) = pipe_rhs_violation(rhs, src)
+        {
+            let start = rhs.start_byte();
+            let end = rhs.end_byte();
+            let pos = rhs.start_position();
+            out.push(crate::ast::SyntaxViolation {
+                span: Span::new(start, end, pos.row, pos.column),
+                message,
+            });
+        }
+        let mut child_cursor = node.walk();
+        for child in node.children(&mut child_cursor) {
+            stack.push(child);
+        }
+    }
+    // The walk is a stack (reverse child order); sort so violations
+    // appear in source order like collect_parse_errors does.
+    out.sort_by_key(|v| (v.span.start, v.span.end));
+    out
+}
+
+/// Whether the native-pipe RHS `rhs` violates base R's rewrite
+/// restrictions, returning the diagnostic message if so. Every message
+/// mirrors what R 4.6.1 itself prints for the same input.
+fn pipe_rhs_violation(rhs: Node, src: &str) -> Option<String> {
+    match rhs.kind() {
+        // Extraction calls. Accepted only when the chain is rooted at
+        // the `_` placeholder (`_[1]`, `_$a`, `_[[i]]$b`); a backquoted
+        // `` `_` `` does not count (R rejects `` x |> `_`[1] `` too).
+        "subset" | "subset2" | "extract_operator" => {
+            let root = extraction_root_identifier(rhs, src);
+            if root.as_deref() == Some("_") {
+                return None;
+            }
+            // A root that merely starts with `_` (e.g. `_x[1]`) trips an
+            // artifact of R 4.3+'s placeholder lexing in pipe RHS: R
+            // rejects it with the generic message instead of naming the
+            // extractor (pre-4.3 R named `[`; a backquoted `` `_x` ``
+            // still gets the named message). Mirror R 4.6.
+            if root.is_some_and(|name| name.starts_with('_')) {
+                return Some(PIPE_NOT_A_CALL_MESSAGE.to_string());
+            }
+            let op = match rhs.kind() {
+                "subset" => "[".to_string(),
+                "subset2" => "[[".to_string(),
+                // `@` and `$` share the extract_operator kind; recover
+                // the operator text, defaulting to `$` on the malformed
+                // shapes that cannot occur in an error-free tree.
+                _ => text_opt(rhs.child_by_field_name("operator"), src)
+                    .unwrap_or_else(|| "$".to_string()),
+            };
+            Some(unsupported_pipe_head_message(&op))
+        }
+        // Calls: rejected when the head is a syntactically special name,
+        // however it is spelled. R resolves both backquoted heads
+        // (`x |> `while`(z)`) and string heads (`x |> "while"(z)`) to a
+        // symbol before the pipe check, so both spellings are consulted
+        // against the same table (`1 |> "+"(y)` is rejected; ordinary
+        // names like `"sqrt"()` stay accepted). Any non-name head shape
+        // is fine, including namespace-qualified names, parenthesized
+        // expressions, and calls/extractions (`x |> z[[1]](y)`).
+        "call" => {
+            let func = rhs.child_by_field_name("function")?;
+            let name = match func.kind() {
+                "identifier" => text_opt(Some(func), src)?.trim_matches('`').to_string(),
+                "string" => unquote_r_string(&text_opt(Some(func), src)?),
+                _ => return None,
+            };
+            PIPE_UNSUPPORTED_HEADS
+                .contains(&name.as_str())
+                .then(|| unsupported_pipe_head_message(&name))
+        }
+        // Unary operators bind tighter than `|>` in both parsers, and
+        // R's error names the operator (`1 |> -x` -> "function '-'
+        // not supported...").
+        "unary_operator" => {
+            let op = text_opt(rhs.child_by_field_name("operator"), src)?;
+            if PIPE_UNSUPPORTED_HEADS.contains(&op.as_str()) {
+                Some(unsupported_pipe_head_message(&op))
+            } else {
+                Some(PIPE_NOT_A_CALL_MESSAGE.to_string())
+            }
+        }
+        // Binary operators: only `^` (with its `**` spelling) and `:`
+        // bind tighter than `|>`, and R's error names them
+        // (`1 |> f()^2`, `1 |> 1:2`). Every other binary operator wraps
+        // the pipe instead, so if one still lands in RHS position R's
+        // own message for it is the generic one (verified for `*`,
+        // `%%`, `%in%`, comparisons, and assignments).
+        "binary_operator" => {
+            let op = text_opt(rhs.child_by_field_name("operator"), src)?;
+            let op = if op == "**" { "^".to_string() } else { op };
+            if matches!(op.as_str(), "^" | ":") {
+                Some(unsupported_pipe_head_message(&op))
+            } else {
+                Some(PIPE_NOT_A_CALL_MESSAGE.to_string())
+            }
+        }
+        // In R's AST a block is a call to `{`, a lambda is a call to
+        // `function`, parens are a call to `(`, and the control
+        // keywords and `::`/`:::` are calls by those names; R's own
+        // errors name the function, so mirror them.
+        "braced_expression" => Some(unsupported_pipe_head_message("{")),
+        "function_definition" => Some(unsupported_pipe_head_message("function")),
+        "parenthesized_expression" => Some(unsupported_pipe_head_message("(")),
+        "if_statement" => Some(unsupported_pipe_head_message("if")),
+        "while_statement" => Some(unsupported_pipe_head_message("while")),
+        "for_statement" => Some(unsupported_pipe_head_message("for")),
+        "repeat_statement" => Some(unsupported_pipe_head_message("repeat")),
+        "namespace_operator" => Some(unsupported_pipe_head_message(
+            namespace_op(rhs, src).unwrap_or("::"),
+        )),
+        // Every other expression shape (symbols, literals, operators)
+        // is not a call R can rewrite.
+        _ => Some(PIPE_NOT_A_CALL_MESSAGE.to_string()),
+    }
+}
+
+/// The R-parity message for a rejected pipe-RHS call head.
+fn unsupported_pipe_head_message(name: &str) -> String {
+    format!("syntax error: function '{name}' not supported in RHS call of a pipe")
+}
+
+/// Walk an extraction chain down to its root operand and return the
+/// root's raw identifier text when that root is an identifier:
+/// `subset`/`subset2` chain via their `function` field,
+/// `extract_operator` via `lhs` (`_$a$b` is `extract(extract(_, a), b)`).
+fn extraction_root_identifier(node: Node, src: &str) -> Option<String> {
+    let mut node = node;
+    loop {
+        node = match node.kind() {
+            "extract_operator" => node.child_by_field_name("lhs")?,
+            "subset" | "subset2" => node.child_by_field_name("function")?,
+            "identifier" => return text(node, src),
+            _ => return None,
+        };
+    }
+}
+
+/// `text` for an optional node, mapping `None` to `None`.
+fn text_opt(n: Option<Node>, src: &str) -> Option<String> {
+    n.and_then(|n| text(n, src))
+}
+
 /// Find the namespace operator token (`::` or `:::`) among a
 /// `namespace_operator` node's anonymous children. Returns `None` if
 /// neither token is present (malformed input).
@@ -1362,6 +1574,65 @@ mod tests {
                 );
             }
             other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn pipe_rhs_shapes_base_r_rejects_become_syntax_violations() {
+        // The two headline forms from the corpus audit: an extraction
+        // whose object is not the `_` placeholder, and a bare block.
+        // R 4.6 rejects both at parse time; tree-sitter accepts them, so
+        // they must surface as syntax violations (RY000) instead of
+        // checking clean. Messages mirror R's own parse errors.
+        let f = parse("z <- c(10, 20)\n1 |> z[.]\n1 |> { . + 1 }\n");
+        assert!(f.parse_errors.is_empty());
+        let messages: Vec<&str> = f
+            .syntax_violations
+            .iter()
+            .map(|v| v.message.as_str())
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "syntax error: function '[' not supported in RHS call of a pipe",
+                "syntax error: function '{' not supported in RHS call of a pipe",
+            ],
+        );
+        // Each violation spans exactly the offending RHS expression.
+        assert_eq!(
+            &f.source[f.syntax_violations[0].span.start..f.syntax_violations[0].span.end],
+            "z[.]"
+        );
+        assert_eq!(
+            &f.source[f.syntax_violations[1].span.start..f.syntax_violations[1].span.end],
+            "{ . + 1 }"
+        );
+    }
+
+    #[test]
+    fn pipe_rhs_shapes_base_r_accepts_stay_clean() {
+        // The rewriteable shapes: calls (qualified, string-headed, and
+        // call-headed) plus `_`-rooted extraction chains must not be
+        // flagged, nor must magrittr pipes, whose RHS is unrestricted.
+        for src in [
+            "x |> f(y)",
+            "x |> base::f(y)",
+            "x |> \"f\"(y)",
+            "x |> z[[1]](y)",
+            "x |> (\\(d) d)()",
+            "x |> f(y = _)",
+            "x |> _$a",
+            "x |> _[[1]]",
+            "x |> _[1]$a",
+            "x %>% abs",
+            "x %>% { . + 1 }",
+        ] {
+            let f = parse(&format!("{src}\n"));
+            assert!(
+                f.parse_errors.is_empty() && f.syntax_violations.is_empty(),
+                "{src}: unexpected violations {:?}",
+                f.syntax_violations
+            );
         }
     }
 

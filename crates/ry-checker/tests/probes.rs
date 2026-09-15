@@ -265,6 +265,12 @@ static PROBES: &[Probe] = &[
         positive: "if (length(sum(1L)) > 0) 1 else 2\n",
         negative: "f <- function(v) if (length(v) > 0) 1 else 2\n",
     },
+    Probe {
+        code: "RY107",
+        note: "`any()`/`all()` scalar logical compared with a negating or constant literal",
+        positive: "f <- function(x) if (any(x) == 0) 1 else 2\n",
+        negative: "f <- function(x) if (any(x == 0)) 1 else 2\n",
+    },
 ];
 
 #[test]

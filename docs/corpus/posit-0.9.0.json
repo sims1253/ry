@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "0a9808015419474031650904bb49b93635746839b77178c4d0acdce56a4c6976",
-  "ry_commit": "eee8c8d98ba4e0c49be430655e927c13ef68bd4a",
+  "source_sha256": "e942971740bbc6b1e1ba7002c3088be7f17f5b93a4929d897ba0f488b546bac9",
+  "ry_commit": "1b7123fdffdaa9bff51a2d5a557b838cfcd1576d",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -180,7 +180,7 @@
       "repo": "tidyverse/glue",
       "stars": 748,
       "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a",
-      "diagnostics": 1
+      "diagnostics": 2
     },
     {
       "name": "cli",
@@ -1657,6 +1657,15 @@
       "column": 20,
       "label": "false_positive",
       "audit_group": "s3-method-dispatch"
+    },
+    {
+      "package": "glue",
+      "code": "RY107",
+      "path": "R/utils.R",
+      "line": 32,
+      "column": 7,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
     },
     {
       "package": "gt",
@@ -3973,7 +3982,7 @@
     }
   ],
   "classification": {
-    "true_positive": 38,
+    "true_positive": 39,
     "false_positive": 354,
     "uncertain": 0
   },
@@ -3989,7 +3998,7 @@
     "s3-method-dispatch": 3,
     "test-fixture": 72,
     "type-narrowing": 52,
-    "upstream-package": 27
+    "upstream-package": 28
   },
   "notes": [
     "testthat block scoping (#368) makes sibling blocks reachable after a mid-test `return()`, surfacing two reviewed rlang RY040 false positives previously hidden by the flattened-scope unreachability: tests/testthat/test-cnd-message.R:481:8 quotes its operand through `enexpr()` and never forces the promise, and tests/testthat/test-trace.R:587:28 is a deliberate caught-error fixture (`identity(1 + \"\")` on the error path under `catch_cnd`). Both are test-fixture false positives; all 37 true positives are retained.",
@@ -4016,6 +4025,7 @@
     "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved.",
     "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained.",
+    "RY107 any-all-scalar-comparison (issue #356) adds exactly one identity: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(), runtime-verified (FALSE == 0 is TRUE, so the written guard computes `!any(lengths)`; the intended `any(lengths == 0)` is written at glue.R:139,191). Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet. Reconciled on top of the #473 recovered-tree reconciliation.",
     "The non-UTF-8 source flag (#376) adds one reviewed finding: lintr tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000. At the pinned commit the file deliberately carries CP1252 bytes (a 0xe4 in a comment, a raw 0xfc opening the symbol on line 4); R 4.6.1 rejects it with \"invalid multibyte character in parser\" at 4:6, so the finding is a true_positive in the test-fixture group. No other posit identity moves: comment-confined invalid bytes stay clean like R, and no other corpus file is non-UTF-8."
   ]
 }

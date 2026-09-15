@@ -72,14 +72,28 @@ fn checker_identities() -> BTreeSet<String> {
     }
 
     let mut identities = BTreeSet::new();
+    // `run.sh`'s report writer relativizes every diagnostic path against
+    // the package directory, so identities carry `R/...` components.
+    // Mirror that here instead of flattening to a file name, which would
+    // only agree while the committed report is empty.
+    let package_dir = vendor_glue_r_dir()
+        .parent()
+        .expect("vendor glue R/ dir has a parent")
+        .to_path_buf();
     for (path, diagnostics) in project.check() {
-        let relative = Path::new(&path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
+        let absolute = Path::new(&path);
+        let relative: String = absolute
+            .strip_prefix(&package_dir)
+            .map(|rel| rel.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| {
+                absolute
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
         for diag in diagnostics {
             identities.insert(format_identity(
-                relative,
+                &relative,
                 diag.span.line as u32 + 1,
                 diag.span.col as u32 + 1,
                 diag.code,

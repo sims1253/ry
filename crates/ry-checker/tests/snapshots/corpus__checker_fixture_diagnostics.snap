@@ -21,6 +21,16 @@ expression: snapshots
         start: 63
   fixture: err_ambiguous_partial_argument.R
 - diagnostics:
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      severity: warning
+      span:
+        column: 6
+        end: 697
+        line: 12
+        start: 680
+  fixture: err_any_all_scalar_comparison.R
+- diagnostics:
     - code: RY092
       message: "argument `x` to `mean` is `list`, expected numeric"
       severity: error
@@ -319,6 +329,48 @@ expression: snapshots
         start: 54
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
+    - code: RY000
+      message: "syntax error: function '[' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 451
+        line: 8
+        start: 447
+    - code: RY000
+      message: "syntax error: function '{' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 471
+        line: 9
+        start: 462
+    - code: RY000
+      message: "syntax error: the pipe operator requires a function call as RHS"
+      severity: error
+      span:
+        column: 10
+        end: 486
+        line: 10
+        start: 482
+    - code: RY000
+      message: "syntax error: function 'return' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 506
+        line: 11
+        start: 497
+    - code: RY000
+      message: "syntax error: function '+' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 523
+        line: 12
+        start: 517
+  fixture: err_pipe_native_rhs.R
+- diagnostics:
     - code: RY080
       message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
       severity: error
@@ -400,25 +452,33 @@ expression: snapshots
       severity: warning
       span:
         column: 21
-        end: 290
+        end: 297
         line: 6
-        start: 271
+        start: 278
     - code: RY103
       message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
       severity: warning
       span:
         column: 21
-        end: 518
+        end: 525
         line: 10
-        start: 499
+        start: 506
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      severity: warning
+      span:
+        column: 6
+        end: 1086
+        line: 21
+        start: 1069
     - code: RY105
       message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
       severity: warning
       span:
         column: 13
-        end: 1347
+        end: 1322
         line: 30
-        start: 1331
+        start: 1306
   fixture: err_recall_rules_repro.R
 - diagnostics:
     - code: RY000
@@ -894,6 +954,8 @@ expression: snapshots
   fixture: ok_pipe_chain.R
 - diagnostics: []
   fixture: ok_pipe_magrittr.R
+- diagnostics: []
+  fixture: ok_pipe_native_rhs.R
 - diagnostics: []
   fixture: ok_pipe_placeholder.R
 - diagnostics: []

@@ -221,5 +221,11 @@ mod tests {
             export_type(&RType::unknown())["length"],
             json!({"kind": "unknown"})
         );
+        // `nonempty` is a lower bound, not an exact count: no known
+        // length, but provably at least one element.
+        assert_eq!(
+            export_type(&RType::new(Mode::Integer, Length::Nonempty))["length"],
+            json!({"kind": "nonempty"})
+        );
     }
 }

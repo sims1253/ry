@@ -4,6 +4,17 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
+  `test` vector and only overwrites selected positions, so a zero-length or
+  all-`NA` test yields a `logical` result even when `yes`/`no` agree on
+  another mode -- the typed-NA select behind tidyverse/hms#231, where
+  `as.character(hms())` returned `logical(0)` instead of `character(0)`.
+  Fires for definite collapses (a literal empty or `NA` test) and for
+  typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
+  (#461).
+
 ### Fixed
 
 - Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse

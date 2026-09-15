@@ -233,6 +233,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.",
     },
+    Rule {
+        code: "RY107",
+        name: "any-all-scalar-comparison",
+        default_severity: Severity::Warning,
+        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

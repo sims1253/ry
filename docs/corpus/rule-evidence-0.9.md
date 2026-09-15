@@ -103,7 +103,7 @@ determines the verdict.
 | `RY102` named-list-element-arrow | 1/0 | yes | `named_list_element_arrow_claim.R` | n/a (syntactic) | - | yes | keep | Valid claim; 1 TP / 0 FP. |
 | `RY103` class-equality | 2/0 | yes | `class_equality_claim.R` | consistent | piloted | yes | keep | Valid claim; 2 TP / 0 FP. Consistent under R7 lifting. Mutation pilot passed. |
 | `RY105` constant-length-comparison | 1/11 | yes | `constant_length_comparison_claim.R` | consistent | - | - | keep | Valid claim; 1 TP / 11 FP. Moderate FP but small absolute count; 1 TP demonstrates reachability. |
-| `RY106` ifelse-mode-collapse | 0/0 | yes | `ifelse_mode_collapse_claim.R` | consistent | - | - | keep | Valid claim; 0 corpus findings. From the tidyverse/hms#231 replay; fires for definite collapses and typed-NA selects. |
+| `RY106` ifelse-mode-collapse | 5/0 | yes | `ifelse_mode_collapse_claim.R` | consistent | - | - | keep | Valid claim; 5 TP / 0 FP (hms `R/hms.R:218`, blob `R/format.R:43`, gt `R/format_data.R:4057`, `R/utils_render_latex.R:69`, `R/z_utils_render_footnotes.R:418` -- the tidyverse/hms#231 typed-NA-select family). Fires for definite collapses (literal empty or NA tests) and typed-NA selects over maybe-empty tests. |
 | `RY107` any-all-scalar-comparison | 1/0 | yes | `any_all_scalar_comparison_claim.R` | consistent | - | yes | keep | Valid claim; 1 TP / 0 FP on the vendored packages (glue `R/utils.R:32`, the audited defect itself, issue #356). Value-preserving comparisons stay silent, keeping diffobj's pinned idiom quiet. Consistent under R7 lifting (syntactic). |
 
 ## Verdict execution

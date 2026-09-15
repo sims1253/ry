@@ -37,7 +37,7 @@ explanation for one rule.
 | RY094 | printf-argument-count    | warning  | A literal printf-family format string has more conversions than supplied value arguments.                                                                                                                 |
 | RY096 | hasarg-non-formal        | warning  | `hasArg()` names a parameter that is not a formal of an enclosing function without `...`.                                                                                                                 |
 | RY097 | not-r-source             | info     | File does not appear to be R source (e.g. Ratfor); its diagnostics are suppressed.                                                                                                                        |
-| RY098 | default-forced-before-assignment | warning | A parameter default references a body-local that may not be assigned yet on some execution path.                                                                                                    |
+| RY098 | default-forced-before-assignment | warning | A parameter default references a body-local that may not be assigned yet on some execution path, or references its own formal in a body that provably forces the promise.                                                                                              |
 | RY099 | discarded-conditional-value | warning | A value-producing expression in a non-tail one-arm `if` is discarded, commonly because an assignment was omitted.                                                                                   |
 | RY100 | comparison-inside-math-call | warning | A comparison directly inside a numeric math function is usually a parenthesization mistake.                                                                                                         |
 | RY101 | identical-list-subset-scalar | warning | `identical()` compares a single-bracket list subset with an atomic scalar, making the result always `FALSE`; use `[[` to extract the element.                                                        |
@@ -46,10 +46,21 @@ explanation for one rule.
 | RY105 | constant-length-comparison | warning | `length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.                                                          |
 | RY106 | ifelse-mode-collapse | warning | `ifelse()` builds its result from `test`, so a zero-length or all-`NA` test yields a logical result even when `yes`/`no` agree on another mode — in particular for typed-NA selects. Use a typed alternative such as `vctrs::if_else()`.                                                          |
 | RY107 | any-all-scalar-comparison | warning | `any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal negates it or has a constant result. The comparison usually belongs inside the call (`any(x == 0)`, not `any(x) == 0`). Value-preserving comparisons (`== 1`, `> 0`) are a deliberate idiom and stay quiet. |
+| RY109 | self-referential-default | warning | A formal's default expression references the formal itself (`copy = copy`, `n = n + 1`). The reference can only resolve to the promise, so triggering the default errors in R with "promise already under evaluation: recursive default argument reference"; a supplied argument is unaffected. Warns even without a provable force in the body (RY098 carries the proven-forcing half), because such a default can never evaluate. Defaults referencing a different formal (`x = y, y = 1L`) are legal and stay quiet, as do quoted defaults that capture the formal (`substitute(x)`). |
 
 RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example
 `warn = ["RY003"]`).
+
+RY109 stays quiet when the body defuses the promise with a reviewed capture
+helper (`enquo()`, `substitute()`, ...) or tidy injection (`{{ x }}`). A
+bare helper name is credited only when it resolves through an attached
+package or a `NAMESPACE` import (`library(rlang)`, `import(rlang)`); in a
+standalone file with no import the same `enquo(x)` body warns. This
+resolvability requirement is also why rlang's own defusing tests warn:
+their bare `enexpr`/`enquo` are defined by rlang itself, and crediting a
+project-defined name without provenance would also credit a test-local
+`quote <- function(x) x`, which forces.
 
 RY032 also has a parameter-pattern heuristic. See
 [scalar guards](scalar-guards.md) for its package, assertion, and alias/loop

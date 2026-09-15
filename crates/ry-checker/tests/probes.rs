@@ -277,6 +277,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x) if (any(x) == 0) 1 else 2\n",
         negative: "f <- function(x) if (any(x == 0)) 1 else 2\n",
     },
+    Probe {
+        code: "RY109",
+        note: "self-referential default with no provable force in the body",
+        positive: "f <- function(x = x) 1L\n",
+        negative: "f <- function(x = y, y = 1L) x\n",
+    },
 ];
 
 #[test]

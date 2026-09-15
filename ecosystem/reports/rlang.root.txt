@@ -9,5 +9,7 @@ R/trace.R:531:7 RY001
 R/trace.R:540:7 RY001
 tests/testthat/test-cnd-entrace.R:284:28 RY040
 tests/testthat/test-cnd-message.R:480:8 RY040
+tests/testthat/test-nse-defuse.R:329:22 RY109
+tests/testthat/test-nse-defuse.R:334:22 RY109
 tests/testthat/test-trace.R:323:5 RY091
 tests/testthat/test-trace.R:592:28 RY040

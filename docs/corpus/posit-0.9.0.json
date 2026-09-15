@@ -4,7 +4,7 @@
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
   "source_sha256": "aa5e315754aa077946c2214323d66ca42194f2648a75b9d8858aa9b993280d84",
-  "ry_commit": "c8bc3de9c3434cf00389e08c4586d05ec3b7d3e5",
+  "ry_commit": "9c1e3c17e4fb67f9a4c8d7a87d526dac8cec0164",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -82,7 +82,7 @@
       "repo": "r-lib/lintr",
       "stars": 1289,
       "commit": "990e57870498634ce67d1fa0e53311f385b4b3d4",
-      "diagnostics": 9
+      "diagnostics": 8
     },
     {
       "name": "renv",
@@ -117,7 +117,7 @@
       "repo": "r-lib/testthat",
       "stars": 938,
       "commit": "9b6f12b9f50c297b4b5f485f728a2a19305770eb",
-      "diagnostics": 8
+      "diagnostics": 2
     },
     {
       "name": "usethis",
@@ -180,7 +180,7 @@
       "repo": "tidyverse/glue",
       "stars": 748,
       "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a",
-      "diagnostics": 1
+      "diagnostics": 2
     },
     {
       "name": "cli",
@@ -1659,6 +1659,15 @@
       "audit_group": "s3-method-dispatch"
     },
     {
+      "package": "glue",
+      "code": "RY107",
+      "path": "R/utils.R",
+      "line": 32,
+      "column": 7,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
+    },
+    {
       "package": "gt",
       "code": "RY001",
       "path": "R/fmt.R",
@@ -1882,15 +1891,6 @@
       "column": 18,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "lintr",
-      "code": "RY010",
-      "path": "tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R",
-      "line": 3,
-      "column": 1,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
     },
     {
       "package": "lintr",
@@ -3603,60 +3603,6 @@
       "audit_group": "type-narrowing"
     },
     {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 1,
-      "label": "false_positive",
-      "audit_group": "test-fixture"
-    },
-    {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 5,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 15,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 22,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 6,
-      "column": 1,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
       "package": "tidyr",
       "code": "RY010",
       "path": "R/chop.R",
@@ -4027,8 +3973,8 @@
     }
   ],
   "classification": {
-    "true_positive": 37,
-    "false_positive": 361,
+    "true_positive": 38,
+    "false_positive": 354,
     "uncertain": 0
   },
   "audit_group_counts": {
@@ -4041,9 +3987,9 @@
     "numeric-if-idiom": 3,
     "reassign-scope": 9,
     "s3-method-dispatch": 3,
-    "test-fixture": 73,
-    "type-narrowing": 57,
-    "upstream-package": 27
+    "test-fixture": 71,
+    "type-narrowing": 52,
+    "upstream-package": 28
   },
   "notes": [
     "testthat block scoping (#368) makes sibling blocks reachable after a mid-test `return()`, surfacing two reviewed rlang RY040 false positives previously hidden by the flattened-scope unreachability: tests/testthat/test-cnd-message.R:481:8 quotes its operand through `enexpr()` and never forces the promise, and tests/testthat/test-trace.R:587:28 is a deliberate caught-error fixture (`identity(1 + \"\")` on the error path under `catch_cnd`). Both are test-fixture false positives; all 37 true positives are retained.",
@@ -4068,6 +4014,7 @@
     "Function-mode call-head lookup removes four RY070 identities. rlang tests/testthat/helper-locale.R:134:5 called skip() past a local logical skip; R resolves the head to testthat::skip (probe: with testthat attached the call raises testthat's skip control condition, never an error), so the prior true_positive label -- assigned in the audit batch documented in docs/corpus/pre-governance-measurement.md with the ordinary-lookup rationale \"a local logical skip shadows the function\" -- was a mislabel and the finding was a false positive. pkgdown tests/testthat/helper.R:24-26 called path() past the NULL formal of local_pkgdown_site; pkgdown's NAMESPACE import(fs) binds fs::path, and R's function-mode lookup skips the NULL formal (probe: fs::path runs); their recorded false_positive labels were correct. All other identities are unchanged, including pkgdown R/templates.R:57:5, which still fires because import(fs) is not enumerable hermetically (fs ships no stub; issue #366); its true_positive label was assigned with the same shadowing rationale and is flagged to the maintainers for review under function-mode semantics, not relabeled here. Remaining RY070 messages gain the function-mode wording.",
     "Audit correction: pkgdown R/templates.R:57:5 RY070 was labeled true_positive in the pre-governance audit batch with the ordinary-lookup rationale 'a local path <- NULL shadows the function'. R's call-head lookup is function-mode: in a namespace-faithful evaluation of the exact pinned function (pkgdown 179cfaee3d4e, templates_dir), with NAMESPACE import(fs) bindings and template.path/template.package unset, line 57 resolves past the local NULL binding to fs::path and returns an fs_path; a base-only negative control errors 'could not find function path' (R 4.6.1; evidence scripts in the review record). The finding is a false positive at package runtime. The diagnostic still fires hermetically because fs ships no embedded stub (issue #366); the record, audit group, reports, and messages are unchanged and the finding remains emitted - only the label and derived classification counts change (true_positive 42->41, false_positive 486->487; totals, identities, and source_sha256 unchanged).",
     "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
-    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved."
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved.",
+    "Regenerated on the RY107 any-all-scalar-comparison change (issue #356) plus the recovered-tree suppression of #467. RY107 adds exactly one identity: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect, runtime-verified (FALSE == 0 is TRUE, so the guard computes `!any(lengths)`; the intended `any(lengths == 0)` is written at glue.R:139,191). Seven reviewed false-positive RY010 identities disappear because their carrier files are syntax-error fixtures whose semantic diagnostics the recovered-tree suppression (#467, merged after the previous reconciliation) now withholds by design: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1 and six testthat entries in tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R (5:1, 5:5, 5:13, 5:15, 5:22, 6:1)."
   ]
 }

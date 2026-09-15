@@ -508,6 +508,15 @@
       "audit_group": "P7a"
     },
     {
+      "package": "glue",
+      "code": "RY107",
+      "path": "R/utils.R",
+      "line": 32,
+      "column": 7,
+      "label": "true_positive",
+      "audit_group": "upstream-glue"
+    },
+    {
       "package": "ggplot2",
       "code": "RY010",
       "path": "R/facet-.R",
@@ -770,7 +779,7 @@
     }
   ],
   "classification": {
-    "true_positive": 10,
+    "true_positive": 11,
     "false_positive": 41,
     "uncertain": 0,
     "unowned": 23
@@ -786,7 +795,8 @@
     "P8": 3,
     "P7b": 3,
     "plan-32-33": 23,
-    "pr195-nse-stubs": 6
+    "pr195-nse-stubs": 6,
+    "upstream-glue": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -798,8 +808,9 @@
     "The bounded default-parameter false-branch refinement removes two reviewed ggplot2 RY061 false positives at R/geom-boxplot.R:164:19 and :166:7. Only a default-derived type wholly excluded by a false mode predicate is relaxed; explicit class predicates are excluded and reassignment clears the marker. The pinned corpus comparison removes exactly these two identities and adds none; all true-positive identities remain unchanged.",
     "A forwarded parameter default is no longer asserted onto a root-anchored forwarding call when the caller rebinds the forwarded name before it: the manufactured NULL default (and its logical<len=0> condition) is gone, removing the reviewed ggplot2 RY001 false positive at R/bin.R:101:14. Non-anchored call sites keep their previous behavior; all true positives are preserved.",
     "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
-    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md."
+    "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md.",
+    "RY107 (any-all-scalar-comparison, issue #356) adds exactly one identity across the corpus: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(). Runtime-verified true positive: `FALSE == 0` is TRUE, so the written guard computes `!any(lengths)` and the zero-length branch never runs, while the same commit writes the intended `any(lengths == 0)` at glue.R:139,191. Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet."
   ],
-  "ry_commit": "c8bc3de9c3434cf00389e08c4586d05ec3b7d3e5",
-  "source_sha256": "d9d1fca1cea6a66268d795dd3ee74191bbb48633497e9ca7b2dc70c725ffa2ee"
+  "ry_commit": "9c1e3c17e4fb67f9a4c8d7a87d526dac8cec0164",
+  "source_sha256": "3e3699c321fa893fb933563af75689637b8b24fb2aefc89a73559baff1efff71"
 }

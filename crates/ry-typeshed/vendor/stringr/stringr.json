@@ -1,0 +1,760 @@
+{
+  "schema_version": "2",
+  "package": "stringr",
+  "version": "0.0.1",
+  "functions": {
+    "%>%": {
+      "params": [
+        "lhs",
+        "rhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "boundary": {
+      "params": [
+        "type",
+        "skip_word_none",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coll": {
+      "params": [
+        "pattern",
+        "ignore_case",
+        "locale",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fixed": {
+      "params": [
+        "pattern",
+        "ignore_case"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "invert_match": {
+      "params": [
+        "loc"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "regex": {
+      "params": [
+        "pattern",
+        "ignore_case",
+        "multiline",
+        "comments",
+        "dotall",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_c": {
+      "params": [
+        "...",
+        "sep",
+        "collapse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_conv": {
+      "params": [
+        "string",
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_count": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_detect": {
+      "params": [
+        "string",
+        "pattern",
+        "negate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_dup": {
+      "params": [
+        "string",
+        "times",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_ends": {
+      "params": [
+        "string",
+        "pattern",
+        "negate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_equal": {
+      "params": [
+        "x",
+        "y",
+        "locale",
+        "ignore_case",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_escape": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_extract": {
+      "params": [
+        "string",
+        "pattern",
+        "group"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_extract_all": {
+      "params": [
+        "string",
+        "pattern",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_flatten": {
+      "params": [
+        "string",
+        "collapse",
+        "last",
+        "na.rm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_flatten_comma": {
+      "params": [
+        "string",
+        "last",
+        "na.rm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_glue": {
+      "params": [
+        "...",
+        ".sep",
+        ".envir",
+        ".trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_glue_data": {
+      "params": [
+        ".x",
+        "...",
+        ".sep",
+        ".envir",
+        ".na"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_ilike": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_interp": {
+      "params": [
+        "string",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_length": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_like": {
+      "params": [
+        "string",
+        "pattern",
+        "ignore_case"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_locate": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_locate_all": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_match": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_match_all": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_order": {
+      "params": [
+        "x",
+        "decreasing",
+        "na_last",
+        "locale",
+        "numeric",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_pad": {
+      "params": [
+        "string",
+        "width",
+        "side",
+        "pad",
+        "use_width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_rank": {
+      "params": [
+        "x",
+        "locale",
+        "numeric",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_remove": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_remove_all": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_replace": {
+      "params": [
+        "string",
+        "pattern",
+        "replacement"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_replace_all": {
+      "params": [
+        "string",
+        "pattern",
+        "replacement"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_replace_na": {
+      "params": [
+        "string",
+        "replacement"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_sort": {
+      "params": [
+        "x",
+        "decreasing",
+        "na_last",
+        "locale",
+        "numeric",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_split": {
+      "params": [
+        "string",
+        "pattern",
+        "n",
+        "simplify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_split_1": {
+      "params": [
+        "string",
+        "pattern"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_split_fixed": {
+      "params": [
+        "string",
+        "pattern",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_split_i": {
+      "params": [
+        "string",
+        "pattern",
+        "i"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_squish": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_starts": {
+      "params": [
+        "string",
+        "pattern",
+        "negate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_sub": {
+      "params": [
+        "string",
+        "start",
+        "end"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_sub_all": {
+      "params": [
+        "string",
+        "start",
+        "end"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_sub<-": {
+      "params": [
+        "string",
+        "start",
+        "end",
+        "omit_na",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_subset": {
+      "params": [
+        "string",
+        "pattern",
+        "negate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_camel": {
+      "params": [
+        "string",
+        "first_upper"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_kebab": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_lower": {
+      "params": [
+        "string",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_sentence": {
+      "params": [
+        "string",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_snake": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_title": {
+      "params": [
+        "string",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_to_upper": {
+      "params": [
+        "string",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_trim": {
+      "params": [
+        "string",
+        "side"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_trunc": {
+      "params": [
+        "string",
+        "width",
+        "side",
+        "ellipsis"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_unique": {
+      "params": [
+        "string",
+        "locale",
+        "ignore_case",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_view": {
+      "params": [
+        "string",
+        "pattern",
+        "match",
+        "html",
+        "use_escapes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_view_all": {
+      "params": [
+        "string",
+        "pattern",
+        "match",
+        "html",
+        "use_escapes"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_which": {
+      "params": [
+        "string",
+        "pattern",
+        "negate"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_width": {
+      "params": [
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "str_wrap": {
+      "params": [
+        "string",
+        "width",
+        "indent",
+        "exdent",
+        "whitespace_only"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "word": {
+      "params": [
+        "string",
+        "start",
+        "end",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

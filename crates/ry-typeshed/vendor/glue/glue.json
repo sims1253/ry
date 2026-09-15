@@ -1,0 +1,227 @@
+{
+  "schema_version": "2",
+  "package": "glue",
+  "version": "0.0.1",
+  "functions": {
+    "as_glue": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "backtick": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "double_quote": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue": {
+      "params": [
+        "...",
+        ".sep",
+        ".envir",
+        ".open",
+        ".close",
+        ".na",
+        ".null",
+        ".comment",
+        ".literal",
+        ".transformer",
+        ".trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_col": {
+      "params": [
+        "...",
+        ".envir",
+        ".na",
+        ".literal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_collapse": {
+      "params": [
+        "x",
+        "sep",
+        "width",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_data": {
+      "params": [
+        ".x",
+        "...",
+        ".sep",
+        ".envir",
+        ".open",
+        ".close",
+        ".na",
+        ".null",
+        ".comment",
+        ".literal",
+        ".transformer",
+        ".trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_data_col": {
+      "params": [
+        ".x",
+        "...",
+        ".envir",
+        ".na",
+        ".literal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_data_safe": {
+      "params": [
+        ".x",
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_data_sql": {
+      "params": [
+        ".x",
+        "...",
+        ".con",
+        ".sep",
+        ".envir",
+        ".open",
+        ".close",
+        ".na",
+        ".null",
+        ".comment",
+        ".literal",
+        ".trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_safe": {
+      "params": [
+        "...",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_sql": {
+      "params": [
+        "...",
+        ".con",
+        ".sep",
+        ".envir",
+        ".open",
+        ".close",
+        ".na",
+        ".null",
+        ".comment",
+        ".literal",
+        ".trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glue_sql_collapse": {
+      "params": [
+        "x",
+        "sep",
+        "width",
+        "last"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "identity_transformer": {
+      "params": [
+        "text",
+        "envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "single_quote": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trim": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

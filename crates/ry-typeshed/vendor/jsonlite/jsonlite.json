@@ -1,0 +1,306 @@
+{
+  "schema_version": "2",
+  "package": "jsonlite",
+  "version": "0.0.1",
+  "functions": {
+    "as_gzjson_b64": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_gzjson_raw": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "base64_dec": {
+      "params": [
+        "input"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "base64_enc": {
+      "params": [
+        "input"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "base64url_dec": {
+      "params": [
+        "input"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "base64url_enc": {
+      "params": [
+        "input"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "flatten": {
+      "params": [
+        "x",
+        "recursive"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fromJSON": {
+      "params": [
+        "txt",
+        "simplifyVector",
+        "simplifyDataFrame",
+        "simplifyMatrix",
+        "flatten",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minify": {
+      "params": [
+        "txt"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_gzjson_b64": {
+      "params": [
+        "b64",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_gzjson_raw": {
+      "params": [
+        "buf",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_json": {
+      "params": [
+        "json",
+        "simplifyVector",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "prettify": {
+      "params": [
+        "txt",
+        "indent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rbind_pages": {
+      "params": [
+        "pages"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_json": {
+      "params": [
+        "path",
+        "simplifyVector",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "serializeJSON": {
+      "params": [
+        "x",
+        "digits",
+        "pretty"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stream_in": {
+      "params": [
+        "con",
+        "handler",
+        "pagesize",
+        "verbose",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stream_out": {
+      "params": [
+        "x",
+        "con",
+        "pagesize",
+        "verbose",
+        "prefix",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "toJSON": {
+      "params": [
+        "x",
+        "dataframe",
+        "matrix",
+        "Date",
+        "POSIXt",
+        "factor",
+        "complex",
+        "raw",
+        "null",
+        "na",
+        "auto_unbox",
+        "digits",
+        "pretty",
+        "force",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unbox": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unserializeJSON": {
+      "params": [
+        "txt"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "validate": {
+      "params": [
+        "txt"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_json": {
+      "params": [
+        "x",
+        "path",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__T__$:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__$<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[[<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

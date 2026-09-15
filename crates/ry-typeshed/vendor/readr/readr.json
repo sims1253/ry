@@ -1,0 +1,1483 @@
+{
+  "schema_version": "2",
+  "package": "readr",
+  "version": "0.0.1",
+  "functions": {
+    "as.col_spec": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "clipboard": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_character": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_date": {
+      "params": [
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_datetime": {
+      "params": [
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_double": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_factor": {
+      "params": [
+        "levels",
+        "ordered",
+        "include_na"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_guess": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_integer": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_logical": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_number": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_skip": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_time": {
+      "params": [
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cols": {
+      "params": [
+        "...",
+        ".default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cols_condense": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cols_only": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "count_fields": {
+      "params": [
+        "file",
+        "tokenizer",
+        "skip",
+        "n_max"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "datasource": {
+      "params": [
+        "file",
+        "skip",
+        "skip_empty_rows",
+        "comment",
+        "skip_quote"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_names": {
+      "params": [
+        "mon",
+        "mon_ab",
+        "day",
+        "day_ab",
+        "am_pm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_names_lang": {
+      "params": [
+        "language"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_names_langs": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "default_locale": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "edition_get": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_csv": {
+      "params": [
+        "x",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_csv2": {
+      "params": [
+        "x",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_delim": {
+      "params": [
+        "x",
+        "delim",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_tsv": {
+      "params": [
+        "x",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fwf_cols": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fwf_empty": {
+      "params": [
+        "file",
+        "skip",
+        "skip_empty_rows",
+        "col_names",
+        "comment",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fwf_positions": {
+      "params": [
+        "start",
+        "end",
+        "col_names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fwf_widths": {
+      "params": [
+        "widths",
+        "col_names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guess_encoding": {
+      "params": [
+        "file",
+        "n_max",
+        "threshold"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guess_parser": {
+      "params": [
+        "x",
+        "locale",
+        "guess_integer",
+        "na"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "local_edition": {
+      "params": [
+        "edition",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "locale": {
+      "params": [
+        "date_names",
+        "date_format",
+        "time_format",
+        "decimal_mark",
+        "grouping_mark",
+        "tz",
+        "encoding",
+        "asciify"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "output_column": {
+      "params": [
+        "x",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_character": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_date": {
+      "params": [
+        "x",
+        "format",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_datetime": {
+      "params": [
+        "x",
+        "format",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_double": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_factor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "na",
+        "locale",
+        "include_na",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_guess": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws",
+        "guess_integer"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_integer": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_logical": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_number": {
+      "params": [
+        "x",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_time": {
+      "params": [
+        "x",
+        "format",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_vector": {
+      "params": [
+        "x",
+        "collector",
+        "na",
+        "locale",
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "problems": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_builtin": {
+      "params": [
+        "x",
+        "package"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_csv": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "name_repair",
+        "num_threads",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_csv_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "chunk_size",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "guess_max",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_csv2": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "name_repair",
+        "num_threads",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_csv2_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "chunk_size",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "guess_max",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_delim": {
+      "params": [
+        "file",
+        "delim",
+        "quote",
+        "escape_backslash",
+        "escape_double",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "name_repair",
+        "num_threads",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_delim_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "delim",
+        "chunk_size",
+        "quote",
+        "escape_backslash",
+        "escape_double",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "quoted_na",
+        "comment",
+        "trim_ws",
+        "skip",
+        "guess_max",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_file": {
+      "params": [
+        "file",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_file_raw": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_fwf": {
+      "params": [
+        "file",
+        "col_positions",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "name_repair",
+        "num_threads",
+        "show_col_types",
+        "lazy",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_lines": {
+      "params": [
+        "file",
+        "skip",
+        "skip_empty_rows",
+        "n_max",
+        "locale",
+        "na",
+        "lazy",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_lines_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "chunk_size",
+        "skip",
+        "locale",
+        "na",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_lines_raw": {
+      "params": [
+        "file",
+        "skip",
+        "n_max",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_lines_raw_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "chunk_size",
+        "skip",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_log": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "show_col_types",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_rds": {
+      "params": [
+        "file",
+        "refhook"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_table": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "comment",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_tsv": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "name_repair",
+        "num_threads",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_tsv_chunked": {
+      "params": [
+        "file",
+        "callback",
+        "chunk_size",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "guess_max",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readr_example": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readr_threads": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "should_read_lazy": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "should_show_types": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "show_progress": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec_csv": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "name_repair",
+        "num_threads",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec_csv2": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "name_repair",
+        "num_threads",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec_delim": {
+      "params": [
+        "file",
+        "delim",
+        "quote",
+        "escape_backslash",
+        "escape_double",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "name_repair",
+        "num_threads",
+        "progress",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec_table": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "locale",
+        "na",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "comment",
+        "show_col_types",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spec_tsv": {
+      "params": [
+        "file",
+        "col_names",
+        "col_types",
+        "col_select",
+        "id",
+        "locale",
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip",
+        "n_max",
+        "guess_max",
+        "progress",
+        "name_repair",
+        "num_threads",
+        "show_col_types",
+        "skip_empty_rows",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stop_for_problems": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenize": {
+      "params": [
+        "file",
+        "tokenizer",
+        "skip",
+        "n_max"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_csv": {
+      "params": [
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_delim": {
+      "params": [
+        "delim",
+        "quote",
+        "na",
+        "quoted_na",
+        "comment",
+        "trim_ws",
+        "escape_double",
+        "escape_backslash",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_fwf": {
+      "params": [
+        "begin",
+        "end",
+        "na",
+        "comment",
+        "trim_ws",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_line": {
+      "params": [
+        "na",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_log": {
+      "params": [
+        "trim_ws"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_tsv": {
+      "params": [
+        "na",
+        "quoted_na",
+        "quote",
+        "comment",
+        "trim_ws",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tokenizer_ws": {
+      "params": [
+        "na",
+        "comment",
+        "skip_empty_rows"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "type_convert": {
+      "params": [
+        "df",
+        "col_types",
+        "na",
+        "trim_ws",
+        "locale",
+        "guess_integer"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_edition": {
+      "params": [
+        "edition",
+        "code"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_csv": {
+      "params": [
+        "x",
+        "file",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_csv2": {
+      "params": [
+        "x",
+        "file",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_delim": {
+      "params": [
+        "x",
+        "file",
+        "delim",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_excel_csv": {
+      "params": [
+        "x",
+        "file",
+        "na",
+        "append",
+        "col_names",
+        "delim",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_excel_csv2": {
+      "params": [
+        "x",
+        "file",
+        "na",
+        "append",
+        "col_names",
+        "delim",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_file": {
+      "params": [
+        "x",
+        "file",
+        "append"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_lines": {
+      "params": [
+        "x",
+        "file",
+        "sep",
+        "na",
+        "append",
+        "num_threads"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_rds": {
+      "params": [
+        "x",
+        "file",
+        "compress",
+        "version",
+        "refhook",
+        "text",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_tsv": {
+      "params": [
+        "x",
+        "file",
+        "na",
+        "append",
+        "col_names",
+        "quote",
+        "escape",
+        "eol",
+        "num_threads",
+        "progress"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "AccumulateCallback": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ChunkCallback": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "DataFrameCallback": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ListCallback": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "SideEffectChunkCallback": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

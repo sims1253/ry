@@ -1,0 +1,1048 @@
+{
+  "schema_version": "2",
+  "package": "httr",
+  "version": "0.0.1",
+  "functions": {
+    "accept": {
+      "params": [
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "accept_json": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "accept_xml": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "add_headers": {
+      "params": [
+        "...",
+        ".headers"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "authenticate": {
+      "params": [
+        "user",
+        "password",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "BROWSE": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "build_url": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cache_info": {
+      "params": [
+        "r"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "config": {
+      "params": [
+        "...",
+        "token"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "content": {
+      "params": [
+        "x",
+        "as",
+        "type",
+        "encoding",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "content_type": {
+      "params": [
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "content_type_json": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "content_type_xml": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cookies": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_docs": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "DELETE": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "GET": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "get_callback": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "guess_media": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle": {
+      "params": [
+        "url",
+        "cookies"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_find": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_reset": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_content": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "HEAD": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "headers": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hmac_sha1": {
+      "params": [
+        "key",
+        "string"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "http_condition": {
+      "params": [
+        "x",
+        "type",
+        "task",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "http_date": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "http_error": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "http_status": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "http_type": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "httr_dr": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "httr_options": {
+      "params": [
+        "matches"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "init_oauth1.0": {
+      "params": [
+        "endpoint",
+        "app",
+        "permission",
+        "is_interactive",
+        "private_key"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "init_oauth2.0": {
+      "params": [
+        "endpoint",
+        "app",
+        "scope",
+        "user_params",
+        "type",
+        "use_oob",
+        "oob_value",
+        "is_interactive",
+        "use_basic_auth",
+        "config_init",
+        "client_credentials",
+        "query_authorize_extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "insensitive": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "message_for_status": {
+      "params": [
+        "x",
+        "task"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "modify_url": {
+      "params": [
+        "url",
+        "scheme",
+        "hostname",
+        "port",
+        "path",
+        "query",
+        "params",
+        "fragment",
+        "username",
+        "password"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_app": {
+      "params": [
+        "appname",
+        "key",
+        "secret",
+        "redirect_uri"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_callback": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_endpoint": {
+      "params": [
+        "request",
+        "authorize",
+        "access",
+        "...",
+        "base_url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_endpoints": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_exchanger": {
+      "params": [
+        "request_url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_header": {
+      "params": [
+        "info"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_listener": {
+      "params": [
+        "request_url",
+        "is_interactive"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_service_token": {
+      "params": [
+        "endpoint",
+        "secrets",
+        "scope",
+        "sub"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth_signature": {
+      "params": [
+        "url",
+        "method",
+        "app",
+        "token",
+        "token_secret",
+        "private_key",
+        "other_params"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth1.0_token": {
+      "params": [
+        "endpoint",
+        "app",
+        "permission",
+        "as_header",
+        "private_key",
+        "cache"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth2.0_access_token": {
+      "params": [
+        "endpoint",
+        "app",
+        "code",
+        "user_params",
+        "type",
+        "use_basic_auth",
+        "redirect_uri",
+        "client_credentials",
+        "config"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth2.0_authorize_url": {
+      "params": [
+        "endpoint",
+        "app",
+        "scope",
+        "redirect_uri",
+        "state",
+        "query_extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oauth2.0_token": {
+      "params": [
+        "endpoint",
+        "app",
+        "scope",
+        "user_params",
+        "type",
+        "use_oob",
+        "oob_value",
+        "as_header",
+        "use_basic_auth",
+        "cache",
+        "config_init",
+        "client_credentials",
+        "credentials",
+        "query_authorize_extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_http_date": {
+      "params": [
+        "x",
+        "failure"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_media": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_url": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parsed_content": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "PATCH": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "POST": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "progress": {
+      "params": [
+        "type",
+        "con"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "PUT": {
+      "params": [
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rerequest": {
+      "params": [
+        "r"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reset_config": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "RETRY": {
+      "params": [
+        "verb",
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "times",
+        "pause_base",
+        "pause_cap",
+        "pause_min",
+        "handle",
+        "quiet",
+        "terminate_on",
+        "terminate_on_success"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "revoke_all": {
+      "params": [
+        "cache_path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_callback": {
+      "params": [
+        "name",
+        "new_callback"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_config": {
+      "params": [
+        "config",
+        "override"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_cookies": {
+      "params": [
+        "...",
+        ".cookies"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sha1_hash": {
+      "params": [
+        "key",
+        "string",
+        "method"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sign_oauth1.0": {
+      "params": [
+        "app",
+        "token",
+        "token_secret",
+        "as_header",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sign_oauth2.0": {
+      "params": [
+        "access_token",
+        "as_header"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "status_code": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stop_for_status": {
+      "params": [
+        "x",
+        "task"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "text_content": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "timeout": {
+      "params": [
+        "seconds"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "upload_file": {
+      "params": [
+        "path",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_ok": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_success": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "use_proxy": {
+      "params": [
+        "url",
+        "port",
+        "username",
+        "password",
+        "auth"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "user_agent": {
+      "params": [
+        "agent"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "VERB": {
+      "params": [
+        "verb",
+        "url",
+        "config",
+        "...",
+        "body",
+        "encode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "verbose": {
+      "params": [
+        "data_out",
+        "data_in",
+        "info",
+        "ssl"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "warn_for_status": {
+      "params": [
+        "x",
+        "task"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_config": {
+      "params": [
+        "config",
+        "expr",
+        "override"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "with_verbose": {
+      "params": [
+        "expr",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_disk": {
+      "params": [
+        "path",
+        "overwrite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_function": {
+      "params": [
+        "subclass",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_memory": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_stream": {
+      "params": [
+        "f"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "Token": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Token1.0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Token2.0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "TokenServiceAccount": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

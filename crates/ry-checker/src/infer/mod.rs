@@ -22,6 +22,7 @@ pub(crate) mod quoting;
 pub(crate) mod recall;
 mod switch;
 mod types;
+pub(crate) mod vacuous;
 
 /// Join an entire collection of types into one: the lattice join of every
 /// element, with `unknown` for an empty collection (no branch contributes
@@ -285,6 +286,10 @@ impl Checker {
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
+                    // A rebound name no longer carries any armed
+                    // vacuous-all guard (RY110): later demands receive
+                    // the new value, not the guarded one.
+                    self.note_vacuous_guard_rebind(name);
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
                     }
@@ -369,6 +374,9 @@ impl Checker {
                         }
                     }
                 }
+                // RY110: a `stopifnot(...)` argument is a validation
+                // guard whose accepted path is the continuation.
+                self.check_vacuous_all_stopifnot(e, scope);
                 self.infer(e, scope);
             }
             Stmt::If {
@@ -376,6 +384,15 @@ impl Checker {
             } => {
                 // RY103: an `if` condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::If);
+                // RY110: arm the vacuous-all guard before the branches
+                // walk, so accepted-path demands see it.
+                self.check_vacuous_all_guard_stmt(
+                    cond,
+                    then,
+                    else_.as_deref(),
+                    vacuous::stmt_span(s),
+                    scope,
+                );
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 #[cfg(test)]
                 if !self.journal_branches {

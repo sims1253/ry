@@ -252,6 +252,9 @@ impl Checker {
                     ),
                 );
             }
+            // RY110: a stub-declared parameter type is also the
+            // downstream mode demand a vacuous-all guard needs.
+            self.check_vacuous_guard_demand(function_name, &expected, &args[argument_index]);
         }
     }
 
@@ -419,7 +422,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 /// Whether RY092 should defer its argument mode check: a classed or NULL
 /// actual may dispatch to a method that accepts it.
-fn generic_argument_may_dispatch(
+pub(crate) fn generic_argument_may_dispatch(
     globals: &ry_typeshed::Globals,
     function_name: &str,
     actual: &RType,

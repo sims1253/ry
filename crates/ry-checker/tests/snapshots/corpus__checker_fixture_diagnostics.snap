@@ -752,6 +752,48 @@ expression: snapshots
         line: 2
         start: 57
   fixture: err_user_fn_missing_required.R
+- diagnostics:
+    - code: RY110
+      message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `sqrt()` rejects; guard the emptiness too: `is.numeric(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
+      severity: warning
+      span:
+        column: 29
+        end: 785
+        line: 13
+        start: 766
+    - code: RY110
+      message: "`all(is.na(x))` is vacuously TRUE when `x` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `round()` rejects; guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`"
+      severity: warning
+      span:
+        column: 25
+        end: 940
+        line: 19
+        start: 927
+    - code: RY110
+      message: "`all(is.na(x))` is vacuously TRUE when `x` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `exp()` rejects; guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`"
+      severity: warning
+      span:
+        column: 29
+        end: 1127
+        line: 26
+        start: 1114
+    - code: RY092
+      message: "argument `x` to `log` is `character`, expected numeric"
+      severity: error
+      span:
+        column: 16
+        end: 1286
+        line: 32
+        start: 1281
+    - code: RY110
+      message: "`empty` is empty here, so `all(is.na(empty))` is TRUE, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `log()` rejects; guard the emptiness too: `is.numeric(empty) || (length(empty) > 0 && all(is.na(empty)))`"
+      severity: warning
+      span:
+        column: 25
+        end: 1261
+        line: 31
+        start: 1244
+  fixture: err_vacuous_all_guard.R
 - diagnostics: []
   fixture: ok_ambient_globals.R
 - diagnostics: []
@@ -1140,6 +1182,8 @@ expression: snapshots
   fixture: ok_user_fn_missing_lazy_formal.R
 - diagnostics: []
   fixture: ok_user_fn_return.R
+- diagnostics: []
+  fixture: ok_vacuous_all_guard.R
 - diagnostics: []
   fixture: ok_vector_constructors.R
 - diagnostics: []

@@ -245,6 +245,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
     },
+    Rule {
+        code: "RY110",
+        name: "vacuous-all-guard",
+        default_severity: Severity::Warning,
+        summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then rejects. Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

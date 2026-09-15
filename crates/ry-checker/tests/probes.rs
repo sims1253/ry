@@ -277,6 +277,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x) if (any(x) == 0) 1 else 2\n",
         negative: "f <- function(x) if (any(x == 0)) 1 else 2\n",
     },
+    Probe {
+        code: "RY110",
+        note: "vacuous `all(is.na(x))` in a validation guard admitting empty non-numeric input to a stub-declared mode demand",
+        positive: "f <- function(x) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\n",
+        negative: "f <- function(x) {\n  if (is.numeric(x) || (length(x) > 0 && all(is.na(x)))) sqrt(x)\n}\n",
+    },
 ];
 
 #[test]

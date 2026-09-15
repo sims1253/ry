@@ -109,6 +109,19 @@ pub enum ReturnLengthSpec {
     RecycledValues(Box<RecycledValuesLengthSpec>),
 }
 
+/// Result-mode rule keyed on argument facts, extending the
+/// `return_length` `param_value` precedent to the mode dimension.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReturnModeSpec {
+    /// The function seeds its result from `test`'s storage and only
+    /// overwrites selected positions (`base::ifelse`): the result mode is
+    /// `logical` whenever `test` may be empty (nothing is overwritten) or
+    /// is all-`NA` (no position is overwritten), and otherwise the mode
+    /// join of `values`.
+    TestTemplate { test: String, values: Vec<String> },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecycledValuesLengthSpec {
@@ -530,6 +543,8 @@ pub struct FunctionSig {
     pub assertion: Option<AssertionSpec>,
     #[serde(default)]
     pub return_length: Option<ReturnLengthSpec>,
+    #[serde(default)]
+    pub return_mode: Option<ReturnModeSpec>,
     #[serde(default)]
     pub higher_order: Option<HigherOrderSpec>,
     #[serde(default)]
@@ -1253,6 +1268,27 @@ fn validate_function_semantics(
             &effect.current_scope_when.param,
         );
     }
+    if let Some(mode) = &signature.return_mode {
+        let ReturnModeSpec::TestTemplate { test, values } = mode;
+        validate_param(report, "return_mode.test", test);
+        if values.is_empty() {
+            validation_error(
+                report,
+                path,
+                format!("{location}.return_mode.values: must not be empty"),
+            );
+        }
+        if values.contains(test) {
+            validation_error(
+                report,
+                path,
+                format!("{location}.return_mode: test must not also be a value"),
+            );
+        }
+        for param in values {
+            validate_param(report, "return_mode.values", param);
+        }
+    }
     if let Some(length) = &signature.return_length {
         let has_duplicates = |params: &[String]| {
             params
@@ -1693,6 +1729,31 @@ mod tests {
                 "return_length",
                 json!({"kind": "param_value", "param": "missing", "default_length": 0}),
                 "unknown parameter `missing`",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "test_template", "test": "missing", "values": ["yes", "no"]}),
+                "unknown parameter `missing`",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "test_template", "test": "test", "values": []}),
+                "must not be empty",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "test_template", "test": "test", "values": ["test", "no"]}),
+                "test must not also be a value",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "test_template", "test": "test", "values": ["yes", "missing"]}),
+                "unknown parameter `missing`",
+            ),
+            (
+                "return_mode",
+                json!({"kind": "unsupported", "test": "test", "values": ["yes", "no"]}),
+                "unknown variant",
             ),
         ] {
             let mut invalid = valid.clone();

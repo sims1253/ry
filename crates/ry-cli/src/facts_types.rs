@@ -23,6 +23,7 @@ pub(crate) fn export_type(ty: &RType) -> Value {
         Length::One => json!({"kind": "known", "value": 1}),
         Length::Known(value) => json!({"kind": "known", "value": value}),
         Length::Unknown => json!({"kind": "unknown"}),
+        Length::Nonempty => json!({"kind": "nonempty"}),
     };
     let class_names: Vec<_> = ty
         .class

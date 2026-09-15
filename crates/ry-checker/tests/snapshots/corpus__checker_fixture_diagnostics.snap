@@ -193,6 +193,40 @@ expression: snapshots
         start: 370
   fixture: err_if_expr_join.R
 - diagnostics:
+    - code: RY106
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      severity: warning
+      span:
+        column: 2
+        end: 627
+        line: 11
+        start: 578
+    - code: RY106
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      severity: warning
+      span:
+        column: 5
+        end: 749
+        line: 14
+        start: 711
+    - code: RY106
+      message: "`ifelse()` builds its result from `test`, so an all-`NA` test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      severity: warning
+      span:
+        column: 5
+        end: 843
+        line: 16
+        start: 823
+    - code: RY106
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both integer; use a typed alternative such as `vctrs::if_else()` when the result must be integer"
+      severity: warning
+      span:
+        column: 5
+        end: 924
+        line: 18
+        start: 898
+  fixture: err_ifelse_mode_collapse.R
+- diagnostics:
     - code: RY092
       message: "argument `value` to `check_string` is `character<len=2>`, expected character"
       severity: error
@@ -794,6 +828,8 @@ expression: snapshots
   fixture: ok_if_unknown_length_condition.R
 - diagnostics: []
   fixture: ok_ifelse_mode.R
+- diagnostics: []
+  fixture: ok_ifelse_mode_collapse.R
 - diagnostics: []
   fixture: ok_ignore_comment.R
 - diagnostics: []

@@ -176,6 +176,11 @@ const R7_CASES: &[R7Case] = &[
         literal_src: "f <- function(v) if (length(sum(v)) > 0) 1 else 2\nf(1:3)\n",
         default_src: "f <- function(v = 1:3) if (length(sum(v)) > 0) 1 else 2\nf()\n",
     },
+    R7Case {
+        rule: "RY106",
+        literal_src: "f <- function(x) ifelse(x, NA_character_, \"b\")\nf(logical(0))\n",
+        default_src: "f <- function(x = logical(0)) ifelse(x, NA_character_, \"b\")\nf()\n",
+    },
 ];
 
 /// Rules for which R7 is not applicable: purely syntactic or structural.
@@ -650,6 +655,10 @@ const VERDICTS: &[Verdict] = &[
     },
     Verdict {
         code: "RY105",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY106",
         verdict: "keep",
     },
 ];

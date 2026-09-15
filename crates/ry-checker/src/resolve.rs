@@ -586,13 +586,18 @@ impl Checker {
 
     // Surface parse errors collected by `RParser` as `RY000`
     // (syntax-error) diagnostics. Each tree-sitter `ERROR` / `MISSING`
-    // node becomes one diagnostic. Always emitted, regardless of the
-    // checker's other findings: a broken region of input is the primary
-    // signal that the file is malformed. Conversely, when any parse error
-    // exists, `emit_diagnostics` suppresses the semantic rules' output for
-    // the whole file: diagnostics derived from a recovered tree are
-    // artifacts of parser repair, and RY000 already covers the file
-    // (issue #380).
+    // node becomes one diagnostic, and each native-pipe right-hand side
+    // that base R's parser rejects (tree-sitter accepts it; see
+    // `SourceFile::syntax_violations`) becomes one more. Always emitted,
+    // regardless of the checker's other findings: a broken region of
+    // input is the primary signal that the file is malformed.
+    // Conversely, when any parse error exists, `emit_diagnostics`
+    // suppresses the semantic rules' output for the whole file:
+    // diagnostics derived from a recovered tree are artifacts of parser
+    // repair, and RY000 already covers the file (issue #380). Pipe
+    // violations never trigger that suppression: they are only
+    // collected from error-free trees, so the file's other diagnostics
+    // remain real.
     pub(crate) fn emit_parse_errors(&mut self, file: &SourceFile) {
         for span in &file.parse_errors {
             self.emit(
@@ -600,6 +605,14 @@ impl Checker {
                 *span,
                 "RY000",
                 "syntax error: unparseable region (recovered tree may be unreliable)",
+            );
+        }
+        for violation in &file.syntax_violations {
+            self.emit(
+                Severity::Error,
+                violation.span,
+                "RY000",
+                violation.message.clone(),
             );
         }
     }

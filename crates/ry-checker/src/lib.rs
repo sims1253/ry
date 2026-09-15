@@ -1287,6 +1287,16 @@ impl Checker {
             types.clear();
         }
         self.emit_parse_errors(file);
+        // A recovered tree is partly invented by parser repair: the
+        // statements, calls, and identifiers the checker walks can be
+        // artifacts that exist nowhere in the source. Semantic rules
+        // fired over them are noise on top of the actionable signal --
+        // the RY000 parse failure itself (issue #380: corpus files with
+        // RY000 also reported RY010 `variable `` is not bound`). The
+        // walk below still runs so captures (scopes, references,
+        // assignment types) stay available to editor features on files
+        // that are merely mid-edit; only its diagnostics are dropped.
+        let semantic_start = self.diagnostics.len();
         let mut scope = self.top_level_scope();
         if self.capture_references {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
@@ -1294,6 +1304,9 @@ impl Checker {
         }
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
+        }
+        if !file.parse_errors.is_empty() {
+            self.diagnostics.truncate(semantic_start);
         }
         // The top level is itself a lexical scope in R; record it after
         // the walk so the snapshot reflects every top-level assignment.

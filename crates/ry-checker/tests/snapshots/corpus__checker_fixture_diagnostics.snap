@@ -307,14 +307,6 @@ expression: snapshots
         end: 189
         line: 4
         start: 187
-    - code: RY010
-      message: "variable `f` is not bound in this scope"
-      severity: warning
-      span:
-        column: 0
-        end: 155
-        line: 3
-        start: 154
   fixture: err_parse_error.R
 - diagnostics:
     - code: RY060
@@ -428,6 +420,16 @@ expression: snapshots
         line: 30
         start: 1331
   fixture: err_recall_rules_repro.R
+- diagnostics:
+    - code: RY000
+      message: "syntax error: unparseable region (recovered tree may be unreliable)"
+      severity: error
+      span:
+        column: 2
+        end: 388
+        line: 6
+        start: 376
+  fixture: err_recovered_tree_suppresses_semantics.R
 - diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"

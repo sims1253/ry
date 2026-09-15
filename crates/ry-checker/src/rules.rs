@@ -195,7 +195,7 @@ pub const RULES: &[Rule] = &[
         code: "RY098",
         name: "default-forced-before-assignment",
         default_severity: Severity::Warning,
-        summary: "A parameter default references a body-local that may not be assigned yet on some execution path.",
+        summary: "A parameter default references a body-local that may not be assigned yet on some execution path, or references its own formal in a body that provably forces the promise.",
     },
     Rule {
         code: "RY099",
@@ -244,6 +244,12 @@ pub const RULES: &[Rule] = &[
         name: "any-all-scalar-comparison",
         default_severity: Severity::Warning,
         summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
+    },
+    Rule {
+        code: "RY109",
+        name: "self-referential-default",
+        default_severity: Severity::Warning,
+        summary: "A formal's default expression references the formal itself (`copy = copy`, `n = n + 1`). The reference can only resolve to the promise, so triggering the default errors in R ('promise already under evaluation'); supplying the argument is unaffected. Warns even without a provable force in the body (RY098 carries the proven-forcing half), because such a default can never evaluate. Defaults referencing a different formal are legal and stay quiet.",
     },
 ];
 

@@ -3,3 +3,4 @@ source: crates/ry-checker/tests/vendor_snapshot.rs
 expression: rendered
 ---
 - "deprec-prepend.R:34:7 RY032 `||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+- "progress-bars.R:56:16 RY109 parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"

@@ -1,4 +1,9 @@
-# no-diag
+# expect: RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109, RY109
+# The `quoted <- function(x = x) base::quote(x)` line defuses its promise
+# through a reviewed capture helper and stays quiet.
+# RY098 must stay silent on every line (the forcing contracts this file
+# pins); RY109 now flags each self-referential default without a forcing
+# proof.
 length <- function(x) 1L
 masked <- function(x = x) length(x)
 unused <- function(x) NULL

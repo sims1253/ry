@@ -47,14 +47,11 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
 fn is_leading_dot_chain(e: &Expr) -> bool {
     match e {
         Expr::Ident { name, .. } => name == ".",
-        Expr::BinOp { op, lhs, .. }
-            if matches!(
-                op,
-                BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee
-            ) =>
-        {
-            is_leading_dot_chain(lhs)
-        }
+        Expr::BinOp {
+            op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
+            lhs,
+            ..
+        } => is_leading_dot_chain(lhs),
         _ => false,
     }
 }

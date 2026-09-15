@@ -1,4 +1,4 @@
-# expect: RY108, RY108, RY108, RY108, RY108
+# expect: RY108, RY108, RY108, RY108, RY108, RY108
 # A seq.* S3 method that forwards or casts its defaulted `to` without a
 # missing(to) check cannot tell a caller-supplied endpoint from the
 # default: `seq(hms(1), length.out = 3)` re-enters seq.default with the
@@ -43,4 +43,13 @@ seq.super <- function(from = 1, to = 9, ...) {
 seq.exprlim <- function(from = 1, to = 9, ...) {
   lim <- if (missing(to)) from + 1
   seq(from, to, ...)
+}
+
+# A negated conjunction stays reachable on the `!k` disjunct, so the arm
+# can run with the defaulted value (R with k = FALSE forwards it).
+seq.demorgan <- function(from = 1, to = 9, ...) {
+  k <- FALSE
+  if (!(missing(to) && k)) {
+    seq(from, to, ...)
+  }
 }

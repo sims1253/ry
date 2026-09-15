@@ -117,3 +117,12 @@ seq.repeatguard <- function(from = 1, to = 9, ...) {
   }
   seq(from, to, ...)
 }
+
+# A negated disjunction decodes by De Morgan: the arm runs only when both
+# disjuncts are false, so `to` is proven supplied there and R skips the
+# arm entirely when the value is defaulted.
+seq.demorgan <- function(from = 1, to = 9, ...) {
+  if (!(missing(to) || is.null(to))) {
+    seq(from, to, ...)
+  }
+}

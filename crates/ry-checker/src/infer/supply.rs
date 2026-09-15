@@ -45,19 +45,28 @@
 //!   leaves `missing(p)` `FALSE`), so the promise is dead after the
 //!   loop.
 //!
-//! Documented concessions (all recall-only; none produces a false
-//! positive): reads inside a nested closure's body or parameter defaults
-//! are not analyzed at all — a closure defined before a guard and called
-//! after it would otherwise fire on its definition-site state although R
-//! never calls it on the defaulted path; loop bodies whose iterator may
-//! be empty discard their exit state (a guard inside such a body may not
-//! run), except `repeat`/`while (TRUE)` and syntactically nonempty
-//! literal iterators, where the body provably runs at least once and the
-//! first-iteration exit approximates the post-loop state (a `break`
-//! before the body's last statement included); `while` exit states ignore
+//! Documented concessions, in two classes. Recall-only (a guarded or
+//! buggy read stays quiet): reads inside a nested closure's body or
+//! parameter defaults are not analyzed at all — a closure defined before
+//! a guard and called after it would otherwise fire on its
+//! definition-site state although R never calls it on the defaulted
+//! path; loop bodies whose iterator may be empty discard their exit
+//! state (a guard inside such a body may not run), except
+//! `repeat`/`while (TRUE)` and syntactically nonempty literal iterators,
+//! where the body provably runs at least once and the first-iteration
+//! exit approximates the post-loop state (a `break` before the body's
+//! last statement included); `while` exit states ignore
 //! `break`-mid-body paths; and a supply test's own condition is walked
 //! silently, so `p > 0 || missing(p)` (the left operand forces the
-//! promise unconditionally) stays quiet.
+//! promise unconditionally) stays quiet. Statically sound over-firing
+//! (the defaulted value is reachable on some path, so a report is never
+//! unproven, but runtimes that settle the unknown input can make the
+//! guarded code clean): a loop body under an unknown `while` condition
+//! may never run, so a guard inside it does not protect the post-loop
+//! read; and the else-fact of a compound guard `A && missing(p)` (or its
+//! De Morgan dual) cannot prove the `!missing(p)` disjunct when `A` is
+//! unknown, so a read after such a guard reports even on runtimes where
+//! `A`'s value made the guard total.
 //!
 //! RY108 applies the capability to the seq generic. `seq.hms`
 //! (tidyverse/hms#231, pre-fix `R/hms.R:301`) cast and forwarded `to` —
@@ -201,6 +210,22 @@ impl AtomOutcome {
                     else_: else_a.refine(else_b),
                 }
             }
+        }
+    }
+
+    /// The facts with the arms exchanged: what the assertion-true path
+    /// knew becomes the assertion-false path's knowledge. Applying the
+    /// positive-polarity combinator and swapping under odd negation is
+    /// De Morgan — `!(A || B)`'s true-path is `!A && !B` — which is how
+    /// a negated composition decodes without duplicating the lattice
+    /// operations for each polarity.
+    fn swapped(self) -> Self {
+        match self {
+            AtomOutcome::Test { then, else_ } => AtomOutcome::Test {
+                then: else_,
+                else_: then,
+            },
+            other => other,
         }
     }
 }
@@ -689,17 +714,36 @@ impl FormalSupplyWalk<'_, '_> {
                 lhs,
                 rhs,
                 ..
-            } => self
-                .atom(lhs, polarity, point)
-                .combine_and(self.atom(rhs, polarity, point)),
+            } => {
+                // The operands appear positively inside the composition
+                // (polarity only flips through `!`), so they decompose at
+                // their own truth and the positive combinator applies; an
+                // assertion that NEGATES the composition then takes the
+                // De Morgan dual by exchanging the arms.
+                let combined = self
+                    .atom(lhs, true, point)
+                    .combine_and(self.atom(rhs, true, point));
+                if polarity {
+                    combined
+                } else {
+                    combined.swapped()
+                }
+            }
             Expr::BinOp {
                 op: BinOpKind::OrOr,
                 lhs,
                 rhs,
                 ..
-            } => self
-                .atom(lhs, polarity, point)
-                .combine_or(self.atom(rhs, polarity, point)),
+            } => {
+                let combined = self
+                    .atom(lhs, true, point)
+                    .combine_or(self.atom(rhs, true, point));
+                if polarity {
+                    combined
+                } else {
+                    combined.swapped()
+                }
+            }
             other if self.mentions_supply_test(other, point) => AtomOutcome::Mention,
             _ => AtomOutcome::NoInfo,
         }
@@ -1009,6 +1053,53 @@ mod tests {
              \x20   n <- n + 1\n\
              \x20 }\n\
              \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn negated_compositions_decode_by_de_morgan() {
+        // `!(missing(to) || !ok)` holds only when `to` was supplied
+        // (both disjuncts false), so the then-arm is proven supplied and
+        // R skips it entirely when the value is defaulted (returns NULL).
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 ok <- TRUE\n\
+             \x20 if (!(missing(to) || !ok)) {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
+             }\n"
+        ));
+        // The defensive spelling over a NULL check is the same guard.
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 if (!(missing(to) || is.null(to))) {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
+             }\n"
+        ));
+        // `!(missing(to) && k)` leaves the arm reachable with the
+        // defaulted value on the `!k` disjunct, so the use still
+        // reports (R with k = FALSE enters the arm and forwards the
+        // default: 1 5 9).
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 k <- FALSE\n\
+             \x20 if (!(missing(to) && k)) {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
+             }\n"
+        ));
+        // And the else-arm of that guard is the `missing(to) && k`
+        // path: a read there is a proven-defaulted read.
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 k <- TRUE\n\
+             \x20 if (!(missing(to) && k)) {\n\
+             \x20   seq(from, ...)\n\
+             \x20 } else {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
              }\n"
         ));
     }

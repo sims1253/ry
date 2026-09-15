@@ -22,8 +22,12 @@ All notable changes to ry are documented in this file.
   `hms(seconds = character())` passed validation and then failed inside
   `vec_cast()`. Fires only when the vacuously accepted value reaches a
   downstream mode demand a typeshed stub declares (a parameter `type`,
-  as RY092 checks); the fix is hms's own (`length(x) > 0 &&` before the
-  `all()`) (#462).
+  as RY092 checks) and the guard and demand share the binding (a nested
+  closure's same-named parameter never matches); the fix is hms's own
+  (`length(x) > 0 &&` before the `all()`). The founding hms shape itself
+  is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
+  the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
+  #479 (#462).
 - Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
   `test` vector and only overwrites selected positions, so a zero-length or
   all-`NA` test yields a `logical` result even when `yes`/`no` agree on

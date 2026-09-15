@@ -66,7 +66,13 @@ pub(crate) enum AggregateLiteral {
 ///   premise consumes.
 ///
 /// A merely maybe-empty argument yields no literal: its `all()` is TRUE
-/// only on the empty path.
+/// only on the empty path. The `any()` half (`False`) has no production
+/// consumer yet -- RY110's guard shape deliberately ignores `any()`
+/// operands because `any(empty)` is FALSE and therefore rejects rather
+/// than accepts -- so it stands as the evaluated twin of the `all()`
+/// half: forward scaffolding for a future rule over vacuous `any()`
+/// (`!any(...)`-style guard families), with its R semantics pinned by
+/// the oracle claim fixture.
 pub(crate) fn vacuous_aggregate_literal(
     checker: &Checker,
     callee: &Expr,
@@ -167,10 +173,15 @@ struct VacuousAllSite<'a> {
 }
 
 /// Parse an `||` chain into the vacuous-all guard shape: at least one
-/// positive base mode predicate over an identifier, and at least one
-/// bare base `all(is.na(x))` operand over the same identifier. Extra
-/// operands (other predicates, `is.null(x)`) are ignored; an `all()`
-/// operand guarded by an emptiness check -- the fixed hms form
+/// bare base `all(is.na(x))` operand, and at least one positive base
+/// mode predicate over the SAME identifier -- the predicate is what
+/// marks a validation-alternatives guard, and requiring it over the
+/// guarded variable keeps the diagnostic's named predicate and
+/// suggested rewrite about `x` itself (a predicate over another
+/// variable only shrinks the vacuous set, but it would be reported as
+/// the failed alternative). Extra operands (other predicates,
+/// `is.null(x)`) are ignored; an `all()` operand guarded by an
+/// emptiness check -- the fixed hms form
 /// `length(x) > 0 && all(is.na(x))` -- is a `&&` expression and does not
 /// match the bare-operand shape, so the corrected guard stays silent.
 fn vacuous_all_site<'a>(
@@ -181,17 +192,14 @@ fn vacuous_all_site<'a>(
     let mut leaves = Vec::new();
     collect_or_leaves(chain, &mut leaves);
     let mut all_leaf: Option<(&Expr, Span, &Expr, &[Arg])> = None;
-    let mut covered_modes = Vec::new();
-    let mut predicate_name: Option<String> = None;
-    for leaf in leaves {
+    for leaf in &leaves {
         let Expr::Call { func, args, span } = leaf else {
             continue;
         };
         let Some(name) = ident_name(func) else {
             continue;
         };
-        let bare = crate::semantic_lists::bare_name(name);
-        if bare == "all" {
+        if crate::semantic_lists::bare_name(name) == "all" {
             // Only a bare `all(is.na(x))` carries the vacuous-accept
             // premise in the shape this rule pins; `any(is.na(x))` is
             // FALSE over empty and rejects instead of accepting.
@@ -201,12 +209,25 @@ fn vacuous_all_site<'a>(
                 Some(_) => {}
                 None => all_leaf = Some((var, *span, func, args)),
             }
-            continue;
         }
-        // A positive single-identifier mode predicate: `is.numeric(x)`,
-        // `is.character(x)`, ... Class predicates (`is.data.frame`,
-        // `inherits`) carry a class claim the mode lattice cannot
-        // complement, so they do not count as covering predicates.
+    }
+    let (var, all_span, all_callee, all_args) = all_leaf?;
+    let mut covered_modes = Vec::new();
+    let mut predicate_name: Option<String> = None;
+    for leaf in &leaves {
+        let Expr::Call { func, args, .. } = leaf else {
+            continue;
+        };
+        let Some(name) = ident_name(func) else {
+            continue;
+        };
+        let bare = crate::semantic_lists::bare_name(name);
+        // A positive single-identifier mode predicate over the guarded
+        // variable: `is.numeric(x)`, `is.character(x)`, ... Class
+        // predicates (`is.data.frame`, `inherits`) carry a class claim
+        // the mode lattice cannot complement, so they do not count as
+        // covering predicates; predicates over other variables are not
+        // part of this guard at all.
         let Some(target) = narrow_predicate_target(bare) else {
             continue;
         };
@@ -219,13 +240,15 @@ fn vacuous_all_site<'a>(
         let Expr::Ident { .. } = &argument.value else {
             continue;
         };
+        if !same_ident(&argument.value, var) {
+            continue;
+        }
         if !checker.resolves_to_base_lenient(name, scope) {
             continue;
         }
         covered_modes.extend(modes_of_target(&target));
         predicate_name.get_or_insert_with(|| bare.to_string());
     }
-    let (var, all_span, all_callee, all_args) = all_leaf?;
     if covered_modes.is_empty() {
         return None;
     }
@@ -370,10 +393,10 @@ impl Checker {
     /// `if` condition and arm it for the accepted path. The accepted
     /// path is the `then` branch for a positive condition; for a
     /// negated condition it is the `else` branch, or -- in the
-    /// rejecting-guard idiom `if (!(G)) stop()` -- the continuation
-    /// after the `if`, but only when the rejection block provably
-    /// diverges (`stop()`, `return()`, ...), which is what makes that
-    /// continuation the guard-true path.
+    /// rejecting-guard idiom `if (!(G)) stop()` / `if (!(G)) return()` --
+    /// the continuation after the `if`, but only when the rejection
+    /// block provably diverges, which is what makes that continuation
+    /// the guard-true path.
     pub(crate) fn check_vacuous_all_guard_stmt(
         &mut self,
         cond: &Expr,
@@ -397,7 +420,7 @@ impl Checker {
             return;
         };
         let accept = if negated {
-            match (else_, self.block_diverges(then)) {
+            match (else_, self.block_diverges_for_guard(then)) {
                 (Some(statements), _) => stmt_list_span(statements),
                 (None, true) => self.stmt_continuations.get(&if_span).copied(),
                 (None, false) => None,
@@ -494,11 +517,36 @@ impl Checker {
         }
     }
 
+    /// The `assign("x", v)` statement form of a rebind: the named local
+    /// is replaced exactly as `x <- v` does, so its armed guards drop.
+    pub(crate) fn note_vacuous_guard_assign_rebind(&mut self, expr: &Expr, scope: &Scope) {
+        if self.vacuous_guards.is_empty() {
+            return;
+        }
+        let Expr::Call { func, args, .. } = expr else {
+            return;
+        };
+        let Some(name) = ident_name(func) else {
+            return;
+        };
+        if crate::semantic_lists::bare_name(name) != "assign"
+            || !self.resolves_to_base_lenient(name, scope)
+        {
+            return;
+        }
+        if let Some(Expr::String(name, _)) = args.first().map(|argument| &argument.value) {
+            self.note_vacuous_guard_rebind(name);
+        }
+    }
+
     /// The demand half of RY110, called from the typeshed
     /// argument-validation stage for every parameter with a declared
     /// type. Fires when the argument is the guarded variable, the call
-    /// site lies on the armed guard's accepted path, and the declared
-    /// type rejects one of the guard's vacuous-accept modes.
+    /// site lies on the armed guard's accepted path, no nested function
+    /// formal shadows the name between guard and demand (binding
+    /// identity, not name equality: a closure parameter with the same
+    /// spelling is a different binding), and the declared type rejects
+    /// one of the guard's vacuous-accept modes.
     pub(crate) fn check_vacuous_guard_demand(
         &mut self,
         demand_name: &str,
@@ -511,23 +559,34 @@ impl Checker {
         let Expr::Ident { name, span } = &argument.value else {
             return;
         };
-        // The same dispatch humility RY092 applies: a generic demand may
-        // route a classed or NULL value to a method that accepts it.
-        let recorded = self
-            .vacuous_guards
-            .iter()
-            .find(|guard| !guard.fired && guard.var == *name)
-            .map(|guard| guard.recorded.clone())
-            .unwrap_or_else(RType::unknown);
-        if generic_argument_may_dispatch(&self.typeshed.globals, demand_name, &recorded) {
-            return;
-        }
+        let contains =
+            |outer: Span, inner: Span| outer.start <= inner.start && inner.end <= outer.end;
+        // A formal of a nested function literal that contains the demand
+        // but not the guard shadows the name for the demand site: the
+        // `x` the demand sees is the closure's own parameter, never the
+        // guarded binding (`vapply(x, function(x) sqrt(x), ...)` has no
+        // failure path at all -- vapply over empty never calls the
+        // lambda). A shadow that contains the guard as well means both
+        // sites read the same formal, which is the same binding.
+        let shadowed = |guard_span: Span| {
+            self.formal_shadows.iter().any(|(formal, function_span)| {
+                formal == name
+                    && contains(*function_span, *span)
+                    && !contains(*function_span, guard_span)
+            })
+        };
         let mut hit: Option<(Span, Mode, String, bool)> = None;
         for guard in &self.vacuous_guards {
-            if guard.fired || guard.var != *name {
+            if guard.fired || guard.var != *name || shadowed(guard.all_span) {
                 continue;
             }
-            if !(guard.accept.start <= span.start && span.end <= guard.accept.end) {
+            if !contains(guard.accept, *span) {
+                continue;
+            }
+            // The same dispatch humility RY092 applies, decided by THIS
+            // guard's recorded type: a generic demand may route a classed
+            // or NULL value to a method that accepts it.
+            if generic_argument_may_dispatch(&self.typeshed.globals, demand_name, &guard.recorded) {
                 continue;
             }
             if let Some(mode) = guard
@@ -566,14 +625,70 @@ impl Checker {
         } else {
             format!("`all(is.na({var}))` is vacuously TRUE when `{var}` is empty")
         };
+        // "cannot use as {label}" covers both demand behaviors the stubs
+        // declare: the Math group errors on the empty non-numeric value,
+        // while `mean()` warns ("argument is not numeric or logical")
+        // and returns NA -- the value is unusable either way, but only
+        // the first is a rejection.
+        let label = expected_type_label(expected);
         self.emit(
             Severity::Warning,
             all_span,
             "RY110",
             format!(
-                "{premise}, and the guard then accepts zero-length input that fails `{predicate_name}` (such as an empty {mode}) which `{demand_name}()` rejects; guard the emptiness too: `{predicate_name}({var}) || (length({var}) > 0 && all(is.na({var})))`"
+                "{premise}, and the guard then accepts zero-length input that fails `{predicate_name}` (such as an empty {mode}) which `{demand_name}()` cannot use as {label}; guard the emptiness too: `{predicate_name}({var}) || (length({var}) > 0 && all(is.na({var})))`"
             ),
         );
+    }
+}
+
+/// Whether a statement exits its function through a source-level
+/// `return(...)`: the `Stmt::Expr` call form the walk's own `Stmt::Expr`
+/// arm treats as exiting (it sets `unreachable`). RY110's divergence
+/// view extends `block_diverges` with this form -- the most idiomatic R
+/// reject-guard is `if (!(G)) return(...)` -- deliberately WITHOUT
+/// routing it through the shared `expr_diverges`: that view also feeds
+/// the journal's continuation facts, and recognizing `return()` there
+/// would flow the else-branch narrowing of pre-existing guards into
+/// continuations (`if (is.null(x)) return(NULL)` currently keeps the
+/// stale default type and lets RY001 fire on a following condition, a
+/// pinned behavior). Bare-name `return` only, matching the walker;
+/// `invisible()` returns a value and does not exit.
+pub(crate) fn stmt_diverges_for_guard(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return { .. } => true,
+        Stmt::Expr(expression) => expr_diverges_for_guard(expression),
+        Stmt::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
+            then.iter().any(stmt_diverges_for_guard) && else_.iter().any(stmt_diverges_for_guard)
+        }),
+        _ => false,
+    }
+}
+
+fn expr_diverges_for_guard(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call { func, .. } => {
+            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return")
+        }
+        Expr::Block { body, .. } => body.iter().any(stmt_diverges_for_guard),
+        Expr::If { then, else_, .. } => else_
+            .as_ref()
+            .is_some_and(|else_| expr_diverges_for_guard(then) && expr_diverges_for_guard(else_)),
+        _ => false,
+    }
+}
+
+/// The root identifier of an assignment target: the bound name for a
+/// plain `x <- v`, and the indexed root for complex targets
+/// (`x[1] <- v` can coerce the whole vector's mode; `d$k <- v` can
+/// change `d`'s shape). Counting the root for every index target is the
+/// conservative direction for guard invalidation. Non-identifier roots
+/// (calls) bind no name here.
+pub(crate) fn assignment_root_name(target: &Expr) -> Option<&str> {
+    match target {
+        Expr::Index { base, .. } => assignment_root_name(base),
+        Expr::Ident { name, .. } => Some(name),
+        _ => None,
     }
 }
 
@@ -601,15 +716,20 @@ pub(crate) fn stmt_span(stmt: &Stmt) -> Span {
     }
 }
 
-/// Index, for every statement, the byte range of the statements that
-/// follow it in its enclosing list. Rejecting guards
-/// (`if (!(G)) stop(...)`, `stopifnot(G)`) continue into that range on
-/// the accepted path. Nested statement lists are indexed too, so a
-/// guard inside a branch, loop, or braced block gets its own
-/// continuation.
+/// Index the two AST facts RY110's demand correlation needs, in one
+/// walk:
+///
+/// * for every statement, the byte range of the statements that follow
+///   it in its enclosing list -- rejecting guards (`if (!(G)) stop(...)`,
+///   `stopifnot(G)`) continue into that range on the accepted path;
+/// * every function literal or definition's formal names with the
+///   function's own span -- the binding-identity shadow set the demand
+///   check consults (`function(x)` inside the accept range does not
+///   consume an enclosing guard armed over its own `x`).
 pub(crate) fn index_statement_continuations(
     stmts: &[Stmt],
     map: &mut std::collections::HashMap<Span, Span>,
+    shadows: &mut Vec<(String, Span)>,
 ) {
     for (index, statement) in stmts.iter().enumerate() {
         if index + 1 < stmts.len() {
@@ -626,19 +746,32 @@ pub(crate) fn index_statement_continuations(
             );
         }
         match statement {
-            Stmt::Assign { value, .. } => index_expr_lists(value, map),
-            Stmt::Expr(expression) => index_expr_lists(expression, map),
+            Stmt::Assign { value, .. } => index_expr_lists(value, map, shadows),
+            Stmt::Expr(expression) => index_expr_lists(expression, map, shadows),
             Stmt::If { then, else_, .. } => {
-                index_statement_continuations(then, map);
+                index_statement_continuations(then, map, shadows);
                 if let Some(else_) = else_ {
-                    index_statement_continuations(else_, map);
+                    index_statement_continuations(else_, map, shadows);
                 }
             }
             Stmt::For { body, .. } | Stmt::While { body, .. } => {
-                index_statement_continuations(body, map);
+                index_statement_continuations(body, map, shadows);
             }
-            Stmt::FunctionDef { body, .. } => index_statement_continuations(body, map),
+            Stmt::FunctionDef { params, body, span } => {
+                index_formals(params, *span, shadows);
+                index_statement_continuations(body, map, shadows);
+            }
             Stmt::Return { .. } => {}
+        }
+    }
+}
+
+/// Record each formal's name against the function's whole span. `...`
+/// binds no name a call site could resolve to.
+fn index_formals(params: &[Param], span: Span, shadows: &mut Vec<(String, Span)>) {
+    for param in params {
+        if param.name != "..." {
+            shadows.push((param.name.clone(), span));
         }
     }
 }
@@ -648,35 +781,43 @@ pub(crate) fn index_statement_continuations(
 /// nested lists through the same recursion; function bodies get their
 /// own continuation ranges, so a guard at the end of one function
 /// cannot leak into a lexically following definition.
-fn index_expr_lists(expr: &Expr, map: &mut std::collections::HashMap<Span, Span>) {
+fn index_expr_lists(
+    expr: &Expr,
+    map: &mut std::collections::HashMap<Span, Span>,
+    shadows: &mut Vec<(String, Span)>,
+) {
     match expr {
-        Expr::Function { body, .. } | Expr::Block { body, .. } => {
-            index_statement_continuations(body, map);
+        Expr::Function {
+            params, body, span, ..
+        } => {
+            index_formals(params, *span, shadows);
+            index_statement_continuations(body, map, shadows);
         }
+        Expr::Block { body, .. } => index_statement_continuations(body, map, shadows),
         Expr::Call { func, args, .. } => {
-            index_expr_lists(func, map);
+            index_expr_lists(func, map, shadows);
             for argument in args {
-                index_expr_lists(&argument.value, map);
+                index_expr_lists(&argument.value, map, shadows);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            index_expr_lists(lhs, map);
-            index_expr_lists(rhs, map);
+            index_expr_lists(lhs, map, shadows);
+            index_expr_lists(rhs, map, shadows);
         }
-        Expr::UnaryOp { expr, .. } => index_expr_lists(expr, map),
+        Expr::UnaryOp { expr, .. } => index_expr_lists(expr, map, shadows),
         Expr::Index { base, args, .. } => {
-            index_expr_lists(base, map);
+            index_expr_lists(base, map, shadows);
             for argument in args {
-                index_expr_lists(&argument.value, map);
+                index_expr_lists(&argument.value, map, shadows);
             }
         }
         Expr::If {
             cond, then, else_, ..
         } => {
-            index_expr_lists(cond, map);
-            index_expr_lists(then, map);
+            index_expr_lists(cond, map, shadows);
+            index_expr_lists(then, map, shadows);
             if let Some(else_) = else_ {
-                index_expr_lists(else_, map);
+                index_expr_lists(else_, map, shadows);
             }
         }
         Expr::Logical(_, _)
@@ -908,5 +1049,105 @@ mod tests {
             .map(|d| d.span.start)
             .collect();
         assert_eq!(sites.len(), 1, "diagnostics: {diagnostics:?}");
+    }
+
+    #[test]
+    fn rejecting_return_guards_fire_in_every_syntactic_form() {
+        // `return(...)` diverges exactly like `stop()`; unbraced, braced,
+        // and bare `return()` all make the continuation the accepted
+        // path. Runtime-true: a vacuously accepted `character()` makes
+        // the guard TRUE, skips the return, and errors at `sqrt`.
+        assert!(fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) return(NULL)\n  sqrt(x)\n}\n"
+        ));
+        assert!(fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) {\n    return(NULL)\n  }\n  sqrt(x)\n}\n"
+        ));
+        assert!(fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) return()\n  sqrt(x)\n}\n"
+        ));
+        // A return buried in a nested statement of the rejection block
+        // still diverges the block.
+        assert!(fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) {\n    if (verbose) return(NULL)\n    return(NA)\n  }\n  sqrt(x)\n}\nverbose <- TRUE\n"
+        ));
+        // `invisible()` returns a value and does not exit: the
+        // continuation is not provably the accepted path.
+        assert!(!fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) invisible(NULL)\n  sqrt(x)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn closure_parameters_do_not_consume_enclosing_guards() {
+        // A nested function literal's identically named parameter is a
+        // different binding: the demand inside operates on the closure's
+        // own `x`, never the guarded value.
+        assert!(!fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) stop(\"bad\")\n  helper <- function(x) sqrt(x)\n  helper(2)\n}\n"
+        ));
+        // vapply over a vacuously accepted empty input returns
+        // numeric(0) without ever invoking the lambda -- no failure
+        // path exists at all.
+        assert!(!fires(
+            "f <- function(x) {\n  stopifnot(is.numeric(x) || all(is.na(x)))\n  out <- vapply(x, function(x) sqrt(x), numeric(1))\n}\n"
+        ));
+        // A lambda WITHOUT a shadowing formal captures the guarded
+        // binding; its demand is the same runtime defect. (A projected
+        // use such as `sqrt(x[i])` stays silent per the bare-identifier
+        // demand shape.)
+        assert!(fires(
+            "f <- function(x) {\n  stopifnot(is.numeric(x) || all(is.na(x)))\n  later <- function() sqrt(x)\n  out <- later()\n}\n"
+        ));
+    }
+
+    #[test]
+    fn loop_rebinds_and_complex_rebinds_drop_guards() {
+        // The loop variable rebinds `x` for the body and holds the final
+        // iterated value afterwards; the guarded input never reaches the
+        // demand.
+        assert!(!fires(
+            "f <- function(x) {\n  stopifnot(is.numeric(x) || all(is.na(x)))\n  for (x in c(\"a\", \"b\")) total <- x\n  sqrt(x)\n}\n"
+        ));
+        // A subassign can coerce the whole vector's mode, so the root
+        // name's guards drop like a plain rebind's.
+        assert!(!fires(
+            "f <- function(x) {\n  stopifnot(is.numeric(x) || all(is.na(x)))\n  x[1] <- \"a\"\n  sqrt(x)\n}\n"
+        ));
+        // `assign("x", v)` rebinds the named local exactly as `x <- v`.
+        assert!(!fires(
+            "f <- function(x) {\n  stopifnot(is.numeric(x) || all(is.na(x)))\n  assign(\"x\", 1)\n  sqrt(x)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn predicates_must_target_the_guarded_variable() {
+        // A predicate over another variable neither covers nor names
+        // this guard; there is no predicate over `x` here at all.
+        assert!(!fires(
+            "f <- function(x, y) {\n  if (is.character(y) || all(is.na(x))) sqrt(x)\n}\n"
+        ));
+        // With a genuine predicate over `x` in the chain, the foreign
+        // predicate is ignored: the diagnostic names `is.numeric` and
+        // the suggested rewrite touches `x`'s operand only.
+        let diagnostics = check(
+            "f <- function(x, y) {\n  if (is.character(y) || is.numeric(x) || all(is.na(x))) sqrt(x)\n}\n",
+        );
+        let messages: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == "RY110")
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(messages.len(), 1, "diagnostics: {diagnostics:?}");
+        assert!(
+            messages[0].contains("fails `is.numeric`"),
+            "message must name the predicate over x: {}",
+            messages[0]
+        );
+        assert!(
+            !messages[0].contains("is.character"),
+            "message must not name the predicate over y: {}",
+            messages[0]
+        );
     }
 }

@@ -1025,6 +1025,11 @@ pub struct Checker {
     // (`if (!(G)) stop(...)`, `stopifnot(G)`). Indexed once per check run
     // by `emit_diagnostics`.
     stmt_continuations: HashMap<Span, Span>,
+    // Every function literal or definition's formal names with the
+    // function's span: the binding-identity shadow set RY110's demand
+    // check consults, so a demand on a closure parameter does not
+    // consume an enclosing function's same-named guard.
+    formal_shadows: Vec<(String, Span)>,
 }
 
 impl Checker {
@@ -1084,6 +1089,7 @@ impl Checker {
         self.return_slots = Arc::new(ReturnSlots::default());
         self.vacuous_guards.clear();
         self.stmt_continuations.clear();
+        self.formal_shadows.clear();
 
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
@@ -1171,6 +1177,7 @@ impl Checker {
             assignment_types: None,
             vacuous_guards: Vec::new(),
             stmt_continuations: HashMap::new(),
+            formal_shadows: Vec::new(),
         }
     }
 
@@ -1300,10 +1307,16 @@ impl Checker {
             types.clear();
         }
         // RY110 state is per-run: guards armed in this walk consume
-        // demands in this walk, against this file's continuation ranges.
+        // demands in this walk, against this file's continuation and
+        // shadow ranges.
         self.vacuous_guards.clear();
         self.stmt_continuations.clear();
-        infer::vacuous::index_statement_continuations(&file.stmts, &mut self.stmt_continuations);
+        self.formal_shadows.clear();
+        infer::vacuous::index_statement_continuations(
+            &file.stmts,
+            &mut self.stmt_continuations,
+            &mut self.formal_shadows,
+        );
         // Encoding problems come first: an undecodable file is the most
         // fundamental way input can be malformed, and R's parser rejects
         // it before any syntax consideration.

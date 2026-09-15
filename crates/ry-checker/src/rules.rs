@@ -249,7 +249,7 @@ pub const RULES: &[Rule] = &[
         code: "RY110",
         name: "vacuous-all-guard",
         default_severity: Severity::Warning,
-        summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then rejects. Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
+        summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then cannot use as numeric (the Math group errors; `mean()` warns and returns `NA`). Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
     },
 ];
 

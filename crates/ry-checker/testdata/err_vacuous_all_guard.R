@@ -1,4 +1,4 @@
-# expect: RY092, RY110, RY110, RY110, RY110
+# expect: RY092, RY110, RY110, RY110, RY110, RY110
 # all() is vacuously TRUE over a zero-length argument, so a validation
 # guard of the shape `is.numeric(x) || all(is.na(x))` accepts any
 # zero-length non-numeric input. Each site below pairs that guard with a
@@ -19,6 +19,14 @@ to_seconds <- function(seconds) {
 round_or_stop <- function(x) {
   if (!(is.numeric(x) || all(is.na(x)))) {
     stop("must be numeric or NA")
+  }
+  round(x)
+}
+# The same rejecting shape with return(): the most idiomatic R
+# reject-guard diverges exactly like stop().
+round_or_return <- function(x) {
+  if (!(is.numeric(x) || all(is.na(x)))) {
+    return(NULL)
   }
   round(x)
 }

@@ -72,3 +72,46 @@ any_guard <- function(x) {
     sqrt(x)
   }
 }
+# A nested closure's identically named parameter is a different
+# binding; its demand never sees the guarded value.
+shadowed_closure <- function(x) {
+  if (!(is.numeric(x) || all(is.na(x)))) stop("bad")
+  helper <- function(x) sqrt(x)
+  helper(2)
+}
+# vapply over a vacuously accepted empty input returns numeric(0)
+# without ever invoking the lambda; no failure path exists.
+shadowed_vapply <- function(x) {
+  stopifnot(is.numeric(x) || all(is.na(x)))
+  out <- vapply(x, function(x) sqrt(x), numeric(1))
+}
+# A loop variable rebinds the name for the body and afterwards; the
+# guarded input never reaches the demand (the loop's integer values do,
+# which the demand accepts).
+loop_rebind <- function(x) {
+  stopifnot(is.numeric(x) || all(is.na(x)))
+  for (x in c(1, 2)) total <- x
+  sqrt(x)
+}
+# Subassign and assign() rebind the value like a plain assignment does.
+subassign_rebind <- function(x) {
+  stopifnot(is.numeric(x) || all(is.na(x)))
+  x[1] <- 2
+  sqrt(x)
+}
+assign_rebind <- function(x) {
+  stopifnot(is.numeric(x) || all(is.na(x)))
+  assign("x", 1)
+  sqrt(x)
+}
+# A predicate over another variable does not make this a guard over x;
+# there is no predicate over the `all()` variable at all.
+foreign_predicate <- function(x, y) {
+  if (is.character(y) || all(is.na(x))) sqrt(x)
+}
+# `invisible()` returns a value and does not exit: the continuation is
+# not provably the accepted path.
+invisible_reject <- function(x) {
+  if (!(is.numeric(x) || all(is.na(x)))) invisible(NULL)
+  sqrt(x)
+}

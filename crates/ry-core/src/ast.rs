@@ -19,6 +19,18 @@ pub struct SourceFile {
     /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
     /// that malformed input no longer checks "clean".
     pub parse_errors: Vec<Span>,
+    /// Syntax that tree-sitter's more permissive grammar accepts but
+    /// base R's parser rejects at parse time. The first (and currently
+    /// only) family is the native-pipe (`|>`) right-hand side: R only
+    /// rewrites a call whose function is not syntactically special
+    /// (`x |> f(y)`, `x |> pkg::f(y)`), or an extraction chain rooted
+    /// at the `_` placeholder (R 4.3+: `x |> _$a`, `x |> _[[i]]`).
+    /// Forms like `x |> z[.]` or `x |> { ... }` parse here but error in
+    /// R. Like [`SourceFile::parse_errors`], the checker surfaces these
+    /// as `RY000`; unlike parse errors the region lowers normally, so
+    /// the two lists are kept separate and consumers counting broken
+    /// regions (facts, heuristics) are unaffected.
+    pub syntax_violations: Vec<SyntaxViolation>,
     /// All `comment` nodes collected during parsing, in source order.
     /// Each entry is the comment's body (the text AFTER the leading
     /// `#`, untrimmed) and its line number (0-indexed). The checker
@@ -43,6 +55,16 @@ pub struct Comment {
     /// Comment text after the leading `#` (not trimmed; the suppression
     /// parser trims as needed).
     pub body: String,
+}
+
+/// A construct that tree-sitter parses but base R's parser rejects at
+/// parse time (see [`SourceFile::syntax_violations`]). `message` is the
+/// full diagnostic text; it mirrors base R's own parse errors so R users
+/// recognize the wording.
+#[derive(Debug, Clone)]
+pub struct SyntaxViolation {
+    pub span: Span,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]

@@ -316,6 +316,10 @@ pub(crate) fn run_dump_facts(
     let mut sources = BTreeMap::new();
     let mut canonical_files = BTreeSet::new();
     for file in &parsed {
+        // Deliberately keyed on `parse_errors` only: a recovered tree's
+        // node shapes are partly invented, so its facts would be
+        // fiction, while `syntax_violations` (native-pipe RHS shapes R
+        // rejects) still lower to a real tree whose facts are sound.
         if !file.parse_errors.is_empty() {
             return Err(miette::miette!(
                 "{}: dump-facts cannot export facts from source with syntax errors",

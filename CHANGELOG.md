@@ -15,6 +15,15 @@ All notable changes to ry are documented in this file.
   typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
   (#461).
 
+### Changed
+
+- The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
+  0.27.0 and tree-sitter-language 0.1.8 require rustc 1.90. Prebuilt release
+  binaries are unaffected; only building from source needs a newer toolchain
+  (#466).
+- Update tree-sitter from 0.26.13 to 0.27.0 and tree-sitter-language from
+  0.1.7 to 0.1.8 (#466, taking over the dependabot update from #465).
+
 ### Fixed
 
 - Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse
@@ -22,6 +31,15 @@ All notable changes to ry are documented in this file.
   region" diagnostics, which are the actionable signal: findings derived from
   parser-repaired structure -- including the corpus's empty-name RY010
   (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
+- Flag native-pipe (`|>`) right-hand sides that base R's parser rejects
+  but tree-sitter accepts, such as `x |> z[.]`, `x |> { ... }`, and
+  `x |> sqrt`, as RY000 syntax errors mirroring R's own messages
+  ("function '[' not supported in RHS call of a pipe", "The pipe
+  operator requires a function call as RHS"). The rewriteable shapes
+  stay silent: calls with ordinary heads (including `pkg::f(y)`,
+  `"f"(y)`, and `(\(d) d)()`), and extraction chains rooted at the `_`
+  placeholder (`x |> _$a`, R 4.3+). The accept/reject boundary was
+  verified form by form against R 4.6.1 (#375).
 
 ## [0.10.0] - 2026-09-15
 

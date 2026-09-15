@@ -319,6 +319,48 @@ expression: snapshots
         start: 54
   fixture: err_partial_column_indexed_assignment.R
 - diagnostics:
+    - code: RY000
+      message: "syntax error: function '[' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 451
+        line: 8
+        start: 447
+    - code: RY000
+      message: "syntax error: function '{' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 471
+        line: 9
+        start: 462
+    - code: RY000
+      message: "syntax error: the pipe operator requires a function call as RHS"
+      severity: error
+      span:
+        column: 10
+        end: 486
+        line: 10
+        start: 482
+    - code: RY000
+      message: "syntax error: function 'return' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 506
+        line: 11
+        start: 497
+    - code: RY000
+      message: "syntax error: function '+' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 523
+        line: 12
+        start: 517
+  fixture: err_pipe_native_rhs.R
+- diagnostics:
     - code: RY080
       message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
       severity: error
@@ -894,6 +936,8 @@ expression: snapshots
   fixture: ok_pipe_chain.R
 - diagnostics: []
   fixture: ok_pipe_magrittr.R
+- diagnostics: []
+  fixture: ok_pipe_native_rhs.R
 - diagnostics: []
   fixture: ok_pipe_placeholder.R
 - diagnostics: []

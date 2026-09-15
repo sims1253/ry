@@ -1286,6 +1286,10 @@ impl Checker {
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }
+        // Encoding problems come first: an undecodable file is the most
+        // fundamental way input can be malformed, and R's parser rejects
+        // it before any syntax consideration.
+        let encoding_flagged = self.emit_invalid_utf8(file);
         self.emit_parse_errors(file);
         // A recovered tree is partly invented by parser repair: the
         // statements, calls, and identifiers the checker walks can be
@@ -1296,6 +1300,9 @@ impl Checker {
         // walk below still runs so captures (scopes, references,
         // assignment types) stay available to editor features on files
         // that are merely mid-edit; only its diagnostics are dropped.
+        // A file flagged for non-UTF-8 source is suppressed the same
+        // way (#376): its tree is a faithful parse of a lossy Latin-1
+        // transcoding, and R rejects the whole file regardless.
         let semantic_start = self.diagnostics.len();
         let mut scope = self.top_level_scope();
         if self.capture_references {
@@ -1305,7 +1312,7 @@ impl Checker {
         for s in &file.stmts {
             self.check_stmt(s, &mut scope);
         }
-        if !file.parse_errors.is_empty() {
+        if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
         }
         // The top level is itself a lexical scope in R; record it after

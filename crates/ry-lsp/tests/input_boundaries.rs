@@ -153,6 +153,65 @@ fn latin1_sibling_survives_open_and_close() {
         });
 }
 
+/// The decode-time encoding flag (#376) must reach the LSP through the
+/// same on-disk index the CLI uses: an unopened Latin-1 sibling is
+/// published with an RY000 encoding diagnostic, and opening it with
+/// client-decoded text (which is genuinely Unicode) clears the flag.
+#[test]
+fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            let source = "value <- make_label() + 1\n";
+            fixture.write_file("main.R", source).unwrap();
+            fixture
+                .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
+                .unwrap();
+            assert!(
+                cli(&fixture, "helper.R")
+                    .iter()
+                    .any(|d| d["code"] == "RY000"),
+                "the CLI must flag the non-UTF-8 sibling"
+            );
+            let main_uri = file_uri(&fixture.path("main.R"));
+            let helper_uri = file_uri(&fixture.path("helper.R"));
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&main_uri, 1, source).await.unwrap();
+            let published = session
+                .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
+                .await
+                .unwrap();
+            let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
+            assert!(
+                helper.iter().any(|d| d["code"] == "RY000"),
+                "the unopened Latin-1 sibling must carry the encoding flag: {helper:?}"
+            );
+
+            let mark = session.publication_mark();
+            session
+                .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
+                .await
+                .unwrap();
+            let republished = session
+                .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
+                .await
+                .unwrap();
+            let helper = republished
+                .get(&helper_uri)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            assert!(
+                helper.iter().all(|d| d["code"] != "RY000"),
+                "an opened buffer is client-supplied Unicode and must not be flagged: {helper:?}"
+            );
+            join_session(session, server).await;
+        });
+}
+
 #[test]
 fn environment_paths_are_anchored_globs_in_both_frontends() {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {

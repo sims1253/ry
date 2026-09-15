@@ -25,7 +25,7 @@ pub const RULES: &[Rule] = &[
         code: "RY000",
         name: "syntax-error",
         default_severity: Severity::Error,
-        summary: "Unparseable input, or input base R's parser rejects (such as an invalid native-pipe right-hand side). A recovered tree reports only its RY000s; diagnostics derived from parser repair are unreliable.",
+        summary: "Unparseable input, or input R's parser rejects: a region tree-sitter could not recover, source bytes that are not valid UTF-8, or syntax base R rejects at parse time (such as an invalid native-pipe right-hand side). A file with any RY000 reports only its RY000s, because diagnostics derived from the repaired or transcoded tree are unreliable.",
     },
     Rule {
         code: "RY001",

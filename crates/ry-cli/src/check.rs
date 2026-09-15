@@ -1016,6 +1016,40 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY010")
         );
+        // R's parser tolerates invalid bytes inside comments, so the
+        // file must not gain an encoding RY000 either (#376).
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY000"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    #[test]
+    fn latin1_bytes_in_a_string_are_flagged_as_an_encoding_ry000() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("latin1_string.R");
+        std::fs::write(&file, b"label <- \"caf\xe9 au lait\"\n").unwrap();
+
+        let result = check_files(&[file], Some(temp.path()));
+
+        // Like recovered-tree files, an encoding-flagged file reports
+        // only its RY000.
+        let encoding: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY000")
+            .collect();
+        assert_eq!(encoding.len(), 1, "{:?}", result.diagnostics);
+        assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
+        assert!(
+            encoding[0].message.contains("not valid UTF-8"),
+            "{:?}",
+            result.diagnostics
+        );
     }
 
     #[test]

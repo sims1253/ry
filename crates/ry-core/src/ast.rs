@@ -19,6 +19,21 @@ pub struct SourceFile {
     /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
     /// that malformed input no longer checks "clean".
     pub parse_errors: Vec<Span>,
+    /// Maximal byte spans of invalid UTF-8 sequences found while decoding
+    /// this file from disk, located in `source` (which for such files is
+    /// a Latin-1 transcoding; see `ry_workspace::read_r_source`). Empty
+    /// for valid UTF-8 and for client-supplied editor buffers, which
+    /// arrive as Unicode. R's parser rejects such files with "invalid
+    /// multibyte character in parser" unless every invalid byte sits
+    /// inside a comment or a `%...%` operator token; the checker applies
+    /// the same tolerance when surfacing them as `RY000`.
+    pub invalid_utf8: Vec<Span>,
+    /// Byte spans of the `%...%` special-operator tokens in the file,
+    /// sorted by start offset. R's lexer (gram.y `SpecialValue`) scans
+    /// these tokens as raw bytes with no multibyte validation, so the
+    /// checker's invalid-UTF-8 tolerance treats bytes inside them like
+    /// comment bytes: `parse()` in R accepts them (#376).
+    pub special_operators: Vec<Span>,
     /// Syntax that tree-sitter's more permissive grammar accepts but
     /// base R's parser rejects at parse time. The first (and currently
     /// only) family is the native-pipe (`|>`) right-hand side: R only

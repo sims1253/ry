@@ -19,36 +19,40 @@
 //!   logical `NA`.
 //!
 //! A *mixed* test (`c(TRUE, NA)`) does not collapse: the subset
-//! assignments coerce the whole vector up to the branch mode. The
-//! all-`NA` half is therefore only claimed for tests that are definitely
-//! `NA` (a literal `NA`, or a comparison with one). A merely maybe-`NA`
-//! test (`x > 0` for an NA-capable `x`) is usually NA-free in practice
-//! and R's type lattice carries no NA facts to separate the cases, so it
-//! stays silent — the emptiness half, decided by the
-//! [`Length::may_be_empty`] split, is the sound collapse premise.
+//! assignments coerce the whole vector up to the branch mode. Both
+//! definite halves therefore rest on the *expression's shape*, never on
+//! the type lattice: the all-`NA` half is claimed only for a literal
+//! `NA` (or a comparison with one), and the empty half only for a
+//! literal empty construction (`logical(0)`, `NULL`, ...). Inferred
+//! facts are not definite proofs — a merely maybe-`NA` test (`x > 0`
+//! for an NA-capable `x`) is usually NA-free, and inferred
+//! `len = 0` types are pre-existing join artifacts on values that are
+//! not empty at runtime (googledrive `R/drive_mime_type.R:56`,
+//! testthat `R/parallel-taskq.R:194`). The *possible* half is sound
+//! where the lattice says maybe-empty ([`Length::may_be_empty`], with
+//! the open-world widening of [`Checker::test_may_be_empty`]).
 //!
 //! The warning needs more than a possible collapse: either the collapse
-//! is definite (the test is zero-length or definitely all-`NA`), or one
-//! branch is a typed `NA` constant (`NA_character_`, `NA_real_`, ...) of
-//! the shared branch mode. The typed NA is the author's written-down mode
-//! intent, which is what the collapse silently betrays; without that
-//! restriction every open-world `ifelse(x, 1, 0)` in a mutate pipeline
-//! would warn.
+//! is definite (one of the literal forms above), or one branch is a
+//! typed `NA` constant (`NA_character_`, `NA_real_`, ...) of the shared
+//! branch mode. The typed NA is the author's written-down mode intent,
+//! which is what the collapse silently betrays; without that restriction
+//! every open-world `ifelse(x, 1, 0)` in a mutate pipeline would warn.
 //!
 //! The stub-driven half lives in the typeshed: the `ifelse` entry declares
 //! a `return_mode: test_template` rule (the mode-dimension analog of
 //! `seq_len`'s `return_length: param_value`), which this module applies
 //! in place of the plain `yes_or_no` join when the test may collapse.
 
-use super::recall::strip_negation;
+use super::recall::{numeric_literal, strip_negation};
 use super::*;
 
 /// Everything RY106 needs about one test-template call site, computed
 /// once by [`Checker::infer_test_template_call`].
 struct TestTemplateSite<'a> {
     lookup_name: &'a str,
-    /// The test is zero-length or definitely all-`NA`: the result is the
-    /// (logical) test vector itself.
+    /// The test is an empty vector or all-`NA` *by construction* (a
+    /// literal form): the result is the (logical) test vector itself.
     definite_collapse: bool,
     definitely_na: bool,
     /// The test argument may be empty at runtime (open-world widening
@@ -115,12 +119,14 @@ impl Checker {
 
         let may_be_empty = self.test_may_be_empty(test_expr, test_ty, scope);
         let definitely_na = test_definitely_na(test_expr);
+        let definitely_empty = self.test_definitely_empty(test_expr, scope);
+        let definite_collapse = definitely_na || definitely_empty;
         let branch_mode = shared_branch_mode(&value_types);
         let result = self.apply_sig(signature, arg_types, args);
 
         let site = TestTemplateSite {
             lookup_name,
-            definite_collapse: definitely_na || matches!(test_ty.length, Length::Zero),
+            definite_collapse,
             definitely_na,
             may_be_empty,
             typed_na_branch: value_exprs
@@ -130,10 +136,10 @@ impl Checker {
         };
         self.check_test_template_mode_collapse(&site, span);
 
-        if !may_be_empty && !definitely_na {
+        if !may_be_empty && !definite_collapse {
             return Some(result);
         }
-        if definitely_na || matches!(test_ty.length, Length::Zero) {
+        if definite_collapse {
             // Nothing is overwritten at all: the result IS the (logical)
             // test vector.
             return Some(RType {
@@ -142,10 +148,17 @@ impl Checker {
             });
         }
         // A maybe-empty test yields the branch join when nonempty and a
-        // logical vector when empty. Only a known atomic branch mode can
-        // join with logical; opaque/union branches keep the declared
-        // fallback rather than collapse to unknown.
-        if is_atomic_branch_mode(result.mode) {
+        // logical vector when empty — but only when the emptiness is
+        // open-world knowledge (an unknown length, or a pinned length on
+        // an open-world binding). A pinned `Zero` length on a computed
+        // expression keeps the plain branch join: inferred len=0 facts
+        // are join artifacts as often as real emptiness, and rewriting
+        // them to logical poisons downstream comparisons (testthat
+        // `R/parallel-taskq.R:194`).
+        if is_atomic_branch_mode(result.mode)
+            && !(matches!(test_ty.length, Length::Zero)
+                && !self.test_binding_is_open_world(test_expr, scope))
+        {
             let collapsed = RType::new(Mode::Logical, result.length);
             return Some(RType::union(std::sync::Arc::from([collapsed, result])));
         }
@@ -160,8 +173,9 @@ impl Checker {
     ///
     /// Two premises are admitted:
     ///
-    /// * the collapse is *definite*: the test is zero-length or definitely
-    ///   all-`NA` (the literal forms); or
+    /// * the collapse is *definite*: the test is an empty vector by
+    ///   construction (`logical(0)`, `NULL`) or definitely all-`NA` (a
+    ///   literal form); or
     /// * the collapse is *possible* (the test may be empty) and a branch
     ///   is a typed `NA` constant of the shared mode. The typed NA is the
     ///   author writing the expected mode down; without it, `ifelse(x, 1,
@@ -199,17 +213,72 @@ impl Checker {
     /// to scalar defaults (a scalar default does not prove a scalar
     /// input). Locals keep their pinned lengths.
     pub(crate) fn test_may_be_empty(&self, expr: &Expr, ty: &RType, scope: &Scope) -> bool {
-        if ty.length.may_be_empty() {
-            return true;
+        ty.length.may_be_empty() || self.test_binding_is_open_world(expr, scope)
+    }
+
+    /// Whether `expr` names a binding whose pinned type must not serve as
+    /// an emptiness proof: a parameter, a parameter default, or a
+    /// flow-narrowed refinement. Parameters and defaults describe one
+    /// observed call shape, not every caller's input. A narrowed binding
+    /// is distrusted for the reason scalar-guards.md gives: its pinned
+    /// length usually comes from a `length()` guard, and `length` is a
+    /// generic whose dispatch to a `length.*` method the checker does not
+    /// track (#372) — the same exclusions RY105 applies to
+    /// scalar-by-construction proofs.
+    fn test_binding_is_open_world(&self, expr: &Expr, scope: &Scope) -> bool {
+        matches!(
+            expr,
+            Expr::Ident { name, .. }
+                if scope.parameter_bindings.contains(name)
+                    || scope.default_parameter_bindings.contains(name)
+                    || scope.narrowed_bindings.contains(name)
+        )
+    }
+
+    /// Whether the test expression is an empty vector *by construction*:
+    /// a literal `NULL`, or a direct call to a base atomic-vector
+    /// constructor whose only (or absent) length argument is a literal
+    /// zero — `logical(0)`, `character()`, `integer(length = 0)`.
+    ///
+    /// An inferred `Length::Zero` on any other expression does NOT
+    /// qualify: parameter refinement and index/subset joins already
+    /// produce zero-length artifacts for values that are not empty at
+    /// runtime (googledrive `R/drive_mime_type.R:56` refines `type` to
+    /// `character<len=0>`; testthat `R/parallel-taskq.R:194` infers
+    /// `logical<len=0>` for an indexed subset), so the definite premise
+    /// rests on the expression's shape, exactly the discipline
+    /// [`test_definitely_na`] applies to the NA half.
+    fn test_definitely_empty(&self, expr: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, args, .. } = expr else {
+            return matches!(expr, Expr::Null(..));
+        };
+        let Some(name) = ident_name(func) else {
+            return false;
+        };
+        let bare = crate::semantic_lists::bare_name(name);
+        if !matches!(
+            bare,
+            "logical" | "integer" | "double" | "numeric" | "complex" | "character" | "raw"
+        ) {
+            return false;
         }
-        if let Expr::Ident { name, .. } = expr
-            && (scope.parameter_bindings.contains(name)
-                || scope.default_parameter_bindings.contains(name)
-                || scope.narrowed_bindings.contains(name))
-        {
-            return true;
+        // A shadowed constructor may have unrelated semantics.
+        if !self.resolves_to_base_lenient(name, scope) {
+            return false;
         }
-        false
+        // `logical()` defaults to length 0; a single positional or
+        // `length`/`length.out` named argument must be a literal zero.
+        match args.as_slice() {
+            [] => true,
+            [argument] => {
+                let unnamed_or_length = argument
+                    .name
+                    .as_deref()
+                    .is_none_or(|name| matches!(name, "length" | "length.out"));
+                unnamed_or_length && numeric_literal(&argument.value) == Some(0.0)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -275,6 +344,35 @@ mod tests {
     fn fires_on_literal_empty_and_na_tests() {
         assert!(fires("a <- ifelse(logical(0), NA_character_, 'a')\n"));
         assert!(fires("b <- ifelse(NA, 'a', 'b')\n"));
+    }
+
+    #[test]
+    fn fires_on_other_literal_empty_constructions() {
+        assert!(fires("a <- ifelse(NULL, 'a', 'b')\n"));
+        assert!(fires("a <- ifelse(character(), 'a', 'b')\n"));
+        assert!(fires("a <- ifelse(integer(length = 0), 1L, 2L)\n"));
+    }
+
+    #[test]
+    fn inferred_zero_length_is_not_a_definite_empty_proof() {
+        // googledrive R/drive_mime_type.R:56 / testthat
+        // R/parallel-taskq.R:194: call-site joins and index inference
+        // produce len=0 artifacts for values that are not empty at
+        // runtime, so an inferred Zero neither warns nor rewrites the
+        // result mode.
+        let src = "v <- c()[1]\na <- ifelse(v > 0, 'pos', 'neg')\n";
+        assert!(!fires(src));
+        let ty = binding(src, "a");
+        assert_eq!(
+            ty.mode,
+            Mode::Character,
+            "inferred-Zero keeps the branch join"
+        );
+        // A typed-NA branch still fires on a maybe-empty test: the Zero
+        // length does say the value may be empty.
+        assert!(fires(
+            "v <- c()[1]\na <- ifelse(v > 0, 'pos', NA_character_)\n"
+        ));
     }
 
     #[test]

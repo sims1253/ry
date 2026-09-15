@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "27391c5dbf13353bdad5872e9426c4131c3d75c4f6f0c54b5b53183f3e4fdb90",
-  "ry_commit": "5031e861c084c6b0f46eb8d305986b5f787504dd",
+  "source_sha256": "0a9808015419474031650904bb49b93635746839b77178c4d0acdce56a4c6976",
+  "ry_commit": "eee8c8d98ba4e0c49be430655e927c13ef68bd4a",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -82,7 +82,7 @@
       "repo": "r-lib/lintr",
       "stars": 1289,
       "commit": "990e57870498634ce67d1fa0e53311f385b4b3d4",
-      "diagnostics": 8
+      "diagnostics": 9
     },
     {
       "name": "renv",
@@ -1873,6 +1873,15 @@
       "column": 1,
       "label": "true_positive",
       "audit_group": "upstream-package"
+    },
+    {
+      "package": "lintr",
+      "code": "RY000",
+      "path": "tests/testthat/dummy_packages/cp1252/R/cp1252.R",
+      "line": 4,
+      "column": 1,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
     },
     {
       "package": "lintr",
@@ -3964,7 +3973,7 @@
     }
   ],
   "classification": {
-    "true_positive": 37,
+    "true_positive": 38,
     "false_positive": 354,
     "uncertain": 0
   },
@@ -3978,7 +3987,7 @@
     "numeric-if-idiom": 3,
     "reassign-scope": 9,
     "s3-method-dispatch": 3,
-    "test-fixture": 71,
+    "test-fixture": 72,
     "type-narrowing": 52,
     "upstream-package": 27
   },
@@ -4006,6 +4015,7 @@
     "Audit correction: pkgdown R/templates.R:57:5 RY070 was labeled true_positive in the pre-governance audit batch with the ordinary-lookup rationale 'a local path <- NULL shadows the function'. R's call-head lookup is function-mode: in a namespace-faithful evaluation of the exact pinned function (pkgdown 179cfaee3d4e, templates_dir), with NAMESPACE import(fs) bindings and template.path/template.package unset, line 57 resolves past the local NULL binding to fs::path and returns an fs_path; a base-only negative control errors 'could not find function path' (R 4.6.1; evidence scripts in the review record). The finding is a false positive at package runtime. The diagnostic still fires hermetically because fs ships no embedded stub (issue #366); the record, audit group, reports, and messages are unchanged and the finding remains emitted - only the label and derived classification counts change (true_positive 42->41, false_positive 486->487; totals, identities, and source_sha256 unchanged).",
     "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved.",
-    "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained."
+    "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained.",
+    "The non-UTF-8 source flag (#376) adds one reviewed finding: lintr tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000. At the pinned commit the file deliberately carries CP1252 bytes (a 0xe4 in a comment, a raw 0xfc opening the symbol on line 4); R 4.6.1 rejects it with \"invalid multibyte character in parser\" at 4:6, so the finding is a true_positive in the test-fixture group. No other posit identity moves: comment-confined invalid bytes stay clean like R, and no other corpus file is non-UTF-8."
   ]
 }

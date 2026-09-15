@@ -20,7 +20,7 @@ updates:
       default-days: 7
     open-pull-requests-limit: 5
     ignore:
-      # The @1.88 pin in ci.yml is the MSRV job: it deliberately tests the
+      # The @1.90.0 pin in ci.yml is the MSRV job: it deliberately tests the
       # MINIMUM supported Rust version, so version bumps are never wanted.
       # (Dependabot also proposes dtolnay branches for unreleased toolchains
       # -- 1.100 existed as a branch before the toolchain was released,

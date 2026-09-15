@@ -1494,15 +1494,6 @@
       "severity": "warning",
       "message": "variable `x` is not bound in this scope"
     },
-    "lintr::RY010::tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1": {
-      "package": "lintr",
-      "code": "RY010",
-      "path": "tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R",
-      "line": 3,
-      "column": 1,
-      "severity": "warning",
-      "message": "variable `` is not bound in this scope"
-    },
     "lintr::RY032::R/get_source_expressions.R:583:7": {
       "package": "lintr",
       "code": "RY032",
@@ -3212,60 +3203,6 @@
       "column": 13,
       "severity": "warning",
       "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:1": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 1,
-      "severity": "warning",
-      "message": "variable `but` is not bound in this scope"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:13": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 13,
-      "severity": "warning",
-      "message": "variable `a` is not bound in this scope"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:15": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 15,
-      "severity": "warning",
-      "message": "variable `syntax` is not bound in this scope"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:22": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 22,
-      "severity": "warning",
-      "message": "variable `error` is not bound in this scope"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:5:5": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 5,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `this` is not bound in this scope"
-    },
-    "testthat::RY010::tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R:6:1": {
-      "package": "testthat",
-      "code": "RY010",
-      "path": "tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R",
-      "line": 6,
-      "column": 1,
-      "severity": "warning",
-      "message": "variable `` is not bound in this scope"
     },
     "tidyr::RY010::R/chop.R:386:27": {
       "package": "tidyr",

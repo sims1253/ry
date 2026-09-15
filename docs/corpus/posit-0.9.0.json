@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "27391c5dbf13353bdad5872e9426c4131c3d75c4f6f0c54b5b53183f3e4fdb90",
-  "ry_commit": "5031e861c084c6b0f46eb8d305986b5f787504dd",
+  "source_sha256": "294bd1c72839533e42f4be54251aa2f2fcf6b76b2556a1e1a50fe4ca3c3d72d5",
+  "ry_commit": "bce9a5df3759210cfb2b776a1c946857de2a1164",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 5
+      "diagnostics": 8
     },
     {
       "name": "blogdown",
@@ -1702,6 +1702,33 @@
       "column": 57,
       "label": "false_positive",
       "audit_group": "type-narrowing"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/format_data.R",
+      "line": 4057,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/utils_render_latex.R",
+      "line": 69,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/z_utils_render_footnotes.R",
+      "line": 418,
+      "column": 18,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
     },
     {
       "package": "httr",
@@ -3964,7 +3991,7 @@
     }
   ],
   "classification": {
-    "true_positive": 37,
+    "true_positive": 40,
     "false_positive": 354,
     "uncertain": 0
   },
@@ -3973,6 +4000,7 @@
     "data-masking-nse": 1,
     "delayed-assign": 15,
     "function-shadowing": 3,
+    "ifelse-mode": 3,
     "local-closure-forward-ref": 19,
     "namespace-on-load": 46,
     "numeric-if-idiom": 3,
@@ -4006,6 +4034,7 @@
     "Audit correction: pkgdown R/templates.R:57:5 RY070 was labeled true_positive in the pre-governance audit batch with the ordinary-lookup rationale 'a local path <- NULL shadows the function'. R's call-head lookup is function-mode: in a namespace-faithful evaluation of the exact pinned function (pkgdown 179cfaee3d4e, templates_dir), with NAMESPACE import(fs) bindings and template.path/template.package unset, line 57 resolves past the local NULL binding to fs::path and returns an fs_path; a base-only negative control errors 'could not find function path' (R 4.6.1; evidence scripts in the review record). The finding is a false positive at package runtime. The diagnostic still fires hermetically because fs ships no embedded stub (issue #366); the record, audit group, reports, and messages are unchanged and the finding remains emitted - only the label and derived classification counts change (true_positive 42->41, false_positive 486->487; totals, identities, and source_sha256 unchanged).",
     "Raising the default serialized-data byte cap to 16 MiB enumerates gt's R/sysdata.rda (8,046,404 decoded bytes at pin caa07401), removing 77 reviewed RY010 false positives whose 15 distinct names are all members of the pinned sysdata inventory; the non-sysdata grand_summary_col identity at R/dt_summary.R:176:59 stays reviewed.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved.",
-    "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained."
+    "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained.",
+    "RY106 (ifelse-mode-collapse, #461) adds three owned gt true positives at R/format_data.R:4057:3, R/utils_render_latex.R:69:3, and R/z_utils_render_footnotes.R:418:18: typed-NA selects whose result collapses to logical when the maybe-empty test is empty (the tidyverse/hms#231 family, runtime-verified as ifelse(logical(0), NA_character_, 'a') == logical(0)). The rule fires only for literal empty or all-NA tests and for typed-NA selects, so the testthat parallel-taskq len=0 join artifacts stay silent; all prior identities are unchanged."
   ]
 }

@@ -4,5 +4,7 @@ R/plot-render.R:64:12 RY010
 R/plot-render.R:65:12 RY010
 R/plot-render.R:82:46 RY010
 R/plot-render.R:83:46 RY010
+R/stat-bindot.R:133:68 RY109
+R/stat-quantilemethods.R:81:38 RY109
 R/utilities.R:556:53 RY010
 R/utilities.R:563:53 RY010

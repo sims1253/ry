@@ -283,6 +283,12 @@ static PROBES: &[Probe] = &[
         positive: "seq.widget <- function(from = 1, to = 9, ...) {\n  seq(from, to, ...)\n}\n",
         negative: "seq.widget <- function(from = 1, to = 9, ...) {\n  if (missing(to)) {\n    seq(from, ...)\n  } else {\n    seq(from, to, ...)\n  }\n}\n",
     },
+    Probe {
+        code: "RY109",
+        note: "self-referential default with no provable force in the body",
+        positive: "f <- function(x = x) 1L\n",
+        negative: "f <- function(x = y, y = 1L) x\n",
+    },
 ];
 
 #[test]

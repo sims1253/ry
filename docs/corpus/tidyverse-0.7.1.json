@@ -794,10 +794,19 @@
       "column": 3,
       "label": "true_positive",
       "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "hms",
+      "code": "RY108",
+      "path": "R/hms.R",
+      "line": 307,
+      "column": 15,
+      "label": "true_positive",
+      "audit_group": "seq-defaulted"
     }
   ],
   "classification": {
-    "true_positive": 13,
+    "true_positive": 14,
     "false_positive": 41,
     "uncertain": 0,
     "unowned": 23
@@ -815,7 +824,8 @@
     "plan-32-33": 23,
     "pr195-nse-stubs": 6,
     "upstream-glue": 1,
-    "ifelse-mode": 2
+    "ifelse-mode": 2,
+    "seq-defaulted": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -829,8 +839,9 @@
     "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md.",
     "RY107 (any-all-scalar-comparison, issue #356) adds exactly one identity across the corpus: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(). Runtime-verified true positive: `FALSE == 0` is TRUE, so the written guard computes `!any(lengths)` and the zero-length branch never runs, while the same commit writes the intended `any(lengths == 0)` at glue.R:139,191. Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet.",
-    "RY106 (ifelse-mode-collapse, #461) adds two owned true positives: hms R/hms.R:218:3 and blob R/format.R:43:10, the exact typed-NA select behind tidyverse/hms#231 (ifelse(is.na(x), NA_character_, <character>) over an open-world test, runtime-verified as logical(0) for empty x). The googledrive R/drive_mime_type.R:56 len=0 join artifact stays silent: inferred zero lengths are not collapse proofs, so the definite half fires only on literal empty or NA tests. The regeneration also replaces a source_sha256 that had been stale on main since the 0.5.1 vendor reconciliation regenerated ggplot2.root.txt without recomputing the digest; the recorded value now reproduces from the committed 32 non-posit root reports in filename order."
+    "RY106 (ifelse-mode-collapse, #461) adds two owned true positives: hms R/hms.R:218:3 and blob R/format.R:43:10, the exact typed-NA select behind tidyverse/hms#231 (ifelse(is.na(x), NA_character_, <character>) over an open-world test, runtime-verified as logical(0) for empty x). The googledrive R/drive_mime_type.R:56 len=0 join artifact stays silent: inferred zero lengths are not collapse proofs, so the definite half fires only on literal empty or NA tests. The regeneration also replaces a source_sha256 that had been stale on main since the 0.5.1 vendor reconciliation regenerated ggplot2.root.txt without recomputing the digest; the recorded value now reproduces from the committed 32 non-posit root reports in filename order.",
+    "RY108 (seq-defaulted-forward, #463) adds one owned true positive: hms R/hms.R:307:15, the tidyverse/hms#231 defect itself -- the defaulted `to = hms(1)` is validated (`is_hms(to)`), cast, and forwarded without a `missing(to)` check, so `seq(hms(1), length.out = 3)` repeats the default endpoint (three identical values) and a forwarded `by` errors with \"too many arguments\". The upstream fix (6fec3ad) guards every `to` use with `missing(to)`, exactly the shape the rule's supplied-vs-defaulted flow analysis recognizes; seq.Date (no default on `to`, cached mTo tests) and the other seq.* methods in the corpus stay silent."
   ],
   "ry_commit": "772fb41b80e925354920cfb6f743923f6056cce1",
-  "source_sha256": "ce2bef2ee09b3a5cd693318b05553fa638bf970f07c94a2997663dd26541a33c"
+  "source_sha256": "9b615b90bb42559f7e47a6c63e7efc4866ced1c60fd9ad619b9d94b4a067d1a9"
 }

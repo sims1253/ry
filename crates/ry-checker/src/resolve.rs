@@ -603,6 +603,35 @@ impl Checker {
             );
         }
     }
+
+    // Surface invalid UTF-8 found while decoding the file from disk as an
+    // `RY000` (encoding) diagnostic, mirroring R's parser: a file whose
+    // bytes are not valid UTF-8 fails `parse()` in R with "invalid
+    // multibyte character in parser" instead of checking clean (#376).
+    // R tolerates invalid bytes inside comments, so spans contained in a
+    // comment do not count; a legacy file whose only non-ASCII bytes
+    // decorate comments stays clean, exactly like R. One diagnostic per
+    // file at the first surviving span: R reports the first invalid
+    // multibyte character and stops, and a transcoded file can otherwise
+    // produce one span per legacy byte. Returns whether the file was
+    // flagged, so `emit_diagnostics` can suppress the semantic rules for
+    // it exactly like it does for recovered trees (#380).
+    pub(crate) fn emit_invalid_utf8(&mut self, file: &SourceFile) -> bool {
+        let Some(span) = file
+            .invalid_utf8
+            .iter()
+            .find(|span| !inside_comment(file, **span))
+        else {
+            return false;
+        };
+        self.emit(
+            Severity::Error,
+            *span,
+            "RY000",
+            "invalid multibyte character: source file is not valid UTF-8 (R's parser rejects it)",
+        );
+        true
+    }
 }
 
 fn has_schema_semantics(signature: &FunctionSig) -> bool {
@@ -623,4 +652,15 @@ fn has_schema_semantics(signature: &FunctionSig) -> bool {
 fn split_qualified(name: &str) -> Option<(&str, &str)> {
     let (pkg_raw, member) = name.rsplit_once("::")?;
     Some((pkg_raw.trim_end_matches(':'), member))
+}
+
+/// Whether a byte span sits inside an R comment. A comment runs from its
+/// `#` to the end of the line, so the span is contained exactly when a
+/// lexically collected comment starts at or before it on the same line.
+/// Both `Comment::col` and `Span::col` are byte columns over the same
+/// decoded source text, so the comparison is direct.
+fn inside_comment(file: &SourceFile, span: Span) -> bool {
+    file.comments
+        .iter()
+        .any(|comment| comment.line == span.line && comment.col <= span.col)
 }

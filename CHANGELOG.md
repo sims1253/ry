@@ -11,6 +11,12 @@ All notable changes to ry are documented in this file.
   region" diagnostics, which are the actionable signal: findings derived from
   parser-repaired structure -- including the corpus's empty-name RY010
   (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
+- Flag non-UTF-8 source files (CP1252/Latin-1 bytes) with an RY000 encoding
+  diagnostic instead of silently checking them clean, matching R's parser,
+  which rejects such files with "invalid multibyte character in parser".
+  Invalid bytes inside comments are tolerated exactly like R, a flagged file
+  reports only its RY000, and the flag flows through the shared read boundary
+  so `ry check` and the LSP's on-disk index agree (#376).
 
 ## [0.10.0] - 2026-09-15
 

@@ -25,7 +25,7 @@ pub const RULES: &[Rule] = &[
         code: "RY000",
         name: "syntax-error",
         default_severity: Severity::Error,
-        summary: "Unparseable input. tree-sitter could not recover this region; subsequent diagnostics may be unreliable.",
+        summary: "Unparseable input. tree-sitter could not recover this region, or the source bytes are not valid UTF-8 (R's parser rejects the file); a file with any RY000 reports only its RY000s, because diagnostics derived from the repaired tree are unreliable.",
     },
     Rule {
         code: "RY001",

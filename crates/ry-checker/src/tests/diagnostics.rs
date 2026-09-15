@@ -319,6 +319,108 @@ fn recovered_tree_suppression_leaves_clean_files_alone() {
     );
 }
 
+// ---- invalid UTF-8 (encoding) diagnostics, #376 ----
+
+/// Parse `src` (already decoded, as the frontends hand it over) and mark
+/// it with an invalid-UTF-8 span, exactly like the CLI/LSP read
+/// boundary does for a transcoded file. The span points into the
+/// decoded text at the byte where the original file was not UTF-8.
+fn parse_transcoded(src: &str, invalid: Span) -> SourceFile {
+    let mut file = parse_file("test.R", src);
+    file.invalid_utf8 = vec![invalid];
+    file
+}
+
+fn invalid_utf8_ry000(src: &str, invalid: Span) -> Vec<Diagnostic> {
+    let mut checker = Checker::new("test.R");
+    let file = parse_transcoded(src, invalid);
+    checker.check(&file);
+    checker
+        .take_diagnostics()
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "RY000")
+        .collect()
+}
+
+#[test]
+fn invalid_utf8_in_a_string_is_flagged_as_ry000() {
+    // Decoded form of `label <- "caf\xe9"`; the invalid byte became the
+    // `é` at decoded bytes 9..11.
+    let diags = invalid_utf8_ry000("label <- \"café\"\n", Span::new(9, 11, 0, 9));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].severity, Severity::Error);
+    assert!(
+        diags[0].message.contains("not valid UTF-8"),
+        "message should name the encoding problem: {}",
+        diags[0].message
+    );
+    assert_eq!(diags[0].span.start, 9);
+}
+
+/// R's parser tolerates invalid bytes inside comments; a legacy file
+/// whose only non-ASCII bytes sit in comments parses fine in R and must
+/// stay clean in ry too.
+#[test]
+fn invalid_utf8_inside_a_comment_stays_clean_like_r() {
+    // Decoded form of `# K\xf6lner Kommentar`: the whole high byte is
+    // inside the comment starting at column 0.
+    assert!(invalid_utf8_ry000("# Kölner Kommentar\nx <- 1\n", Span::new(2, 4, 0, 2)).is_empty());
+    // Trailing comment after code: everything from `#` on is comment.
+    assert!(invalid_utf8_ry000("x <- 1  # café\n", Span::new(11, 13, 0, 11)).is_empty());
+}
+
+/// A comment later on the same line does not shield an invalid byte
+/// that precedes it: `s <- "café"  # ok` is rejected by R.
+#[test]
+fn invalid_utf8_before_a_trailing_comment_is_flagged() {
+    let diags = invalid_utf8_ry000("s <- \"café\"  # ok\n", Span::new(7, 9, 0, 7));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+}
+
+/// Like R ("invalid multibyte character in parser" reports the first
+/// bad character and stops), only the first non-comment invalid
+/// sequence is diagnosed, even when the decode step recorded many.
+#[test]
+fn only_the_first_non_comment_invalid_sequence_is_reported() {
+    let mut file = parse_file("test.R", "a <- \"café\"; b <- \"café\"\n");
+    file.invalid_utf8 = vec![Span::new(5, 7, 0, 5), Span::new(17, 19, 0, 17)];
+    let mut checker = Checker::new("test.R");
+    checker.check(&file);
+    let diagnostics = checker.take_diagnostics();
+    let encoding: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code == "RY000" && d.message.contains("not valid UTF-8"))
+        .collect();
+    assert_eq!(encoding.len(), 1, "{encoding:?}");
+    assert_eq!(encoding[0].span.start, 5);
+}
+
+/// Valid UTF-8 files carry no invalid spans, so nothing fires.
+#[test]
+fn valid_utf8_source_emits_no_encoding_diagnostic() {
+    let diags = check("label <- \"café\"\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY000"),
+        "valid UTF-8 must not be flagged: {diags:?}"
+    );
+}
+
+/// Like a recovered tree (#380), a file flagged for non-UTF-8 source
+/// reports only its RY000: semantic findings over a lossy transcoding
+/// are noise on top of the encoding failure R already reports.
+#[test]
+fn encoding_ry000_suppresses_semantic_diagnostics() {
+    let mut file = parse_file("test.R", "missing_name\nlabel <- \"café\"\n");
+    // The `é` in line 1's string, at decoded bytes 26..28.
+    file.invalid_utf8 = vec![Span::new(26, 28, 1, 13)];
+    let mut checker = Checker::new("test.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "RY000");
+    assert!(diags[0].message.contains("not valid UTF-8"), "{diags:?}");
+}
+
 // ---- comparison-in-call & format arity (moved from packages_typeshed) ----
 #[test]
 fn comparison_directly_inside_length_is_diagnosed() {

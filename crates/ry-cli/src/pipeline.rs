@@ -134,8 +134,8 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
         static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
             const { std::cell::RefCell::new(None) };
     }
-    let src = match ry_workspace::read_r_source(path) {
-        Ok(src) => src,
+    let decoded = match ry_workspace::read_r_source_decoded(path) {
+        Ok(decoded) => decoded,
         Err(error) => {
             return Err(ParseFailure {
                 path: path.to_path_buf(),
@@ -158,10 +158,16 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
             },
         };
         parser
-            .parse(&path_str, &src)
+            .parse(&path_str, &decoded.text)
             .map_err(|message| message.to_string())
     });
-    file.map(Arc::new).map_err(|message| ParseFailure {
+    file.map(|mut file| {
+        // Record where the on-disk bytes were not valid UTF-8 so the
+        // checker can flag files R's parser rejects (#376).
+        file.invalid_utf8 = decoded.invalid_utf8;
+        Arc::new(file)
+    })
+    .map_err(|message| ParseFailure {
         path: path.to_path_buf(),
         error: ParseError::Parse(message),
     })

@@ -87,6 +87,11 @@ impl RParser {
                 source: src.to_string(),
                 stmts,
                 parse_errors,
+                // Invalid-UTF-8 spans come from the on-disk decoding
+                // step, not tree-sitter (which only ever sees the
+                // already-decoded text). The read boundary fills this in
+                // for files it had to transcode.
+                invalid_utf8: Vec::new(),
                 comments,
             },
             tree,

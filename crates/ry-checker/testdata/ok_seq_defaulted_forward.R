@@ -68,10 +68,52 @@ seq.defused <- function(from = 1, to = 9, ...) {
   substitute(to)
 }
 
-# A loop variable named `to` shadows the formal inside the body.
+# A loop variable named `to` shadows the formal inside the body, and R
+# assigns it even on a zero-trip loop, so the promise is dead afterwards.
 seq.loopvar <- function(from = 1, to = 9, ...) {
   for (to in 1:3) {
     print(to)
   }
-  seq(from, 5, ...)
+  seq(from, to, ...)
+}
+
+# A statement superassignment assigns in an enclosing frame, so the local
+# promise survives -- but the defaulted `by = NULL` is out of scope and
+# `from` never competes with `...`-carried specifiers.
+seq.super <- function(from = 1, to, by = NULL, ...) {
+  from <<- from
+  seq(from, to, ...)
+}
+
+# A diverging then-arm in expression position: only the supplied
+# fall-through reaches the continuation.
+seq.exprguard <- function(from = 1, to = 9, ...) {
+  lim <- if (missing(to)) {
+    return(seq(from, ...))
+  }
+  seq(from, to, ...)
+}
+
+# A closure defined before the guard and called after it never runs on
+# the defaulted path; closure bodies and defaults are not analyzed.
+seq.helper <- function(from = 1, to = 9, ...) {
+  helper <- function(x = to) {
+    seq(from, x, ...)
+  }
+  if (missing(to)) {
+    return(seq(from, ...))
+  }
+  helper()
+}
+
+# repeat runs its body at least once, so a guard-rebind inside it
+# genuinely protects the post-loop use.
+seq.repeatguard <- function(from = 1, to = 9, ...) {
+  repeat {
+    if (missing(to)) {
+      to <- from + 1
+    }
+    break
+  }
+  seq(from, to, ...)
 }

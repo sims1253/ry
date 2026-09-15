@@ -710,17 +710,41 @@ expression: snapshots
       severity: warning
       span:
         column: 19
-        end: 781
+        end: 802
         line: 13
-        start: 779
+        start: 800
     - code: RY108
       message: "`seq.widget()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
       severity: warning
       span:
         column: 12
-        end: 1000
+        end: 1021
         line: 20
-        start: 998
+        start: 1019
+    - code: RY108
+      message: "`seq.defaulted()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 14
+        end: 1242
+        line: 27
+        start: 1240
+    - code: RY108
+      message: "`seq.super()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1477
+        line: 37
+        start: 1475
+    - code: RY108
+      message: "`seq.exprlim()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1714
+        line: 44
+        start: 1712
   fixture: err_seq_defaulted_forward.R
 - diagnostics:
     - code: RY040

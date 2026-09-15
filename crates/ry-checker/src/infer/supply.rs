@@ -6,39 +6,58 @@
 //! *defaulted* (the caller omitted it and evaluation falls back to the
 //! default expression). `missing(p)` is exactly the query that tells them
 //! apart — it stays correct after the promise is forced, and collapses to
-//! `FALSE` only once the name is reassigned (both verified against R
-//! 4.6.1). Forcing the formal does not choose an identity: a defaulted `to`
-//! evaluated inside the method is indistinguishable from a caller-supplied
-//! one, which is the confusion the rules in this module report.
+//! `FALSE` only once the name is reassigned or consumed as a loop
+//! variable; a superassignment `p <<- v` leaves it intact (all verified
+//! against R 4.6.1). Forcing the formal does not choose an identity: a
+//! defaulted `to` evaluated inside the method is indistinguishable from a
+//! caller-supplied one, which is the confusion the rules in this module
+//! report.
 //!
 //! The distinction is a capability several argument rules could reuse
 //! (RY090/RY091/RY092/RY098 all reason about formals), so it lives here as
 //! a small flow analysis over one formal rather than inside a rule:
 //!
-//! * A use of the formal is *unguarded* when some path from function entry
-//!   reaches it with no `missing()` test seen — the path where the value
-//!   may still be the default, read as if supplied.
+//! * [`SupplyPoint::alive`] is the per-point state: `None` when every
+//!   path reaching the point rebound the name (no live promise to read),
+//!   otherwise the [`Supply`] fact for the paths where the promise is
+//!   still readable. A read reports when the live promise is untested
+//!   *or proven defaulted* — reading a proven-defaulted value forwards
+//!   the default (the bug), so `if (missing(p)) seq(x, p, ...)` fires.
+//!   Merging is path-correlated: a path that rebound the name contributes
+//!   no live promise, which is what keeps
+//!   `if (missing(p)) p <- fallback` from poisoning the supplied
+//!   fall-through.
 //! * A `missing(p)` test at an `if` refines exactly like a type
-//!   narrowing: entering either arm means the test ran, so both arms (and,
-//!   when the tested arm diverges via `return`/`stop()`/`UseMethod`, the
-//!   continuation) are guarded. `&&`/`||`/`!` compositions are decoded
-//!   positionally; a test the walker cannot decode (inside a call, a
-//!   comparison) still proves the author's awareness, which is the safe
-//!   conclusion everywhere: arms and continuation count as checked.
-//! * `m <- missing(p)` caches the test in a variable; `seq.Date`'s
-//!   `mTo <- missing(to)` is the canonical example. Cached names are
-//!   tracked with their polarity and decoded like the direct call until
-//!   reassigned.
+//!   narrowing: the then-arm gets the asserted fact, the else-arm (and,
+//!   with no `else`, the fall-through) the negation, and a diverging arm
+//!   (`return`, `stop()`, `UseMethod`) contributes nothing to the
+//!   continuation. `&&`/`||`/`!` compositions decode positionally; cached
+//!   tests (`m <- missing(p)`, `m <- !missing(p)` — `seq.Date`'s `mTo`)
+//!   decode with their polarity until reassigned. A test the walker
+//!   cannot decode (inside a call, a comparison) still proves the
+//!   author's awareness, which silences safely.
 //! * `p <- value` rebinds the name: the value side is walked first (R
-//!   evaluates it before the assignment), then the name stops denoting
-//!   the promise — matching `missing(p)` collapsing to `FALSE` after a
-//!   rebinding.
+//!   evaluates it before the assignment), then the promise is dead —
+//!   matching `missing(p)` collapsing to `FALSE` after a rebinding.
+//!   `p <<- value` (statement or expression) keeps the local promise.
+//! * `for (p in ...)` consumes the promise unconditionally: R assigns
+//!   the loop variable even on a zero-trip loop (`for (p in NULL)`
+//!   leaves `missing(p)` `FALSE`), so the promise is dead after the
+//!   loop.
 //!
-//! Deliberately single-bit per path: the question a rule can act on is
-//! only "can this read be a defaulted value the author has not tested?",
-//! so branch merges OR the bit instead of merging a supply lattice. That
-//! keeps `if (missing(p)) p <- fallback` from poisoning the fall-through
-//! path, where the promise is still readable but proven supplied.
+//! Documented concessions (all recall-only; none produces a false
+//! positive): reads inside a nested closure's body or parameter defaults
+//! are not analyzed at all — a closure defined before a guard and called
+//! after it would otherwise fire on its definition-site state although R
+//! never calls it on the defaulted path; loop bodies whose iterator may
+//! be empty discard their exit state (a guard inside such a body may not
+//! run), except `repeat`/`while (TRUE)` and syntactically nonempty
+//! literal iterators, where the body provably runs at least once and the
+//! first-iteration exit approximates the post-loop state (a `break`
+//! before the body's last statement included); `while` exit states ignore
+//! `break`-mid-body paths; and a supply test's own condition is walked
+//! silently, so `p > 0 || missing(p)` (the left operand forces the
+//! promise unconditionally) stays quiet.
 //!
 //! RY108 applies the capability to the seq generic. `seq.hms`
 //! (tidyverse/hms#231, pre-fix `R/hms.R:301`) cast and forwarded `to` —
@@ -48,22 +67,63 @@
 //! values, or "too many arguments" once `by` is forwarded too. `from` is
 //! deliberately not analyzed: `seq.default` consumes `from` on every
 //! path, so a defaulted `from` never competes with `...`-carried
-//! specifiers — the upstream fix still casts `from` unconditionally. That
-//! fix and `seq.Date`/`seq.POSIXt` guard every `to` use behind
-//! `missing(to)`, which the flow analysis recognizes; a `to` without a
-//! default (`seq.Date`) has nothing to confuse and stays silent.
+//! specifiers — the upstream fix still casts `from` unconditionally.
+//! `by` and `length.out` are excluded for the complementary reason: a
+//! defaulted, forwarded `by` or `length.out` collides with a
+//! `...`-carried competitor *loudly* ("too many arguments"), while the
+//! `to` collision with `length.out` is silently wrong (`seq(1, 1,
+//! length.out = 3)` is `1 1 1`), and ry reports silent wrongness, not
+//! errors R already raises. That fix and `seq.Date`/`seq.POSIXt` guard
+//! every `to` use behind `missing(to)`, which the flow analysis
+//! recognizes; a `to` without a default (`seq.Date`) has nothing to
+//! confuse and stays silent.
 
 use super::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
-/// The per-point state of one formal: whether a read here can still be an
-/// untested defaulted value, plus the cached `missing()` tests in scope.
-/// Branch merges OR `unguarded` over the contributing paths and keep only
-/// proxy bindings both paths agree on.
+/// What a `missing()` view proves about one formal's value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Supply {
+    /// No test dominates: the value may still be the default.
+    Untested,
+    /// The caller supplied the argument. Reads are safe.
+    Supplied,
+    /// The caller omitted the argument: the value IS the default. A read
+    /// here forwards the default, which is exactly the bug.
+    Defaulted,
+}
+
+impl Supply {
+    /// The fact that survives both inputs being possible. Only equal
+    /// facts merge to a fact; `Supplied` and `Defaulted` meet at
+    /// `Untested`, which is also the absorbing element.
+    fn merge(self, other: Self) -> Self {
+        if self == other { self } else { Self::Untested }
+    }
+
+    /// The more specific of two facts: a non-`Untested` fact refines an
+    /// `Untested` one. Used where both operands of `&&` must hold (both
+    /// `||` operands must fail), so either proof settles the arm.
+    fn refine(self, other: Self) -> Self {
+        if self == Self::Untested { other } else { self }
+    }
+
+    /// Whether a read at this supply can forward a defaulted value.
+    fn may_read_default(self) -> bool {
+        !matches!(self, Self::Supplied)
+    }
+}
+
+/// The per-point state of one formal: whether the promise is still
+/// readable, and with what supply fact, plus the cached `missing()` tests
+/// in scope. `alive == None` means every path reaching the point rebound
+/// the name. Branch merges keep the path-correlated combination: rebound
+/// paths contribute no live promise, and cached tests survive only when
+/// both paths bound the same polarity.
 #[derive(Clone, Debug)]
 struct SupplyPoint {
-    unguarded: bool,
+    alive: Option<Supply>,
     /// Cached tests `m <- missing(p)` / `m <- !missing(p)`: name -> whether
     /// the binding holds the *negation* of the test.
     proxies: HashMap<String, bool>,
@@ -72,7 +132,7 @@ struct SupplyPoint {
 impl SupplyPoint {
     fn new() -> Self {
         Self {
-            unguarded: true,
+            alive: Some(Supply::Untested),
             proxies: HashMap::new(),
         }
     }
@@ -81,9 +141,8 @@ impl SupplyPoint {
 /// What an `if`/`while` condition proves about the formal's supply.
 enum SupplyTest {
     /// The condition decodes to a `missing()` test (direct or cached):
-    /// every arm — and the fall-through, once the tested arm diverges —
-    /// has run the test.
-    Decoded,
+    /// (then-arm fact, else-arm fact).
+    Decoded { then: Supply, else_: Supply },
     /// The condition mentions a supply test in a shape the walker cannot
     /// decode (`isTRUE(missing(p))`, a comparison). The author
     /// demonstrated awareness; silence is the safe reading.
@@ -92,35 +151,64 @@ enum SupplyTest {
 
 /// Outcome of decomposing one condition subtree.
 enum AtomOutcome {
-    Test,
+    Test {
+        then: Supply,
+        else_: Supply,
+    },
     /// The subtree contains no supply test for this formal.
     NoInfo,
     Mention,
 }
 
 impl AtomOutcome {
-    fn combine(self, rhs: Self) -> Self {
+    /// The (then, else) supply facts, with `NoInfo` as the fully
+    /// untested pair so the compositions are uniform lattice operations.
+    fn facts(self) -> (Supply, Supply) {
+        match self {
+            AtomOutcome::Test { then, else_ } => (then, else_),
+            AtomOutcome::NoInfo | AtomOutcome::Mention => (Supply::Untested, Supply::Untested),
+        }
+    }
+
+    /// `a && b`: the then-arm requires both operands true (either proof
+    /// settles it); the else-arm is `!a || !b`, where knowledge from only
+    /// one disjunct does not survive the other being unknown.
+    fn combine_and(self, rhs: Self) -> Self {
         match (self, rhs) {
             (AtomOutcome::Mention, _) | (_, AtomOutcome::Mention) => AtomOutcome::Mention,
-            (AtomOutcome::Test, AtomOutcome::Test) => AtomOutcome::Test,
-            (AtomOutcome::Test, AtomOutcome::NoInfo) | (AtomOutcome::NoInfo, AtomOutcome::Test) => {
-                // `missing(p) && q`: the then-arm requires the test's
-                // truth, but the else-arm is `!missing(p) || !q`, which
-                // leaves the supply unknown on the `!q` disjunct. The
-                // safest fact that survives both arms is the author's
-                // awareness (a test exists on every path through the
-                // condition), so this still counts as Mention-level
-                // knowledge rather than a decoded test.
-                AtomOutcome::Mention
-            }
             (AtomOutcome::NoInfo, AtomOutcome::NoInfo) => AtomOutcome::NoInfo,
+            (a, b) => {
+                let (then_a, else_a) = a.facts();
+                let (then_b, else_b) = b.facts();
+                AtomOutcome::Test {
+                    then: then_a.refine(then_b),
+                    else_: else_a.merge(else_b),
+                }
+            }
+        }
+    }
+
+    /// `a || b`: dual of `&&`.
+    fn combine_or(self, rhs: Self) -> Self {
+        match (self, rhs) {
+            (AtomOutcome::Mention, _) | (_, AtomOutcome::Mention) => AtomOutcome::Mention,
+            (AtomOutcome::NoInfo, AtomOutcome::NoInfo) => AtomOutcome::NoInfo,
+            (a, b) => {
+                let (then_a, else_a) = a.facts();
+                let (then_b, else_b) = b.facts();
+                AtomOutcome::Test {
+                    then: then_a.merge(then_b),
+                    else_: else_a.refine(else_b),
+                }
+            }
         }
     }
 }
 
 /// The first reference to `formal` in `body` that would evaluate while the
-/// value may still be an untested default — the use that cannot tell a
-/// supplied argument from a defaulted one. `None` means every use is
+/// value may still be a defaulted one the author has not tested — the use
+/// that cannot tell a supplied argument from a defaulted one, including a
+/// read *inside* a proven-defaulted branch. `None` means every use is
 /// guarded by a `missing()` test, reads a rebinding, or is defused
 /// (`substitute(p)` and the promise-capture helpers).
 ///
@@ -163,7 +251,24 @@ impl FormalSupplyWalk<'_, '_> {
 
     fn walk_stmt(&mut self, statement: &Stmt, point: &mut SupplyPoint) {
         match statement {
-            Stmt::Assign { target, value, .. } => self.walk_assign(target, value, point),
+            Stmt::Assign { target, value, .. } => {
+                // The statement form of `p <<- v` (and `v ->> p`) lowers
+                // to Assign carrying a SuperAssign wrapper around the
+                // value: R evaluates the value and assigns in an
+                // enclosing frame, so the local promise survives
+                // (`missing(p)` stays TRUE). The wrapper's left operand is
+                // the target restated, never evaluated.
+                if let Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    rhs,
+                    ..
+                } = value
+                {
+                    self.walk_expr(rhs, point);
+                    return;
+                }
+                self.walk_assign(target, value, point);
+            }
             Stmt::Expr(expression) => self.walk_expr(expression, point),
             Stmt::If {
                 cond, then, else_, ..
@@ -172,32 +277,62 @@ impl FormalSupplyWalk<'_, '_> {
                 name, iter, body, ..
             } => {
                 self.walk_expr(iter, point);
-                // The loop variable rebinds the formal name on every
-                // iteration, so reads inside the body see the iterator,
-                // never the promise. The body may also not run: its
-                // effects do not survive the loop.
+                let shadows = name == self.formal;
                 let mut inner = point.clone();
-                if name == self.formal {
-                    inner.unguarded = false;
+                if shadows {
+                    // The loop variable rebinds the formal name on every
+                    // iteration, so reads inside the body see the
+                    // iterator, never the promise.
+                    inner.alive = None;
                 }
                 self.walk_stmts(body, &mut inner);
+                if shadows {
+                    // R assigns the loop variable even on a zero-trip
+                    // loop (`for (p in NULL)` leaves `missing(p)` FALSE),
+                    // so the promise is dead after the loop whatever the
+                    // iterator.
+                    point.alive = None;
+                } else if iterator_provably_nonempty(iter) {
+                    // The body runs at least once, so its first-iteration
+                    // exit approximates the post-loop state (a `break`
+                    // before the last statement included).
+                    point.alive = inner.alive;
+                    point.proxies = inner.proxies;
+                }
+                // Otherwise the iterator may be empty and the body may
+                // never run: keep the entry state.
             }
             Stmt::While { cond, body, .. } => {
+                // `repeat body` lowers to While with a constant-true
+                // condition, which the main walker treats the same way
+                // (`always_true`): the body provably runs at least once.
+                let always_true = matches!(cond, Expr::Logical(true, _));
                 match self.classify_condition(cond, point) {
-                    Some(_) => {
-                        // Entering the body means the condition held, and
-                        // leaving the loop means it failed or a `break`
-                        // fired — every path ran the test.
+                    Some(SupplyTest::Decoded { then, else_ }) => {
                         self.walk_cond_silently(cond, point);
                         let mut inner = point.clone();
-                        inner.unguarded = false;
+                        inner.alive = self.arm_state(point, then);
                         self.walk_stmts(body, &mut inner);
-                        point.unguarded = false;
+                        // Leaving the loop requires the condition to fail;
+                        // `break`-mid-body paths are approximated by this
+                        // exit state.
+                        point.alive = self.arm_state(point, else_);
+                    }
+                    Some(SupplyTest::Mention) => {
+                        self.walk_cond_silently(cond, point);
+                        let mut inner = point.clone();
+                        inner.alive = self.arm_state(point, Supply::Supplied);
+                        self.walk_stmts(body, &mut inner);
+                        point.alive = self.arm_state(point, Supply::Supplied);
                     }
                     None => {
                         self.walk_expr(cond, point);
                         let mut inner = point.clone();
                         self.walk_stmts(body, &mut inner);
+                        if always_true {
+                            point.alive = inner.alive;
+                            point.proxies = inner.proxies;
+                        }
                     }
                 }
             }
@@ -219,7 +354,7 @@ impl FormalSupplyWalk<'_, '_> {
         match target {
             Expr::Ident { name, .. } => {
                 if name == self.formal {
-                    point.unguarded = false;
+                    point.alive = None;
                 } else {
                     // Record `m <- missing(p)` / `m <- !missing(p)` as a
                     // cached test; any other binding drops the cache.
@@ -244,7 +379,7 @@ impl FormalSupplyWalk<'_, '_> {
             target => {
                 self.walk_expr(target, point);
                 if self.references_formal(target) {
-                    point.unguarded = false;
+                    point.alive = None;
                 }
             }
         }
@@ -262,48 +397,57 @@ impl FormalSupplyWalk<'_, '_> {
                 // The condition itself may force the formal (`if (to > 0)`),
                 // which is exactly an unguarded use.
                 self.walk_expr(cond, point);
-                self.walk_arms(then, else_, point, point.unguarded);
+                self.walk_arms(then, else_, point, point.alive, point.alive);
             }
-            Some(_) => {
+            Some(SupplyTest::Decoded {
+                then: then_fact,
+                else_: else_fact,
+            }) => {
                 // A test's argument positions are guarded by evaluation
                 // order: `missing(p) && p > 0` never evaluates `p > 0`
-                // when the value is defaulted, and entering either arm
-                // means the test ran.
+                // when the value is defaulted.
                 self.walk_cond_silently(cond, point);
-                self.walk_arms(then, else_, point, false);
+                let then_alive = self.arm_state(point, then_fact);
+                let else_alive = self.arm_state(point, else_fact);
+                self.walk_arms(then, else_, point, then_alive, else_alive);
+            }
+            Some(SupplyTest::Mention) => {
+                self.walk_cond_silently(cond, point);
+                let silent = self.arm_state(point, Supply::Supplied);
+                self.walk_arms(then, else_, point, silent, silent);
             }
         }
     }
 
     /// Walk both arms from forked states and merge the states that reach
-    /// the continuation. `arm_unguarded` is the arm-entry bit for a
-    /// decoded test (`false`: the test ran) or the inherited bit for a
-    /// foreign condition. A diverging arm (`return`, `stop()`,
+    /// the continuation. A diverging arm (`return`, `stop()`,
     /// `UseMethod`) contributes nothing; with no `else`, the implicit
-    /// fall-through path inherits the pre-`if` state.
+    /// fall-through path carries the condition's else-fact (for a decoded
+    /// test) or the inherited state (for a foreign condition).
     fn walk_arms(
         &mut self,
         then: Option<&[Stmt]>,
         else_: Option<&[Stmt]>,
         point: &mut SupplyPoint,
-        arm_unguarded: bool,
+        then_alive: Option<Supply>,
+        else_alive: Option<Supply>,
     ) {
         let mut then_point = point.clone();
-        then_point.unguarded = arm_unguarded;
+        then_point.alive = then_alive;
         if let Some(then) = then {
             self.walk_stmts(then, &mut then_point);
         }
-        let then_diverges = then.is_some_and(|then| self.checker.block_diverges(then));
+        let then_diverges = then.is_some_and(|then| self.stmts_diverge(then));
         match else_ {
             Some(else_statements) => {
                 let mut else_point = point.clone();
-                else_point.unguarded = arm_unguarded;
+                else_point.alive = else_alive;
                 self.walk_stmts(else_statements, &mut else_point);
-                let else_diverges = self.checker.block_diverges(else_statements);
+                let else_diverges = self.stmts_diverge(else_statements);
                 *point = match (then_diverges, else_diverges) {
                     (true, true) => {
                         let mut dead = point.clone();
-                        dead.unguarded = false;
+                        dead.alive = None;
                         dead
                     }
                     (true, false) => else_point,
@@ -312,11 +456,8 @@ impl FormalSupplyWalk<'_, '_> {
                 };
             }
             None => {
-                // With no `else`, the implicit fall-through path is the
-                // condition's else-arm: it carries the arm-entry bit
-                // (guarded for a decoded test, inherited otherwise).
                 let mut fall_through = point.clone();
-                fall_through.unguarded = arm_unguarded;
+                fall_through.alive = else_alive;
                 *point = if then_diverges {
                     fall_through
                 } else {
@@ -332,7 +473,9 @@ impl FormalSupplyWalk<'_, '_> {
         }
         match expression {
             Expr::Ident { name, span } => {
-                if name == self.formal && point.unguarded {
+                if name == self.formal
+                    && point.alive.is_some_and(|supply| supply.may_read_default())
+                {
                     self.hit = Some(*span);
                 }
             }
@@ -391,11 +534,14 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
-    /// `if` in expression position. The arms are expressions, so the
-    /// statement-level divergence rule (a `return` in a block arm) is not
-    /// applied: the decoded-test case silences the arms and the merged
-    /// continuation either way, which is the conservative direction for
-    /// the rare `x <- if (missing(p)) return(...) else p` shape.
+    /// `if` in expression position. Unlike the statement form, a
+    /// non-diverging then-arm does not rebind anything, so the
+    /// continuation merges the then-arm's state (a proven-defaulted
+    /// promise survives `lim <- if (missing(p)) e` with no `else`) with
+    /// the fall-through's else-fact — which is why that shape followed by
+    /// a `p` forward still reports. A diverging then-arm (`if
+    /// (missing(p)) return(...)`) leaves only the fall-through reaching
+    /// the continuation and is silent, mirroring the statement form.
     fn walk_expr_if(
         &mut self,
         cond: &Expr,
@@ -406,106 +552,178 @@ impl FormalSupplyWalk<'_, '_> {
         match self.classify_condition(cond, point) {
             None => {
                 self.walk_expr(cond, point);
-                self.walk_expr(then, point);
-                if let Some(else_) = else_ {
-                    self.walk_expr(else_, point);
-                }
+                let mut then_point = point.clone();
+                self.walk_expr(then, &mut then_point);
+                let then_diverges = self.expr_diverges_strict(then);
+                self.merge_expr_arms(then_point, then_diverges, else_, point, point.alive);
             }
-            Some(_) => {
+            Some(SupplyTest::Decoded {
+                then: then_fact,
+                else_: else_fact,
+            }) => {
                 self.walk_cond_silently(cond, point);
                 let mut then_point = point.clone();
-                then_point.unguarded = false;
+                then_point.alive = self.arm_state(point, then_fact);
                 self.walk_expr(then, &mut then_point);
-                match else_ {
-                    Some(else_expr) => {
-                        let mut else_point = point.clone();
-                        else_point.unguarded = false;
-                        self.walk_expr(else_expr, &mut else_point);
-                        *point = merge_points(&then_point, &else_point);
-                    }
-                    None => {
-                        *point = merge_points(&then_point, point);
-                    }
-                }
+                let then_diverges = self.expr_diverges_strict(then);
+                let else_alive = self.arm_state(point, else_fact);
+                self.merge_expr_arms(then_point, then_diverges, else_, point, else_alive);
+            }
+            Some(SupplyTest::Mention) => {
+                self.walk_cond_silently(cond, point);
+                let silent = self.arm_state(point, Supply::Supplied);
+                let mut then_point = point.clone();
+                then_point.alive = silent;
+                self.walk_expr(then, &mut then_point);
+                let then_diverges = self.expr_diverges_strict(then);
+                self.merge_expr_arms(then_point, then_diverges, else_, point, silent);
             }
         }
     }
 
-    /// A nested closure's body: same-named formals shadow ours entirely;
-    /// otherwise the body may force the captured promise when called, so
-    /// reads count at the current state. Effects inside the closure body
-    /// happen at call time and do not flow back to the definition site.
-    fn walk_closure(&mut self, params: &[Param], body: &[Stmt], point: &mut SupplyPoint) {
-        if params.iter().any(|param| param.name == self.formal) {
-            return;
+    /// Merge the expression-if arms into `point`. `then_diverges` drops
+    /// the then-arm's state; with no `else`, the fall-through carries
+    /// `fall_alive` (the condition's else-fact, or the pre-`if` state for
+    /// a foreign condition).
+    fn merge_expr_arms(
+        &mut self,
+        then_point: SupplyPoint,
+        then_diverges: bool,
+        else_: Option<&Expr>,
+        point: &mut SupplyPoint,
+        fall_alive: Option<Supply>,
+    ) {
+        match else_ {
+            Some(else_expr) => {
+                let mut else_point = point.clone();
+                else_point.alive = fall_alive;
+                self.walk_expr(else_expr, &mut else_point);
+                let else_diverges = self.expr_diverges_strict(else_expr);
+                *point = match (then_diverges, else_diverges) {
+                    (true, true) => {
+                        let mut dead = point.clone();
+                        dead.alive = None;
+                        dead
+                    }
+                    (true, false) => else_point,
+                    (false, true) => then_point,
+                    (false, false) => merge_points(&then_point, &else_point),
+                };
+            }
+            None => {
+                let mut fall_through = point.clone();
+                fall_through.alive = fall_alive;
+                *point = if then_diverges {
+                    fall_through
+                } else {
+                    merge_points(&then_point, &fall_through)
+                };
+            }
         }
-        let mut inner = point.clone();
-        for param in params {
-            // A same-named closure formal is that closure's own variable;
-            // whatever the outer scope cached under the name no longer
-            // holds inside.
-            inner.proxies.remove(&param.name);
-        }
-        self.walk_stmts(body, &mut inner);
     }
+
+    /// A nested closure's body and parameter defaults are not analyzed.
+    /// They evaluate when the closure is CALLED, not here, so the
+    /// definition-site supply state would misclassify both directions: a
+    /// closure defined before a guard and called after it would fire
+    /// although R never calls it on the defaulted path, and a default
+    /// like `function(x = to)` forces the promise at call time. Reads
+    /// that only ever happen inside closures therefore stay silent; the
+    /// enclosing method's own reads still report.
+    fn walk_closure(&mut self, _params: &[Param], _body: &[Stmt], _point: &mut SupplyPoint) {}
 
     /// Walk a condition that contains a supply test without reporting its
     /// argument reads.
     fn walk_cond_silently(&mut self, cond: &Expr, point: &mut SupplyPoint) {
         let mut silent = point.clone();
-        silent.unguarded = false;
+        silent.alive = Some(Supply::Supplied);
         self.walk_expr(cond, &mut silent);
+    }
+
+    /// The arm-entry state for a decoded fact: a dead promise stays dead
+    /// (a `missing()` test after a rebinding is constantly FALSE, so the
+    /// tested arm is unreachable and the other arm inherits the local).
+    fn arm_state(&self, point: &SupplyPoint, supply: Supply) -> Option<Supply> {
+        point.alive.is_some().then_some(supply)
     }
 
     // -- Condition classification -------------------------------------
 
     fn classify_condition(&self, cond: &Expr, point: &SupplyPoint) -> Option<SupplyTest> {
-        match self.atom(cond, point) {
-            AtomOutcome::Test => Some(SupplyTest::Decoded),
+        match self.atom(cond, true, point) {
+            AtomOutcome::Test { then, else_ } => Some(SupplyTest::Decoded { then, else_ }),
             AtomOutcome::Mention => Some(SupplyTest::Mention),
             AtomOutcome::NoInfo => None,
         }
     }
 
-    /// Decompose `expr` into whether it *is* a supply test, contains none,
-    /// or mentions one undecodably. `&&`/`||` combine conservatively: a
-    /// test on one side of an `&&` proves the then-arm but not the
-    /// else-arm, so the combination is only a Mention.
-    fn atom(&self, expr: &Expr, point: &SupplyPoint) -> AtomOutcome {
+    /// Decompose `expr` under `polarity` (whether the enclosing condition
+    /// asserts the subtree's truth). `point` supplies the proxy bindings
+    /// in scope at the condition.
+    fn atom(&self, expr: &Expr, polarity: bool, point: &SupplyPoint) -> AtomOutcome {
         match expr {
             Expr::UnaryOp {
                 op: UnaryOpKind::Not,
                 expr,
                 ..
-            } => self.atom(expr, point),
+            } => self.atom(expr, !polarity, point),
             Expr::Call { func, args, .. } => {
                 if self.is_missing_test_call(func, args) {
-                    AtomOutcome::Test
+                    self.missing_atom(polarity)
                 } else if self.mentions_supply_test(expr, point) {
                     AtomOutcome::Mention
                 } else {
                     AtomOutcome::NoInfo
                 }
             }
-            Expr::Ident { name, .. } => {
-                if point.proxies.contains_key(name) {
-                    AtomOutcome::Test
-                } else {
-                    AtomOutcome::NoInfo
-                }
-            }
+            Expr::Ident { name, .. } => match point.proxies.get(name).copied() {
+                // The binding holds `missing(p)` when not negated and
+                // `!missing(p)` when negated; the condition asserts the
+                // binding's value, so the two flags XOR to the supply the
+                // then-arm sees.
+                Some(negated) => self.missing_atom(polarity != negated),
+                None => AtomOutcome::NoInfo,
+            },
             Expr::BinOp {
-                op: BinOpKind::AndAnd | BinOpKind::OrOr,
+                op: BinOpKind::AndAnd,
                 lhs,
                 rhs,
                 ..
-            } => self.atom(lhs, point).combine(self.atom(rhs, point)),
+            } => self
+                .atom(lhs, polarity, point)
+                .combine_and(self.atom(rhs, polarity, point)),
+            Expr::BinOp {
+                op: BinOpKind::OrOr,
+                lhs,
+                rhs,
+                ..
+            } => self
+                .atom(lhs, polarity, point)
+                .combine_or(self.atom(rhs, polarity, point)),
             other if self.mentions_supply_test(other, point) => AtomOutcome::Mention,
             _ => AtomOutcome::NoInfo,
         }
     }
 
-    /// Whether `expr` is the direct call `missing(<this formal>)`.
+    /// The test outcome for a `missing(p)` fact, under `polarity`: the
+    /// then-arm sees the asserted fact, the else-arm the negation.
+    fn missing_atom(&self, polarity: bool) -> AtomOutcome {
+        AtomOutcome::Test {
+            then: if polarity {
+                Supply::Defaulted
+            } else {
+                Supply::Supplied
+            },
+            else_: if polarity {
+                Supply::Supplied
+            } else {
+                Supply::Defaulted
+            },
+        }
+    }
+
+    /// Whether `expr` is the direct call `missing(<this formal>)`, bare
+    /// or namespace-qualified (`base::missing`).
     fn is_missing_test_call(&self, func: &Expr, args: &[Arg]) -> bool {
         args.len() == 1 && self.is_missing_head(func) && self.references_formal(&args[0].value)
     }
@@ -564,11 +782,74 @@ impl FormalSupplyWalk<'_, '_> {
         );
         found
     }
+
+    /// Whether every path through these statements stops the enclosing
+    /// function. The main walker's divergence query misses `return(...)`
+    /// here: the parser never produces `Stmt::Return` (it lowers the
+    /// keyword to an ordinary call), and `return` has no `no_return`
+    /// stub, so this strict variant adds the call form on top of
+    /// [`Checker::expr_diverges`] (`stop()` via its stub, `UseMethod`,
+    /// diverging collected helpers).
+    fn stmts_diverge(&self, stmts: &[Stmt]) -> bool {
+        stmts.iter().any(|statement| match statement {
+            Stmt::Return { .. } => true,
+            Stmt::Expr(expression) => self.expr_diverges_strict(expression),
+            Stmt::If { then, else_, .. } => else_
+                .as_ref()
+                .is_some_and(|else_| self.stmts_diverge(then) && self.stmts_diverge(else_)),
+            _ => false,
+        })
+    }
+
+    /// Whether evaluating `expr` stops the enclosing function: blocks and
+    /// expression `if`s recurse structurally, `return(...)` parses as an
+    /// ordinary call in expression position (the shape that matters
+    /// here: `lim <- if (missing(p)) return(...)`), and everything else
+    /// defers to [`Checker::expr_diverges`].
+    fn expr_diverges_strict(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Call { func, .. }
+                if ident_name(func)
+                    .map(crate::semantic_lists::bare_name)
+                    .is_some_and(|name| name == "return") =>
+            {
+                true
+            }
+            Expr::Block { body, .. } => self.stmts_diverge(body),
+            Expr::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
+                self.expr_diverges_strict(then) && self.expr_diverges_strict(else_)
+            }),
+            other => self
+                .checker
+                .expr_diverges(other, &mut std::collections::HashSet::new()),
+        }
+    }
 }
 
-/// Merge two branch-end states into the state that survives both paths: a
-/// defaulted read is possible if either path allows it, and a cached test
-/// survives only when both paths bound the same polarity.
+/// Whether a `for` iterator is syntactically provably nonempty: a
+/// literal-only `a:b` sequence, or a single non-`NA` literal (length 1).
+/// Anything else may be empty, and the loop body's effects then may never
+/// run.
+fn iterator_provably_nonempty(iter: &Expr) -> bool {
+    match iter {
+        Expr::Integer(..) | Expr::Double(..) | Expr::String(..) => true,
+        Expr::BinOp {
+            op: BinOpKind::Colon,
+            lhs,
+            rhs,
+            ..
+        } => {
+            matches!(lhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                && matches!(rhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
+        }
+        _ => false,
+    }
+}
+
+/// Merge two branch-end states into the state that survives both paths:
+/// a path with no live promise contributes none (its reads see a local),
+/// live paths merge their supply facts, and a cached test survives only
+/// when both paths bound the same polarity.
 fn merge_points(a: &SupplyPoint, b: &SupplyPoint) -> SupplyPoint {
     let mut proxies = HashMap::new();
     for (name, polarity) in &a.proxies {
@@ -577,7 +858,10 @@ fn merge_points(a: &SupplyPoint, b: &SupplyPoint) -> SupplyPoint {
         }
     }
     SupplyPoint {
-        unguarded: a.unguarded || b.unguarded,
+        alive: match (a.alive, b.alive) {
+            (Some(x), Some(y)) => Some(x.merge(y)),
+            (None, other) | (other, None) => other,
+        },
         proxies,
     }
 }
@@ -687,10 +971,86 @@ mod tests {
     }
 
     #[test]
+    fn fires_on_a_read_inside_the_proven_defaulted_branch() {
+        // Entering the then-arm of `if (missing(to))` proves the value IS
+        // the default: forwarding it there forwards the default (R:
+        // seq(1, to=9-default, length.out=3) is 1 5 9).
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 if (missing(to)) {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 } else {\n\
+             \x20   seq(from, ...)\n\
+             \x20 }\n\
+             }\n"
+        ));
+        // The negated cached test is the same fact through a proxy: the
+        // else-arm of `if (m)` where `m <- !missing(to)` is defaulted.
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 m <- !missing(to)\n\
+             \x20 if (m) {\n\
+             \x20   seq(from, ...)\n\
+             \x20 } else {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn fires_when_a_while_condition_is_the_only_test() {
+        // `missing(to) && n < 1` also fails on the `n >= 1` disjunct, so
+        // leaving the loop does not prove `to` supplied (R: 1 5 9).
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 n <- 0\n\
+             \x20 while (missing(to) && n < 1) {\n\
+             \x20   n <- n + 1\n\
+             \x20 }\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn fires_after_a_statement_superassignment() {
+        // `to <<- v` assigns in an enclosing frame; the local promise
+        // survives (missing(to) stays TRUE) and the forward still hands
+        // seq.default the default (R: 1 5 9).
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 to <<- 5\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+        // The right-to-left spelling lowers to the same wrapper.
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 5 ->> to\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn fires_for_a_nondiverging_expression_if_guard() {
+        // `lim <- if (missing(to)) from + 1` does not rebind `to`: the
+        // missing-path falls through to the continuation with the
+        // defaulted promise still in place (R: 1 5 9).
+        assert!(fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 lim <- if (missing(to)) from + 1\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
     fn stays_silent_for_the_fixed_hms_shape() {
         // The 6fec3ad fix: every `to` use sits behind a
         // `if (missing(to)) return(...)` early exit, so the continuation
-        // is proven guarded.
+        // is proven supplied.
         assert!(!fires(
             "as_hms <- function(x) x\n\
              seq.hms <- function(from = hms(1), to = hms(1), by = NULL, ...) {\n\
@@ -736,9 +1096,9 @@ mod tests {
 
     #[test]
     fn stays_silent_for_a_guarded_rebinding() {
-        // `if (missing(to)) to <- fallback`: the then-path reads the
-        // default deliberately and the fall-through path is proven
-        // supplied, so the later forward is guarded on both paths.
+        // `if (missing(to)) to <- fallback`: the then-path reads nothing
+        // and rebinds (promise dead), the fall-through path is proven
+        // supplied, so the later forward is safe on both paths.
         assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 if (missing(to)) {\n\
@@ -751,7 +1111,8 @@ mod tests {
 
     #[test]
     fn stays_silent_for_short_circuit_compositions() {
-        // The condition's own `to` use is guarded by lazy `&&`.
+        // The condition's own `to` use is guarded by lazy `&&`, and the
+        // then-arm requires `!missing(to)`.
         assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 if (!missing(to) && to > from) {\n\
@@ -886,18 +1247,31 @@ mod tests {
     }
 
     #[test]
-    fn shadows_and_loops_keep_the_analysis_honest() {
-        // A loop variable named `to` shadows the formal inside the body.
+    fn the_loop_variable_consumes_the_promise() {
+        // R assigns the loop variable even on a zero-trip loop, so after
+        // `for (to in ...)` the name can never read the default again
+        // (R forwards 3 here, no bug).
         assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 for (to in 1:3) {\n\
              \x20   print(to)\n\
              \x20 }\n\
-             \x20 seq(from, 5, ...)\n\
+             \x20 seq(from, to, ...)\n\
              }\n"
         ));
-        // A rebinding on one branch does not guard the fall-through path,
-        // where the untested promise is still readable.
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 for (to in NULL) {\n\
+             \x20   print(to)\n\
+             \x20 }\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn a_rebinding_on_one_branch_does_not_guard_the_fall_through() {
+        // The fall-through path still reads the untested promise.
         assert!(fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 if (from > 0) {\n\
@@ -909,13 +1283,34 @@ mod tests {
     }
 
     #[test]
-    fn nested_closure_uses_count_until_shadowed() {
-        assert!(fires(
+    fn closure_bodies_and_defaults_are_not_analyzed() {
+        // A closure defined before the guard and called after it never
+        // runs on the defaulted path (R: 1 2 3), so its body must not
+        // fire; suppression also covers unguarded closures and closure
+        // parameter defaults (`function(x = to)`), a documented recall
+        // concession.
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 helper <- function() seq(from, to, ...)\n\
+             \x20 if (missing(to)) {\n\
+             \x20   return(seq(from, ...))\n\
+             \x20 }\n\
+             \x20 helper()\n\
+             }\n"
+        ));
+        assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 helper <- function() to\n\
              \x20 helper()\n\
              }\n"
         ));
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 helper <- function(x = to) x\n\
+             \x20 helper()\n\
+             }\n"
+        ));
+        // A same-named closure formal is that closure's own variable.
         assert!(!fires(
             "seq.widget <- function(from = 1, to = 9, ...) {\n\
              \x20 helper <- function(to) to\n\
@@ -932,6 +1327,71 @@ mod tests {
              \x20   stop('`to` is required')\n\
              \x20 }\n\
              \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn stays_silent_for_a_diverging_expression_if_guard() {
+        // `lim <- if (missing(to)) return(...)`: the then-arm returns to
+        // the caller, so only the supplied fall-through reaches the
+        // continuation (R: 1 2 3).
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 lim <- if (missing(to)) return(seq(from, ...))\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+        // A block arm containing return() diverges the same way.
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 lim <- if (missing(to)) {\n\
+             \x20   return(seq(from, ...))\n\
+             \x20 }\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn provably_running_loop_bodies_keep_their_guards() {
+        // repeat / while (TRUE) run their body at least once, and a
+        // literal a:b iterator cannot be empty, so a guard-rebind inside
+        // the body genuinely protects the post-loop use (R: no bug).
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 repeat {\n\
+             \x20   if (missing(to)) {\n\
+             \x20     to <- from + 1\n\
+             \x20   }\n\
+             \x20   break\n\
+             \x20 }\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 for (i in 1:3) {\n\
+             \x20   if (missing(to)) {\n\
+             \x20     to <- from + 1\n\
+             \x20   }\n\
+             \x20 }\n\
+             \x20 seq(from, to, ...)\n\
+             }\n"
+        ));
+    }
+
+    #[test]
+    fn a_qualified_missing_test_is_recognized() {
+        // `base::missing(to)` lowers with the qualified name, which the
+        // bare-name split already strips.
+        assert!(!fires(
+            "seq.widget <- function(from = 1, to = 9, ...) {\n\
+             \x20 if (base::missing(to)) {\n\
+             \x20   seq(from, ...)\n\
+             \x20 } else {\n\
+             \x20   seq(from, to, ...)\n\
+             \x20 }\n\
              }\n"
         ));
     }

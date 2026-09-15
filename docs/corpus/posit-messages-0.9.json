@@ -358,7 +358,7 @@
       "line": 61,
       "column": 16,
       "severity": "warning",
-      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `caller_env` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "dplyr::RY010::R/conditions.R:310:14": {
       "package": "dplyr",
@@ -547,7 +547,7 @@
       "line": 81,
       "column": 16,
       "severity": "warning",
-      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `caller_env` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "dtplyr::RY109::R/step-join.R:162:43": {
       "package": "dtplyr",
@@ -556,7 +556,7 @@
       "line": 162,
       "column": 43,
       "severity": "warning",
-      "message": "parameter `copy` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "dtplyr::RY109::R/tidyeval-across.R:20:47": {
       "package": "dtplyr",
@@ -565,7 +565,7 @@
       "line": 20,
       "column": 47,
       "severity": "warning",
-      "message": "parameter `j` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `j` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "dtplyr::RY109::R/tidyeval-across.R:6:51": {
       "package": "dtplyr",
@@ -574,7 +574,7 @@
       "line": 6,
       "column": 51,
       "severity": "warning",
-      "message": "parameter `j` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `j` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "ellmer::RY010::R/chat-structured.R:2:37": {
       "package": "ellmer",
@@ -1159,7 +1159,7 @@
       "line": 149,
       "column": 36,
       "severity": "warning",
-      "message": "parameter `type` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `type` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "flexdashboard::RY001::R/flex_dashboard.R:381:11": {
       "package": "flexdashboard",
@@ -1321,7 +1321,7 @@
       "line": 133,
       "column": 68,
       "severity": "warning",
-      "message": "parameter `method` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `method` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "ggplot2::RY109::R/stat-quantilemethods.R:81:38": {
       "package": "ggplot2",
@@ -1330,7 +1330,7 @@
       "line": 81,
       "column": 38,
       "severity": "warning",
-      "message": "parameter `method.args` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `method.args` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "glue::RY040::tests/testthat/test-glue.R:595:20": {
       "package": "glue",
@@ -1429,7 +1429,7 @@
       "line": 197,
       "column": 14,
       "severity": "warning",
-      "message": "parameter `data_tbl` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `data_tbl` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "gt::RY109::R/cols_align.R:198:17": {
       "package": "gt",
@@ -1438,7 +1438,7 @@
       "line": 198,
       "column": 17,
       "severity": "warning",
-      "message": "parameter `col_classes` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `col_classes` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "gt::RY109::R/utils_render_grid.R:421:37": {
       "package": "gt",
@@ -1447,7 +1447,7 @@
       "line": 421,
       "column": 37,
       "severity": "warning",
-      "message": "parameter `data` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `data` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
@@ -1474,7 +1474,7 @@
       "line": 189,
       "column": 34,
       "severity": "warning",
-      "message": "parameter `config` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `config` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "infer::RY109::R/calculate.R:741:42": {
       "package": "infer",
@@ -1483,7 +1483,7 @@
       "line": 741,
       "column": 42,
       "severity": "warning",
-      "message": "parameter `call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `call` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "keras3::RY010::R/model-training.R:596:35": {
       "package": "keras3",
@@ -1762,7 +1762,7 @@
       "line": 265,
       "column": 64,
       "severity": "warning",
-      "message": "parameter `.select_formats` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `.select_formats` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "lubridate::RY109::R/parse.r:975:32": {
       "package": "lubridate",
@@ -1771,7 +1771,7 @@
       "line": 975,
       "column": 32,
       "severity": "warning",
-      "message": "parameter `tz` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `tz` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "pak::RY001::R/json.R:100:13": {
       "package": "pak",
@@ -2068,7 +2068,7 @@
       "line": 483,
       "column": 43,
       "severity": "warning",
-      "message": "parameter `call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `call` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "pkgdown::RY010::R/config.R:171:7": {
       "package": "pkgdown",
@@ -2131,7 +2131,7 @@
       "line": 271,
       "column": 16,
       "severity": "warning",
-      "message": "parameter `error_call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `error_call` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "pkgdown::RY109::R/tweak-navbar.R:32:41": {
       "package": "pkgdown",
@@ -2140,7 +2140,7 @@
       "line": 32,
       "column": 41,
       "severity": "warning",
-      "message": "parameter `pkg` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `pkg` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "plumber::RY032::R/plumber.R:1360:7": {
       "package": "plumber",
@@ -2194,7 +2194,7 @@
       "line": 56,
       "column": 16,
       "severity": "warning",
-      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `caller_env` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "renv::RY001::R/parse.R:3:7": {
       "package": "renv",
@@ -2815,7 +2815,7 @@
       "line": 329,
       "column": 22,
       "severity": "warning",
-      "message": "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "rlang::RY109::tests/testthat/test-nse-defuse.R:334:22": {
       "package": "rlang",
@@ -2824,7 +2824,7 @@
       "line": 334,
       "column": 22,
       "severity": "warning",
-      "message": "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "rmarkdown::RY032::R/pandoc.R:210:38": {
       "package": "rmarkdown",
@@ -3301,7 +3301,7 @@
       "line": 609,
       "column": 52,
       "severity": "warning",
-      "message": "parameter `width` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `width` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "shiny-r::RY109::R/bootstrap-layout.R:609:68": {
       "package": "shiny-r",
@@ -3310,7 +3310,7 @@
       "line": 609,
       "column": 68,
       "severity": "warning",
-      "message": "parameter `height` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `height` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "sparklyr::RY001::R/config.R:375:9": {
       "package": "sparklyr",
@@ -3382,7 +3382,7 @@
       "line": 2,
       "column": 12,
       "severity": "warning",
-      "message": "parameter `master` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `master` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "sparklyr::RY109::R/connection_test.R:3:12": {
       "package": "sparklyr",
@@ -3391,7 +3391,7 @@
       "line": 3,
       "column": 12,
       "severity": "warning",
-      "message": "parameter `config` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      "message": "parameter `config` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
     "styler::RY010::tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R:2:18": {
       "package": "styler",

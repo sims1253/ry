@@ -174,7 +174,7 @@ expression: snapshots
   fixture: err_fnbody_unbound.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 23
@@ -182,7 +182,7 @@ expression: snapshots
         line: 7
         start: 457
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 25
@@ -190,7 +190,7 @@ expression: snapshots
         line: 9
         start: 522
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 34
@@ -198,7 +198,7 @@ expression: snapshots
         line: 11
         start: 610
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 22
@@ -206,7 +206,7 @@ expression: snapshots
         line: 12
         start: 669
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 26
@@ -214,7 +214,7 @@ expression: snapshots
         line: 13
         start: 724
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 23
@@ -222,7 +222,7 @@ expression: snapshots
         line: 14
         start: 767
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 32
@@ -230,7 +230,7 @@ expression: snapshots
         line: 15
         start: 842
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 28
@@ -238,7 +238,7 @@ expression: snapshots
         line: 16
         start: 925
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 27
@@ -246,7 +246,7 @@ expression: snapshots
         line: 17
         start: 1011
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 25
@@ -254,7 +254,7 @@ expression: snapshots
         line: 18
         start: 1096
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 34
@@ -262,7 +262,7 @@ expression: snapshots
         line: 30
         start: 1949
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 41
@@ -270,7 +270,7 @@ expression: snapshots
         line: 31
         start: 2017
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 32
@@ -278,7 +278,7 @@ expression: snapshots
         line: 32
         start: 2078
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 31
@@ -286,7 +286,7 @@ expression: snapshots
         line: 34
         start: 2221
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 32
@@ -294,7 +294,7 @@ expression: snapshots
         line: 37
         start: 2433
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 31
@@ -302,7 +302,7 @@ expression: snapshots
         line: 38
         start: 2513
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 31
@@ -620,7 +620,7 @@ expression: snapshots
   fixture: err_qualified_identity_forces_default.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 23
@@ -628,7 +628,7 @@ expression: snapshots
         line: 7
         start: 421
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 22
@@ -636,7 +636,7 @@ expression: snapshots
         line: 8
         start: 458
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 23
@@ -644,7 +644,7 @@ expression: snapshots
         line: 9
         start: 511
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 34
@@ -652,7 +652,7 @@ expression: snapshots
         line: 10
         start: 585
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 29
@@ -660,7 +660,7 @@ expression: snapshots
         line: 12
         start: 679
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 28
@@ -668,7 +668,7 @@ expression: snapshots
         line: 13
         start: 719
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 29
@@ -676,7 +676,7 @@ expression: snapshots
         line: 14
         start: 775
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 40
@@ -686,7 +686,7 @@ expression: snapshots
   fixture: err_qualified_identity_skips_lazy_arguments.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 27
@@ -694,7 +694,7 @@ expression: snapshots
         line: 5
         start: 297
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 22
@@ -702,7 +702,7 @@ expression: snapshots
         line: 6
         start: 349
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 33
@@ -710,7 +710,7 @@ expression: snapshots
         line: 7
         start: 416
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 28
@@ -764,7 +764,7 @@ expression: snapshots
   fixture: err_recovered_tree_suppresses_semantics.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 25
@@ -772,7 +772,7 @@ expression: snapshots
         line: 6
         start: 366
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 24
@@ -780,7 +780,7 @@ expression: snapshots
         line: 7
         start: 404
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 34
@@ -788,7 +788,7 @@ expression: snapshots
         line: 8
         start: 451
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 33
@@ -796,7 +796,7 @@ expression: snapshots
         line: 9
         start: 497
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 28
@@ -806,7 +806,7 @@ expression: snapshots
   fixture: err_recursive_default_conditional_operands.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -816,7 +816,7 @@ expression: snapshots
   fixture: err_recursive_default_conditional_return.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -878,7 +878,7 @@ expression: snapshots
   fixture: err_recursive_default_forced_operands.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -908,7 +908,7 @@ expression: snapshots
   fixture: err_recursive_default_literal_false_block.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -918,7 +918,7 @@ expression: snapshots
   fixture: err_recursive_default_missing.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -926,7 +926,7 @@ expression: snapshots
         line: 5
         start: 301
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -936,7 +936,7 @@ expression: snapshots
   fixture: err_recursive_default_replaced.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -946,7 +946,7 @@ expression: snapshots
   fixture: err_recursive_default_shadowed_defuser.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -956,7 +956,7 @@ expression: snapshots
   fixture: err_recursive_default_shadowed_strict.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -964,7 +964,7 @@ expression: snapshots
         line: 3
         start: 195
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -1024,7 +1024,7 @@ expression: snapshots
   fixture: err_recursive_default_taken_operands.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -1034,7 +1034,7 @@ expression: snapshots
   fixture: err_recursive_default_unforced_branch.R
 - diagnostics:
     - code: RY109
-      message: "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 18
@@ -1102,7 +1102,7 @@ expression: snapshots
   fixture: err_scalar_logical.R
 - diagnostics:
     - code: RY109
-      message: "parameter `copy` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 42
@@ -1110,7 +1110,7 @@ expression: snapshots
         line: 8
         start: 429
     - code: RY109
-      message: "parameter `j` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `j` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 50
@@ -1118,7 +1118,7 @@ expression: snapshots
         line: 17
         start: 618
     - code: RY109
-      message: "parameter `n` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `n` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 25
@@ -1126,7 +1126,7 @@ expression: snapshots
         line: 20
         start: 742
     - code: RY109
-      message: "parameter `copy` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+      message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
       span:
         column: 30

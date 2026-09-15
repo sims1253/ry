@@ -52,6 +52,16 @@ RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example
 `warn = ["RY003"]`).
 
+RY109 stays quiet when the body defuses the promise with a reviewed capture
+helper (`enquo()`, `substitute()`, ...) or tidy injection (`{{ x }}`). A
+bare helper name is credited only when it resolves through an attached
+package or a `NAMESPACE` import (`library(rlang)`, `import(rlang)`); in a
+standalone file with no import the same `enquo(x)` body warns. This
+resolvability requirement is also why rlang's own defusing tests warn:
+their bare `enexpr`/`enquo` are defined by rlang itself, and crediting a
+project-defined name without provenance would also credit a test-local
+`quote <- function(x) x`, which forces.
+
 RY032 also has a parameter-pattern heuristic. See
 [scalar guards](scalar-guards.md) for its package, assertion, and alias/loop
 limits, and for the distinction

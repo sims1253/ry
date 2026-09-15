@@ -163,13 +163,20 @@ impl Checker {
                         ),
                     );
                 } else if !body_defuses_formal(self, body, &param.name) {
+                    // The wording separates what is always true (the default
+                    // can never evaluate) from what depends on the body:
+                    // a never-forced formal (dplyr's distinct helpers,
+                    // ggplot2's densitybin) makes the call run when the
+                    // argument is missing, and only consuming the promise
+                    // would raise R's recursive-default error.
                     self.emit(
                         Severity::Warning,
                         span,
                         "RY109",
                         format!(
-                            "parameter `{}` has a self-referential default that errors \
-                             ('promise already under evaluation') when the argument is missing",
+                            "parameter `{}` has a self-referential default that can never \
+                             evaluate; forcing the promise errors ('promise already under \
+                             evaluation')",
                             param.name
                         ),
                     );
@@ -787,12 +794,32 @@ enum DefaultCapture {
 /// self-reference deliberately — the defuser receives the unevaluated
 /// default — so the self-referential default rules stay quiet for them.
 /// A qualified callee carries exact provenance; a bare callee is trusted
-/// only when the project does not define the same name itself (a local
-/// `quote <-` replacement is not a defuser until proven). `{{ x }}` is
-/// tidy-eval syntax: as an eager argument it would be a forced `x` in
-/// pointless braces, which nobody writes. Only this frame's statements
-/// count: a nested function's own formals shadow the promise, and a
-/// nested defusing closure says nothing about this body's other reads.
+/// only when it resolves through an attached or NAMESPACE-imported
+/// package AND the project does not define the same name itself (a local
+/// `quote <-` replacement is not a defuser until proven; this is also why
+/// rlang's own defusing tests warn: their bare enexpr/enquo are defined
+/// in-project). `{{ x }}` is tidy-eval syntax: as an eager argument it
+/// would be a forced `x` in pointless braces, which nobody writes. Only
+/// this frame's statements count: a nested function's own formals shadow
+/// the promise, and a nested defusing closure says nothing about this
+/// body's other reads.
+///
+/// Known misses (under-warning; both pinned as `oracle: known-gap`
+/// fixtures and acceptable because the rule is a warning):
+///
+/// - Defuse-then-force: `q <- rlang::enquo(x); rlang::eval_tidy(q)`
+///   errors in R (the captured default is evaluated later) but contains
+///   no bare read of `x`, so the credit applies.
+/// - Divergent branches: `if (flag) rlang::enquo(x) else x` errors in R
+///   on the else path but is credited for the defusing branch. Refusing
+///   the credit whenever the formal also appears in a non-capture
+///   position does NOT fall out cleanly: after `x <- enquo(x)`, later
+///   bare reads see the replacement quosure, not the promise (corrr's
+///   `stretch_unique` reads `as_label(y)` after `y <- enquo(y)`), and
+///   formula-quoted references (`stats::xtabs(val ~ x + y, data)` in
+///   corrr's `retract`) are bare only without a data-mask/formula
+///   context. A sound version needs stop-at-reassignment flow analysis
+///   plus quoting-context tracking, so the gap is pinned instead.
 fn body_defuses_formal(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
     // `{{ wanted }}` parses as a block whose single statement is another
     // block whose single expression is the identifier.

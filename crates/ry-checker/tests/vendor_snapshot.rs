@@ -72,12 +72,19 @@ fn glue_vendor_snapshot() {
     // -----------------------------------------------------------------
     // Triage of the glue vendor snapshot.
     //
-    // The snapshot is EMPTY: zero diagnostics across the whole glue
-    // package.
+    // One diagnostic across the whole glue package:
     //
-    // It MUST stay empty: any future diagnostic on glue is a
-    // regression. A second vendor package is pinned separately to keep
-    // the net honest now that glue is clean.
+    // - utils.R:32:7 RY107 — TRUE POSITIVE. `any(lengths) == 0` computes
+    //   `!any(lengths)` (FALSE == 0 is TRUE), so the zero-length guard in
+    //   recycle_columns() runs on the wrong condition. The same commit
+    //   writes the intended `any(lengths == 0)` at glue.R:139,191; issue
+    //   #356 runtime-verified the divergence. Latent at da9c73f (a
+    //   pre-filter masks the only call path), but a real defect and the
+    //   rule's flagship hit.
+    //
+    // Any diagnostic beyond this one is a regression: every future
+    // finding must be triaged here before the snapshot changes. A second
+    // vendor package is pinned separately to keep the net honest.
     // -----------------------------------------------------------------
 
     let rendered = check_vendor(VENDOR_DIR);

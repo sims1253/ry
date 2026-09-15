@@ -375,6 +375,95 @@ fn comparison_directly_inside_numeric_math_is_diagnosed() {
     );
 }
 
+// ---- any()/all() scalar comparison (RY107) ----
+
+#[test]
+fn any_all_scalar_comparison_negating_literal_is_diagnosed() {
+    // glue R/utils.R:32. `any(lengths) == 0` computes `!any(lengths)`
+    // (FALSE == 0 is TRUE), so the emptiness guard never runs.
+    let diags = check(
+        "u <- function(x) {\n  lengths <- vapply(x, NROW, integer(1))\n  if (any(lengths) == 0) return(character())\n}\n",
+    );
+    let hits: Vec<_> = diags
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "RY107")
+        .collect();
+    assert_eq!(hits.len(), 1, "expected one RY107: {diags:?}");
+    assert!(hits[0].message.contains("any(lengths == 0)"));
+    assert!(hits[0].severity == Severity::Warning);
+}
+
+#[test]
+fn any_all_scalar_comparison_constant_outcome_is_diagnosed() {
+    // TRUE > 1 and FALSE > 1 are both FALSE, so the guard is dead.
+    let diags = check("f <- function(x) if (any(x > 1) || all(x) > 1) 1\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY107")
+            .count(),
+        1,
+        "only the constant all(x) > 1 comparison should fire: {diags:?}"
+    );
+}
+
+#[test]
+fn any_all_scalar_comparison_preserving_idioms_stay_silent() {
+    // `== 1`, `> 0`, `>= 1`, and `!= 0` compute exactly the bare call's
+    // value; diffobj's `!all(diff(x)) == 1L` (pinned in
+    // ry095_ry096_real_shapes.R) is this family written on purpose.
+    let diags = check(
+        "a <- function(x) !all(diff(x)) == 1L\nb <- function(x) any(x) == 1\nc <- function(x) any(x) > 0\nd <- function(x) all(x) >= 1\ne <- function(x) any(x) != 0\n",
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == "RY107"),
+        "value-preserving comparisons are the deliberate idiom: {diags:?}"
+    );
+}
+
+#[test]
+fn any_all_scalar_comparison_correct_spellings_stay_silent() {
+    let diags = check(
+        "a <- function(x) any(x == 0)\nb <- function(x) all(x != 1)\nc <- function(x) any(x > 1)\nd <- function(x) any(x, na.rm = TRUE) == 0\n",
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == "RY107"),
+        "comparison inside any()/all() is the intended spelling: {diags:?}"
+    );
+}
+
+#[test]
+fn any_all_scalar_comparison_shadowed_callee_stays_silent() {
+    // A local `any` need not return a length-1 logical, so the scalar
+    // premise does not hold.
+    let diags =
+        check("f <- function(v) {\n  any <- function(x) c(TRUE, FALSE)\n  if (any(v) == 0) 1\n}\n");
+    assert!(
+        !diags.iter().any(|d| d.code == "RY107"),
+        "shadowed any() must not fire: {diags:?}"
+    );
+}
+
+#[test]
+fn any_all_scalar_comparison_yields_to_same_span_neighbors() {
+    // RY093 and RY100 already report a comparison nested directly inside
+    // length()/nchar()/math calls on the same span; RY107 must not
+    // double-report it. RY105 owns the `length(any(...))` wrapper shape.
+    let diags =
+        check("a <- length(any(x) == 0)\nb <- abs(any(x) == 0)\nc <- if (length(any(1L)) > 0) 1\n");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY107")
+            .count(),
+        0,
+        "RY093/RY100 own the inside-aggregate spans and RY105 owns the wrapped length: {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.code == "RY093"));
+    assert!(diags.iter().any(|d| d.code == "RY100"));
+    assert!(diags.iter().any(|d| d.code == "RY105"));
+}
+
 #[test]
 fn sign_comparison_is_an_allowed_indicator_idiom() {
     let diags = check("sign(x <= y)\nabs(x <= y)\n");

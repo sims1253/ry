@@ -4,6 +4,15 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- RY107 flags scalar comparisons on `any()`/`all()` results, such as
+  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
+  compared instead of the elements, so negating comparisons are always
+  wrong and constant-outcome comparisons are dead guards. Comparisons
+  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
+  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
+
 ### Changed
 
 - The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter

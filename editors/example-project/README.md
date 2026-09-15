@@ -87,7 +87,7 @@ cargo test -p ry-cli --test editor_playground
 <!-- playground-diagnostics:start -->
 | File | Errors | Warnings | Code at line:column |
 | :--- | ---: | ---: | :--- |
-| R/broken.R | 4 | 1 | RY000@16:12; RY000@16:24; RY000@16:29; RY000@18:1; RY010@21:11 |
+| R/broken.R | 4 | 0 | RY000@16:12; RY000@16:24; RY000@16:29; RY000@18:1 |
 | R/daily-report.R | 0 | 1 | RY010@43:51 |
 | R/menu.R | 0 | 0 | none |
 | R/prices.R | 0 | 0 | none |
@@ -126,8 +126,9 @@ provide completion, hover, navigation, or rename.
 - Enable inlay hints in your editor and inspect the simple assignments in
   `R/prices.R`. Compare inferred types with
   `../../target/debug/ry dump-types R/prices.R`; an unknown type is an analysis limit.
-- In `R/broken.R`, inspect the RY000 spans. Findings after the syntax error
-  come from a recovered parse tree and can be unreliable.
+- In `R/broken.R`, inspect the RY000 spans. Semantic findings are suppressed
+  on files with a syntax error: later statements come from a recovered parse
+  tree and can be unreliable, so the RY000s are the only report.
 
 The table is the CLI expectation, not a record of a manual editor session.
 If editor results differ, first check the binary path, settings, and unsaved

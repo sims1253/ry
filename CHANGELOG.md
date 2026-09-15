@@ -4,6 +4,14 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse
+  produced a recovered tree. Such files report only their RY000 "unparseable
+  region" diagnostics, which are the actionable signal: findings derived from
+  parser-repaired structure -- including the corpus's empty-name RY010
+  (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
+
 ## [0.10.0] - 2026-09-15
 
 This release adds three Linux targets, improves package and function lookup,

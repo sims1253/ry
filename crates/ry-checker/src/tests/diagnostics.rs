@@ -287,6 +287,38 @@ fn public_check_emits_each_parse_error_once() {
     );
 }
 
+// ---- recovered-tree semantic suppression (issue #380) ----
+
+#[test]
+fn recovered_tree_suppresses_semantic_diagnostics() {
+    // The incomplete `function(` header makes tree-sitter invent a call
+    // expression over the rest of the file; before the suppression the
+    // unbound-variable rule reported `x` (and, on corpus files, names as
+    // empty as ``) on top of the parse error. RY000 must be the only
+    // survivor: it is the actionable signal for a recovered tree.
+    let diags = check("x <- function(\n");
+    assert!(
+        diags.iter().any(|d| d.code == "RY000"),
+        "broken file must still report RY000, got {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.code == "RY000"),
+        "recovered tree must not carry semantic diagnostics, got {diags:?}"
+    );
+}
+
+#[test]
+fn recovered_tree_suppression_leaves_clean_files_alone() {
+    // The same shape with the syntax repaired keeps its semantic finding:
+    // suppression keys on the presence of parse errors, not on the
+    // construct that happened to be broken.
+    let clean = check("print(undefined_thing)\n");
+    assert!(
+        clean.iter().any(|d| d.code == "RY010"),
+        "clean file must keep semantic diagnostics, got {clean:?}"
+    );
+}
+
 // ---- comparison-in-call & format arity (moved from packages_typeshed) ----
 #[test]
 fn comparison_directly_inside_length_is_diagnosed() {

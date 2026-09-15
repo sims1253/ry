@@ -15,6 +15,15 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Add RY110 (`vacuous-all-guard`): `all(is.na(x))` is vacuously TRUE when
+  `x` is zero-length, so a validation guard of the shape
+  `is.numeric(x) || all(is.na(x))` accepts any empty non-numeric input --
+  the pre-fix hms guard behind tidyverse/hms#231, where
+  `hms(seconds = character())` passed validation and then failed inside
+  `vec_cast()`. Fires only when the vacuously accepted value reaches a
+  downstream mode demand a typeshed stub declares (a parameter `type`,
+  as RY092 checks); the fix is hms's own (`length(x) > 0 &&` before the
+  `all()`) (#462).
 - Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
   `test` vector and only overwrites selected positions, so a zero-length or
   all-`NA` test yields a `logical` result even when `yes`/`no` agree on

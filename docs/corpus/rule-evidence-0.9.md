@@ -38,7 +38,7 @@ value is a literal call argument (`f(literal)`) versus a parameter default
 | :-- | :-- |
 | lift-reachable | RY001, RY003, RY020, RY021, RY031, RY033, RY040 |
 | param-unreachable | RY002, RY030, RY032, RY061 |
-| consistent | RY034, RY093, RY099, RY100, RY103, RY105, RY106 |
+| consistent | RY034, RY093, RY099, RY100, RY103, RY105, RY106, RY107 |
 | n/a (syntactic) | RY000, RY010, RY041, RY042, RY050, RY060, RY070, RY080, RY090, RY091, RY092, RY094, RY096, RY097, RY098, RY101, RY102 |
 
 ## Targeted mutation pilot
@@ -104,6 +104,7 @@ determines the verdict.
 | `RY103` class-equality | 2/0 | yes | `class_equality_claim.R` | consistent | piloted | yes | keep | Valid claim; 2 TP / 0 FP. Consistent under R7 lifting. Mutation pilot passed. |
 | `RY105` constant-length-comparison | 1/11 | yes | `constant_length_comparison_claim.R` | consistent | - | - | keep | Valid claim; 1 TP / 11 FP. Moderate FP but small absolute count; 1 TP demonstrates reachability. |
 | `RY106` ifelse-mode-collapse | 0/0 | yes | `ifelse_mode_collapse_claim.R` | consistent | - | - | keep | Valid claim; 0 corpus findings. From the tidyverse/hms#231 replay; fires for definite collapses and typed-NA selects. |
+| `RY107` any-all-scalar-comparison | 1/0 | yes | `any_all_scalar_comparison_claim.R` | consistent | - | yes | keep | Valid claim; 1 TP / 0 FP on the vendored packages (glue `R/utils.R:32`, the audited defect itself, issue #356). Value-preserving comparisons stay silent, keeping diffobj's pinned idiom quiet. Consistent under R7 lifting (syntactic). |
 
 ## Verdict execution
 
@@ -123,9 +124,9 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
 ## Completeness checks
 
-- Rows: 34, exactly one for every non-retired entry in `RULES`.
-- Probes: 33 present; RY097 has the committed CLI-level exclusion.
-- Claim fixtures: 34 present and enforced by `every_rule_has_a_claim_fixture`.
+- Rows: 35, exactly one for every non-retired entry in `RULES`.
+- Probes: 34 present; RY097 has the committed CLI-level exclusion.
+- Claim fixtures: 35 present and enforced by `every_rule_has_a_claim_fixture`.
 - R7 coverage: every rule is classified (lift-reachable, param-unreachable,
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).

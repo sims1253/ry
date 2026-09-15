@@ -1,4 +1,5 @@
-//! Recall rules targeting known false-negative shapes (RY102, RY103, RY105).
+//! Recall rules targeting known false-negative shapes (RY102, RY103,
+//! RY105, RY107).
 //!
 //! These codes exist to catch real defects the 62-package Posit corpus audit
 //! found and 0.8.0 missed. They are grouped here because they share a
@@ -9,7 +10,7 @@
 //! `tests/recall_rules.rs` pins both the positive and the negative
 //! direction of each rule.
 //!
-//! Two of the original sketches are deliberately **not** implemented.
+//! One of the original sketches is deliberately **not** implemented.
 //!
 //! `not-before-comparison` was premised on `!x >= y` parsing as
 //! `(!x) >= y`, but R's `?Syntax` places unary `!` *below* the comparison
@@ -19,11 +20,15 @@
 //! `constant-condition`'s `any(v) == 0` half (glue `R/utils.R:32`) is a real
 //! bug — `any(lengths == 0)` was meant — but the sketch's justification for
 //! flagging it, "is always FALSE", is wrong: `any()` yields a logical and
-//! `FALSE == 0` is `TRUE`. The shape is also indistinguishable from
-//! diffobj's legitimate `!all(diff(x)) == 1L`, pinned as must-stay-silent in
-//! `testdata/ry095_ry096_real_shapes.R`. The false negative stays open
-//! rather than being traded for a false-positive source. Its second half
-//! (`length(sum(...)) > 0`) is decidable and ships as RY105.
+//! `FALSE == 0` is `TRUE`. The shape originally stayed open because it
+//! seemed indistinguishable from diffobj's legitimate `!all(diff(x)) == 1L`,
+//! pinned as must-stay-silent in `testdata/ry095_ry096_real_shapes.R`. RY107
+//! separates them by *outcome* rather than by shape: a comparison that
+//! preserves the scalar logical's value (`== 1`, `> 0`, ...) is the diffobj
+//! idiom and stays silent, while one that negates it (`== 0`, `!= 1`, ...) or
+//! is constant (`> 1`, `< 0`, ...) computes something other than what the
+//! element-level reading suggests and is reported. The `length(sum(...)) > 0`
+//! half ships as RY105.
 
 use super::*;
 
@@ -57,6 +62,25 @@ fn unary_call_to(expr: &Expr, callee: &str) -> bool {
         return false;
     };
     bare_callee(expr) == Some(callee) && args.len() == 1 && args[0].name.is_none()
+}
+
+/// The source spelling of a direct call's callee together with its single
+/// positional argument, or `None` for any other shape. Indirect callees have
+/// no name to resolve, and a call with several arguments is not the
+/// misplaced-parenthesis reading this family matches (its `na.rm` style
+/// controls would be lost by the suggested rewrite).
+fn unary_call_callee(expr: &Expr) -> Option<(&str, &Expr)> {
+    let Expr::Call { func, args, .. } = expr else {
+        return None;
+    };
+    let name = match func.as_ref() {
+        Expr::Ident { name, .. } | Expr::String(name, _) => name.as_str(),
+        _ => return None,
+    };
+    if args.len() != 1 || args[0].name.is_some() {
+        return None;
+    }
+    Some((name, &args[0].value))
 }
 
 /// The integer value of a whole-number numeric literal.
@@ -331,6 +355,135 @@ impl Checker {
                 "{reason}, so `length(...)` is 1 here and this zero-length guard is always {outcome}"
             ),
         );
+    }
+
+    /// RY107: a comparison with a direct `any(...)`/`all(...)` call on one
+    /// side and a numeric literal on the other, when the comparison does not
+    /// preserve the call's scalar logical value.
+    ///
+    /// `any()`/`all()` return a length-1 logical, which numeric comparison
+    /// coerces to 0/1, so exactly three outcomes exist:
+    ///
+    /// * **preserving** (`== 1`, `!= 0`, `> 0`, `>= 1`): the comparison
+    ///   computes what the bare call already computes. That is diffobj's
+    ///   `!all(diff(x)) == 1L` idiom, pinned must-stay-silent in
+    ///   `testdata/ry095_ry096_real_shapes.R`, so these stay silent.
+    /// * **negating** (`== 0`, `!= 1`, `<= 0`, `< 1`): the comparison
+    ///   computes `!any(x)`, which reads nothing like the source. Found in
+    ///   glue `R/utils.R:32` — `any(lengths) == 0` where
+    ///   `any(lengths == 0)` was meant.
+    /// * **constant** (`> 1`, `>= 2`, `< 0`, `== 2`, ...): the guard is
+    ///   always TRUE or always FALSE.
+    ///
+    /// The negating and constant outcomes are reported with the element-level
+    /// rewrite. `NA` input propagates to an `NA` result in every family,
+    /// which changes neither classification.
+    ///
+    /// Scoped against the neighbors: RY093 and RY100 report a comparison
+    /// nested *inside* `length()`/`nchar()`/a math call on the same span this
+    /// rule would report, and those checks run at the enclosing call before
+    /// its arguments are inferred, so an existing same-span diagnostic means
+    /// the site is already covered. RY105 requires a `length()` call as an
+    /// operand — a different shape from the bare `any()`/`all()` call matched
+    /// here — so the two rules cannot meet on one comparison.
+    pub(crate) fn check_any_all_scalar_comparison(
+        &mut self,
+        op: BinOpKind,
+        lhs: &Expr,
+        rhs: &Expr,
+        span: Span,
+        scope: &Scope,
+    ) {
+        if !is_comparison(op) {
+            return;
+        }
+        if self.diagnostics.iter().any(|diagnostic| {
+            diagnostic.span == span && matches!(diagnostic.code, "RY093" | "RY100")
+        }) {
+            return;
+        }
+        let ((callee, argument), literal_expr, aggregate_on_left) =
+            match (unary_call_callee(lhs), unary_call_callee(rhs)) {
+                (Some(call), None) => (call, rhs, true),
+                (None, Some(call)) => (call, lhs, false),
+                // Both sides calls, or neither: the scalar-vs-literal shape
+                // this family matches needs a literal to compare against.
+                _ => return,
+            };
+        let bare = crate::semantic_lists::bare_name(callee);
+        if !matches!(bare, "any" | "all") {
+            return;
+        }
+        // The length-1 logical premise holds only for the base functions; a
+        // shadowed or differently-imported `any`/`all` may return anything.
+        if !self.resolves_to_base_lenient(callee, scope) {
+            return;
+        }
+        let Some(literal) = numeric_literal(literal_expr) else {
+            return;
+        };
+        // The logical operand coerces to 0 under FALSE and 1 under TRUE, so
+        // evaluating both pins the comparison's behavior on every non-NA
+        // input.
+        let outcome = |value: f64| -> bool {
+            let (left, right) = if aggregate_on_left {
+                (value, literal)
+            } else {
+                (literal, value)
+            };
+            match op {
+                BinOpKind::Lt => left < right,
+                BinOpKind::Le => left <= right,
+                BinOpKind::Gt => left > right,
+                BinOpKind::Ge => left >= right,
+                BinOpKind::Eq => left == right,
+                BinOpKind::Ne => left != right,
+                _ => false,
+            }
+        };
+        let when_false = outcome(0.0);
+        let when_true = outcome(1.0);
+        // The preserving family computes the bare call's own value, which is
+        // a written-on-purpose idiom (diffobj); only negating and constant
+        // outcomes mislead.
+        if !when_false && when_true {
+            return;
+        }
+        // Mirror the operator for the suggestion when the literal is on the
+        // left, so `0 == any(x)` suggests `any(x == 0)`.
+        let suggested_op = if aggregate_on_left {
+            op
+        } else {
+            match op {
+                BinOpKind::Lt => BinOpKind::Gt,
+                BinOpKind::Le => BinOpKind::Ge,
+                BinOpKind::Gt => BinOpKind::Lt,
+                BinOpKind::Ge => BinOpKind::Le,
+                other => other,
+            }
+        };
+        let outcome_text = if when_false == when_true {
+            if when_false {
+                "always TRUE"
+            } else {
+                "always FALSE"
+            }
+        } else {
+            "TRUE exactly when the call is FALSE"
+        };
+        let message = match (
+            self.source_text(span_of(argument)),
+            self.source_text(span_of(literal_expr)),
+        ) {
+            (Some(argument_text), Some(literal_text)) => format!(
+                "`{bare}()` returns a length-1 logical, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
+                op_symbol(suggested_op),
+            ),
+            _ => format!(
+                "`{bare}()` returns a length-1 logical, so this comparison is {outcome_text}; compare the elements inside the call instead"
+            ),
+        };
+        self.emit(Severity::Warning, span, "RY107", message);
     }
 
     /// Why `expr` is length 1 for every input, or `None` when that cannot be

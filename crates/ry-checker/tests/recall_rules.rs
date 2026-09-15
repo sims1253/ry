@@ -1,7 +1,7 @@
 //! Recall rules.
 //!
 //! Four rules were sketched during the Posit corpus audit response, aimed at
-//! the false-negative half of the corpus audit. Two ship whole, one ships in
+//! the false-negative half of the corpus audit. Two ship whole, two ship in
 //! half, and one does not ship at all.
 //!
 //! | rule name | code | shape |
@@ -9,7 +9,7 @@
 //! | `named-list-element-arrow` | `RY102` | `list("a" <- 1)` |
 //! | `class-equality` | `RY103` | `if (class(x) == "y")` |
 //! | `constant-condition` (b) | `RY105` | `length(sum(v)) > 0` |
-//! | `constant-condition` (a) | — | **not shipped**, see below |
+//! | `constant-condition` (a) | `RY107` | `any(v) == 0`, see below |
 //! | `not-before-comparison` | — | **not shipped**, see the module test |
 //!
 //! `not-before-comparison` rests on the original claim that "`!` binds
@@ -20,14 +20,17 @@
 //! `testdata/ry095_ry096_real_shapes.R` exists to pin it.
 //!
 //! `constant-condition`'s first half (`any(v) == 0`, glue `R/utils.R:32`)
-//! is dropped for a related reason. The original sketch justifies it with "is always
-//! FALSE", which is not true: `any()` returns a logical, and `FALSE == 0`
-//! is `TRUE`. glue's line is a real bug — the author meant
-//! `any(lengths == 0)` — but the *shape* is indistinguishable from
-//! diffobj's legitimate `!all(diff(x)) == 1L`, already pinned as
-//! must-stay-silent in the same regression fixture. A rule that cannot
-//! separate them is a false-positive source, so the glue false negative
-//! stays open rather than being traded for one.
+//! was originally dropped alongside it. The original sketch justifies the
+//! rule with "is always FALSE", which is not true: `any()` returns a
+//! logical, and `FALSE == 0` is `TRUE`. glue's line is a real bug — the
+//! author meant `any(lengths == 0)` — and the shape seemed indistinguishable
+//! from diffobj's legitimate `!all(diff(x)) == 1L`, already pinned as
+//! must-stay-silent in the same regression fixture. RY107 separates the two
+//! by *outcome* rather than shape: a comparison that preserves the scalar
+//! logical's value (`== 1`, `> 0`, ...) is the diffobj idiom and stays
+//! silent, while one that negates it (`== 0`, `!= 1`, ...) or is constant
+//! (`> 1`, `< 0`, ...) computes something other than what the element-level
+//! reading suggests and is reported.
 //!
 //! Every rule is asserted against the corpus reproduction committed at
 //! `testdata/err_recall_rules_repro.R`, which 0.8.0 checked completely clean.
@@ -505,6 +508,160 @@ fn ry105_respects_local_shadowing_of_scalar_reduction() {
 }
 
 // ---------------------------------------------------------------------------
+// RY107 — any-all-scalar-comparison (`any(v) == 0`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ry107_fires_on_the_glue_parenthesization_bug() {
+    // glue R/utils.R:32 (da9c73f). `any(lengths) == 0` computes
+    // `!any(lengths)`, so with a zero length present the guard is FALSE
+    // and the early return never runs. The same commit writes the intended
+    // `any(lengths == 0)` twice in R/glue.R:139,191.
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse(
+            "recall.R",
+            "u <- function(x) {\n  lengths <- vapply(x, NROW, integer(1))\n  if (any(lengths) == 0) return(character())\n}\n",
+        )
+        .expect("parse");
+    let mut checker = Checker::new("recall.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY107" && d.message.contains("any(lengths == 0)")),
+        "expected RY107 suggesting the element-level rewrite: {diags:?}"
+    );
+}
+
+#[test]
+fn ry107_fires_on_negating_and_constant_outcomes_only() {
+    // `== 0`/`!= 1` negate the scalar logical; `> 1`/`< 0` are constant
+    // FALSE; `>= 0` is constant TRUE. All compute something other than
+    // the element-level reading.
+    for src in [
+        "f <- function(x) if (any(x) == 0) 1\n",
+        "f <- function(x) if (any(x) != 1) 1\n",
+        "f <- function(x) if (all(x) <= 0) 1\n",
+        "f <- function(x) if (all(x) < 1) 1\n",
+        "f <- function(x) if (any(x) > 1) 1\n",
+        "f <- function(x) if (any(x) < 0) 1\n",
+        "f <- function(x) if (all(x) >= 0) 1\n",
+        "f <- function(x) if (any(x) == 2) 1\n",
+    ] {
+        assert!(fires(src, "RY107"), "RY107 did not fire on {src:?}");
+    }
+}
+
+#[test]
+fn ry107_stays_silent_on_value_preserving_comparisons() {
+    // `== 1`, `!= 0`, `> 0`, and `>= 1` compute exactly what the bare
+    // call computes. diffobj's `!all(diff(x)) == 1L` is this family
+    // written on purpose and is pinned as must-stay-silent in
+    // testdata/ry095_ry096_real_shapes.R.
+    for src in [
+        "f <- function(x) any(x) == 1\n",
+        "f <- function(x) any(x) != 0\n",
+        "f <- function(x) any(x) > 0\n",
+        "f <- function(x) all(x) >= 1\n",
+        "f <- function(x) !all(diff(x)) == 1L\n",
+    ] {
+        assert!(!fires(src, "RY107"), "RY107 fired on the idiom {src:?}");
+    }
+}
+
+#[test]
+fn ry107_mirrors_the_suggestion_for_a_leading_literal() {
+    // `0 == any(x)` must suggest `any(x == 0)`, not `any(x 0 ==)`.
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse("recall.R", "f <- function(x) if (0 == any(x)) 1\n")
+        .expect("parse");
+    let mut checker = Checker::new("recall.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "RY107" && d.message.contains("any(x == 0)")),
+        "expected the mirrored rewrite: {diags:?}"
+    );
+}
+
+#[test]
+fn ry107_stays_silent_for_element_level_spellings() {
+    // The comparison inside any()/all() is the intended form, and a call
+    // with controls (`na.rm`) is not the single-argument shape whose
+    // misplaced parenthesis this rule reconstructs.
+    assert!(!fires("f <- function(x) if (any(x == 0)) 1\n", "RY107"));
+    assert!(!fires("f <- function(x) if (all(x != 1)) 1\n", "RY107"));
+    assert!(!fires(
+        "f <- function(x) if (any(x, na.rm = TRUE) == 0) 1\n",
+        "RY107"
+    ));
+}
+
+#[test]
+fn ry107_stays_silent_against_non_literal_operands() {
+    // No dataflow: comparing any() with a name, a call, or a logical
+    // literal is outside this rule.
+    assert!(!fires("f <- function(x, k) if (any(x) == k) 1\n", "RY107"));
+    assert!(!fires(
+        "f <- function(x) if (any(x) == length(x)) 1\n",
+        "RY107"
+    ));
+    assert!(!fires("f <- function(x) if (any(x) == FALSE) 1\n", "RY107"));
+    assert!(!fires(
+        "f <- function(x) if (any(x) == all(x)) 1\n",
+        "RY107"
+    ));
+}
+
+#[test]
+fn ry107_respects_local_shadowing() {
+    // A locally redefined `any` need not return a length-1 logical, so
+    // the scalar premise does not hold for the shadowed callee.
+    assert!(!fires(
+        "f <- function(v) { any <- function(x) c(TRUE, FALSE); if (any(v) == 0) 1 }
+",
+        "RY107"
+    ));
+    // A base-qualified call keeps the premise.
+    assert!(fires(
+        "f <- function(v) if (base::any(v) == 0) 1\n",
+        "RY107"
+    ));
+    // A foreign-qualified `any` is a different function.
+    assert!(!fires(
+        "f <- function(v) if (otherpkg::any(v) == 0) 1\n",
+        "RY107"
+    ));
+}
+
+#[test]
+fn ry107_does_not_double_report_the_aggregate_neighbors() {
+    // `length(any(x) == 0)` is RY093's span and `abs(any(x) == 0)` is
+    // RY100's; RY107 yields when either already reported the comparison.
+    // `length(any(1L)) > 0` is RY105's wrapped-length shape.
+    for (src, neighbor) in [
+        ("a <- length(any(x) == 0)\n", "RY093"),
+        ("b <- abs(any(x) == 0)\n", "RY100"),
+        ("c <- if (length(any(1L)) > 0) 1\n", "RY105"),
+    ] {
+        let emitted = codes(src);
+        assert!(
+            !emitted.contains(&"RY107"),
+            "RY107 double-reported {src:?} alongside {neighbor}: {emitted:?}"
+        );
+        assert!(
+            emitted.contains(&neighbor),
+            "{neighbor} should own {src:?}: {emitted:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // `not-before-comparison` is deliberately NOT implemented
 // ---------------------------------------------------------------------------
 
@@ -533,7 +690,7 @@ fn negation_before_comparison_is_not_diagnosed() {
             "RY095 is retired and must never be reinstated: {src:?} emitted {emitted:?}"
         );
         // Nor may any of these codes stand in for it.
-        for code in ["RY102", "RY103", "RY105"] {
+        for code in ["RY102", "RY103", "RY105", "RY107"] {
             assert!(
                 !emitted.contains(&code),
                 "{code} fired on a correctly-parsing negation: {src:?} emitted {emitted:?}"
@@ -566,6 +723,7 @@ fn corpus_repro_fires_every_shipped_rule() {
         ("RY102", 7, "pak R/pak-sitrep-data.R:41"),
         ("RY103", 11, "sparklyr R/worker_apply.R:522"),
         ("RY105", 31, "pak R/confirmation.R:42"),
+        ("RY107", 22, "glue R/utils.R:32"),
     ];
     let mut missing = Vec::new();
     for (code, line, origin) in expected {
@@ -587,7 +745,7 @@ fn corpus_repro_emits_nothing_beyond_the_shipped_rules() {
     let src = repro_source();
     let unexpected: Vec<_> = code_lines(&src)
         .into_iter()
-        .filter(|(c, _)| !matches!(*c, "RY102" | "RY103" | "RY105"))
+        .filter(|(c, _)| !matches!(*c, "RY102" | "RY103" | "RY105" | "RY107"))
         .collect();
     assert!(
         unexpected.is_empty(),

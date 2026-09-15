@@ -239,6 +239,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`ifelse()` builds its result from `test`, so a zero-length or all-NA test yields a logical result even when `yes`/`no` agree on another mode — in particular for typed-NA selects. Use a typed alternative such as `vctrs::if_else()`.",
     },
+    Rule {
+        code: "RY107",
+        name: "any-all-scalar-comparison",
+        default_severity: Severity::Warning,
+        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

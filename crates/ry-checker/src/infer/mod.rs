@@ -2094,9 +2094,10 @@ impl Checker {
                         "comparison with `NA` always produces `NA`; use `is.na()` instead";
                     self.emit(Severity::Warning, *span, "RY034", message);
                 }
-                // Syntax-shape rules. Both read the operand syntax, so
+                // Syntax-shape rules. These read the operand syntax, so
                 // they run before `infer` collapses the operands to types.
                 self.check_constant_length_comparison(*op, lhs, rhs, *span, scope);
+                self.check_any_all_scalar_comparison(*op, lhs, rhs, *span, scope);
                 let left_plain = ops_chooser::plain_vector(self, lhs, scope);
                 let lt = self.infer(lhs, scope);
                 let right_plain = ops_chooser::plain_vector(self, rhs, scope);

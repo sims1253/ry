@@ -14,6 +14,12 @@ All notable changes to ry are documented in this file.
   Fires for definite collapses (a literal empty or `NA` test) and for
   typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
   (#461).
+- RY107 flags scalar comparisons on `any()`/`all()` results, such as
+  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
+  compared instead of the elements, so negating comparisons are always
+  wrong and constant-outcome comparisons are dead guards. Comparisons
+  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
+  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
 
 ### Changed
 

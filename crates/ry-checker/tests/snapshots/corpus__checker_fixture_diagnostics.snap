@@ -21,6 +21,16 @@ expression: snapshots
         start: 63
   fixture: err_ambiguous_partial_argument.R
 - diagnostics:
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      severity: warning
+      span:
+        column: 6
+        end: 697
+        line: 12
+        start: 680
+  fixture: err_any_all_scalar_comparison.R
+- diagnostics:
     - code: RY092
       message: "argument `x` to `mean` is `list`, expected numeric"
       severity: error
@@ -476,25 +486,33 @@ expression: snapshots
       severity: warning
       span:
         column: 21
-        end: 290
+        end: 297
         line: 6
-        start: 271
+        start: 278
     - code: RY103
       message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(df[[1]], t)`"
       severity: warning
       span:
         column: 21
-        end: 518
+        end: 525
         line: 10
-        start: 499
+        start: 506
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      severity: warning
+      span:
+        column: 6
+        end: 1086
+        line: 21
+        start: 1069
     - code: RY105
       message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
       severity: warning
       span:
         column: 13
-        end: 1347
+        end: 1322
         line: 30
-        start: 1331
+        start: 1306
   fixture: err_recall_rules_repro.R
 - diagnostics:
     - code: RY000

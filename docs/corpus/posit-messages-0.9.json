@@ -1269,6 +1269,15 @@
       "severity": "error",
       "message": "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
     },
+    "glue::RY107::R/utils.R:32:7": {
+      "package": "glue",
+      "code": "RY107",
+      "path": "R/utils.R",
+      "line": 32,
+      "column": 7,
+      "severity": "warning",
+      "message": "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+    },
     "gt::RY001::R/fmt.R:166:7": {
       "package": "gt",
       "code": "RY001",

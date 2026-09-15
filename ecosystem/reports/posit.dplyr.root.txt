@@ -2,6 +2,7 @@ R/conditions.R:310:14 RY010
 R/data-mask.R:112:7 RY091
 R/data-mask.R:117:7 RY091
 R/data-mask.R:131:7 RY091
+R/distinct.R:81:16 RY109
 R/summarise.R:342:34 RY010
 tests/testthat/test-conditions.R:10:20 RY040
 tests/testthat/test-conditions.R:11:19 RY040

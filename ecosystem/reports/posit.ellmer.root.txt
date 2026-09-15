@@ -11,6 +11,7 @@ R/content.R:356:12 RY010
 R/content.R:412:13 RY010
 R/otel.R:258:32 RY010
 R/provider-aws.R:189:13 RY010
+R/provider-claude-files.R:149:36 RY109
 R/provider-claude.R:139:20 RY010
 R/provider-deepseek.R:102:34 RY010
 R/provider-deepseek.R:118:32 RY010

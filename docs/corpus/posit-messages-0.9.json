@@ -351,6 +351,15 @@
       "severity": "warning",
       "message": "missing required argument `stop` in call to `substr`"
     },
+    "dbplyr::RY109::R/verb-distinct.R:61:16": {
+      "package": "dbplyr",
+      "code": "RY109",
+      "path": "R/verb-distinct.R",
+      "line": 61,
+      "column": 16,
+      "severity": "warning",
+      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "dplyr::RY010::R/conditions.R:310:14": {
       "package": "dplyr",
       "code": "RY010",
@@ -530,6 +539,42 @@
       "column": 7,
       "severity": "warning",
       "message": "missing required argument `expr` in call to `eval`"
+    },
+    "dplyr::RY109::R/distinct.R:81:16": {
+      "package": "dplyr",
+      "code": "RY109",
+      "path": "R/distinct.R",
+      "line": 81,
+      "column": 16,
+      "severity": "warning",
+      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "dtplyr::RY109::R/step-join.R:162:43": {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/step-join.R",
+      "line": 162,
+      "column": 43,
+      "severity": "warning",
+      "message": "parameter `copy` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "dtplyr::RY109::R/tidyeval-across.R:20:47": {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 20,
+      "column": 47,
+      "severity": "warning",
+      "message": "parameter `j` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "dtplyr::RY109::R/tidyeval-across.R:6:51": {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 6,
+      "column": 51,
+      "severity": "warning",
+      "message": "parameter `j` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
     },
     "ellmer::RY010::R/chat-structured.R:2:37": {
       "package": "ellmer",
@@ -1107,6 +1152,15 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
+    "ellmer::RY109::R/provider-claude-files.R:149:36": {
+      "package": "ellmer",
+      "code": "RY109",
+      "path": "R/provider-claude-files.R",
+      "line": 149,
+      "column": 36,
+      "severity": "warning",
+      "message": "parameter `type` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "flexdashboard::RY001::R/flex_dashboard.R:381:11": {
       "package": "flexdashboard",
       "code": "RY001",
@@ -1260,6 +1314,24 @@
       "severity": "warning",
       "message": "comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead"
     },
+    "ggplot2::RY109::R/stat-bindot.R:133:68": {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-bindot.R",
+      "line": 133,
+      "column": 68,
+      "severity": "warning",
+      "message": "parameter `method` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "ggplot2::RY109::R/stat-quantilemethods.R:81:38": {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-quantilemethods.R",
+      "line": 81,
+      "column": 38,
+      "severity": "warning",
+      "message": "parameter `method.args` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "glue::RY040::tests/testthat/test-glue.R:595:20": {
       "package": "glue",
       "code": "RY040",
@@ -1350,6 +1422,33 @@
       "severity": "warning",
       "message": "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
     },
+    "gt::RY109::R/cols_align.R:197:14": {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/cols_align.R",
+      "line": 197,
+      "column": 14,
+      "severity": "warning",
+      "message": "parameter `data_tbl` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "gt::RY109::R/cols_align.R:198:17": {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/cols_align.R",
+      "line": 198,
+      "column": 17,
+      "severity": "warning",
+      "message": "parameter `col_classes` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "gt::RY109::R/utils_render_grid.R:421:37": {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/utils_render_grid.R",
+      "line": 421,
+      "column": 37,
+      "severity": "warning",
+      "message": "parameter `data` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
       "code": "RY032",
@@ -1367,6 +1466,24 @@
       "column": 5,
       "severity": "error",
       "message": "could not find function `callback` (bound here as `NULL`)"
+    },
+    "httr::RY109::R/config.r:189:34": {
+      "package": "httr",
+      "code": "RY109",
+      "path": "R/config.r",
+      "line": 189,
+      "column": 34,
+      "severity": "warning",
+      "message": "parameter `config` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "infer::RY109::R/calculate.R:741:42": {
+      "package": "infer",
+      "code": "RY109",
+      "path": "R/calculate.R",
+      "line": 741,
+      "column": 42,
+      "severity": "warning",
+      "message": "parameter `call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
     },
     "keras3::RY010::R/model-training.R:596:35": {
       "package": "keras3",
@@ -1637,6 +1754,24 @@
       "column": 3,
       "severity": "warning",
       "message": "variable `lubridate_shared_empty_period` is not bound in this scope"
+    },
+    "lubridate::RY109::R/guess.r:265:64": {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/guess.r",
+      "line": 265,
+      "column": 64,
+      "severity": "warning",
+      "message": "parameter `.select_formats` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "lubridate::RY109::R/parse.r:975:32": {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/parse.r",
+      "line": 975,
+      "column": 32,
+      "severity": "warning",
+      "message": "parameter `tz` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
     },
     "pak::RY001::R/json.R:100:13": {
       "package": "pak",
@@ -1926,6 +2061,15 @@
       "severity": "warning",
       "message": "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
     },
+    "parsnip::RY109::R/aaa_models.R:483:43": {
+      "package": "parsnip",
+      "code": "RY109",
+      "path": "R/aaa_models.R",
+      "line": 483,
+      "column": 43,
+      "severity": "warning",
+      "message": "parameter `call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "pkgdown::RY010::R/config.R:171:7": {
       "package": "pkgdown",
       "code": "RY010",
@@ -1980,6 +2124,24 @@
       "severity": "warning",
       "message": "`template` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
     },
+    "pkgdown::RY109::R/topics.R:271:16": {
+      "package": "pkgdown",
+      "code": "RY109",
+      "path": "R/topics.R",
+      "line": 271,
+      "column": 16,
+      "severity": "warning",
+      "message": "parameter `error_call` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "pkgdown::RY109::R/tweak-navbar.R:32:41": {
+      "package": "pkgdown",
+      "code": "RY109",
+      "path": "R/tweak-navbar.R",
+      "line": 32,
+      "column": 41,
+      "severity": "warning",
+      "message": "parameter `pkg` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "plumber::RY032::R/plumber.R:1360:7": {
       "package": "plumber",
       "code": "RY032",
@@ -2024,6 +2186,15 @@
       "column": 20,
       "severity": "error",
       "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
+    },
+    "purrr::RY109::R/progress-bars.R:56:16": {
+      "package": "purrr",
+      "code": "RY109",
+      "path": "R/progress-bars.R",
+      "line": 56,
+      "column": 16,
+      "severity": "warning",
+      "message": "parameter `caller_env` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
     },
     "renv::RY001::R/parse.R:3:7": {
       "package": "renv",
@@ -2637,6 +2808,24 @@
       "severity": "warning",
       "message": "missing required argument `expr` in call to `eval`"
     },
+    "rlang::RY109::tests/testthat/test-nse-defuse.R:329:22": {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 329,
+      "column": 22,
+      "severity": "warning",
+      "message": "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "rlang::RY109::tests/testthat/test-nse-defuse.R:334:22": {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 334,
+      "column": 22,
+      "severity": "warning",
+      "message": "parameter `x` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "rmarkdown::RY032::R/pandoc.R:210:38": {
       "package": "rmarkdown",
       "code": "RY032",
@@ -3105,6 +3294,24 @@
       "severity": "warning",
       "message": "comparison is inside `length()`; compare `length(x)` instead"
     },
+    "shiny-r::RY109::R/bootstrap-layout.R:609:52": {
+      "package": "shiny-r",
+      "code": "RY109",
+      "path": "R/bootstrap-layout.R",
+      "line": 609,
+      "column": 52,
+      "severity": "warning",
+      "message": "parameter `width` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "shiny-r::RY109::R/bootstrap-layout.R:609:68": {
+      "package": "shiny-r",
+      "code": "RY109",
+      "path": "R/bootstrap-layout.R",
+      "line": 609,
+      "column": 68,
+      "severity": "warning",
+      "message": "parameter `height` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
     "sparklyr::RY001::R/config.R:375:9": {
       "package": "sparklyr",
       "code": "RY001",
@@ -3167,6 +3374,24 @@
       "column": 40,
       "severity": "warning",
       "message": "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits()`"
+    },
+    "sparklyr::RY109::R/connection_test.R:2:12": {
+      "package": "sparklyr",
+      "code": "RY109",
+      "path": "R/connection_test.R",
+      "line": 2,
+      "column": 12,
+      "severity": "warning",
+      "message": "parameter `master` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
+    },
+    "sparklyr::RY109::R/connection_test.R:3:12": {
+      "package": "sparklyr",
+      "code": "RY109",
+      "path": "R/connection_test.R",
+      "line": 3,
+      "column": 12,
+      "severity": "warning",
+      "message": "parameter `config` has a self-referential default that errors ('promise already under evaluation') when the argument is missing"
     },
     "styler::RY010::tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R:2:18": {
       "package": "styler",

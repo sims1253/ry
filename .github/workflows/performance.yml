@@ -118,7 +118,7 @@ jobs:
             exit "$status"
           fi
       - name: Compare measurements and update main history
-        uses: benchmark-action/github-action-benchmark@a7bc2366eda11037936ea57d811a43b3418d3073 # v1.21.0
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: ry performance
           tool: customSmallerIsBetter

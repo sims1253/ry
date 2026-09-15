@@ -4377,11 +4377,6 @@
         "mode": "yes_or_no",
         "length": "test",
         "na": true
-      },
-      "return_mode": {
-        "kind": "test_template",
-        "test": "test",
-        "values": ["yes", "no"]
       }
     },
     "inherits": {

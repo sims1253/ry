@@ -373,3 +373,188 @@ fn unsupported_actual_values_are_not_missing() {
     assert_eq!(args[0].name.as_deref(), Some("a"));
     assert_eq!(args[1].name.as_deref(), Some("b"));
 }
+
+/// The native-pipe (`|>`) right-hand-side matrix, verified form by form
+/// against R 4.6.1's parser (`Rscript -e 'parse(text = "...")'`). R
+/// implements `|>` as a syntax transformation and only rewrites
+///
+///   * a call whose function is not syntactically special, and
+///   * an extraction chain rooted at the `_` placeholder (R 4.3+).
+///
+/// tree-sitter's grammar accepts every shape below, so the rejected
+/// forms must surface as `syntax_violations` (RY000) instead of
+/// checking clean. The `_`-placeholder discipline (unnamed, nested, or
+/// repeated `_` inside the call) is R 4.2+-specific and intentionally
+/// not flagged here; those forms appear as accepted expectations only.
+#[test]
+fn native_pipe_rhs_matrix_matches_base_r() {
+    let accepted = [
+        // Plain, string-headed, and namespace-qualified calls.
+        "1 |> sqrt()",
+        "1 |> f(y)",
+        "1 |> f(.)",
+        "1 |> f(y, .)",
+        "1 |> base::sqrt()",
+        "1 |> base:::sqrt()",
+        "1 |> \"sqrt\"()",
+        "1 |> f(y, ...)",
+        // Calls headed by calls, extractions, and parenthesized
+        // expressions (including the documented lambda idiom).
+        "1 |> f(y)(z)",
+        "1 |> f(y)(z)(w)",
+        "1 |> z[[1]](x)",
+        "1 |> z[1](x)",
+        "1 |> z$x(y)",
+        "1 |> (\\(d) d)()",
+        "1 |> (function(d) d)()",
+        // The named `_` placeholder (R 4.2+).
+        "1 |> f(x = _)",
+        "1 |> f(y, x = _)",
+        "1 |> list(x = _)",
+        // Extraction chains rooted at `_` (R 4.3+).
+        "1 |> _[1]",
+        "1 |> _[[1]]",
+        "1 |> _[1, 2]",
+        "1 |> _[x > 1]",
+        "1 |> _$a",
+        "1 |> _@a",
+        "1 |> _$a$b",
+        "1 |> _[[1]][2]",
+        "1 |> _[1]$a",
+        "1 |> _$a[1]",
+        // Backquoted ordinary (non-special) heads stay calls.
+        "1 |> `f`(y)",
+        "1 |> `names<-`(z, 1)",
+        "1 |> `%>%`(a, b)",
+        "1 |> `:=`(a, b)",
+        "1 |> `->`(a, b)",
+        "1 |> `else`(a)",
+        "1 |> `in`(a, b)",
+        "1 |> `_`(a)",
+        // Chains and precedence: `|>` binds tighter than `+`.
+        "1 |> sqrt() + 1",
+        "1 |> sqrt() |> log()",
+        "x <- 1 |> sqrt()",
+        // magrittr pipes are not restricted: bare symbols, blocks, and
+        // `.[1]` extractions are all valid `%>%` right-hand sides.
+        "x %>% abs",
+        "x %>% { . + 1 }",
+        "x %>% .[1]",
+    ];
+    let rejected = [
+        // RHS is not a call at all.
+        "1 |> sqrt",
+        "1 |> 2",
+        "1 |> \"a\"",
+        "1 |> TRUE",
+        "1 |> NA",
+        "1 |> _",
+        "1 |> ..1",
+        "1 |> ...",
+        "1 |> z + 1",
+        // Bare blocks and lambdas are calls to `{` / `function` in R's
+        // AST; R rejects both shapes.
+        "1 |> { . + 1 }",
+        "1 |> { 1 }",
+        "1 |> \\(z) z",
+        "1 |> function(z) z",
+        // Parenthesized and namespace-qualified names are calls to
+        // `(` and `::`.
+        "1 |> (sqrt)",
+        "1 |> (sqrt())",
+        "1 |> base::sqrt",
+        // Control flow on the RHS.
+        "1 |> if (z) 2 else 3",
+        "1 |> while (z) 2",
+        "1 |> for (i in 1:2) 3",
+        "1 |> repeat 2",
+        // Extraction calls not rooted at the `_` placeholder.
+        "1 |> z[.]",
+        "1 |> z[1]",
+        "1 |> z[]",
+        "1 |> z[1][2]",
+        "1 |> z[[1]]",
+        "1 |> z[[.]][1]",
+        "1 |> z$x",
+        "1 |> z$.x",
+        "1 |> z$.x$y",
+        "1 |> z$`x y`",
+        "1 |> z@x",
+        "1 |> base::x[1]",
+        "1 |> (z)[1]",
+        "1 |> f(y)[1]",
+        "1 |> f(x = _)$y",
+        "1 |> `_`[1]",
+        // Backquoted syntactically-special heads.
+        "1 |> `+`(y)",
+        "1 |> `while`(x) 1",
+        "1 |> `if`(z, 1)",
+        "1 |> `{`(1)",
+        "1 |> `[[`(z, 1)",
+        "1 |> `$`(z, 1)",
+        "1 |> `@`(z, x)",
+        "1 |> `(`(z)",
+        "1 |> `function`(z) 1",
+        "1 |> `::`(base, sqrt)",
+        // Assignment RHS groups the extraction under the pipe.
+        "1 |> z$x <- 1",
+    ];
+    for source in accepted {
+        let file = parse(source);
+        assert!(
+            file.parse_errors.is_empty() && file.syntax_violations.is_empty(),
+            "{source}: accepted by R but flagged: {:?} / {:?}",
+            file.parse_errors,
+            file.syntax_violations
+        );
+    }
+    for source in rejected {
+        let file = parse(source);
+        assert!(
+            !file.syntax_violations.is_empty(),
+            "{source}: rejected by R's parser but not flagged"
+        );
+        // Every violation must carry the exact R-verified message shape
+        // and stay inside the source bounds.
+        for violation in &file.syntax_violations {
+            assert!(
+                violation.message
+                    == "syntax error: the pipe operator requires a function call as RHS"
+                    || (violation.message.starts_with("syntax error: function '")
+                        && violation
+                            .message
+                            .ends_with("' not supported in RHS call of a pipe")),
+                "{source}: unexpected message {:?}",
+                violation.message
+            );
+            assert!(violation.span.start <= violation.span.end);
+            assert!(violation.span.end <= source.len());
+            assert!(source.is_char_boundary(violation.span.start));
+            assert!(source.is_char_boundary(violation.span.end));
+        }
+    }
+}
+
+/// The placeholder-discipline forms R 4.6 rejects at parse time
+/// (`f(_)`, nested or repeated `_`, `_` in the call's function part)
+/// are deliberately NOT flagged yet: those rules are R 4.2+ semantics
+/// and need their own precision case. This test pins the current
+/// behavior so widening it later is a conscious decision.
+#[test]
+fn native_pipe_placeholder_discipline_is_currently_unflagged() {
+    for source in [
+        "1 |> f(_)",
+        "1 |> f(y, _)",
+        "1 |> f(g(_))",
+        "1 |> f(x = _ + 1)",
+        "1 |> f(y, x = _, z = _)",
+        "1 |> _[[1]](x)",
+    ] {
+        let file = parse(source);
+        assert!(
+            file.parse_errors.is_empty() && file.syntax_violations.is_empty(),
+            "{source}: expected no diagnostics under the current scope, got {:?}",
+            file.syntax_violations
+        );
+    }
+}

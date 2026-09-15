@@ -1158,6 +1158,30 @@ fn pipe_placeholders_are_specific_to_their_pipe_form() {
 }
 
 #[test]
+fn magrittr_leading_dot_pipe_builds_a_function() {
+    // `. %>% f %>% g` is magrittr's functional sequence: the dot is the
+    // chain's parameter (?magrittr::`%>%`, "Using the dot-place-holder as
+    // lhs"), not an unbound name, and the chain's value is a function
+    // (torch's `map(.x, . %>% get_args %>% parse_args)` corpus shape).
+    let (diags, scope) = check_with_scope("g <- . %>% identity %>% class\nh <- . %T>% print\n");
+    assert!(
+        diags.iter().all(|d| d.code != "RY010"),
+        "the leading dot is a chain parameter, got {diags:?}"
+    );
+    for name in ["g", "h"] {
+        let t = scope.get(name).unwrap_or_else(|| panic!("{name} bound"));
+        assert_eq!(t.mode, Mode::Function, "{name}: {t:?}");
+    }
+    // The native pipe has no functional-sequence form: `_` on the left of
+    // `|>` stays an ordinary (unbound) name.
+    let native = check("k <- _ |> identity()\n");
+    assert!(
+        native.iter().any(|d| d.code == "RY010"),
+        "native `_` has no lambda form: {native:?}"
+    );
+}
+
+#[test]
 fn pipe_dot_pronoun_single_bracket() {
     // `df %>% .[1]` preserves the base type (single-bracket
     // subsetting keeps the existing opaque behavior at v1), so the

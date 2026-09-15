@@ -1,0 +1,540 @@
+{
+  "schema_version": "2",
+  "package": "tibble",
+  "version": "0.0.2",
+  "functions": {
+    "%>%": {
+      "params": [
+        "lhs",
+        "rhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "add_case": {
+      "params": [
+        ".data",
+        "...",
+        ".before",
+        ".after"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "add_column": {
+      "params": [
+        ".data",
+        "...",
+        ".before",
+        ".after",
+        ".name_repair"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "add_row": {
+      "params": [
+        ".data",
+        "...",
+        ".before",
+        ".after"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "as_data_frame": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_tibble": {
+      "params": [
+        "x",
+        "...",
+        ".rows",
+        ".name_repair",
+        "rownames"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_tibble_col": {
+      "params": [
+        "x",
+        "column_name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_tibble_row": {
+      "params": [
+        "x",
+        ".name_repair"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.tibble": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "char": {
+      "params": [
+        "x",
+        "...",
+        "min_chars",
+        "shorten"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "column_to_rownames": {
+      "params": [
+        ".data",
+        "var"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "data_frame": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "data_frame_": {
+      "params": [
+        "xs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deframe": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "enframe": {
+      "params": [
+        "x",
+        "name",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frame_data": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frame_matrix": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glimpse": {
+      "params": [
+        "x",
+        "width",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_name": {
+      "params": [
+        "x",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_rownames": {
+      "params": [
+        ".data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_tibble": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.tibble": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lst": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "lst_": {
+      "params": [
+        "xs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_tibble": {
+      "params": [
+        "x",
+        "...",
+        "nrow",
+        "class",
+        "subclass"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "splice"}
+    },
+    "num": {
+      "params": [
+        "x",
+        "...",
+        "sigfig",
+        "digits",
+        "label",
+        "scale",
+        "notation",
+        "fixed_exponent",
+        "extra_sigfig"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "obj_sum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "remove_rownames": {
+      "params": [
+        ".data"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "repair_names": {
+      "params": [
+        "x",
+        "prefix",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowid_to_column": {
+      "params": [
+        ".data",
+        "var"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rownames_to_column": {
+      "params": [
+        ".data",
+        "var"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_char_opts": {
+      "params": [
+        "x",
+        "...",
+        "min_chars",
+        "shorten"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_num_opts": {
+      "params": [
+        "x",
+        "...",
+        "sigfig",
+        "digits",
+        "label",
+        "scale",
+        "notation",
+        "fixed_exponent",
+        "extra_sigfig"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "set_tidy_names": {
+      "params": [
+        "x",
+        "syntactic",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "size_sum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tbl_sum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tibble": {
+      "params": [
+        "...",
+        ".rows",
+        ".name_repair"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "tibble_": {
+      "params": [
+        "xs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tibble_row": {
+      "params": [
+        "...",
+        ".name_repair"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      },
+      "injection": {"...": "full"}
+    },
+    "tidy_names": {
+      "params": [
+        "name",
+        "syntactic",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tribble": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trunc_mat": {
+      "params": [
+        "x",
+        "n",
+        "width",
+        "n_extra"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "type_sum": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "validate_tibble": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "view": {
+      "params": [
+        "x",
+        "title",
+        "...",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__C__tbl_df": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

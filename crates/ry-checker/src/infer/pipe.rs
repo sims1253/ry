@@ -38,6 +38,24 @@ fn is_placeholder_chain(e: &Expr, form: PipeForm) -> bool {
     }
 }
 
+/// True if `e` is a magrittr pipe chain whose leftmost operand is the bare
+/// `.` pronoun — `. %>% f`, `. %T>% print`, `. %>% f %<>% g`. magrittr
+/// builds a functional sequence from it: a function whose parameter is the
+/// dot (?magrittr::`%>%`, "Using the dot-place-holder as lhs"), so the dot
+/// is bound for the whole chain. The native pipe has no such form: `_` on
+/// the left of `|>` stays an ordinary unbound name.
+fn is_leading_dot_chain(e: &Expr) -> bool {
+    match e {
+        Expr::Ident { name, .. } => name == ".",
+        Expr::BinOp {
+            op: BinOpKind::PipeForward | BinOpKind::PipeAssign | BinOpKind::PipeTee,
+            lhs,
+            ..
+        } => is_leading_dot_chain(lhs),
+        _ => false,
+    }
+}
+
 impl Checker {
     /// Run `f` with magrittr's `.` bound to the piped value, restoring the
     /// previous binding (if any) afterwards. magrittr binds `.` across the
@@ -97,6 +115,23 @@ impl Checker {
         form: PipeForm,
         scope: &mut Scope,
     ) -> RType {
+        // A leading-dot magrittr chain is a functional sequence: bind the
+        // dot as the chain's parameter while the chain is inferred, then
+        // type the chain as a function value. The recursion guard keeps
+        // the inner walk (whose own lhs is the dot itself) on the ordinary
+        // path, where the binding above resolves it.
+        if matches!(form, PipeForm::Magrittr)
+            && !self.in_leading_dot_chain
+            && is_leading_dot_chain(lhs)
+        {
+            let previous = scope.replace_binding_only(".", Some(RType::unknown()));
+            self.in_leading_dot_chain = true;
+            let lhs_t = self.infer(lhs, scope);
+            self.in_leading_dot_chain = false;
+            let _ = self.infer_pipe_with_lhs_type(lhs, rhs, span, lhs_t, form, scope);
+            scope.replace_binding_only(".", previous);
+            return RType::scalar(Mode::Function);
+        }
         // Infer the LHS so diagnostics fire on it (e.g. unbound name).
         let lhs_t = self.infer(lhs, scope);
         self.infer_pipe_with_lhs_type(lhs, rhs, span, lhs_t, form, scope)
@@ -235,6 +270,25 @@ impl Checker {
     /// The RHS side-effect (e.g. `print`, `plot`) is discarded at runtime;
     /// the value flows through as the LHS.
     pub(crate) fn infer_pipe_tee(&mut self, lhs: &Expr, rhs: &Expr, scope: &mut Scope) -> RType {
+        // A leading-dot tee chain is a functional sequence like the other
+        // magrittr forms (magrittr's lambda construction is kind-
+        // independent), so the dot binds as the chain's parameter.
+        if !self.in_leading_dot_chain && is_leading_dot_chain(lhs) {
+            let previous = scope.replace_binding_only(".", Some(RType::unknown()));
+            self.in_leading_dot_chain = true;
+            let lhs_t = self.infer(lhs, scope);
+            self.in_leading_dot_chain = false;
+            let _ = self.infer_pipe_with_lhs_type(
+                lhs,
+                rhs,
+                span_of(rhs),
+                lhs_t,
+                PipeForm::Magrittr,
+                scope,
+            );
+            scope.replace_binding_only(".", previous);
+            return RType::scalar(Mode::Function);
+        }
         let lhs_t = self.infer(lhs, scope);
         let _ = self.infer_pipe_with_lhs_type(
             lhs,

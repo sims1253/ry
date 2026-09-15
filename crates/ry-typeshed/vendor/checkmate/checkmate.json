@@ -1,0 +1,6059 @@
+{
+  "schema_version": "2",
+  "package": "checkmate",
+  "version": "0.0.1",
+  "functions": {
+    "%??%": {
+      "params": [
+        "lhs",
+        "rhs"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "allMissing": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "anyInfinite": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "anyMissing": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "anyNaN": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asCount": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asInt": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asInteger": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert": {
+      "params": [
+        "...",
+        "combine",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_access": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_array": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_atomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_atomic_vector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_character": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_choice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_class": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_complex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_count": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_data_frame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_data_table": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_date": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_directory": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_directory_exists": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_disjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_double": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_environment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_factor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_false": {
+      "params": [
+        "x",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_file": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_file_exists": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_flag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_formula": {
+      "params": [
+        "x",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_function": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_int": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_integer": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_integerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_list": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_logical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_matrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_multi_class": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_named": {
+      "params": [
+        "x",
+        "type",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_names": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_null": {
+      "params": [
+        "x",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_number": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_numeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_os": {
+      "params": [
+        "os",
+        "add",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_path_for_output": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_permutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_posixct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_r6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_raw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_scalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_scalar_na": {
+      "params": [
+        "x",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_set_equal": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_string": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_subset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_tibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_true": {
+      "params": [
+        "x",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assert_vector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertAccess": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertArray": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertAtomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertAtomicVector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertCharacter": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertChoice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertClass": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertComplex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertCount": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDataFrame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDataTable": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDate": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDirectory": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDirectoryExists": {
+      "params": [
+        "x",
+        "access",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDisjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertDouble": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertEnvironment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFactor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFALSE": {
+      "params": [
+        "x",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFile": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFileExists": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFlag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFormula": {
+      "params": [
+        "x",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertFunction": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertInt": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertInteger": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertIntegerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "coerce",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertList": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertLogical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertMatrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertMultiClass": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertNamed": {
+      "params": [
+        "x",
+        "type",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertNames": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertNull": {
+      "params": [
+        "x",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertNumber": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertNumeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertOS": {
+      "params": [
+        "os",
+        "add",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertPathForOutput": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertPermutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertPOSIXct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertR6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertRaw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertScalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertScalarNA": {
+      "params": [
+        "x",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertSetEqual": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertString": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertSubset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertTibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertTRUE": {
+      "params": [
+        "x",
+        "na.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "assertVector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_access": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_array": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_atomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_atomic_vector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_character": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_choice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_class": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_complex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_count": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_data_frame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_data_table": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_date": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_directory_exists": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_disjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_double": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_environment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_factor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_false": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_file_exists": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_flag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_formula": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_function": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_int": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_integer": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_integerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_list": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_logical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_matrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_multi_class": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_named": {
+      "params": [
+        "x",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_names": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_null": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_number": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_numeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_os": {
+      "params": [
+        "os"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_path_for_output": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_permutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_posixct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_r6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_raw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_scalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_scalar_na": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_set_equal": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_string": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_subset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_tibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_true": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "check_vector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkAccess": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkArray": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkAtomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkAtomicVector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkCharacter": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkChoice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkClass": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkComplex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkCount": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDataFrame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDataTable": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDate": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDirectory": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDirectoryExists": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDisjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkDouble": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkEnvironment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFactor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFALSE": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFile": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFileExists": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFlag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFormula": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkFunction": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkInt": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkInteger": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkIntegerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkList": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkLogical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkMatrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkMultiClass": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkNamed": {
+      "params": [
+        "x",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkNames": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkNull": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkNumber": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkNumeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkOS": {
+      "params": [
+        "os"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkPathForOutput": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkPermutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkPOSIXct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkR6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkRaw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkScalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkScalarNA": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkSetEqual": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkString": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkSubset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkTibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkTRUE": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "checkVector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_access": {
+      "params": [
+        "x",
+        "access",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_array": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_atomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_atomic_vector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_character": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_choice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_class": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_complex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_count": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_data_frame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_data_table": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_date": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_directory": {
+      "params": [
+        "x",
+        "access",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_directory_exists": {
+      "params": [
+        "x",
+        "access",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_disjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_double": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_environment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_factor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_file": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_file_exists": {
+      "params": [
+        "x",
+        "access",
+        "extension",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_flag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_formula": {
+      "params": [
+        "x",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_function": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_int": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_integer": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_integerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_list": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_logical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_matrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_multi_class": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_names": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_number": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_numeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_os": {
+      "params": [
+        "os",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_path_for_output": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_permutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_posixct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_r6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_raw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_scalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_scalar_na": {
+      "params": [
+        "x",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_set_equal": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_string": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_subset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_tibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeAssertCollection": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeAssertion": {
+      "params": [
+        "x",
+        "res",
+        "var.name",
+        "collection"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeAssertionFunction": {
+      "params": [
+        "check.fun",
+        "c.fun",
+        "use.namespace",
+        "coerce",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeExpectation": {
+      "params": [
+        "x",
+        "res",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeExpectationFunction": {
+      "params": [
+        "check.fun",
+        "c.fun",
+        "use.namespace",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeTest": {
+      "params": [
+        "res"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "makeTestFunction": {
+      "params": [
+        "check.fun",
+        "c.fun",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "matchArg": {
+      "params": [
+        "x",
+        "choices",
+        "several.ok",
+        ".var.name",
+        "add"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qassert": {
+      "params": [
+        "x",
+        "rules",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qassertr": {
+      "params": [
+        "x",
+        "rules",
+        ".var.name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qexpect": {
+      "params": [
+        "x",
+        "rules",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qexpectr": {
+      "params": [
+        "x",
+        "rules",
+        "info",
+        "label"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qtest": {
+      "params": [
+        "x",
+        "rules"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qtestr": {
+      "params": [
+        "x",
+        "rules",
+        "depth"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "register_test_backend": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reportAssertions": {
+      "params": [
+        "collection"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_access": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_array": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_atomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_atomic_vector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_character": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_choice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_class": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_complex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_count": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_data_frame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_data_table": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_date": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_directory": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_directory_exists": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_disjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_double": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_environment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_factor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_false": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_file_exists": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_flag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_formula": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_function": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_int": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_integer": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_integerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_list": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_logical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_matrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_multi_class": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_named": {
+      "params": [
+        "x",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_names": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_null": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_number": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_numeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_os": {
+      "params": [
+        "os"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_path_for_output": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_permutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_posixct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_r6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_raw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_scalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_scalar_na": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_set_equal": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_string": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_subset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_tibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_true": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "test_vector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testAccess": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testArray": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "d",
+        "min.d",
+        "max.d",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testAtomic": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testAtomicVector": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testCharacter": {
+      "params": [
+        "x",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testChoice": {
+      "params": [
+        "x",
+        "choices",
+        "null.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testClass": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testComplex": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testCount": {
+      "params": [
+        "x",
+        "na.ok",
+        "positive",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDataFrame": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDataTable": {
+      "params": [
+        "x",
+        "key",
+        "index",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDate": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDirectory": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDirectoryExists": {
+      "params": [
+        "x",
+        "access"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDisjunct": {
+      "params": [
+        "x",
+        "y",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testDouble": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testEnvironment": {
+      "params": [
+        "x",
+        "contains",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFactor": {
+      "params": [
+        "x",
+        "levels",
+        "ordered",
+        "empty.levels.ok",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "n.levels",
+        "min.levels",
+        "max.levels",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFALSE": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFile": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFileExists": {
+      "params": [
+        "x",
+        "access",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFlag": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFormula": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testFunction": {
+      "params": [
+        "x",
+        "args",
+        "ordered",
+        "nargs",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testInt": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "tol",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testInteger": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testIntegerish": {
+      "params": [
+        "x",
+        "tol",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testList": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testLogical": {
+      "params": [
+        "x",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testMatrix": {
+      "params": [
+        "x",
+        "mode",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testMultiClass": {
+      "params": [
+        "x",
+        "classes",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testNamed": {
+      "params": [
+        "x",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testNames": {
+      "params": [
+        "x",
+        "type",
+        "subset.of",
+        "must.include",
+        "permutation.of",
+        "identical.to",
+        "disjunct.from",
+        "what"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testNull": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testNumber": {
+      "params": [
+        "x",
+        "na.ok",
+        "lower",
+        "upper",
+        "finite",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testNumeric": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "finite",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "names",
+        "typed.missing",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testOS": {
+      "params": [
+        "os"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testPathForOutput": {
+      "params": [
+        "x",
+        "overwrite",
+        "extension"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testPermutation": {
+      "params": [
+        "x",
+        "y",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testPOSIXct": {
+      "params": [
+        "x",
+        "lower",
+        "upper",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "sorted",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testR6": {
+      "params": [
+        "x",
+        "classes",
+        "ordered",
+        "cloneable",
+        "public",
+        "private",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testRaw": {
+      "params": [
+        "x",
+        "len",
+        "min.len",
+        "max.len",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testScalar": {
+      "params": [
+        "x",
+        "na.ok",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testScalarNA": {
+      "params": [
+        "x",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testSetEqual": {
+      "params": [
+        "x",
+        "y",
+        "ordered",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testString": {
+      "params": [
+        "x",
+        "na.ok",
+        "n.chars",
+        "min.chars",
+        "max.chars",
+        "pattern",
+        "fixed",
+        "ignore.case",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testSubset": {
+      "params": [
+        "x",
+        "choices",
+        "empty.ok",
+        "fmatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testTibble": {
+      "params": [
+        "x",
+        "types",
+        "any.missing",
+        "all.missing",
+        "min.rows",
+        "max.rows",
+        "min.cols",
+        "max.cols",
+        "nrows",
+        "ncols",
+        "row.names",
+        "col.names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testTRUE": {
+      "params": [
+        "x",
+        "na.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "testVector": {
+      "params": [
+        "x",
+        "strict",
+        "any.missing",
+        "all.missing",
+        "len",
+        "min.len",
+        "max.len",
+        "unique",
+        "names",
+        "null.ok"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "vname": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wf": {
+      "params": [
+        "x",
+        "use.names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wl": {
+      "params": [
+        "x",
+        "use.names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

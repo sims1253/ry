@@ -1,0 +1,199 @@
+{
+  "schema_version": "2",
+  "package": "lifecycle",
+  "version": "0.0.1",
+  "functions": {
+    "badge": {
+      "params": [
+        "stage"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deprecate_soft": {
+      "params": [
+        "when",
+        "what",
+        "with",
+        "details",
+        "id",
+        "env",
+        "user_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deprecate_stop": {
+      "params": [
+        "when",
+        "what",
+        "with",
+        "details",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deprecate_warn": {
+      "params": [
+        "when",
+        "what",
+        "with",
+        "details",
+        "id",
+        "always",
+        "env",
+        "user_env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "deprecated": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_defunct": {
+      "params": [
+        "expr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expect_deprecated": {
+      "params": [
+        "expr",
+        "regexp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_present": {
+      "params": [
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "last_lifecycle_warnings": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lifecycle_linter": {
+      "params": [
+        "packages",
+        "which",
+        "symbol_is_undesirable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lint_lifecycle": {
+      "params": [
+        "packages",
+        "path",
+        "pattern",
+        "which",
+        "symbol_is_undesirable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lint_tidyverse_lifecycle": {
+      "params": [
+        "path",
+        "pattern",
+        "which",
+        "symbol_is_undesirable"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pkg_lifecycle_statuses": {
+      "params": [
+        "package",
+        "which"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "signal_experimental": {
+      "params": [
+        "when",
+        "what",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "signal_stage": {
+      "params": [
+        "stage",
+        "what",
+        "with",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "signal_superseded": {
+      "params": [
+        "when",
+        "what",
+        "env"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

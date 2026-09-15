@@ -1,0 +1,2447 @@
+{
+  "schema_version": "2",
+  "package": "scales",
+  "version": "0.0.1",
+  "functions": {
+    "abs_area": {
+      "params": [
+        "max"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "alpha": {
+      "params": [
+        "colour",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "area_pal": {
+      "params": [
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_continuous_pal": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_discrete_pal": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.trans": {
+      "params": [
+        "x",
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.transform": {
+      "params": [
+        "x",
+        "arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asinh_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asn_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "atanh_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "boxcox_trans": {
+      "params": [
+        "p",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_exp": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_extended": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_log": {
+      "params": [
+        "n",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_pretty": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_timespan": {
+      "params": [
+        "unit",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "breaks_width": {
+      "params": [
+        "width",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "brewer_pal": {
+      "params": [
+        "type",
+        "palette",
+        "direction"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cbreaks": {
+      "params": [
+        "range",
+        "breaks",
+        "labels"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "censor": {
+      "params": [
+        "x",
+        "range",
+        "only.finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_bin": {
+      "params": [
+        "palette",
+        "domain",
+        "bins",
+        "pretty",
+        "na.color",
+        "alpha",
+        "reverse",
+        "right"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_darker": {
+      "params": [
+        "col",
+        "amount"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_factor": {
+      "params": [
+        "palette",
+        "domain",
+        "levels",
+        "ordered",
+        "na.color",
+        "alpha",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_lighter": {
+      "params": [
+        "col",
+        "amount"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_mix": {
+      "params": [
+        "a",
+        "b",
+        "amount",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_numeric": {
+      "params": [
+        "palette",
+        "domain",
+        "na.color",
+        "alpha",
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_quantile": {
+      "params": [
+        "palette",
+        "domain",
+        "n",
+        "probs",
+        "na.color",
+        "alpha",
+        "reverse",
+        "right"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_saturate": {
+      "params": [
+        "col",
+        "amount"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col_shift": {
+      "params": [
+        "col",
+        "amount"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "col2hcl": {
+      "params": [
+        "colour",
+        "h",
+        "c",
+        "l",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colour_ramp": {
+      "params": [
+        "colors",
+        "na.color",
+        "alpha"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "comma": {
+      "params": [
+        "x",
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "digits",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "comma_format": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "digits",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "compose_label": {
+      "params": [
+        "...",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "compose_trans": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cscale": {
+      "params": [
+        "x",
+        "palette",
+        "na.value",
+        "trans"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_long_scale": {
+      "params": [
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_short_scale": {
+      "params": [
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_si": {
+      "params": [
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cut_time_scale": {
+      "params": [
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_breaks": {
+      "params": [
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_format": {
+      "params": [
+        "format",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "date_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_continuous": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_datetime": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_discrete": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_log10": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_time": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "demo_timespan": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dichromat_pal": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "discard": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "div_gradient_pal": {
+      "params": [
+        "low",
+        "mid",
+        "high",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dollar": {
+      "params": [
+        "x",
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "largest_with_cents",
+        "negative_parens",
+        "style_negative",
+        "scale_cut",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dollar_format": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "largest_with_cents",
+        "negative_parens",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dscale": {
+      "params": [
+        "x",
+        "palette",
+        "na.value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "exp_trans": {
+      "params": [
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expand_range": {
+      "params": [
+        "range",
+        "mul",
+        "add",
+        "zero_width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "extended_breaks": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_format": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format_log": {
+      "params": [
+        "x",
+        "base",
+        "signed",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fullseq": {
+      "params": [
+        "range",
+        "size",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gradient_n_pal": {
+      "params": [
+        "colours",
+        "values",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grey_pal": {
+      "params": [
+        "start",
+        "end"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hms_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hue_pal": {
+      "params": [
+        "h",
+        "c",
+        "l",
+        "h.start",
+        "direction"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "identity_pal": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "identity_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_colour_pal": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_continuous_pal": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_discrete_pal": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_numeric_pal": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is_pal": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.trans": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.transform": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_bytes": {
+      "params": [
+        "units",
+        "accuracy",
+        "scale",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_comma": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "digits",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_currency": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "largest_with_fractional",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_date": {
+      "params": [
+        "format",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_date_short": {
+      "params": [
+        "format",
+        "sep",
+        "leading",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_dictionary": {
+      "params": [
+        "dictionary",
+        "nomatch"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_dollar": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "largest_with_cents",
+        "negative_parens",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_glue": {
+      "params": [
+        "pattern",
+        "...",
+        "parse",
+        ".envir"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_log": {
+      "params": [
+        "base",
+        "digits",
+        "signed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_math": {
+      "params": [
+        "expr",
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_number": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "style_positive",
+        "style_negative",
+        "scale_cut",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_number_auto": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_number_si": {
+      "params": [
+        "unit",
+        "accuracy",
+        "scale",
+        "suffix",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_ordinal": {
+      "params": [
+        "prefix",
+        "suffix",
+        "big.mark",
+        "rules",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_parse": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_percent": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_pvalue": {
+      "params": [
+        "accuracy",
+        "decimal.mark",
+        "prefix",
+        "add_p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_scientific": {
+      "params": [
+        "digits",
+        "scale",
+        "prefix",
+        "suffix",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_time": {
+      "params": [
+        "format",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_timespan": {
+      "params": [
+        "unit",
+        "space",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "label_wrap": {
+      "params": [
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "linetype_pal": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "log_breaks": {
+      "params": [
+        "n",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "log_trans": {
+      "params": [
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "log10_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "log1p_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "log2_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "logit_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "manual_pal": {
+      "params": [
+        "values",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "math_format": {
+      "params": [
+        "expr",
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minor_breaks_log": {
+      "params": [
+        "detail",
+        "smallest"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minor_breaks_n": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "minor_breaks_width": {
+      "params": [
+        "width",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "modulus_trans": {
+      "params": [
+        "p",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "muted": {
+      "params": [
+        "colour",
+        "l",
+        "c"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_continuous_palette": {
+      "params": [
+        "fun",
+        "type",
+        "na_safe"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_discrete_palette": {
+      "params": [
+        "fun",
+        "type",
+        "nlevels"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_transform": {
+      "params": [
+        "name",
+        "transform",
+        "inverse",
+        "d_transform",
+        "d_inverse",
+        "breaks",
+        "minor_breaks",
+        "format",
+        "domain"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "number": {
+      "params": [
+        "x",
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "style_positive",
+        "style_negative",
+        "scale_cut",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "number_bytes": {
+      "params": [
+        "x",
+        "symbol",
+        "units",
+        "accuracy",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "number_bytes_format": {
+      "params": [
+        "symbol",
+        "units",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "number_format": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "style_positive",
+        "style_negative",
+        "scale_cut",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "number_options": {
+      "params": [
+        "decimal.mark",
+        "big.mark",
+        "style_positive",
+        "style_negative",
+        "currency.prefix",
+        "currency.suffix",
+        "currency.decimal.mark",
+        "currency.big.mark",
+        "ordinal.rules"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_censor": {
+      "params": [
+        "x",
+        "range",
+        "only.finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_censor_any": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_discard": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_keep": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_squish": {
+      "params": [
+        "x",
+        "range",
+        "only.finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_squish_any": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "oob_squish_infinite": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ordinal": {
+      "params": [
+        "x",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "rules",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ordinal_english": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ordinal_format": {
+      "params": [
+        "prefix",
+        "suffix",
+        "big.mark",
+        "rules",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ordinal_french": {
+      "params": [
+        "gender",
+        "plural"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ordinal_spanish": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_area": {
+      "params": [
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_brewer": {
+      "params": [
+        "type",
+        "palette",
+        "direction"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_dichromat": {
+      "params": [
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_div_gradient": {
+      "params": [
+        "low",
+        "mid",
+        "high",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_gradient_n": {
+      "params": [
+        "colours",
+        "values",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_grey": {
+      "params": [
+        "start",
+        "end"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_hue": {
+      "params": [
+        "h",
+        "c",
+        "l",
+        "h.start",
+        "direction"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_identity": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_linetype": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_manual": {
+      "params": [
+        "values",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_rescale": {
+      "params": [
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_seq_gradient": {
+      "params": [
+        "low",
+        "high",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_shape": {
+      "params": [
+        "solid"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pal_viridis": {
+      "params": [
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "palette_na_safe": {
+      "params": [
+        "pal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "palette_nlevels": {
+      "params": [
+        "pal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "palette_type": {
+      "params": [
+        "pal"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_format": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "percent": {
+      "params": [
+        "x",
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "percent_format": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pretty_breaks": {
+      "params": [
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "probability_trans": {
+      "params": [
+        "distribution",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "probit_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pseudo_log_trans": {
+      "params": [
+        "sigma",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pvalue": {
+      "params": [
+        "x",
+        "accuracy",
+        "decimal.mark",
+        "prefix",
+        "add_p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pvalue_format": {
+      "params": [
+        "accuracy",
+        "decimal.mark",
+        "prefix",
+        "add_p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reciprocal_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "regular_minor_breaks": {
+      "params": [
+        "reverse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rescale": {
+      "params": [
+        "x",
+        "to",
+        "from",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rescale_max": {
+      "params": [
+        "x",
+        "to",
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rescale_mid": {
+      "params": [
+        "x",
+        "to",
+        "from",
+        "mid",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rescale_none": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rescale_pal": {
+      "params": [
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "reverse_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scientific": {
+      "params": [
+        "x",
+        "digits",
+        "scale",
+        "prefix",
+        "suffix",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scientific_format": {
+      "params": [
+        "digits",
+        "scale",
+        "prefix",
+        "suffix",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "seq_gradient_pal": {
+      "params": [
+        "low",
+        "high",
+        "space"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "shape_pal": {
+      "params": [
+        "solid"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "show_col": {
+      "params": [
+        "colours",
+        "labels",
+        "borders",
+        "cex_label",
+        "ncol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sqrt_trans": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "squish": {
+      "params": [
+        "x",
+        "range",
+        "only.finite"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "squish_infinite": {
+      "params": [
+        "x",
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "time_format": {
+      "params": [
+        "format",
+        "tz",
+        "locale"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "time_trans": {
+      "params": [
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "timespan_trans": {
+      "params": [
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "train_continuous": {
+      "params": [
+        "new",
+        "existing",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "train_discrete": {
+      "params": [
+        "new",
+        "existing",
+        "drop",
+        "na.rm",
+        "fct",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trans_breaks": {
+      "params": [
+        "trans",
+        "inv",
+        "n",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trans_format": {
+      "params": [
+        "trans",
+        "format"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trans_new": {
+      "params": [
+        "name",
+        "transform",
+        "inverse",
+        "d_transform",
+        "d_inverse",
+        "breaks",
+        "minor_breaks",
+        "format",
+        "domain"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trans_range": {
+      "params": [
+        "transform",
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_asinh": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_asn": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_atanh": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_boxcox": {
+      "params": [
+        "p",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_compose": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_date": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_exp": {
+      "params": [
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_hms": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_identity": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_log": {
+      "params": [
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_log10": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_log1p": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_log2": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_logit": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_modulus": {
+      "params": [
+        "p",
+        "offset"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_probability": {
+      "params": [
+        "distribution",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_probit": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_pseudo_log": {
+      "params": [
+        "sigma",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_reciprocal": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_reverse": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_sqrt": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_time": {
+      "params": [
+        "tz"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_timespan": {
+      "params": [
+        "unit"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "transform_yj": {
+      "params": [
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "trim_to_domain": {
+      "params": [
+        "transform",
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unit_format": {
+      "params": [
+        "accuracy",
+        "scale",
+        "prefix",
+        "unit",
+        "sep",
+        "suffix",
+        "big.mark",
+        "decimal.mark",
+        "trim",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "viridis_pal": {
+      "params": [
+        "alpha",
+        "begin",
+        "end",
+        "direction",
+        "option"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "wrap_format": {
+      "params": [
+        "width"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yj_trans": {
+      "params": [
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zero_range": {
+      "params": [
+        "x",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "ContinuousRange": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "DiscreteRange": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Range": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

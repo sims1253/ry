@@ -2022,10 +2022,14 @@ impl Checker {
                 if matches!(*op, BinOpKind::PipeAssign) {
                     // `%<>%` (assignment pipe): like `%>%` but also
                     // rebinds the LHS identifier to the result, so
-                    // `x %<>% f()` is `x <- x %>% f()`.
+                    // `x %<>% f()` is `x <- x %>% f()`. A leading-dot
+                    // chain is a functional sequence, not an assignment
+                    // to the placeholder, so it does not rebind.
                     let result = self.infer_pipe(lhs, rhs, *span, PipeForm::Magrittr, scope);
                     if let Expr::Ident { name, .. } = lhs.as_ref() {
-                        scope.insert(name.clone(), result.clone());
+                        if name != "." {
+                            scope.insert(name.clone(), result.clone());
+                        }
                     }
                     return result;
                 }

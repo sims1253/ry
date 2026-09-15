@@ -995,6 +995,10 @@ pub struct Checker {
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
     pipe_argument_types: HashMap<Span, RType>,
+    // True while inferring the LHS of a leading-dot magrittr chain
+    // (`. %>% f`), so the recursive inner pipe walk treats the already
+    // bound `.` as data instead of re-entering the lambda arm.
+    in_leading_dot_chain: bool,
     /// Span of the expression currently being coerced to a scalar logical
     /// value by `if`, `&&`, or `||`. Call-site idiom checks use this exact
     /// span so a proven boolean operand is distinguished from a value nested
@@ -1147,6 +1151,7 @@ impl Checker {
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
+            in_leading_dot_chain: false,
             boolean_context_span: None,
             capture_scopes: false,
             capture_references: false,

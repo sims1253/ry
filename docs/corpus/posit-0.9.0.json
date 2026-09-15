@@ -12,7 +12,7 @@
       "repo": "tidyverse/ggplot2",
       "stars": 6982,
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 42
+      "diagnostics": 13
     },
     {
       "name": "shiny-r",
@@ -110,7 +110,7 @@
       "repo": "sparklyr/sparklyr",
       "stars": 972,
       "commit": "7f006a6d5c01a4e7a36d203d1ace56c53261900e",
-      "diagnostics": 8
+      "diagnostics": 7
     },
     {
       "name": "testthat",
@@ -1583,267 +1583,6 @@
       "path": "R/plot-render.R",
       "line": 297,
       "column": 19,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 108,
-      "column": 75,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 109,
-      "column": 36,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 164,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 269,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 315,
-      "column": 37,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 315,
-      "column": 52,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 370,
-      "column": 13,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 474,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1015,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1017,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1018,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1493,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1495,
-      "column": 14,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-.R",
-      "line": 1496,
-      "column": 9,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-binned.R",
-      "line": 30,
-      "column": 53,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-binned.R",
-      "line": 50,
-      "column": 53,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-continuous.R",
-      "line": 85,
-      "column": 57,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-continuous.R",
-      "line": 112,
-      "column": 57,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 78,
-      "column": 32,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 115,
-      "column": 32,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 153,
-      "column": 36,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 193,
-      "column": 36,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 233,
-      "column": 32,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-date.R",
-      "line": 272,
-      "column": 32,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-discrete-.R",
-      "line": 87,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-discrete-.R",
-      "line": 104,
-      "column": 17,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-size.R",
-      "line": 135,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/scale-size.R",
-      "line": 145,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/stat-contour.R",
-      "line": 142,
-      "column": 17,
       "label": "false_positive",
       "audit_group": "manual-audit"
     },
@@ -3739,15 +3478,6 @@
     },
     {
       "package": "sparklyr",
-      "code": "RY010",
-      "path": "R/connection_livy.R",
-      "line": 187,
-      "column": 28,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "sparklyr",
       "code": "RY032",
       "path": "R/connection.R",
       "line": 273,
@@ -4298,11 +4028,11 @@
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 391,
+    "false_positive": 361,
     "uncertain": 0
   },
   "audit_group_counts": {
-    "manual-audit": 172,
+    "manual-audit": 142,
     "data-masking-nse": 1,
     "delayed-assign": 15,
     "function-shadowing": 3,

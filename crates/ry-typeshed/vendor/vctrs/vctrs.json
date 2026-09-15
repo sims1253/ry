@@ -1,8 +1,9 @@
 {
   "schema_version": "2",
   "package": "vctrs",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "functions": {
+    "data_frame": {"params": ["...", {"name": ".size", "default": true}, {"name": ".name_repair", "default": true}, {"name": ".error_call", "default": true}], "return": {"mode": "opaque", "length": "unknown", "na": true}, "injection": {"...": "splice"}},
     "obj_is_list": {
       "params": [
         {

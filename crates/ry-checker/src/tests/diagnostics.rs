@@ -377,11 +377,41 @@ fn invalid_utf8_before_a_trailing_comment_is_flagged() {
     assert_eq!(diags.len(), 1, "{diags:?}");
 }
 
-/// Like R ("invalid multibyte character in parser" reports the first
-/// bad character and stops), only the first non-comment invalid
-/// sequence is diagnosed, even when the decode step recorded many.
+/// R's lexer scans `%...%` special-operator tokens as raw bytes with no
+/// multibyte validation (gram.y `SpecialValue`): `parse()` ACCEPTS
+/// `10 %café% 5` and only `source()`/`Rscript` fail later, at
+/// evaluation, with "could not find function". Invalid bytes inside the
+/// operator token therefore must not flag.
 #[test]
-fn only_the_first_non_comment_invalid_sequence_is_reported() {
+fn invalid_utf8_inside_a_special_operator_stays_clean_like_r() {
+    // Decoded form of `x <- 10 %caf\xe9% 5`; the `é` sits at decoded
+    // bytes 12..14, inside the `%café%` token.
+    assert!(invalid_utf8_ry000("x <- 10 %café% 5\n", Span::new(12, 14, 0, 12)).is_empty());
+    // A built-in special operator shields the same way.
+    assert!(invalid_utf8_ry000("z <- a %ïn% b\n", Span::new(10, 12, 0, 10)).is_empty());
+}
+
+/// The operator tolerance only shields bytes inside the token: an
+/// invalid byte in a string on the same line still flags, and the
+/// operator bytes themselves do not shield later lines.
+#[test]
+fn invalid_utf8_beside_a_special_operator_still_flags_the_string() {
+    // Decoded `ok <- 1 %café% 2` + `bad <- "café"`: only the string's
+    // invalid byte is outside every tolerated token.
+    let diags = invalid_utf8_ry000(
+        "ok <- 1 %café% 2\nbad <- \"café\"\n",
+        Span::new(28, 30, 1, 12),
+    );
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].span.line, 1);
+}
+
+/// Like R ("invalid multibyte character in parser" reports the first
+/// bad character and stops), only the first invalid sequence outside
+/// every tolerated token (comment, `%...%` operator) is diagnosed,
+/// even when the decode step recorded many.
+#[test]
+fn only_the_first_untolerated_invalid_sequence_is_reported() {
     let mut file = parse_file("test.R", "a <- \"café\"; b <- \"café\"\n");
     file.invalid_utf8 = vec![Span::new(5, 7, 0, 5), Span::new(17, 19, 0, 17)];
     let mut checker = Checker::new("test.R");

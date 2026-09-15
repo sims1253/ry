@@ -117,6 +117,12 @@ pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
 /// pre-#376 display-only policy byte for byte; the spans are the new
 /// part, and they are computed in decoded-text coordinates (a Latin-1
 /// char above 0x7F re-encodes as two UTF-8 bytes).
+///
+/// Line/column bookkeeping is incremental: a dense legacy file makes
+/// every non-ASCII byte its own invalid sequence, so recomputing the
+/// position from the accumulated text per span would be O(text x spans)
+/// -- a 1 MiB Latin-1 file took minutes. Each input byte is visited a
+/// constant number of times here instead.
 fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return DecodedRSource {
@@ -126,25 +132,37 @@ fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
     }
     let mut text = String::with_capacity(bytes.len());
     let mut invalid_utf8 = Vec::new();
+    // Running position for the next span: newlines seen so far and the
+    // decoded-text byte offset where the current line started.
+    let mut line = 0_usize;
+    let mut line_start = 0_usize;
     let mut rest = bytes;
     while let Err(error) = std::str::from_utf8(rest) {
         let valid_up_to = error.valid_up_to();
         // `error_len` is `None` only for a truncated sequence at end of
         // input; the span then runs to the end of the file.
         let bad_len = error.error_len().unwrap_or(rest.len() - valid_up_to);
+        let valid = &rest[..valid_up_to];
         // The valid prefix passes through unchanged, so its decoded-text
         // offsets are its byte offsets. (Guaranteed valid, so the lossy
         // conversion borrows rather than replaces anything.)
-        text.push_str(&String::from_utf8_lossy(&rest[..valid_up_to]));
-        let line = text.matches('\n').count();
-        let col = text
-            .rfind('\n')
-            .map_or(text.len(), |newline| text.len() - newline - 1);
+        if let Some(last_newline) = valid.iter().rposition(|&byte| byte == b'\n') {
+            line += valid.iter().filter(|&&byte| byte == b'\n').count();
+            line_start = text.len() + last_newline + 1;
+        }
+        text.push_str(&String::from_utf8_lossy(valid));
         let start = text.len();
+        let span_col = start - line_start;
         for &byte in &rest[valid_up_to..valid_up_to + bad_len] {
             text.push(char::from(byte));
         }
-        invalid_utf8.push(Span::new(start, text.len(), line, col));
+        // No newline tracking is needed for the pushed bytes: 0x0A is
+        // neither a UTF-8 lead nor a continuation byte, so std stops an
+        // invalid sequence before it (`error_len` excludes it), and the
+        // truncated-at-EOF case (`error_len` absent) only ever spans
+        // continuation bytes. An invalid sequence can never contain a
+        // newline.
+        invalid_utf8.push(Span::new(start, text.len(), line, span_col));
         rest = &rest[valid_up_to + bad_len..];
     }
     text.push_str(&String::from_utf8_lossy(rest));

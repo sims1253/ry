@@ -62,7 +62,7 @@ impl RParser {
             })?;
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
-        let comments = collect_comments(root, src)?;
+        let (comments, special_operators) = collect_comments(root, src)?;
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -92,6 +92,7 @@ impl RParser {
                 // already-decoded text). The read boundary fills this in
                 // for files it had to transcode.
                 invalid_utf8: Vec::new(),
+                special_operators,
                 comments,
             },
             tree,
@@ -977,12 +978,19 @@ const MAX_SYNTAX_DEPTH: usize = 128;
 /// that appears inside a string literal is part of the string, not a
 /// comment, so the suppression parser must consume this list rather
 /// than scanning source lines for `#`.
+///
+/// The same walk also collects the spans of `special` nodes (the
+/// `%...%` user-defined operator tokens): R's lexer scans comments and
+/// special-operator bodies as raw bytes without multibyte validation,
+/// so the checker's invalid-UTF-8 tolerance treats both the same way
+/// (#376). Special spans are returned sorted by start offset.
 /// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
 fn collect_comments(
     root: tree_sitter::Node,
     src: &str,
-) -> Result<Vec<crate::ast::Comment>, ParseError> {
+) -> Result<(Vec<crate::ast::Comment>, Vec<Span>), ParseError> {
     let mut out = Vec::new();
+    let mut special = Vec::new();
     let mut stack = vec![(root, 0_usize)];
     while let Some((node, depth)) = stack.pop() {
         if depth > MAX_SYNTAX_DEPTH {
@@ -1003,6 +1011,8 @@ fn collect_comments(
                 let body = full.strip_prefix('#').unwrap_or(full).to_string();
                 out.push(crate::ast::Comment { line, col, body });
             }
+        } else if node.kind() == "special" {
+            special.push(self_span(node));
         }
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
@@ -1010,7 +1020,20 @@ fn collect_comments(
         }
     }
     out.sort_by_key(|c| c.line);
-    Ok(out)
+    special.sort_by_key(|span| span.start);
+    Ok((out, special))
+}
+
+/// A node's span without a `&self` receiver (the free-function twin of
+/// [`RParser::span`], for the lexical collection walks).
+fn self_span(node: tree_sitter::Node) -> Span {
+    let position = node.start_position();
+    Span::new(
+        node.start_byte(),
+        node.end_byte(),
+        position.row,
+        position.column,
+    )
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
@@ -1098,6 +1121,27 @@ mod tests {
     fn parse(src: &str) -> SourceFile {
         let mut p = RParser::new().expect("parser init");
         p.parse("test.R", src).expect("parse ok")
+    }
+
+    #[test]
+    fn special_operator_tokens_are_collected_in_source_order() {
+        // `%café%` and `%in%` are both `special` tokens; R's lexer scans
+        // them raw, so the checker needs their spans for its
+        // invalid-UTF-8 tolerance (#376).
+        let file = parse("x <- 10 %café% 5\nz <- a %in% b\n");
+        assert_eq!(
+            file.special_operators,
+            vec![Span::new(8, 15, 0, 8), Span::new(25, 29, 1, 7)],
+            "{:?}",
+            file.special_operators
+        );
+        // A `%` inside a string literal is string content, not a token.
+        let file = parse("s <- \"50% done\"\n");
+        assert!(
+            file.special_operators.is_empty(),
+            "{:?}",
+            file.special_operators
+        );
     }
 
     #[test]

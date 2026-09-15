@@ -14,7 +14,8 @@ All notable changes to ry are documented in this file.
 - Flag non-UTF-8 source files (CP1252/Latin-1 bytes) with an RY000 encoding
   diagnostic instead of silently checking them clean, matching R's parser,
   which rejects such files with "invalid multibyte character in parser".
-  Invalid bytes inside comments are tolerated exactly like R, a flagged file
+  Invalid bytes inside comments and `%...%` special-operator tokens are
+  tolerated exactly like R's lexer (which scans them raw), a flagged file
   reports only its RY000, and the flag flows through the shared read boundary
   so `ry check` and the LSP's on-disk index agree (#376).
 

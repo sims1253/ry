@@ -46,6 +46,7 @@ explanation for one rule.
 | RY105 | constant-length-comparison | warning | `length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.                                                          |
 | RY106 | ifelse-mode-collapse | warning | `ifelse()` builds its result from `test`, so a zero-length or all-`NA` test yields a logical result even when `yes`/`no` agree on another mode — in particular for typed-NA selects. Use a typed alternative such as `vctrs::if_else()`.                                                          |
 | RY107 | any-all-scalar-comparison | warning | `any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal negates it or has a constant result. The comparison usually belongs inside the call (`any(x == 0)`, not `any(x) == 0`). Value-preserving comparisons (`== 1`, `> 0`) are a deliberate idiom and stay quiet. |
+| RY108 | seq-defaulted-forward | warning | A `seq.*` S3 method uses its defaulted `to` without a `missing(to)` check, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence (three identical values, or "too many arguments" with `by`). Guard the use with `missing(to)`, as `seq.Date` does. |
 
 RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example

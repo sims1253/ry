@@ -20,6 +20,7 @@ mod narrow;
 pub(crate) mod pipe;
 pub(crate) mod quoting;
 pub(crate) mod recall;
+pub(crate) mod supply;
 mod switch;
 mod types;
 
@@ -460,6 +461,10 @@ impl Checker {
         }
         if named_binding && let Some(name) = function_name {
             insert_s3_dispatch_context(name, &mut fn_scope, &self.typeshed.globals);
+            // RY108 inspects the definition's own shape (formal defaults
+            // vs. `missing()` guards), not the walked body's types, so it
+            // runs before the parameter defaults are inserted below.
+            self.check_seq_defaulted_forward(name, params, body);
         }
         for parameter in params {
             fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());

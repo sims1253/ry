@@ -277,6 +277,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x) if (any(x) == 0) 1 else 2\n",
         negative: "f <- function(x) if (any(x == 0)) 1 else 2\n",
     },
+    Probe {
+        code: "RY108",
+        note: "seq.* method using its defaulted `to` without a missing() guard",
+        positive: "seq.widget <- function(from = 1, to = 9, ...) {\n  seq(from, to, ...)\n}\n",
+        negative: "seq.widget <- function(from = 1, to = 9, ...) {\n  if (missing(to)) {\n    seq(from, ...)\n  } else {\n    seq(from, to, ...)\n  }\n}\n",
+    },
 ];
 
 #[test]

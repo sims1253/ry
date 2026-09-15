@@ -705,6 +705,24 @@ expression: snapshots
         start: 104
   fixture: err_scalar_logical.R
 - diagnostics:
+    - code: RY108
+      message: "`seq.hms()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 19
+        end: 781
+        line: 13
+        start: 779
+    - code: RY108
+      message: "`seq.widget()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1000
+        line: 20
+        start: 998
+  fixture: err_seq_defaulted_forward.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `list` and `double`"
       severity: error
@@ -1074,6 +1092,8 @@ expression: snapshots
   fixture: ok_scalar_logical.R
 - diagnostics: []
   fixture: ok_scalar_single_bracket_index.R
+- diagnostics: []
+  fixture: ok_seq_defaulted_forward.R
 - diagnostics: []
   fixture: ok_seq_for_loop.R
 - diagnostics: []

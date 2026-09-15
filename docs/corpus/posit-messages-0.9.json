@@ -1494,6 +1494,15 @@
       "severity": "error",
       "message": "syntax error: unparseable region (recovered tree may be unreliable)"
     },
+    "lintr::RY000::tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1": {
+      "package": "lintr",
+      "code": "RY000",
+      "path": "tests/testthat/dummy_packages/cp1252/R/cp1252.R",
+      "line": 4,
+      "column": 1,
+      "severity": "error",
+      "message": "invalid multibyte character: source file is not valid UTF-8 (R's parser rejects it)"
+    },
     "lintr::RY010::tests/testthat/dummy_packages/RConfig/tests/testthat.R:5:18": {
       "package": "lintr",
       "code": "RY010",

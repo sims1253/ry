@@ -25,6 +25,7 @@ pub use ry_core::FFI_PRIMITIVES;
 
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_core::SourceFile;
+use ry_core::Span;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -77,13 +78,95 @@ fn file_stem_binding(path: &Path) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+/// On-disk R source after the shared decoding policy, with the
+/// locations of any invalid UTF-8 that policy had to paper over.
+#[derive(Debug)]
+pub struct DecodedRSource {
+    /// The decoded source. Identical to the file's bytes when they are
+    /// valid UTF-8; otherwise a Latin-1 transcoding (one char per byte)
+    /// so both frontends can still display and analyze legacy files.
+    pub text: String,
+    /// Maximal byte spans (in `text`) of the invalid UTF-8 sequences the
+    /// file contained, in source order. Empty when the file was valid
+    /// UTF-8. Frontends attach these to the parsed `SourceFile` so the
+    /// checker can flag files R's own parser rejects ("invalid multibyte
+    /// character in parser").
+    pub invalid_utf8: Vec<Span>,
+}
+
 /// Read R source as UTF-8, falling back to Latin-1 for invalid UTF-8.
 /// Both frontends use this policy for on-disk source; open editor buffers
 /// already arrive as Unicode through LSP.
 pub fn read_r_source(path: &Path) -> std::io::Result<String> {
-    let bytes = std::fs::read(path)?;
-    Ok(String::from_utf8(bytes)
-        .unwrap_or_else(|error| error.into_bytes().into_iter().map(char::from).collect()))
+    Ok(decode_r_source(&std::fs::read(path)?).text)
+}
+
+/// Read R source with the same UTF-8/Latin-1 policy as
+/// [`read_r_source`], additionally reporting where the invalid UTF-8
+/// sequences were. Files that were not valid UTF-8 are what this is for:
+/// the text still transcodes lossily, but callers that surface
+/// diagnostics (CLI `ry check`, the LSP's on-disk index) pass the spans
+/// along so the file is flagged instead of silently checking clean.
+pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
+    Ok(decode_r_source(&std::fs::read(path)?))
+}
+
+/// Decode R source bytes as UTF-8, falling back to Latin-1 for invalid
+/// UTF-8 while recording each invalid sequence's span over the decoded
+/// text. The fallback maps every byte to its Latin-1 char, matching the
+/// pre-#376 display-only policy byte for byte; the spans are the new
+/// part, and they are computed in decoded-text coordinates (a Latin-1
+/// char above 0x7F re-encodes as two UTF-8 bytes).
+///
+/// Line/column bookkeeping is incremental: a dense legacy file makes
+/// every non-ASCII byte its own invalid sequence, so recomputing the
+/// position from the accumulated text per span would be O(text x spans)
+/// -- a 1 MiB Latin-1 file took minutes. Each input byte is visited a
+/// constant number of times here instead.
+fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return DecodedRSource {
+            text: text.to_string(),
+            invalid_utf8: Vec::new(),
+        };
+    }
+    let mut text = String::with_capacity(bytes.len());
+    let mut invalid_utf8 = Vec::new();
+    // Running position for the next span: newlines seen so far and the
+    // decoded-text byte offset where the current line started.
+    let mut line = 0_usize;
+    let mut line_start = 0_usize;
+    let mut rest = bytes;
+    while let Err(error) = std::str::from_utf8(rest) {
+        let valid_up_to = error.valid_up_to();
+        // `error_len` is `None` only for a truncated sequence at end of
+        // input; the span then runs to the end of the file.
+        let bad_len = error.error_len().unwrap_or(rest.len() - valid_up_to);
+        let valid = &rest[..valid_up_to];
+        // The valid prefix passes through unchanged, so its decoded-text
+        // offsets are its byte offsets. (Guaranteed valid, so the lossy
+        // conversion borrows rather than replaces anything.)
+        if let Some(last_newline) = valid.iter().rposition(|&byte| byte == b'\n') {
+            line += valid.iter().filter(|&&byte| byte == b'\n').count();
+            line_start = text.len() + last_newline + 1;
+        }
+        text.push_str(&String::from_utf8_lossy(valid));
+        let start = text.len();
+        let span_col = start - line_start;
+        for &byte in &rest[valid_up_to..valid_up_to + bad_len] {
+            text.push(char::from(byte));
+        }
+        // No newline tracking is needed for the pushed bytes: 0x0A is
+        // neither a UTF-8 lead nor a continuation byte, so std stops an
+        // invalid sequence before it (`error_len` excludes it), and the
+        // truncated-at-EOF case (`error_len` absent) only ever spans
+        // continuation bytes. An invalid sequence can never contain a
+        // newline.
+        invalid_utf8.push(Span::new(start, text.len(), line, span_col));
+        rest = &rest[valid_up_to + bad_len..];
+    }
+    text.push_str(&String::from_utf8_lossy(rest));
+    DecodedRSource { text, invalid_utf8 }
 }
 
 struct LibraryRoot {
@@ -1189,6 +1272,77 @@ mod input_tests {
             assert_eq!(read_r_source(&path).unwrap(), "café <- 1\n");
         }
         assert!(read_r_source(&dir.path().join("missing.R")).is_err());
+    }
+
+    #[test]
+    fn valid_utf8_source_decodes_without_invalid_spans() {
+        let decoded = decode_r_source("café <- 1\n".as_bytes());
+        assert_eq!(decoded.text, "café <- 1\n");
+        assert!(
+            decoded.invalid_utf8.is_empty(),
+            "{:?}",
+            decoded.invalid_utf8
+        );
+    }
+
+    /// Spans land in decoded-text coordinates: a Latin-1 byte above 0x7F
+    /// becomes one char but re-encodes as two UTF-8 bytes, so the span
+    /// must track the growing string, not the original byte offsets.
+    #[test]
+    fn invalid_sequences_are_spanned_in_decoded_text_coordinates() {
+        let decoded = decode_r_source(b"caf\xe9 au lait");
+        assert_eq!(decoded.text, "café au lait");
+        // c=0 a=1 f=2, then `é` occupies decoded bytes 3..5.
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(3, 5, 0, 3)]);
+
+        // Adjacent Latin-1 high bytes are separate invalid sequences and
+        // both are reported; a CP1252 smart quote (0x93) lands the same
+        // way as any other single invalid byte.
+        let decoded = decode_r_source(b"a\xe9b\xfc");
+        assert_eq!(decoded.text, "aébü");
+        assert_eq!(
+            decoded.invalid_utf8,
+            vec![Span::new(1, 3, 0, 1), Span::new(4, 6, 0, 4)]
+        );
+    }
+
+    #[test]
+    fn invalid_sequence_on_a_later_line_carries_that_lines_row_and_column() {
+        let decoded = decode_r_source(b"ok\nval <- \"caf\xe9\"\n");
+        assert_eq!(decoded.text, "ok\nval <- \"café\"\n");
+        // Line 1 (0-indexed); `é` sits after 11 bytes of that line.
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(14, 16, 1, 11)]);
+    }
+
+    /// A truncated multibyte sequence at end of input has no
+    /// `error_len`; its span runs to the end of the file.
+    #[test]
+    fn truncated_sequence_at_end_of_file_spans_to_the_end() {
+        let decoded = decode_r_source(b"x\xf0\x9f");
+        assert_eq!(decoded.text, "x\u{f0}\u{9f}");
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(1, 5, 0, 1)]);
+    }
+
+    /// A file that mixes valid UTF-8 with invalid bytes keeps its valid
+    /// multibyte sequences intact while the invalid ones are spanned.
+    #[test]
+    fn valid_multibyte_sequences_among_invalid_bytes_pass_through() {
+        let decoded = decode_r_source(b"a\xc3\xa9\xe9b");
+        assert_eq!(decoded.text, "aééb");
+        // The valid `é` (2 bytes) passes through; only the lone 0xe9 is
+        // spanned, at decoded offset 3..5.
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(3, 5, 0, 3)]);
+    }
+
+    #[test]
+    fn read_r_source_decoded_round_trips_disk_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("latin1.R");
+        std::fs::write(&path, b"s <- \"caf\xe9\"\n").unwrap();
+        let decoded = read_r_source_decoded(&path).unwrap();
+        assert_eq!(decoded.text, "s <- \"café\"\n");
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(9, 11, 0, 9)]);
+        assert!(read_r_source_decoded(&dir.path().join("missing.R")).is_err());
     }
 }
 

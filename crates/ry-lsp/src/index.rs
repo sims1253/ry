@@ -88,9 +88,12 @@ fn parse_paths_with(
     pool: Option<&rayon::ThreadPool>,
 ) -> HashMap<String, Arc<SourceFile>> {
     let parse_one = |path: &PathBuf| {
-        let source = ry_workspace::read_r_source(path).ok()?;
+        let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
         let path_str = path.to_string_lossy().into_owned();
-        let file = parse_with_worker_parser(&path_str, &source)?;
+        let mut file = parse_with_worker_parser(&path_str, &decoded.text)?;
+        // Record where the on-disk bytes were not valid UTF-8 so checks
+        // over the on-disk index flag files R's parser rejects (#376).
+        file.invalid_utf8 = decoded.invalid_utf8;
         Some((path_str, Arc::new(file)))
     };
     match pool {

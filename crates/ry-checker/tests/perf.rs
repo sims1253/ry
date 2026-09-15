@@ -451,3 +451,50 @@ fn scaling_call_depth() {
         .collect();
     assert_subquadratic_scaling("call_depth", &sizes, &times);
 }
+
+/// A dense Latin-1 file -- every line carries a non-ASCII byte -- is the
+/// worst case of the #376 decode path: each high byte is its own invalid
+/// UTF-8 sequence, so the file yields thousands of spans that all need
+/// line/column coordinates and comment-tolerance lookups. The decode
+/// bookkeeping and the comment lookup were quadratic when this landed
+/// (a 1 MiB file took 2m08s in a debug build); both are linear /
+/// logarithmic now, and this budget keeps them that way. The bytes sit
+/// in comments, so the run also asserts the R-parity outcome: like R's
+/// parser, ry stays clean on comment-confined invalid bytes.
+#[test]
+#[ignore]
+fn dense_latin1_file_decodes_and_checks_quickly() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut bytes = Vec::with_capacity(1 << 20);
+    while bytes.len() < (1 << 20) {
+        bytes.extend_from_slice(b"# K\xf6lner Kommentar line payload padding\n");
+    }
+    let path = dir.path().join("dense_latin1.R");
+    std::fs::write(&path, &bytes).expect("write fixture");
+
+    let start = Instant::now();
+    let decoded = ry_workspace::read_r_source_decoded(&path).expect("decode");
+    assert!(
+        !decoded.invalid_utf8.is_empty(),
+        "fixture must contain invalid sequences"
+    );
+    let mut parser = RParser::new().expect("parser init");
+    let mut file = parser
+        .parse("dense_latin1.R", &decoded.text)
+        .expect("parse");
+    file.invalid_utf8 = decoded.invalid_utf8;
+    let mut c = Checker::new("dense_latin1.R");
+    c.check(&file);
+    let diagnostics = c.take_diagnostics();
+    let elapsed = start.elapsed();
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY000"),
+        "comment-confined bytes must stay clean like R: {diagnostics:?}"
+    );
+    assert!(
+        elapsed.as_secs_f64() < 2.0,
+        "1 MiB dense Latin-1 decode+check took {:.3}s (budget 2.0s)",
+        elapsed.as_secs_f64()
+    );
+}

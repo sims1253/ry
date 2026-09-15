@@ -4,15 +4,6 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-### Added
-
-- RY107 flags scalar comparisons on `any()`/`all()` results, such as
-  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
-  compared instead of the elements, so negating comparisons are always
-  wrong and constant-outcome comparisons are dead guards. Comparisons
-  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
-  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
-
 ### Changed
 
 - The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
@@ -21,6 +12,15 @@ All notable changes to ry are documented in this file.
   (#466).
 - Update tree-sitter from 0.26.13 to 0.27.0 and tree-sitter-language from
   0.1.7 to 0.1.8 (#466, taking over the dependabot update from #465).
+
+### Added
+
+- RY107 flags scalar comparisons on `any()`/`all()` results, such as
+  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
+  compared instead of the elements, so negating comparisons are always
+  wrong and constant-outcome comparisons are dead guards. Comparisons
+  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
+  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
 
 ### Fixed
 
@@ -38,6 +38,13 @@ All notable changes to ry are documented in this file.
   `"f"(y)`, and `(\(d) d)()`), and extraction chains rooted at the `_`
   placeholder (`x |> _$a`, R 4.3+). The accept/reject boundary was
   verified form by form against R 4.6.1 (#375).
+- Flag non-UTF-8 source files (CP1252/Latin-1 bytes) with an RY000 encoding
+  diagnostic instead of silently checking them clean, matching R's parser,
+  which rejects such files with "invalid multibyte character in parser".
+  Invalid bytes inside comments and `%...%` special-operator tokens are
+  tolerated exactly like R's lexer (which scans them raw), a flagged file
+  reports only its RY000, and the flag flows through the shared read boundary
+  so `ry check` and the LSP's on-disk index agree (#376).
 
 ## [0.10.0] - 2026-09-15
 

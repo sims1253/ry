@@ -4,10 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-09-13
+## [0.10.0] - 2026-09-15
 
 This release adds three Linux targets, improves package and function lookup,
-and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
+bounds serialized-data parsing, and refreshes the vendored typeshed to
+r-typeshed 0.5.1. Core and the VS Code extension are 0.10.0.
 
 ### Changed
 
@@ -29,6 +30,12 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
 - Explain source discovery with `ry check --explain-files`. Use
   `include-build-ignored` in `ry.toml` to include selected build-ignored files
   in both CLI checks and editor indexing (#363).
+- Refresh the vendored typeshed to r-typeshed 0.5.1 (base 0.0.18, tibble and
+  vctrs 0.0.2): new export inventories for tibble, scales, readr, checkmate,
+  httr, jsonlite, lifecycle, magrittr, stringr, and glue, so wholesale
+  imports and bare names from those packages resolve without installed
+  copies. Resolving the scales inventory clears the ggplot2 RY010
+  false-positive batch from both committed ecosystem ledgers.
 
 ### Fixed
 
@@ -120,6 +127,20 @@ and bounds serialized-data parsing. Core and the VS Code extension are 0.10.0.
   value at runtime, so `dat[month == "a"]` no longer types the comparison
   against the lexical `month`. Callback formals, `j` argument names, and the
   mask pronouns bind inside the mask and keep their typing (#457).
+- Keep `!!!` splice and `!!name :=` injection sites RY021-clean through
+  resolvable dynamic-dots constructors: the vendored tibble and vctrs
+  inventories declare `injection` metadata for their quos()- and
+  list2()-based constructors (r-typeshed 0.5.1). A resolvable entry without
+  dots-semantics metadata is strictly worse than no entry — it suppresses
+  the unresolved-callee injection fallback — so ggplot2's
+  `data_frame0 <- function(...)` forwarder turned five previously clean
+  splice sites into false RY021 once the tibble inventory resolved the name
+  (found in this release's vendor-sync corpus run).
+- Type leading-dot magrittr chains (`. %>% f`, `. %T>% f`) as functional
+  sequences: the dot is the chain's parameter, so the chain types as a
+  function value instead of flagging the placeholder as unbound, and `%<>%`
+  no longer rebinds the placeholder. The native pipe has no such form: `_`
+  left of `|>` stays an ordinary unbound name.
 
 ## [0.9.2] - 2026-09-10
 

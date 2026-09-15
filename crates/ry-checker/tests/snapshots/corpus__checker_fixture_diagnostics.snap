@@ -324,25 +324,41 @@ expression: snapshots
       severity: error
       span:
         column: 10
-        end: 318
-        line: 6
-        start: 314
+        end: 451
+        line: 8
+        start: 447
     - code: RY000
       message: "syntax error: function '{' not supported in RHS call of a pipe"
       severity: error
       span:
         column: 10
-        end: 338
-        line: 7
-        start: 329
+        end: 471
+        line: 9
+        start: 462
     - code: RY000
       message: "syntax error: the pipe operator requires a function call as RHS"
       severity: error
       span:
         column: 10
-        end: 353
-        line: 8
-        start: 349
+        end: 486
+        line: 10
+        start: 482
+    - code: RY000
+      message: "syntax error: function 'return' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 506
+        line: 11
+        start: 497
+    - code: RY000
+      message: "syntax error: function '+' not supported in RHS call of a pipe"
+      severity: error
+      span:
+        column: 10
+        end: 523
+        line: 12
+        start: 517
   fixture: err_pipe_native_rhs.R
 - diagnostics:
     - code: RY080

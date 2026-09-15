@@ -422,15 +422,23 @@ fn native_pipe_rhs_matrix_matches_base_r() {
         "1 |> _[[1]][2]",
         "1 |> _[1]$a",
         "1 |> _$a[1]",
-        // Backquoted ordinary (non-special) heads stay calls.
+        // Backquoted ordinary (non-special) heads stay calls. The
+        // pipe-bind `=>` is gated by `_R_USE_PIPEBIND_` as a token but
+        // is an ordinary call head: R 4.6.1 accepts `` 1 |> `=>`(x) ``.
         "1 |> `f`(y)",
         "1 |> `names<-`(z, 1)",
         "1 |> `%>%`(a, b)",
         "1 |> `:=`(a, b)",
+        "1 |> `=>`(x)",
+        "1 |> `=>`(x, y)",
         "1 |> `->`(a, b)",
         "1 |> `else`(a)",
         "1 |> `in`(a, b)",
         "1 |> `_`(a)",
+        // String heads naming ordinary symbols stay accepted (R
+        // resolves a string head to a symbol before the pipe check).
+        "1 |> \"names<-\"(z, 1)",
+        "1 |> \"=>\"(x)",
         // Chains and precedence: `|>` binds tighter than `+`.
         "1 |> sqrt() + 1",
         "1 |> sqrt() |> log()",
@@ -496,6 +504,38 @@ fn native_pipe_rhs_matrix_matches_base_r() {
         "1 |> `(`(z)",
         "1 |> `function`(z) 1",
         "1 |> `::`(base, sqrt)",
+        // `return` and `|>` itself, however spelled.
+        "1 |> return(x)",
+        "1 |> `return`(x)",
+        "1 |> `|>`(x, y)",
+        // String heads naming special operators are resolved to symbols
+        // by R's parser before the pipe check, so they are rejected
+        // like the backquoted spellings.
+        "1 |> \"+\"(1)",
+        "1 |> \"while\"(z)",
+        "1 |> \"return\"(x)",
+        "1 |> \"|>\"(x, y)",
+        "1 |> \"if\"(z, 1)",
+        "1 |> \"[[\"(z, 1)",
+        // Unary and tighter-binding binary operators; R's errors name
+        // the operator.
+        "1 |> -x",
+        "1 |> +x",
+        "1 |> !x",
+        "1 |> ~x",
+        "1 |> ?x",
+        "1 |> -f()",
+        "1 |> 1:2",
+        "1 |> -1:2",
+        "1 |> f()^2",
+        "1 |> f()**2",
+        "1 |> 2^3",
+        // A root identifier that merely starts with `_` (R 4.3+'s
+        // placeholder lexing artifact) and non-name roots.
+        "1 |> _x",
+        "1 |> _x[1]",
+        "1 |> _x$a",
+        "1 |> _x$a[1]",
         // Assignment RHS groups the extraction under the pipe.
         "1 |> z$x <- 1",
     ];
@@ -532,6 +572,74 @@ fn native_pipe_rhs_matrix_matches_base_r() {
             assert!(source.is_char_boundary(violation.span.start));
             assert!(source.is_char_boundary(violation.span.end));
         }
+    }
+}
+
+/// Each rejected form must carry the exact message R 4.6.1 prints for
+/// the same input, not merely a correct verdict: named-operator errors
+/// where R names the operator, and the generic message where R's own
+/// error is generic (looser-binding binaries, and R 4.3+'s `_`-prefix
+/// placeholder-lexing artifact for roots like `_x[1]`).
+#[test]
+fn native_pipe_rhs_messages_mirror_r_verbatim() {
+    const GENERIC: &str = "syntax error: the pipe operator requires a function call as RHS";
+    fn named(op: &str) -> String {
+        format!("syntax error: function '{op}' not supported in RHS call of a pipe")
+    }
+    for (source, expected) in [
+        ("1 |> z[1]", named("[")),
+        ("1 |> z[[1]]", named("[[")),
+        ("1 |> z$x", named("$")),
+        ("1 |> z@x", named("@")),
+        ("1 |> { 1 }", named("{")),
+        ("1 |> \\(z) z", named("function")),
+        ("1 |> (sqrt)", named("(")),
+        ("1 |> base::sqrt", named("::")),
+        ("1 |> base:::sqrt", named(":::")),
+        ("1 |> if (z) 2 else 3", named("if")),
+        // `return` and `|>`, bare, backquoted, and as string heads.
+        ("1 |> return(x)", named("return")),
+        ("1 |> `return`(x)", named("return")),
+        ("1 |> `|>`(x, y)", named("|>")),
+        ("1 |> \"+\"(1)", named("+")),
+        ("1 |> \"while\"(z)", named("while")),
+        ("1 |> \"return\"(x)", named("return")),
+        ("1 |> \"|>\"(x, y)", named("|>")),
+        // Unary operators bind tighter than `|>`; R names them.
+        ("1 |> -x", named("-")),
+        ("1 |> +x", named("+")),
+        ("1 |> !x", named("!")),
+        ("1 |> ~x", named("~")),
+        ("1 |> ?x", named("?")),
+        ("1 |> -f()", named("-")),
+        // `^` (and `**`) and `:` bind tighter than `|>`; R names them.
+        ("1 |> 1:2", named(":")),
+        ("1 |> -1:2", named(":")),
+        ("1 |> f()^2", named("^")),
+        ("1 |> f()**2", named("^")),
+        ("1 |> 2^3", named("^")),
+        // R's own error is generic for these: looser-binding binaries
+        // wrap the pipe, and a root merely starting with `_` trips R
+        // 4.3+'s placeholder lexing (a backquoted `` `_x` `` still gets
+        // the named message).
+        ("1 |> z * 2", GENERIC.to_string()),
+        ("1 |> z %% 2", GENERIC.to_string()),
+        ("1 |> z %in% w", GENERIC.to_string()),
+        ("1 |> z < 2", GENERIC.to_string()),
+        ("1 |> z <- 1", GENERIC.to_string()),
+        ("1 |> _x", GENERIC.to_string()),
+        ("1 |> _x[1]", GENERIC.to_string()),
+        ("1 |> _x$a[1]", GENERIC.to_string()),
+        ("1 |> `_x`[1]", named("[")),
+    ] {
+        let file = parse(source);
+        let [violation] = file.syntax_violations.as_slice() else {
+            panic!(
+                "{source}: expected exactly one violation, got {:?}",
+                file.syntax_violations
+            );
+        };
+        assert_eq!(violation.message, expected, "{source}");
     }
 }
 

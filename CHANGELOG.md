@@ -4,6 +4,15 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
+  0.27.0 and tree-sitter-language 0.1.8 require rustc 1.90. Prebuilt release
+  binaries are unaffected; only building from source needs a newer toolchain
+  (#466).
+- Update tree-sitter from 0.26.13 to 0.27.0 and tree-sitter-language from
+  0.1.7 to 0.1.8 (#466, taking over the dependabot update from #465).
+
 ### Fixed
 
 - Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse

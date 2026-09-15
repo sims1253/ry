@@ -131,10 +131,26 @@ pub enum Length {
     /// A specific known length greater than 1.
     Known(usize),
     /// Length unknown at compile time (function arg, dynamic computation).
+    /// The value MAY be empty: nothing proves a positive lower bound, and
+    /// open-world inputs (exported function formals, untracked calls)
+    /// default here. Emptiness-sensitive consumers must treat this as
+    /// maybe-empty; see [`Length::may_be_empty`].
     Unknown,
+    /// Length unknown at compile time, but provably at least one. Split
+    /// from `Unknown` so emptiness-sensitive rules (RY106, and the
+    /// vacuous-`all()` work on #462) can stay silent for values that
+    /// cannot be empty, while `Unknown` keeps meaning "possibly zero".
+    Nonempty,
 }
 
 impl Length {
+    /// Whether a value of this length can be empty. Sound
+    /// over-approximation: `Unknown` cannot rule out zero, which is the
+    /// open-world default for parameters and untracked computations.
+    pub fn may_be_empty(self) -> bool {
+        matches!(self, Length::Zero | Length::Unknown)
+    }
+
     /// Length of a binary op's result given the operands' lengths,
     /// following R's vector-recycling rule.
     pub fn binary(self, other: Length) -> Length {
@@ -145,7 +161,15 @@ impl Length {
             // R recycles to max(a, b). The checker separately reports the
             // warning case where neither length divides the other.
             (Known(a), Known(b)) => Known(a.max(b)),
-            (Known(_), Unknown) | (Unknown, Known(_)) | (Unknown, Unknown) => Unknown,
+            // A proven-nonempty operand keeps the maximum at least one
+            // whenever the other operand is not empty.
+            (Nonempty, Known(_)) | (Known(_), Nonempty) | (Nonempty, Nonempty) => Nonempty,
+            // A possibly-empty operand can make the recycled result empty.
+            (Nonempty, Unknown)
+            | (Unknown, Nonempty)
+            | (Known(_), Unknown)
+            | (Unknown, Known(_))
+            | (Unknown, Unknown) => Unknown,
         }
     }
 }
@@ -517,7 +541,8 @@ impl RType {
             && (self.mode == Mode::Complex || rhs.mode == Mode::Complex)
             && length != Length::Zero
         {
-            let nonempty = |length| matches!(length, Length::One | Length::Known(1..));
+            let nonempty =
+                |length| matches!(length, Length::One | Length::Known(1..) | Length::Nonempty);
             if nonempty(self.length) && nonempty(rhs.length) {
                 return None;
             }
@@ -789,6 +814,7 @@ impl fmt::Display for RType {
                 return self.fmt_class(f, core);
             }
             Length::Unknown => "?",
+            Length::Nonempty => "1+",
         };
         let core = write!(f, "{}<len={}>", mode, len);
         self.fmt_class(f, core)
@@ -1004,6 +1030,41 @@ mod tests {
         assert_eq!(Length::One.binary(Length::Known(5)), Length::Known(5));
         assert_eq!(Length::Known(4).binary(Length::Known(2)), Length::Known(4));
         assert_eq!(Length::Zero.binary(Length::Known(5)), Length::Zero);
+    }
+
+    #[test]
+    fn length_maybe_empty_split() {
+        // `Unknown` is the open-world default: emptiness cannot be ruled
+        // out, which is what emptiness-sensitive rules rely on.
+        assert!(Length::Zero.may_be_empty());
+        assert!(Length::Unknown.may_be_empty());
+        assert!(!Length::One.may_be_empty());
+        assert!(!Length::Known(3).may_be_empty());
+        assert!(!Length::Nonempty.may_be_empty());
+    }
+
+    #[test]
+    fn length_recycling_preserves_nonempty_lower_bound() {
+        use Length::*;
+        // max(unknown>=1, anything positive) keeps the >= 1 lower bound.
+        assert_eq!(Nonempty.binary(One), Nonempty);
+        assert_eq!(One.binary(Nonempty), Nonempty);
+        assert_eq!(Nonempty.binary(Known(3)), Nonempty);
+        assert_eq!(Nonempty.binary(Nonempty), Nonempty);
+        // A possibly-empty operand can still make the result empty.
+        assert_eq!(Nonempty.binary(Unknown), Unknown);
+        assert_eq!(Unknown.binary(Nonempty), Unknown);
+        // Zero still dominates: R recycles to zero length.
+        assert_eq!(Nonempty.binary(Zero), Zero);
+        assert_eq!(Zero.binary(Nonempty), Zero);
+    }
+
+    #[test]
+    fn length_display_renders_nonempty_lower_bound() {
+        assert_eq!(
+            format!("{}", RType::new(Mode::Character, Length::Nonempty)),
+            "character<len=1+>"
+        );
     }
 
     #[test]

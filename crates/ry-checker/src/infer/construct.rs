@@ -364,18 +364,25 @@ impl Checker {
         }
         let mut mode = Mode::Null;
         let mut total_len = Some(0usize);
+        let mut any_nonempty = false;
         for t in arg_types {
             mode = mode.combine_result(if t.mode == Mode::Union {
                 Mode::Opaque
             } else {
                 t.mode
             });
-            total_len = total_len.and_then(|total| match t.length {
-                Length::Zero => Some(total),
-                Length::One => total.checked_add(1),
-                Length::Known(n) => total.checked_add(n),
-                Length::Unknown => None,
-            });
+            match t.length {
+                Length::Zero => {}
+                Length::One => total_len = total_len.and_then(|total| total.checked_add(1)),
+                Length::Known(n) => total_len = total_len.and_then(|total| total.checked_add(n)),
+                // The exact total is gone, but a proven-nonempty element
+                // keeps the sum at least one.
+                Length::Nonempty => {
+                    any_nonempty = true;
+                    total_len = None;
+                }
+                Length::Unknown => total_len = None,
+            }
         }
         let length = if args
             .iter()
@@ -383,7 +390,11 @@ impl Checker {
         {
             Length::Unknown
         } else {
-            total_len.map_or(Length::Unknown, Length::Known)
+            match total_len {
+                Some(total) => Length::Known(total),
+                None if any_nonempty => Length::Nonempty,
+                None => Length::Unknown,
+            }
         };
         let result = RType::new(mode, length);
         if mode == Mode::Opaque {
@@ -555,6 +566,15 @@ impl Checker {
                     0 => Length::Zero,
                     1 => Length::One,
                     n => Length::Known(n),
+                }
+            }
+            // Repetition preserves the >= 1 lower bound unless a count
+            // of zero empties the result (unknown counts returned early).
+            Length::Nonempty => {
+                if times_n > 0 && each_n > 0 {
+                    Length::Nonempty
+                } else {
+                    Length::Zero
                 }
             }
             Length::Unknown => Length::Unknown,

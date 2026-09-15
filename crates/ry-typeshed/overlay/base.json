@@ -1,0 +1,33 @@
+{
+  "schema_version": "2",
+  "package": "base",
+  "version": "local-overlay",
+  "functions": {
+    "ifelse": {
+      "params": [
+        {
+          "name": "test",
+          "required": true
+        },
+        {
+          "name": "yes",
+          "required": true
+        },
+        {
+          "name": "no",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "yes_or_no",
+        "length": "test",
+        "na": true
+      },
+      "return_mode": {
+        "kind": "test_template",
+        "test": "test",
+        "values": ["yes", "no"]
+      }
+    }
+  }
+}

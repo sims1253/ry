@@ -84,7 +84,7 @@ fn unary_call_callee(expr: &Expr) -> Option<(&str, &Expr)> {
 }
 
 /// The integer value of a whole-number numeric literal.
-fn numeric_literal(expr: &Expr) -> Option<f64> {
+pub(crate) fn numeric_literal(expr: &Expr) -> Option<f64> {
     match expr {
         Expr::Integer(value, _) => Some(*value as f64),
         Expr::Double(value, _) => Some(*value),

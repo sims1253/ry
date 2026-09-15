@@ -296,7 +296,7 @@ Each type is an object with `kind: "r_type"` and the following fields:
 | Field | Shape |
 | --- | --- |
 | `mode` | `logical`, `integer`, `double`, `complex`, `character`, `raw`, `list`, `null`, `function`, `opaque`, or `union`. |
-| `length` | `{"kind":"known","value":N}` or `{"kind":"unknown"}`. |
+| `length` | `{"kind":"known","value":N}`, `{"kind":"unknown"}`, or `{"kind":"nonempty"}` (exact count unknown, provably at least one). |
 | `class` | `kind` (`known` or `unknown`), ordered `names`, `capacity: 4`, and `may_be_truncated`. |
 | `columns` | `{"kind":"unknown"}` or an object with `kind` (`complete` or `partial`), `entries`, and `locally_constructed`. |
 | `members` | `{"kind":"not_applicable"}`, `{"kind":"unknown"}`, or `{"kind":"known","types":[...]}`. |

@@ -52,6 +52,11 @@
         "current_scope_when": {"param": "local", "equals": true},
         "default_current_scope": "top_level"
       }
+    },
+    "test_template_like": {
+      "params": ["test", "yes", "no"],
+      "return": {"mode": "yes_or_no", "length": "test", "na": true},
+      "return_mode": {"kind": "test_template", "test": "test", "values": ["yes", "no"]}
     }
   }
 }

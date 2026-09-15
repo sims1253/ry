@@ -661,7 +661,10 @@ fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length
         Length::Zero => 0,
         Length::One => 1,
         Length::Known(length) => length,
-        Length::Unknown => return None,
+        // Without an exact count the remaining length cannot be pinned:
+        // a nonempty value may hold exactly one element, so excluding
+        // one position can empty it.
+        Length::Unknown | Length::Nonempty => return None,
     };
     let length = base - usize::from(excluded <= base);
     Some(match length {

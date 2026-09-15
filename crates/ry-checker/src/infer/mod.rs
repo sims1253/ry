@@ -13,6 +13,7 @@ pub(crate) mod call;
 mod cloned_scope_reference;
 pub(crate) mod construct;
 pub(crate) mod custom_operator;
+pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
 mod narrow;
@@ -79,7 +80,7 @@ impl ConditionContext {
 /// above one errors ("the condition has length > 1").
 fn is_coercible_scalar_condition_mode(t: &RType) -> bool {
     matches!(t.mode, Mode::Character | Mode::Complex | Mode::Raw)
-        && matches!(t.length, Length::One | Length::Unknown)
+        && matches!(t.length, Length::One | Length::Unknown | Length::Nonempty)
 }
 
 /// Decoded character text from a literal or a binding with a known value.

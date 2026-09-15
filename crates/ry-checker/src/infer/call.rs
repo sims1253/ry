@@ -377,6 +377,26 @@ impl Checker {
             return t;
         }
 
+        // The test-template mode stage: a signature declaring a
+        // `return_mode` `test_template` rule (`base::ifelse`) seeds its
+        // result from the test vector, so the declared branch-mode join
+        // collapses to logical when the test may be empty or is all-NA
+        // (RY106). Runs after every dispatch shape above so only a call
+        // that reaches the plain typeshed stage is claimed.
+        if let Some(signature) = &call.resolved_sig
+            && signature.return_mode.is_some()
+            && let Some(result) = self.infer_test_template_call(
+                &lookup_name,
+                signature,
+                args,
+                &call.arg_types,
+                scope,
+                span,
+            )
+        {
+            return result;
+        }
+
         // The typeshed stage: a qualified call (`pkg::fun`) resolves
         // against `load_package(pkg)`; an unqualified call falls back
         // from base to loaded packages (reverse load order).

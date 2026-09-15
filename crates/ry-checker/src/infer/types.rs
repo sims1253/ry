@@ -293,7 +293,7 @@ pub(crate) fn literal_callee_mode(e: &Expr) -> Option<Mode> {
 /// Used by `paste` / `paste0` / `sprintf` which return a character
 /// vector whose length is the longest of the input vectors (R recycles
 /// shorter args to match). Returns `Length::Unknown` if any arg has an
-/// unknown length.
+/// unknown length; a proven-nonempty arg keeps the maximum nonempty.
 pub(crate) fn longest_arg_length(arg_types: &[RType]) -> Length {
     let mut max: Length = Length::One;
     for t in arg_types {
@@ -301,6 +301,14 @@ pub(crate) fn longest_arg_length(arg_types: &[RType]) -> Length {
             (Length::Zero, x) | (x, Length::Zero) => x,
             (Length::One, x) | (x, Length::One) => x,
             (Length::Known(a), Length::Known(b)) => Length::Known(a.max(b)),
+            (Length::Nonempty, Length::Known(_))
+            | (Length::Known(_), Length::Nonempty)
+            | (Length::Nonempty, Length::Nonempty) => Length::Nonempty,
+            // max(>= 1, unknown) keeps the >= 1 lower bound: a
+            // possibly-empty operand cannot pull the maximum to zero.
+            (Length::Nonempty, Length::Unknown) | (Length::Unknown, Length::Nonempty) => {
+                Length::Nonempty
+            }
             _ => return Length::Unknown,
         };
     }

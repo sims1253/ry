@@ -7,18 +7,19 @@ and an `audit_group` label. Pinning identities — not aggregate counts — mean
 removing one finding can never be silently mistaken for removing another.
 
 The `audit_group` field groups reviewed findings by how the audit explained
-each label. `posit-0.9.0.json` has 12 groups; most name a cause
-(`type-narrowing`, `test-fixture`), one an owner (`upstream-package`), and
-the largest, `manual-audit`, is the manually
-classified batch. `tidyverse-0.7.1.json` has 17 groups: 16 are batch ids
+each label. `posit-0.9.0.json` has 13 groups; most name a cause
+(`type-narrowing`, `test-fixture`, `ifelse-mode`), one an owner
+(`upstream-package`), and the largest, `manual-audit`, is the manually
+classified batch. `tidyverse-0.7.1.json` has 19 groups: 16 are batch ids
 (`P2`, `P3a`, `plan-32-33`, `pr195-nse-stubs`), kept verbatim because the
 planning records that defined them were local-only and no longer exist;
-the other, `upstream-ggplot2`, names the upstream package.
+`upstream-ggplot2` and `upstream-glue` name upstream packages and
+`ifelse-mode` a cause.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 75 | 11 / 41 / 0 (+23 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 393 | 39 / 354 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 77 | 13 / 41 / 0 (+23 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 396 | 42 / 354 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.

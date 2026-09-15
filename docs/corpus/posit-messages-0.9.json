@@ -1323,6 +1323,33 @@
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `character`"
     },
+    "gt::RY106::R/format_data.R:4057:3": {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/format_data.R",
+      "line": 4057,
+      "column": 3,
+      "severity": "warning",
+      "message": "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+    },
+    "gt::RY106::R/utils_render_latex.R:69:3": {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/utils_render_latex.R",
+      "line": 69,
+      "column": 3,
+      "severity": "warning",
+      "message": "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+    },
+    "gt::RY106::R/z_utils_render_footnotes.R:418:18": {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/z_utils_render_footnotes.R",
+      "line": 418,
+      "column": 18,
+      "severity": "warning",
+      "message": "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+    },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
       "code": "RY032",

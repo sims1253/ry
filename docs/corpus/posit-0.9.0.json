@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "e942971740bbc6b1e1ba7002c3088be7f17f5b93a4929d897ba0f488b546bac9",
-  "ry_commit": "1b7123fdffdaa9bff51a2d5a557b838cfcd1576d",
+  "source_sha256": "e61ddbfdee25f9a5f180c21767cb5015d2ceb208649a703a605653a35213bff4",
+  "ry_commit": "37802e696529752391a6f065efa0b711f9937a53",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 5
+      "diagnostics": 8
     },
     {
       "name": "blogdown",
@@ -1711,6 +1711,33 @@
       "column": 57,
       "label": "false_positive",
       "audit_group": "type-narrowing"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/format_data.R",
+      "line": 4057,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/utils_render_latex.R",
+      "line": 69,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "gt",
+      "code": "RY106",
+      "path": "R/z_utils_render_footnotes.R",
+      "line": 418,
+      "column": 18,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
     },
     {
       "package": "httr",
@@ -3982,7 +4009,7 @@
     }
   ],
   "classification": {
-    "true_positive": 39,
+    "true_positive": 42,
     "false_positive": 354,
     "uncertain": 0
   },
@@ -3998,7 +4025,8 @@
     "s3-method-dispatch": 3,
     "test-fixture": 72,
     "type-narrowing": 52,
-    "upstream-package": 28
+    "upstream-package": 28,
+    "ifelse-mode": 3
   },
   "notes": [
     "testthat block scoping (#368) makes sibling blocks reachable after a mid-test `return()`, surfacing two reviewed rlang RY040 false positives previously hidden by the flattened-scope unreachability: tests/testthat/test-cnd-message.R:481:8 quotes its operand through `enexpr()` and never forces the promise, and tests/testthat/test-trace.R:587:28 is a deliberate caught-error fixture (`identity(1 + \"\")` on the error path under `catch_cnd`). Both are test-fixture false positives; all 37 true positives are retained.",
@@ -4026,6 +4054,7 @@
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed usethis RY092 false positive at R/utils-github.R:131:20 is removed. No other Posit identity changes; all 43 true positives are preserved.",
     "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained.",
     "RY107 any-all-scalar-comparison (issue #356) adds exactly one identity: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(), runtime-verified (FALSE == 0 is TRUE, so the written guard computes `!any(lengths)`; the intended `any(lengths == 0)` is written at glue.R:139,191). Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet. Reconciled on top of the #473 recovered-tree reconciliation.",
-    "The non-UTF-8 source flag (#376) adds one reviewed finding: lintr tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000. At the pinned commit the file deliberately carries CP1252 bytes (a 0xe4 in a comment, a raw 0xfc opening the symbol on line 4); R 4.6.1 rejects it with \"invalid multibyte character in parser\" at 4:6, so the finding is a true_positive in the test-fixture group. No other posit identity moves: comment-confined invalid bytes stay clean like R, and no other corpus file is non-UTF-8."
+    "The non-UTF-8 source flag (#376) adds one reviewed finding: lintr tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000. At the pinned commit the file deliberately carries CP1252 bytes (a 0xe4 in a comment, a raw 0xfc opening the symbol on line 4); R 4.6.1 rejects it with \"invalid multibyte character in parser\" at 4:6, so the finding is a true_positive in the test-fixture group. No other posit identity moves: comment-confined invalid bytes stay clean like R, and no other corpus file is non-UTF-8.",
+    "RY106 (ifelse-mode-collapse, #461) adds three owned gt true positives at R/format_data.R:4057:3, R/utils_render_latex.R:69:3, and R/z_utils_render_footnotes.R:418:18: typed-NA selects whose result collapses to logical when the maybe-empty test is empty (the tidyverse/hms#231 family, runtime-verified as ifelse(logical(0), NA_character_, 'a') == logical(0)). The rule fires only for literal empty or all-NA tests and for typed-NA selects, so the testthat parallel-taskq len=0 join artifacts stay silent; all prior identities are unchanged."
   ]
 }

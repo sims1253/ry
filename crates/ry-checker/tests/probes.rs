@@ -266,6 +266,12 @@ static PROBES: &[Probe] = &[
         negative: "f <- function(v) if (length(v) > 0) 1 else 2\n",
     },
     Probe {
+        code: "RY106",
+        note: "`ifelse()` collapsing to logical for an empty or all-NA test",
+        positive: "a <- ifelse(logical(0), NA_character_, \"a\")\n",
+        negative: "v <- c(-1, 0, 1)\na <- ifelse(v > 0, \"pos\", \"neg\")\n",
+    },
+    Probe {
         code: "RY107",
         note: "`any()`/`all()` scalar logical compared with a negating or constant literal",
         positive: "f <- function(x) if (any(x) == 0) 1 else 2\n",

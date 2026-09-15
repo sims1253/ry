@@ -234,6 +234,12 @@ pub const RULES: &[Rule] = &[
         summary: "`length()` of a value that is length-1 by construction, compared with a literal. The comparison has a constant result, so the guard is dead.",
     },
     Rule {
+        code: "RY106",
+        name: "ifelse-mode-collapse",
+        default_severity: Severity::Warning,
+        summary: "`ifelse()` builds its result from `test`, so a zero-length or all-NA test yields a logical result even when `yes`/`no` agree on another mode — in particular for typed-NA selects. Use a typed alternative such as `vctrs::if_else()`.",
+    },
+    Rule {
         code: "RY107",
         name: "any-all-scalar-comparison",
         default_severity: Severity::Warning,

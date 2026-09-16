@@ -462,13 +462,13 @@ impl FormalSupplyWalk<'_, '_> {
         if let Some(then) = then {
             self.walk_stmts(then, &mut then_point);
         }
-        let then_diverges = then.is_some_and(|then| self.stmts_diverge(then));
+        let then_diverges = then.is_some_and(|then| self.checker.block_diverges(then));
         match else_ {
             Some(else_statements) => {
                 let mut else_point = point.clone();
                 else_point.alive = else_alive;
                 self.walk_stmts(else_statements, &mut else_point);
-                let else_diverges = self.stmts_diverge(else_statements);
+                let else_diverges = self.checker.block_diverges(else_statements);
                 *point = match (then_diverges, else_diverges) {
                     (true, true) => {
                         let mut dead = point.clone();
@@ -579,7 +579,7 @@ impl FormalSupplyWalk<'_, '_> {
                 self.walk_expr(cond, point);
                 let mut then_point = point.clone();
                 self.walk_expr(then, &mut then_point);
-                let then_diverges = self.expr_diverges_strict(then);
+                let then_diverges = self.checker.expr_diverges_full(then);
                 self.merge_expr_arms(then_point, then_diverges, else_, point, point.alive);
             }
             Some(SupplyTest::Decoded {
@@ -590,7 +590,7 @@ impl FormalSupplyWalk<'_, '_> {
                 let mut then_point = point.clone();
                 then_point.alive = self.arm_state(point, then_fact);
                 self.walk_expr(then, &mut then_point);
-                let then_diverges = self.expr_diverges_strict(then);
+                let then_diverges = self.checker.expr_diverges_full(then);
                 let else_alive = self.arm_state(point, else_fact);
                 self.merge_expr_arms(then_point, then_diverges, else_, point, else_alive);
             }
@@ -600,7 +600,7 @@ impl FormalSupplyWalk<'_, '_> {
                 let mut then_point = point.clone();
                 then_point.alive = silent;
                 self.walk_expr(then, &mut then_point);
-                let then_diverges = self.expr_diverges_strict(then);
+                let then_diverges = self.checker.expr_diverges_full(then);
                 self.merge_expr_arms(then_point, then_diverges, else_, point, silent);
             }
         }
@@ -623,7 +623,7 @@ impl FormalSupplyWalk<'_, '_> {
                 let mut else_point = point.clone();
                 else_point.alive = fall_alive;
                 self.walk_expr(else_expr, &mut else_point);
-                let else_diverges = self.expr_diverges_strict(else_expr);
+                let else_diverges = self.checker.expr_diverges_full(else_expr);
                 *point = match (then_diverges, else_diverges) {
                     (true, true) => {
                         let mut dead = point.clone();
@@ -825,48 +825,6 @@ impl FormalSupplyWalk<'_, '_> {
             },
         );
         found
-    }
-
-    /// Whether every path through these statements stops the enclosing
-    /// function. The main walker's divergence query misses `return(...)`
-    /// here: the parser never produces `Stmt::Return` (it lowers the
-    /// keyword to an ordinary call), and `return` has no `no_return`
-    /// stub, so this strict variant adds the call form on top of
-    /// [`Checker::expr_diverges`] (`stop()` via its stub, `UseMethod`,
-    /// diverging collected helpers).
-    fn stmts_diverge(&self, stmts: &[Stmt]) -> bool {
-        stmts.iter().any(|statement| match statement {
-            Stmt::Return { .. } => true,
-            Stmt::Expr(expression) => self.expr_diverges_strict(expression),
-            Stmt::If { then, else_, .. } => else_
-                .as_ref()
-                .is_some_and(|else_| self.stmts_diverge(then) && self.stmts_diverge(else_)),
-            _ => false,
-        })
-    }
-
-    /// Whether evaluating `expr` stops the enclosing function: blocks and
-    /// expression `if`s recurse structurally, `return(...)` parses as an
-    /// ordinary call in expression position (the shape that matters
-    /// here: `lim <- if (missing(p)) return(...)`), and everything else
-    /// defers to [`Checker::expr_diverges`].
-    fn expr_diverges_strict(&self, expr: &Expr) -> bool {
-        match expr {
-            Expr::Call { func, .. }
-                if ident_name(func)
-                    .map(crate::semantic_lists::bare_name)
-                    .is_some_and(|name| name == "return") =>
-            {
-                true
-            }
-            Expr::Block { body, .. } => self.stmts_diverge(body),
-            Expr::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-                self.expr_diverges_strict(then) && self.expr_diverges_strict(else_)
-            }),
-            other => self
-                .checker
-                .expr_diverges(other, &mut std::collections::HashSet::new()),
-        }
     }
 }
 

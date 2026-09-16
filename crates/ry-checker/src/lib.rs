@@ -1016,6 +1016,20 @@ pub struct Checker {
     scope_records: Vec<ScopeRecord>,
     // Assignment-site types for editor hints, captured only on request.
     assignment_types: Option<HashMap<Span, RType>>,
+    // Armed vacuous-all guards (RY110), installed by the pass-3 walk at
+    // `if`/`stopifnot` guard sites and consumed at stub-declared call
+    // arguments on the accepted path. Cleared per check run.
+    vacuous_guards: Vec<infer::vacuous::VacuousGuard>,
+    // For every statement, the byte range of the statements following it
+    // in its enclosing list: the accepted path of a rejecting guard
+    // (`if (!(G)) stop(...)`, `stopifnot(G)`). Indexed once per check run
+    // by `emit_diagnostics`.
+    stmt_continuations: HashMap<Span, Span>,
+    // Every function literal or definition's formal names with the
+    // function's span: the binding-identity shadow set RY110's demand
+    // check consults, so a demand on a closure parameter does not
+    // consume an enclosing function's same-named guard.
+    formal_shadows: Vec<(String, Span)>,
 }
 
 impl Checker {
@@ -1073,6 +1087,9 @@ impl Checker {
         self.diagnostics.clear();
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
+        self.vacuous_guards.clear();
+        self.stmt_continuations.clear();
+        self.formal_shadows.clear();
 
         // Pass 1: collect function definitions into the FnTable. We don't
         // emit diagnostics yet - the body's `return` types depend on the
@@ -1158,6 +1175,9 @@ impl Checker {
             reference_capture: None,
             scope_records: Vec::new(),
             assignment_types: None,
+            vacuous_guards: Vec::new(),
+            stmt_continuations: HashMap::new(),
+            formal_shadows: Vec::new(),
         }
     }
 
@@ -1286,6 +1306,17 @@ impl Checker {
         if let Some(types) = &mut self.assignment_types {
             types.clear();
         }
+        // RY110 state is per-run: guards armed in this walk consume
+        // demands in this walk, against this file's continuation and
+        // shadow ranges.
+        self.vacuous_guards.clear();
+        self.stmt_continuations.clear();
+        self.formal_shadows.clear();
+        infer::vacuous::index_statement_continuations(
+            &file.stmts,
+            &mut self.stmt_continuations,
+            &mut self.formal_shadows,
+        );
         // Encoding problems come first: an undecodable file is the most
         // fundamental way input can be malformed, and R's parser rejects
         // it before any syntax consideration.

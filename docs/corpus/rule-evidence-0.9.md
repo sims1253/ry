@@ -38,7 +38,7 @@ value is a literal call argument (`f(literal)`) versus a parameter default
 | :-- | :-- |
 | lift-reachable | RY001, RY003, RY020, RY021, RY031, RY033, RY040 |
 | param-unreachable | RY002, RY030, RY032, RY061 |
-| consistent | RY034, RY093, RY099, RY100, RY103, RY105, RY106, RY107 |
+| consistent | RY034, RY093, RY099, RY100, RY103, RY105, RY106, RY107, RY110 |
 | n/a (syntactic) | RY000, RY010, RY041, RY042, RY050, RY060, RY070, RY080, RY090, RY091, RY092, RY094, RY096, RY097, RY098, RY101, RY102, RY108, RY109 |
 
 ## Targeted mutation pilot
@@ -107,7 +107,7 @@ determines the verdict.
 | `RY107` any-all-scalar-comparison | 1/0 | yes | `any_all_scalar_comparison_claim.R` | consistent | - | yes | keep | Valid claim; 1 TP / 0 FP on the vendored packages (glue `R/utils.R:32`, the audited defect itself, issue #356). Value-preserving comparisons stay silent, keeping diffobj's pinned idiom quiet. Consistent under R7 lifting (syntactic). |
 | `RY108` seq-defaulted-forward | 1/0 | yes | `seq_defaulted_forward_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 1 TP / 0 FP (hms `R/hms.R:307`, the audited defect itself, tidyverse/hms#231: the defaulted `to` is cast and forwarded without a `missing(to)` check, so `seq(hms(1), length.out = 3)` repeats the default endpoint). `seq.Date`-style guards, cached `m <- missing(to)` tests, and a `to` without a default stay silent. |
 | `RY109` self-referential-default | 33/2 | yes | `self_referential_default_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 33 TP / 2 FP across the corpora (10 TP tidyverse + 23 TP posit, the dtplyr #364 family and latent same-shape defects; 2 FP on rlang's own defusing tests, where a bare in-project `enexpr`/`enquo` cannot be credited without provenance). Defusing idioms (corrr, dbplyr `sql_runif`) stay silent via typeshed `captures_promise` provenance or `{{ }}` recognition. Two suppression-side false negatives are pinned as oracle known-gap fixtures (defuse-then-force, divergent branches). |
-
+| `RY110` vacuous-all-guard | 0/0 | yes | `vacuous_all_guard_claim.R` | consistent | - | yes | keep | Valid claim; 0 corpus findings. The founding hms shape (tidyverse/hms#231) is interprocedural -- the guard sits in the `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast` -- outside the rule's same-function scope; every corpus `all(is.na())` site is an intentionally permissive shape (no mode-predicate operand: rlang `R/bytes.R:199`, scales `R/colour-mapping.R:54`; bare skip-logic guards; or the hms helper itself), so the downstream-demand gate keeps the corpus silent. |
 ## Verdict execution
 
 Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
@@ -126,11 +126,11 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
 ## Completeness checks
 
-- Rows: 35, exactly one for every non-retired entry in `RULES`.
-- Probes: 34 present; RY097 has the committed CLI-level exclusion.
-- Claim fixtures: 35 present and enforced by `every_rule_has_a_claim_fixture`.
+- Rows: 36, exactly one for every non-retired entry in `RULES`.
+- Probes: 35 present; RY097 has the committed CLI-level exclusion.
+- Claim fixtures: 36 present and enforced by `every_rule_has_a_claim_fixture`.
 - R7 coverage: every rule is classified (lift-reachable, param-unreachable,
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values count finding records in the archived hermetic ledger.
-- Verdicts: 33 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).
+- Verdicts: 34 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).

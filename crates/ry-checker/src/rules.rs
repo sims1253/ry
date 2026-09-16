@@ -257,6 +257,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A formal's default expression references the formal itself (`copy = copy`, `n = n + 1`). The reference can only resolve to the promise, so triggering the default errors in R ('promise already under evaluation'); supplying the argument is unaffected. Warns even without a provable force in the body (RY098 carries the proven-forcing half), because such a default can never evaluate. Defaults referencing a different formal are legal and stay quiet.",
     },
+    Rule {
+        code: "RY110",
+        name: "vacuous-all-guard",
+        default_severity: Severity::Warning,
+        summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then cannot use as numeric (the Math group errors; `mean()` warns and returns `NA`). Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

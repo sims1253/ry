@@ -225,7 +225,7 @@ impl Checker {
     /// generic whose dispatch to a `length.*` method the checker does not
     /// track (#372) — the same exclusions RY105 applies to
     /// scalar-by-construction proofs.
-    fn test_binding_is_open_world(&self, expr: &Expr, scope: &Scope) -> bool {
+    pub(crate) fn test_binding_is_open_world(&self, expr: &Expr, scope: &Scope) -> bool {
         matches!(
             expr,
             Expr::Ident { name, .. }
@@ -248,7 +248,7 @@ impl Checker {
     /// `logical<len=0>` for an indexed subset), so the definite premise
     /// rests on the expression's shape, exactly the discipline
     /// [`test_definitely_na`] applies to the NA half.
-    fn test_definitely_empty(&self, expr: &Expr, scope: &Scope) -> bool {
+    pub(crate) fn test_definitely_empty(&self, expr: &Expr, scope: &Scope) -> bool {
         let Expr::Call { func, args, .. } = expr else {
             return matches!(expr, Expr::Null(..));
         };

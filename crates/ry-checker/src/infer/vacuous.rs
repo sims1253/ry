@@ -420,7 +420,7 @@ impl Checker {
             return;
         };
         let accept = if negated {
-            match (else_, self.block_diverges_for_guard(then)) {
+            match (else_, self.block_diverges(then)) {
                 (Some(statements), _) => stmt_list_span(statements),
                 (None, true) => self.stmt_continuations.get(&if_span).copied(),
                 (None, false) => None,
@@ -639,42 +639,6 @@ impl Checker {
                 "{premise}, and the guard then accepts zero-length input that fails `{predicate_name}` (such as an empty {mode}) which `{demand_name}()` cannot use as {label}; guard the emptiness too: `{predicate_name}({var}) || (length({var}) > 0 && all(is.na({var})))`"
             ),
         );
-    }
-}
-
-/// Whether a statement exits its function through a source-level
-/// `return(...)`: the `Stmt::Expr` call form the walk's own `Stmt::Expr`
-/// arm treats as exiting (it sets `unreachable`). RY110's divergence
-/// view extends `block_diverges` with this form -- the most idiomatic R
-/// reject-guard is `if (!(G)) return(...)` -- deliberately WITHOUT
-/// routing it through the shared `expr_diverges`: that view also feeds
-/// the journal's continuation facts, and recognizing `return()` there
-/// would flow the else-branch narrowing of pre-existing guards into
-/// continuations (`if (is.null(x)) return(NULL)` currently keeps the
-/// stale default type and lets RY001 fire on a following condition, a
-/// pinned behavior). Bare-name `return` only, matching the walker;
-/// `invisible()` returns a value and does not exit.
-pub(crate) fn stmt_diverges_for_guard(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Return { .. } => true,
-        Stmt::Expr(expression) => expr_diverges_for_guard(expression),
-        Stmt::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-            then.iter().any(stmt_diverges_for_guard) && else_.iter().any(stmt_diverges_for_guard)
-        }),
-        _ => false,
-    }
-}
-
-fn expr_diverges_for_guard(expr: &Expr) -> bool {
-    match expr {
-        Expr::Call { func, .. } => {
-            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "return")
-        }
-        Expr::Block { body, .. } => body.iter().any(stmt_diverges_for_guard),
-        Expr::If { then, else_, .. } => else_
-            .as_ref()
-            .is_some_and(|else_| expr_diverges_for_guard(then) && expr_diverges_for_guard(else_)),
-        _ => false,
     }
 }
 
@@ -1075,6 +1039,29 @@ mod tests {
         // continuation is not provably the accepted path.
         assert!(!fires(
             "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) invisible(NULL)\n  sqrt(x)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn qualified_base_return_diverges_like_the_bare_form() {
+        // The shared view matches the callee's bare name, so an
+        // explicit `base::return(...)` qualification rejects exactly
+        // like the bare keyword (the same qualification `UseMethod`
+        // already enjoys in `expr_diverges`).
+        assert!(fires(
+            "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) base::return(NULL)\n  sqrt(x)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn a_helpers_return_exits_the_helper_not_the_caller() {
+        // `return` inside a collected helper returns a value to its
+        // caller, and the caller's block continues past the call, so
+        // the rejection arm below does not diverge and the continuation
+        // stays unproven -- the helper-body recursion is return-blind
+        // whatever view the outer query runs.
+        assert!(!fires(
+            "bail <- function(x) return(NULL)\nf <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) bail(x)\n  sqrt(x)\n}\n"
         ));
     }
 

@@ -1652,6 +1652,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_regmatches_callback_lengths.R
 - diagnostics: []
+  fixture: ok_return_guard_divergence.R
+- diagnostics: []
   fixture: ok_s3_data_frame.R
 - diagnostics: []
   fixture: ok_s3_data_frame_operator_override.R
@@ -2115,6 +2117,16 @@ expression: snapshots
         line: 1
         start: 20
   fixture: warn_numeric_min_condition.R
+- diagnostics:
+    - code: RY001
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 6
+        end: 547
+        line: 10
+        start: 542
+  fixture: warn_return_guard_stale_default_condition.R
 - diagnostics:
     - code: RY051
       message: "incompatible S3 methods `+.left` and `+.right` for `+`; R uses the primitive operator"

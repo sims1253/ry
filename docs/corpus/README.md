@@ -119,7 +119,7 @@ the reviewed identity list.
 # tidyverse (default; strict hermetic reconciliation)
 ecosystem/run.sh --check
 
-# posit corpus — strict 0.9 gate; fast tier (35 packages) or full (all 62)
+# posit corpus — strict 0.9 gate; fast tier (36 packages) or full (all 62)
 ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --tier fast
 ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --tier full
 ```

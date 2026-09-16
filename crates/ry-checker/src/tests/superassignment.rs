@@ -5,11 +5,15 @@
 //! it did or did not run before a given read. The conservative model:
 //! every `<<-` target anywhere in a function body (nested closure bodies
 //! included) becomes unknown-typed in the definition scope once the
-//! definition is walked -- except a write whose name an intervening
-//! function frame binds as a formal: `<<-` searches that frame before
-//! the definition scope, so the write lands there and never reaches the
-//! outer binding. Reads before the definition keep the prior type, so a
-//! provably-invalid condition still fires there.
+//! definition is walked -- except a plain-name write whose name an
+//! intervening function frame binds as a formal: `<<-` searches that
+//! frame before the definition scope, so the write lands there and
+//! never reaches the outer binding. Complex targets (subscripted or
+//! call-form) are never excepted: they fetch the root through that
+//! frame and modify it, so a reference-typed root shared with the
+//! definition scope is mutated in place and the outer binding does
+//! observe the write. Reads before the definition keep the prior type,
+//! so a provably-invalid condition still fires there.
 //!
 //! The silent shapes split by what R 4.6 actually does at runtime (each
 //! verdict reproduced with Rscript): where the writing closure is
@@ -168,6 +172,56 @@ fn writing_frame_formals_do_not_intercept() {
         !diagnostics
             .iter()
             .any(|d| matches!(d.code, "RY001" | "RY010" | "RY070")),
+        "{source}: {:?}",
+        codes(&diagnostics)
+    );
+}
+
+/// The interception prune is reserved for plain-name rebinding: a
+/// complex target through an intervening formal fetches the root object
+/// through that formal and modifies it, so when the root is an
+/// environment shared between the formal and the definition scope the
+/// member write happens in place and the definition scope observes it.
+/// Verified in R (`env <- new.env(); env$key <- NULL; outer <-
+/// function(env) { inner <- function() env$key <<- TRUE; inner };
+/// outer(env)()` leaves the file-level `env$key` TRUE, so the loop
+/// runs): pruning the root would keep the stale `key: NULL` member
+/// fact and fire RY001 on code that runs fine, the false-positive
+/// family this model exists to silence. The plain-name control one
+/// test up keeps its finding.
+#[test]
+fn complex_targets_through_intervening_formals_stay_silent() {
+    let source = "env <- new.env()\nenv$key <- NULL\nouter <- function(env) { inner <- function() env$key <<- TRUE; inner }\nouter(env)()\nwhile (env$key) break";
+    let diagnostics = check(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.code, "RY001" | "RY010" | "RY070")),
+        "{source}: {:?}",
+        codes(&diagnostics)
+    );
+
+    // Call-form root, same reference semantics: `class(e2) <<- v`
+    // through a formal retags the shared environment (probe: the
+    // file-level `class(e2)` reads back "foo").
+    let source = "e2 <- new.env()\nouter3 <- function(e2) { inner3 <- function() class(e2) <<- 'foo'; inner3 }\nouter3(e2)()\nif (class(e2) == 'foo') 1L";
+    let diagnostics = check(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.code, "RY001" | "RY010" | "RY070")),
+        "{source}: {:?}",
+        codes(&diagnostics)
+    );
+
+    // Plain-name control: the rebind lands in the formal, the
+    // definition-scope binding keeps its provable type (probe: the
+    // file-level `x` stays NULL and `while (x)` errors), so the
+    // finding must survive next to the silent complex shapes.
+    let source = "x <- NULL\nouter2 <- function(x) { inner2 <- function() x <<- TRUE; inner2 }\nouter2(x)()\nwhile (x) break";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
         "{source}: {:?}",
         codes(&diagnostics)
     );

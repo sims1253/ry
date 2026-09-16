@@ -471,10 +471,13 @@ impl Checker {
     /// body may perform through superassignment (issue #374): every
     /// `<<-` target in the body that can reach the definition scope
     /// becomes unknown-typed there, and a target whose root cannot be
-    /// named discards all value facts. A write nested in a closure
-    /// defined inside the body reaches the definition scope only when no
-    /// frame between that closure and this scope binds the name as a
-    /// formal; such intercepted writes are not applied.
+    /// named discards all value facts. A plain-name write nested in a
+    /// closure defined inside the body reaches the definition scope
+    /// only when no frame between that closure and this scope binds the
+    /// name as a formal; such intercepted writes are not applied.
+    /// Complex targets (subscripted or call-form) are always applied:
+    /// they fetch the root through any intercepting frame and modify
+    /// it, which mutates a shared reference-typed root in place.
     ///
     /// Called once per definition site as the literal's value is
     /// inferred, so the update lands at the definition's position in

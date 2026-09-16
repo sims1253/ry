@@ -974,7 +974,8 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
 /// model is therefore the issue's stated strategy: every name targeted
 /// by a write that can reach the definition scope -- a write directly
 /// in the body, or one nested in a closure whose intervening frames do
-/// not bind the name (see [`InterveningFormals`]) -- becomes
+/// not intercept it, a prune plain-name rebinding earns but complex
+/// targets never do (see [`InterveningFormals`]) -- becomes
 /// unknown-typed in the definition scope once the definition is walked.
 /// Joining the write's type instead would keep the stale initial branch
 /// (the `token <- NULL` before `token <<- 'EOF'`) inside the union, and
@@ -1029,19 +1030,47 @@ fn superassignment_root(target: &Expr) -> Option<String> {
     }
 }
 
+/// Whether a `<<-` target is a plain name: the identifier or
+/// string-literal spelling itself, not a subscripted or call-form
+/// target that [`superassignment_root`] reduces to a name.
+///
+/// The split matters for interception: a plain target rebinds one
+/// binding, so an intervening formal fully absorbs the write, while a
+/// complex target fetches the object through that formal and modifies
+/// it (R's `*tmp*` protocol), which for a reference-typed root -- an
+/// environment or R6 object shared between the formal and the
+/// definition scope -- mutates the object in place, a write every
+/// binding observes (probe: `env <- new.env(); outer <- function(env)
+/// { inner <- function() env$key <<- TRUE }; outer(env)()` flips the
+/// file-level `env$key`, while the same shape through a list root
+/// writes only the formal's copy).
+fn plain_superassignment_target(target: &Expr) -> bool {
+    matches!(target, Expr::Ident { .. } | Expr::String(..))
+}
+
 /// The formal-parameter names bound by the function frames between a
 /// nested `<<-` and the scope whose statements are being scanned.
 ///
 /// `x <<- v` inside a closure F searches F's parent chain -- never F's
-/// own frame -- so the write reaches the scanned scope only when no
-/// frame between the writing closure and that scope binds the name.
+/// own frame -- so a PLAIN write reaches the scanned scope only when
+/// no frame between the writing closure and that scope binds the name.
 /// In R, `outer <- function(x) { inner <- function() x <<- TRUE }`
 /// rebinds `outer`'s formal when `inner` runs; the file-level `x` is
 /// untouched (an enclosing local `<-` intercepts the same way, a corner
 /// this tracker deliberately leaves conservative -- see below). A
-/// frame's formals therefore exclude a write from the collector's
-/// results; the writing frame's own formals never do, because `<<-`
-/// skips that frame entirely.
+/// frame's formals therefore exclude a plain-name write from the
+/// collector's results; the writing frame's own formals never do,
+/// because `<<-` skips that frame entirely.
+///
+/// Complex targets (subscripted `env$key <<- v`, call-form `class(x)
+/// <<- v`) are never excluded: R evaluates them by fetching the root
+/// object through the intercepting binding and modifying it, so when
+/// the root is reference-typed and shared with the definition scope
+/// the mutation happens in place and the definition scope observes it
+/// (verified in R: `outer <- function(e2) { inner3 <- function()
+/// class(e2) <<- "foo" }; outer(e2)()` retags the file-level
+/// environment). Recording those roots unconditionally errs toward
+/// silence, the same tradeoff as the locals corner below.
 ///
 /// The walker reports only the number of function bodies entered, so
 /// the tracker keys each literal's formals by the walk depth at which
@@ -1122,11 +1151,18 @@ impl InterveningFormals {
                 lhs,
                 ..
             }) => match superassignment_root(lhs) {
+                // A complex target mutates the object fetched through
+                // any intercepting binding, so an in-place write to a
+                // shared reference-typed root still reaches the scanned
+                // scope; the root is recorded regardless of nesting.
+                Some(name) if !plain_superassignment_target(lhs) => {
+                    writes.names.insert(name);
+                }
                 Some(name) if !self.intercepts(depth, &name) => {
                     writes.names.insert(name);
                 }
-                // An intercepted write lands in the intervening frame's
-                // own binding; the scanned scope never sees it.
+                // An intercepted plain rebind lands in the intervening
+                // frame's own binding; the scanned scope never sees it.
                 Some(_) => {}
                 // A root that cannot be named could hit any binding, so
                 // the write stays opaque regardless of nesting.
@@ -1146,8 +1182,9 @@ impl InterveningFormals {
 /// (`y <- (x <<- v)`) present the marker as an `Expr::BinOp`.
 ///
 /// Writes nested in closures defined inside `body` are included only
-/// when no intervening frame binds the name as a formal
-/// ([`InterveningFormals`]).
+/// when no intervening frame binds the name as a formal -- a rule that
+/// prunes plain-name rebinding only; complex-target roots are always
+/// included ([`InterveningFormals`]).
 pub(crate) fn superassignment_writes(params: &[Param], body: &[Stmt]) -> SuperassignmentWrites {
     let mut writes = SuperassignmentWrites::default();
     let mut formals = InterveningFormals::with_root(params);
@@ -1185,8 +1222,9 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
 /// expression positions both present the `SuperAssign` marker, nested
 /// closure bodies contribute their targets (a closure defined inside
 /// the body writes through the body's frame when it later runs) unless
-/// an intervening frame's formal intercepts the write, and complex
-/// targets resolve to their root name.
+/// an intervening frame's formal intercepts the write -- a prune only
+/// plain-name targets earn -- and complex targets resolve to their
+/// root name.
 #[cfg(test)]
 mod superassignment_writes_tests {
     use super::*;
@@ -1297,17 +1335,29 @@ mod superassignment_writes_tests {
         assert_names("a <- function(s) NULL\nb <- function() s <<- TRUE", &["s"]);
     }
 
-    /// A complex target is pruned by the same intervening-formal rule:
-    /// `state$key <<- v` inside a closure whose enclosing frame binds
-    /// `state` writes that frame's binding, not the definition scope's.
+    /// A complex target bypasses the intervening-formal rule: R's
+    /// complex superassignment fetches the root through the intercepting
+    /// formal and modifies it, so a reference-typed root shared with the
+    /// definition scope is mutated in place (verified against R:
+    /// `outer <- function(env) { inner <- function() env$key <<- TRUE
+    /// }; outer(env)()` flips the file-level `env$key`, and the
+    /// call-form `class(e2) <<- "foo"` through a formal retags the
+    /// file-level environment). The root stays recorded even when a
+    /// value-typed root (a list) would in fact only write the formal's
+    /// copy -- the conservative side of the split.
     #[test]
-    fn complex_targets_follow_the_interception_rule() {
-        assert_formal_names("state", "inner <- function() state$key <<- TRUE", &[]);
+    fn complex_targets_bypass_the_interception_rule() {
+        assert_formal_names(
+            "state",
+            "inner <- function() state$key <<- TRUE",
+            &["state"],
+        );
         assert_formal_names(
             "other",
             "inner <- function() state$key <<- TRUE",
             &["state"],
         );
+        assert_formal_names("e2", "inner <- function() class(e2) <<- 'foo'", &["e2"]);
     }
 
     /// The expression-position twin collects from the same shapes when

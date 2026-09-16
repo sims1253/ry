@@ -13,6 +13,7 @@ pub(crate) mod call;
 mod cloned_scope_reference;
 pub(crate) mod construct;
 pub(crate) mod custom_operator;
+pub(crate) mod dynamic_closure;
 pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
@@ -470,6 +471,17 @@ impl Checker {
     /// which is the only one that installs an S3 dispatch context. A
     /// statement-position literal is anonymous, so its walk passes no
     /// function name.
+    ///
+    /// A literal whose span is indexed as a dynamic-construction
+    /// placeholder (`x <- function(...)` later followed by
+    /// `formals(x) <- ...` / `body(x) <- ...` in the same lexical scope;
+    /// see [`dynamic_closure`]) is walked normally, but the two rules
+    /// whose premises the construction invalidates — RY010 on names the
+    /// `alist()` formals will bind and RY080 on a `body<-`-replaced
+    /// callback result — are dropped afterwards: the placeholder is not
+    /// the closure R runs (issue #380). A `formals<-`-only placeholder
+    /// keeps findings from closures nested in its body: only the
+    /// formals list was replaced, and those closures survive verbatim.
     fn enter_function_body(
         &mut self,
         function_name: Option<&str>,
@@ -479,6 +491,7 @@ impl Checker {
         span: Span,
         scope: &Scope,
     ) {
+        let diagnostic_start = self.diagnostics.len();
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
@@ -539,6 +552,35 @@ impl Checker {
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
+        if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
+            && !self.discarding
+        {
+            // Only the placeholder-specific rules go: RY010 (a name the
+            // `alist()`-installed formals bind is not unbound at runtime)
+            // and RY080 (a `body<-`-replaced body's callback result is
+            // whatever the construction supplied). Everything else still
+            // describes source the author wrote. A formals-only
+            // replacement leaves nested closures in place, so their
+            // findings survive by span containment — the nested walk has
+            // already finished by the time this filter runs.
+            let nested = match kind {
+                dynamic_closure::PlaceholderKind::FormalsOnly => {
+                    Some(dynamic_closure::nested_function_literal_spans(body))
+                }
+                dynamic_closure::PlaceholderKind::BodyReplaced => None,
+            };
+            let walked = self.diagnostics.split_off(diagnostic_start);
+            self.diagnostics
+                .extend(walked.into_iter().filter(|diagnostic| {
+                    !matches!(diagnostic.code, "RY010" | "RY080")
+                        || nested.as_ref().is_some_and(|literals| {
+                            literals.iter().any(|literal| {
+                                diagnostic.span.start >= literal.start
+                                    && diagnostic.span.end <= literal.end
+                            })
+                        })
+                }));
+        }
     }
 
     /// Infer a condition in place and emit its condition-diagnostic

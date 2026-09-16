@@ -143,6 +143,40 @@ expression: snapshots
         start: 90
   fixture: err_dollar_on_atomic.R
 - diagnostics:
+    - code: RY010
+      message: "variable `unbound_at_top_level` is not bound in this scope"
+      severity: warning
+      span:
+        column: 2
+        end: 615
+        line: 10
+        start: 595
+    - code: RY010
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+      span:
+        column: 24
+        end: 717
+        line: 15
+        start: 716
+    - code: RY010
+      message: "variable `still_unbound` is not bound in this scope"
+      severity: warning
+      span:
+        column: 18
+        end: 795
+        line: 21
+        start: 782
+    - code: RY010
+      message: "variable `nested_survives_formals_replacement` is not bound in this scope"
+      severity: warning
+      span:
+        column: 20
+        end: 951
+        line: 28
+        start: 916
+  fixture: err_dynamic_formals_scope_precision.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
@@ -1360,6 +1394,8 @@ expression: snapshots
   fixture: ok_dynamic_data_frame_extract.R
 - diagnostics: []
   fixture: ok_dynamic_field_write.R
+- diagnostics: []
+  fixture: ok_dynamic_formals_closure.R
 - diagnostics: []
   fixture: ok_dynamic_list_extract.R
 - diagnostics: []

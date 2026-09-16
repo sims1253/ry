@@ -126,6 +126,12 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
         ("filtering/warn", "diagnostic.R", &[][..]),
         ("filtering/exclude", "diagnostic.R", &[][..]),
         ("filtering/baseline", "diagnostic.R", &[][..]),
+        ("filtering/baseline-suppression", "diagnostic.R", &[][..]),
+        (
+            "filtering/baseline-min-confidence",
+            "diagnostic.R",
+            &["--min-confidence", "high"][..],
+        ),
         (
             "filtering/min-confidence",
             "diagnostic.R",
@@ -145,6 +151,42 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
             .collect::<Vec<_>>();
         let lsp = runtime.block_on(run_with_diagnostics(&fixture, target, settings));
         assert_eq!(lsp, cli, "published diagnostics differ for {fixture_name}");
+    }
+}
+
+/// (#491): the editor goes quiet exactly when `ry check` does when
+/// identical `(path, code, message)` keys straddle the post-processing
+/// stages. `baseline-suppression` puts a `# ry: ignore[RY002]` on the
+/// first of two identical findings with a baseline count of 1 — the
+/// suppression must drop its occurrence before the baseline consumes
+/// the count, or the unsuppressed twin stays visible in the editor
+/// while `ry check` is quiet. `baseline-min-confidence` pairs the same
+/// baseline with `--min-confidence high` — below-threshold occurrences
+/// still consume the baseline budget before the threshold drops them,
+/// matching the CLI's order.
+#[test]
+fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let cases = [
+        ("filtering/baseline-suppression", &[][..]),
+        (
+            "filtering/baseline-min-confidence",
+            &["--min-confidence", "high"][..],
+        ),
+    ];
+    for (fixture_name, cli_args) in cases {
+        let fixture = FixtureProject::from_fixture(fixture_name).unwrap();
+        let settings = settings(&fixture, "lsp-settings.json");
+        let cli = cli_diagnostics(&fixture, cli_args);
+        assert!(cli.is_empty(), "{fixture_name}: `ry check` must be quiet");
+        let lsp = runtime.block_on(run_with_diagnostics(&fixture, "diagnostic.R", settings));
+        assert_eq!(
+            lsp, cli,
+            "{fixture_name}: the editor must go quiet exactly when `ry check` does"
+        );
     }
 }
 

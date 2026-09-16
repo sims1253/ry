@@ -484,32 +484,38 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         }
     }
 
-    // Apply inline suppression comments (`# ry: ignore`, `# noqa`,
-    // `# ry: ignore-file`) before the severity filter so a suppressed
-    // error never even reaches the filter pipeline. Use the lexical
-    // (comment-based) filter so a `#` inside a string literal is not
-    // mistaken for a suppression directive.
+    // Post-processing runs through the shared pipeline
+    // (`ry_checker::post_process`) so the CLI and the LSP apply one
+    // specified order: inline suppression comments (`# ry: ignore`,
+    // `# noqa`, `# ry: ignore-file`), then the severity filter, then
+    // [demotion seam — `demote_non_source_paths` below], then baseline
+    // subtraction, then the min-confidence threshold. The lexical
+    // (comment-based) suppression filter keeps a `#` inside a string
+    // literal from being mistaken for a directive.
+    let post = ry_checker::PostProcess {
+        filter: ctx.filter,
+        baseline: ctx.baseline,
+        min_confidence: ctx.min_confidence,
+        repo_root: ctx.repo_root,
+    };
     for (path, diags) in &mut per_file_diagnostics {
-        if let Some(cs) = comments.get(path) {
-            let src = srcs.get(path).map(String::as_str).unwrap_or("");
-            *diags = ry_checker::filter_suppressed_with_comments(std::mem::take(diags), cs, src);
-        }
+        let comments: &[ry_core::ast::Comment] = comments.get(path).map_or(&[], Vec::as_slice);
+        let src = srcs.get(path).map_or("", String::as_str);
+        *diags = post.pre_demotion(std::mem::take(diags), comments, src);
     }
-
-    for (_path, diags) in &mut per_file_diagnostics {
-        ry_checker::apply_filter_to_diagnostics(diags, ctx.filter);
-    }
+    // The synthesized not-R diagnostics have no suppression comments to
+    // honor, so they enter the pipeline at the severity filter.
     ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, ctx.filter);
     all_diagnostics.append(&mut not_r_diagnostics);
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }
 
+    // Demotion seam: path-based confidence demotion sits between the
+    // severity filter and the baseline, its documented position in the
+    // shared order (the LSP has no demotion stage yet — #492).
     demote_non_source_paths(&mut all_diagnostics, ctx.repo_root);
-    if let Some(baseline) = ctx.baseline {
-        config::subtract_baseline(&mut all_diagnostics, baseline, ctx.repo_root);
-    }
-    all_diagnostics.retain(|diagnostic| diagnostic.confidence >= ctx.min_confidence);
+    post.post_demotion(&mut all_diagnostics);
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
 
@@ -817,6 +823,74 @@ mod tests {
         assert_eq!(diagnostic.confidence, ry_checker::Confidence::High);
         demote_non_source_paths(std::slice::from_mut(&mut diagnostic), Some(temp.path()));
         assert_eq!(diagnostic.confidence, ry_checker::Confidence::Medium);
+    }
+
+    /// (#491) Pin the post-processing order `ry check` applies through
+    /// the shared pipeline: inline suppression BEFORE baseline
+    /// subtraction (a suppressed occurrence must not consume the count
+    /// its unsuppressed twin needs) and the min-confidence threshold
+    /// AFTER it (below-threshold occurrences still consume budget).
+    #[test]
+    fn suppression_subtracts_before_the_baseline_and_the_threshold_after() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let file = root.join("diagnostic.R");
+        std::fs::write(
+            &file,
+            "if (c(TRUE, FALSE)) print(1)  # ry: ignore[RY002]\nif (c(TRUE, FALSE)) print(1)\n",
+        )
+        .unwrap();
+        let baseline = config::Baseline {
+            version: 1,
+            entries: vec![config::BaselineEntry {
+                path: "diagnostic.R".to_string(),
+                code: "RY002".to_string(),
+                message: "`if` condition has length 2; R requires a length-1 condition".to_string(),
+                count: 1,
+            }],
+        };
+        let filter = ry_checker::SeverityFilter::default();
+        let resolution_config = config::Config::default();
+        let ctx = CheckContext {
+            filter: &filter,
+            format: ry_checker::format::OutputFormat::Json,
+            resolution_config: &resolution_config,
+            user_stubs: Arc::new(std::collections::BTreeMap::new()),
+            color: false,
+            baseline: Some(&baseline),
+            repo_root: Some(root),
+            min_confidence: ry_checker::Confidence::Low,
+        };
+
+        // Two identical findings, the first suppressed: the suppression
+        // drops it before the baseline subtracts, so the count absorbs
+        // the unsuppressed twin and the run is quiet. Subtracting first
+        // would consume the count on the suppressed occurrence and
+        // leave the twin reported.
+        let result = run_check_once(std::slice::from_ref(&file), &ctx).unwrap();
+        assert_eq!(result.diagnostics.len(), 0);
+
+        // The same shape without the suppression comment shows the twin
+        // (proving the quiet run above is the baseline at work, not the
+        // suppression alone).
+        std::fs::write(
+            &file,
+            "if (c(TRUE, FALSE)) print(1)\nif (c(TRUE, FALSE)) print(1)\n",
+        )
+        .unwrap();
+        let result = run_check_once(std::slice::from_ref(&file), &ctx).unwrap();
+        assert_eq!(result.diagnostics.len(), 1);
+
+        // Threshold AFTER subtraction: with a high min-confidence the
+        // medium-confidence RY002 findings are below threshold, yet the
+        // baseline count is still consumed first — the run is quiet
+        // through subtraction plus threshold, in that order.
+        let ctx = CheckContext {
+            min_confidence: ry_checker::Confidence::High,
+            ..ctx
+        };
+        let result = run_check_once(&[file], &ctx).unwrap();
+        assert_eq!(result.diagnostics.len(), 0);
     }
 
     #[test]

@@ -4,6 +4,19 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The LSP server now applies inline suppression comments and the
+  min-confidence threshold before subtracting the baseline, matching
+  `ry check`: with two identical diagnostics (same path, code, and
+  message) where the first carries `# ry: ignore[...]`, the editor
+  could show the unsuppressed twin while `ry check` stayed quiet,
+  because the LSP let the suppressed occurrence consume the baseline
+  count first (#491). Both frontends now share one post-processing
+  pipeline (`ry_checker::post_process`) with a single specified order:
+  suppression, severity filter, confidence demotion (CLI only, for
+  now), baseline subtraction, min-confidence threshold.
+
 ## [0.11.0] - 2026-09-16
 
 This release adds five new rules (RY106-RY110) whose founding fixtures are

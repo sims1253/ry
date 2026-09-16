@@ -28,6 +28,13 @@ pub struct SourceFile {
     /// inside a comment or a `%...%` operator token; the checker applies
     /// the same tolerance when surfacing them as `RY000`.
     pub invalid_utf8: Vec<Span>,
+    /// Whether the on-disk bytes started with a UTF-8 BOM (`EF BB BF`),
+    /// which survives in `source` as a leading U+FEFF character. R's
+    /// parser rejects the file with "unexpected input" at 1:1 in every
+    /// execution context except `parse(keep.source = TRUE)` (#474), so
+    /// the read boundary sets this and the checker flags it as `RY000`.
+    /// False for client-supplied editor buffers.
+    pub leading_bom: bool,
     /// Byte spans of the `%...%` special-operator tokens in the file,
     /// sorted by start offset. R's lexer (gram.y `SpecialValue`) scans
     /// these tokens as raw bytes with no multibyte validation, so the

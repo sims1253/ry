@@ -183,13 +183,36 @@ pub(crate) fn run_check(
     } else {
         paths
     };
-    let mut all_paths = rescan(
+
+    // Every requested input root must exist (#485): a missing path used
+    // to fall into the directory branch of discovery, whose failed
+    // `read_dir` was swallowed, so a typo'd CI path checked as clean.
+    // `ry dump-types` already rejects missing inputs this way. The run
+    // aborts before checking anything — a partial check that never
+    // mentions the miss is what made the bug dangerous.
+    let missing: Vec<&PathBuf> = search_roots.iter().filter(|root| !root.exists()).collect();
+    if !missing.is_empty() {
+        for root in &missing {
+            eprintln!("ry: {}: no such file or directory", root.display());
+        }
+        // Keep the machine-readable stream well-formed: an empty report,
+        // same as the empty-discovery branch below.
+        print!(
+            "{}",
+            render_diagnostics(&[], format, &HashMap::new(), color)
+        );
+        return Ok(discovery_exit_code(&cfg));
+    }
+
+    let scan = rescan(
         &search_roots,
         config_root.as_deref(),
         &cfg,
         true,
         explain_files,
     );
+    report_read_errors(&scan.read_errors);
+    let mut all_paths = scan.paths;
 
     if all_paths.is_empty() {
         // An empty discovery result still needs a complete machine-readable report.
@@ -197,13 +220,20 @@ pub(crate) fn run_check(
             "{}",
             render_diagnostics(&[], format, &HashMap::new(), color)
         );
-        let roots = search_roots
-            .iter()
-            .map(|root| root.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        eprintln!("ry: no .R / .r files found in {roots}");
-        return Ok(ExitCode::SUCCESS);
+        if scan.read_errors.is_empty() {
+            let roots = search_roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("ry: no .R / .r files found in {roots}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        // Nothing was discovered because the walk could not read a root;
+        // the errors above already say why. The informational "no files
+        // found" note would mislabel that I/O failure as an intentional
+        // empty set.
+        return Ok(discovery_exit_code(&cfg));
     }
 
     // The stable inputs of every pass. Only the file set changes across
@@ -219,7 +249,11 @@ pub(crate) fn run_check(
         min_confidence: min_confidence.into(),
     };
 
-    let result = run_check_once(&all_paths, &ctx)?;
+    let mut result = run_check_once(&all_paths, &ctx)?;
+    // Directories the initial scan could not read fail the run like
+    // parse errors do, even when every discovered file checks clean
+    // (#485).
+    result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
     }
@@ -247,12 +281,12 @@ pub(crate) fn run_check(
         // Re-scan for new/deleted files via shared bounded discovery.
         // Truncation was already reported on the initial scan, so the
         // poll keeps stderr quiet.
-        let current_paths = rescan(&search_roots, config_root.as_deref(), &cfg, false, false);
+        let current = rescan(&search_roots, config_root.as_deref(), &cfg, false, false);
 
         // Check for any file modification or file set change.
-        let mut changed = current_paths != all_paths;
+        let mut changed = current.paths != all_paths;
         if !changed {
-            for p in &current_paths {
+            for p in &current.paths {
                 if let Ok(meta) = std::fs::metadata(p)
                     && let Ok(mtime) = meta.modified()
                 {
@@ -267,7 +301,10 @@ pub(crate) fn run_check(
         }
 
         if changed {
-            all_paths = current_paths;
+            all_paths = current.paths;
+            // A root that stopped being readable dropped files out of
+            // the set; say so instead of letting them vanish silently.
+            report_read_errors(&current.read_errors);
             // Re-sync stamps for any new files.
             sync_stamps(&all_paths, &mut stamps);
             // Clear screen for a clean view of the new diagnostics.
@@ -294,6 +331,11 @@ pub(crate) struct CheckResult {
     /// and `--statistics` rather than as a diagnostic so the JSON/diagnostic
     /// stream (consumed by the ecosystem harness) stays stable.
     degraded: Vec<String>,
+    /// Directories that could not be read while discovering the input
+    /// set. Like parse errors, they fail the run's exit code: a
+    /// partially undiscoverable input must not look like a clean check
+    /// (#485).
+    discovery_errors: usize,
 }
 
 /// Whether parser recovery indicates that a file is probably not R source.
@@ -388,7 +430,10 @@ impl CheckResult {
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
         let (errors, warnings) = self.counts();
-        let failed = errors > 0 || self.parse_errors > 0 || (cfg.error_on_warning && warnings > 0);
+        let failed = errors > 0
+            || self.parse_errors > 0
+            || self.discovery_errors > 0
+            || (cfg.error_on_warning && warnings > 0);
         if cfg.exit_zero || !failed {
             ExitCode::SUCCESS
         } else {
@@ -532,6 +577,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         file_count,
         parse_errors,
         degraded: degraded.into_iter().collect(),
+        discovery_errors: 0,
     })
 }
 
@@ -701,18 +747,31 @@ pub(crate) fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
     paths.dedup();
 }
 
+/// One discovery pass over the search roots: the discovered file set
+/// plus the directories the walk could not read.
+struct Scan {
+    paths: Vec<PathBuf>,
+    read_errors: Vec<(PathBuf, String)>,
+}
+
 /// Discover the R files under `search_roots` via the shared bounded
-/// discovery module and return them sorted and deduplicated. `report`
-/// surfaces discovery-cap warnings (the initial scan does; quiet watch
-/// polls repeat the same roots and stay silent).
+/// discovery module and return them sorted and deduplicated, alongside
+/// the directories the walk could not read. The two are kept apart so
+/// an unreadable root is never mistaken for an intentionally empty or
+/// excluded one (#485). `report` surfaces discovery-cap warnings (the
+/// initial scan does; quiet watch polls repeat the same roots and stay
+/// silent).
 fn rescan(
     search_roots: &[PathBuf],
     config_root: Option<&std::path::Path>,
     cfg: &config::Config,
     report: bool,
     explain: bool,
-) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
+) -> Scan {
+    let mut scan = Scan {
+        paths: Vec::new(),
+        read_errors: Vec::new(),
+    };
     for root in search_roots {
         let result =
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
@@ -730,13 +789,35 @@ fn rescan(
                 );
             }
         }
-        paths.extend(result.files);
+        scan.paths.extend(result.files);
+        scan.read_errors.extend(result.read_errors);
         if report {
             report_truncation(&result.truncated, root);
         }
     }
-    sort_and_deduplicate_paths(&mut paths);
-    paths
+    sort_and_deduplicate_paths(&mut scan.paths);
+    scan.read_errors.sort();
+    scan.read_errors.dedup();
+    scan
+}
+
+/// Exit code for a run that could not walk a requested input: failure,
+/// unless `--exit-zero` defuses it — the same policy as parse failures.
+fn discovery_exit_code(cfg: &config::Config) -> ExitCode {
+    if cfg.exit_zero {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Report directories the discovery walk could not read, in the same
+/// one-line shape a read failure gets during parsing (`ry: <path>:
+/// <error>`), on stderr so machine-readable stdout stays clean.
+fn report_read_errors(read_errors: &[(PathBuf, String)]) {
+    for (path, error) in read_errors {
+        eprintln!("ry: {}: {error}", path.display());
+    }
 }
 
 /// Record the current mtime of every path into `stamps`.
@@ -1125,6 +1206,55 @@ mod tests {
         assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
         assert!(
             encoding[0].message.contains("not valid UTF-8"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    /// A leading UTF-8 BOM is valid UTF-8, but R's parser rejects the
+    /// file with "unexpected input" at 1:1 (#474): `ry check` must flag
+    /// it like the non-UTF-8 case (#376) instead of checking clean.
+    #[test]
+    fn leading_bom_is_flagged_as_an_encoding_ry000() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("bom.R");
+        std::fs::write(&file, b"\xef\xbb\xbfx <- 1\nmissing_name\n").unwrap();
+
+        let result = check_files(&[file], Some(temp.path()));
+
+        // Like recovered-tree and non-UTF-8 files, a BOM-flagged file
+        // reports only its RY000: the unbound name below it is noise on
+        // a file R refuses at 1:1.
+        let encoding: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY000")
+            .collect();
+        assert_eq!(encoding.len(), 1, "{:?}", result.diagnostics);
+        assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
+        assert!(
+            encoding[0].message.contains("byte order mark"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    /// The adjacent idiom that must stay quiet: the same U+FEFF character
+    /// anywhere but the file's first bytes is an ordinary character R's
+    /// parser accepts.
+    #[test]
+    fn bom_character_elsewhere_in_the_file_stays_clean() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("bom_midfile.R");
+        std::fs::write(&file, "s <- \"\u{feff}\"\nx <- 1 # \u{feff} comment\n").unwrap();
+
+        let result = check_files(&[file], Some(temp.path()));
+
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY000"),
             "{:?}",
             result.diagnostics
         );

@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -4377,7 +4377,8 @@
         "mode": "yes_or_no",
         "length": "test",
         "na": true
-      }
+      },
+      "return_mode": {"kind": "test_template", "test": "test", "values": ["yes", "no"]}
     },
     "inherits": {
       "params": [

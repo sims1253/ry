@@ -451,7 +451,7 @@ impl Checker {
                 // The bare statement literal never flows through
                 // `infer`'s `Expr::Function` arm, so its superassignment
                 // targets are applied here (issue #374).
-                self.apply_superassignment_updates(body, scope);
+                self.apply_superassignment_updates(params, body, scope);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -469,9 +469,12 @@ impl Checker {
 
     /// Model the enclosing-scope type updates a function definition's
     /// body may perform through superassignment (issue #374): every
-    /// `<<-` target in the body (nested closures included) becomes
-    /// unknown-typed in the scope where the definition appears, and a
-    /// target whose root cannot be named discards all value facts.
+    /// `<<-` target in the body that can reach the definition scope
+    /// becomes unknown-typed there, and a target whose root cannot be
+    /// named discards all value facts. A write nested in a closure
+    /// defined inside the body reaches the definition scope only when no
+    /// frame between that closure and this scope binds the name as a
+    /// formal; such intercepted writes are not applied.
     ///
     /// Called once per definition site as the literal's value is
     /// inferred, so the update lands at the definition's position in
@@ -485,8 +488,13 @@ impl Checker {
     /// zero-length member R rejects as a condition still flags the
     /// whole union, so the RY001/RY010 family would keep firing;
     /// unknown is the conservative silence.
-    fn apply_superassignment_updates(&mut self, body: &[Stmt], scope: &mut Scope) {
-        index::superassignment_writes(body).apply(scope);
+    fn apply_superassignment_updates(
+        &mut self,
+        params: &[Param],
+        body: &[Stmt],
+        scope: &mut Scope,
+    ) {
+        index::superassignment_writes(params, body).apply(scope);
     }
 
     /// Enter a function literal's body and walk it for diagnostics.
@@ -2339,7 +2347,7 @@ impl Checker {
                 // point after which those bindings are unknown-typed
                 // (issue #374). Fires for both statement and expression
                 // literals, since both infer their value through here.
-                self.apply_superassignment_updates(body, scope);
+                self.apply_superassignment_updates(params, body, scope);
                 value
             }
             Expr::Block { body, .. } => {

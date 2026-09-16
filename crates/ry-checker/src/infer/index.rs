@@ -972,14 +972,15 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
 /// name that frame statically, and whether the closure has run before a
 /// given read is call-graph evidence ry does not have. The conservative
 /// model is therefore the issue's stated strategy: every name targeted
-/// anywhere in the body (nested closure bodies included -- a closure
-/// defined inside the body may itself run later and climb out through
-/// the body's frame) becomes unknown-typed in the definition scope once
-/// the definition is walked. Joining the write's type instead would keep
-/// the stale initial branch (the `token <- NULL` before `token <<-
-/// 'EOF'`) inside the union, and a union member R provably rejects as a
-/// condition (zero-length `NULL`) still flags the whole union, so the
-/// RY001/RY010 family the join targets would keep firing.
+/// by a write that can reach the definition scope -- a write directly
+/// in the body, or one nested in a closure whose intervening frames do
+/// not bind the name (see [`InterveningFormals`]) -- becomes
+/// unknown-typed in the definition scope once the definition is walked.
+/// Joining the write's type instead would keep the stale initial branch
+/// (the `token <- NULL` before `token <<- 'EOF'`) inside the union, and
+/// a union member R provably rejects as a condition (zero-length
+/// `NULL`) still flags the whole union, so the RY001/RY010 family the
+/// join targets would keep firing.
 #[derive(Debug, Default)]
 pub(crate) struct SuperassignmentWrites {
     /// Rebound names: plain identifier or string-literal targets
@@ -1009,47 +1010,152 @@ impl SuperassignmentWrites {
     }
 }
 
-/// Record one superassignment target. Mirrors the R6 member-rebinding
-/// shape in `r6_rebound_members`: a subscripted target rebinds its base
-/// (`state$key <<- v` writes `state`'s binding), and a call-form target
-/// is a replacement-function assignment rebinding its first argument
-/// (`class(x) <<- v`).
-fn record_superassignment_target(target: &Expr, writes: &mut SuperassignmentWrites) {
+/// The single binding a `<<-` target rebinds, as a name. Mirrors the
+/// R6 member-rebinding shape in `r6_rebound_members`: a plain
+/// identifier or string-literal target names itself, a subscripted
+/// target rebinds its base (`state$key <<- v` writes `state`'s
+/// binding), and a call-form target is a replacement-function
+/// assignment rebinding its first argument (`class(x) <<- v`). `None`
+/// when no single name summarizes the write (`f()$a <<- v`).
+fn superassignment_root(target: &Expr) -> Option<String> {
     match target {
-        Expr::Ident { name, .. } | Expr::String(name, _) => {
-            writes.names.insert(name.clone());
-        }
-        Expr::Index { base, .. } => record_superassignment_target(base, writes),
-        Expr::Call { args, .. } => match args.first() {
-            Some(first) => record_superassignment_target(&first.value, writes),
-            None => writes.opaque = true,
-        },
-        _ => {
-            writes.opaque = true;
-        }
+        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name.clone()),
+        Expr::Index { base, .. } => superassignment_root(base),
+        Expr::Call { args, .. } => args
+            .first()
+            .map(|first| &first.value)
+            .and_then(superassignment_root),
+        _ => None,
     }
 }
 
-/// Collect every superassignment target in `body`, entering nested
-/// function bodies, control-flow tests, and block values. Both the
-/// statement form (`x <<- v` lowers to `Stmt::Assign` carrying a
-/// `SuperAssign` marker around the value) and expression position
-/// (`y <- (x <<- v)`) present the marker as an `Expr::BinOp`.
-pub(crate) fn superassignment_writes(body: &[Stmt]) -> SuperassignmentWrites {
-    let mut writes = SuperassignmentWrites::default();
-    let _ = walk_stmts(
-        body,
-        Walk::ALL,
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::BinOp {
+/// The formal-parameter names bound by the function frames between a
+/// nested `<<-` and the scope whose statements are being scanned.
+///
+/// `x <<- v` inside a closure F searches F's parent chain -- never F's
+/// own frame -- so the write reaches the scanned scope only when no
+/// frame between the writing closure and that scope binds the name.
+/// In R, `outer <- function(x) { inner <- function() x <<- TRUE }`
+/// rebinds `outer`'s formal when `inner` runs; the file-level `x` is
+/// untouched (an enclosing local `<-` intercepts the same way, a corner
+/// this tracker deliberately leaves conservative -- see below). A
+/// frame's formals therefore exclude a write from the collector's
+/// results; the writing frame's own formals never do, because `<<-`
+/// skips that frame entirely.
+///
+/// The walker reports only the number of function bodies entered, so
+/// the tracker keys each literal's formals by the walk depth at which
+/// the literal itself appears. Pre-order DFS keeps that sound without
+/// post-order pops: a node at depth `k` sits in the body of the most
+/// recent literal visited at depth `k - 1`, and that literal's own
+/// ancestors are the most recent literals at every shallower depth. A
+/// sibling literal overwrites its depth's entry before the only subtree
+/// that could read it (its own body) is walked.
+///
+/// Only formals are tracked, not locals assigned in the intermediate
+/// frames. R intercepts through those locals too (`outer <- function()
+/// { y <- 1; inner <- function() y <<- TRUE }` rebinds `outer`'s local),
+/// but treating every plain assignment as a potential interception
+/// would suppress the same diagnostics the collector exists to keep
+/// alive; the corner errs toward recording the write, which silences at
+/// most the one outer binding.
+#[derive(Debug, Default)]
+struct InterveningFormals {
+    /// `frames[d]`: formals of the most recent function literal visited
+    /// at walk depth `d`; that literal's body is the depth-`d + 1`
+    /// subtree.
+    frames: Vec<HashSet<String>>,
+    /// Formals of the function whose body starts a
+    /// [`superassignment_writes`] walk: its frame is the first one a
+    /// depth-1 write searches before the scanned scope. The
+    /// expression-position twin starts inside a `local({...})`-style
+    /// block that binds nothing initially, so it keeps this empty.
+    root: HashSet<String>,
+}
+
+impl InterveningFormals {
+    /// Formals of the function whose body the statement walk starts
+    /// from (its literal is outside the walked slice).
+    fn with_root(params: &[Param]) -> Self {
+        InterveningFormals {
+            frames: Vec::new(),
+            root: params.iter().map(|p| p.name.clone()).collect(),
+        }
+    }
+
+    /// Record that the literal visited at `depth` binds `params`.
+    fn enter(&mut self, depth: usize, params: &[Param]) {
+        if self.frames.len() <= depth {
+            self.frames.resize(depth + 1, HashSet::new());
+        }
+        self.frames[depth] = params.iter().map(|p| p.name.clone()).collect();
+    }
+
+    /// Whether a `<<-` at `depth` targeting `name` is intercepted by a
+    /// frame between the writing frame and the scanned scope. The
+    /// writing frame is the literal entered at `depth - 1` (the scanned
+    /// statements themselves at `depth` 0), and `<<-` skips it; every
+    /// frame after it on the chain to the scanned scope -- the walked
+    /// body's own function for a statement walk, then each intervening
+    /// literal's frame -- intercepts the write in R.
+    fn intercepts(&self, depth: usize, name: &str) -> bool {
+        (depth > 0 && self.root.contains(name))
+            || self.frames[..depth.saturating_sub(1)]
+                .iter()
+                .any(|frame| frame.contains(name))
+    }
+
+    /// One pre-order visit. Function literals contribute their formals
+    /// to the frame stack; a superassignment contributes its target
+    /// unless an intervening frame intercepts the name.
+    fn visit(
+        &mut self,
+        node: AstNode<'_>,
+        depth: usize,
+        writes: &mut SuperassignmentWrites,
+    ) -> Descend {
+        match node {
+            AstNode::Expr(Expr::Function { params, .. })
+            | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => self.enter(depth, params),
+            AstNode::Expr(Expr::BinOp {
                 op: BinOpKind::SuperAssign,
                 lhs,
                 ..
-            }) = node
-            {
-                record_superassignment_target(lhs, &mut writes);
-            }
-            ControlFlow::Continue(Descend::Into)
+            }) => match superassignment_root(lhs) {
+                Some(name) if !self.intercepts(depth, &name) => {
+                    writes.names.insert(name);
+                }
+                // An intercepted write lands in the intervening frame's
+                // own binding; the scanned scope never sees it.
+                Some(_) => {}
+                // A root that cannot be named could hit any binding, so
+                // the write stays opaque regardless of nesting.
+                None => writes.opaque = true,
+            },
+            _ => {}
+        }
+        Descend::Into
+    }
+}
+
+/// Collect every superassignment target in `body` that can reach the
+/// scope where the function (`params`/`body`) is defined, entering
+/// nested function bodies, control-flow tests, and block values. Both
+/// the statement form (`x <<- v` lowers to `Stmt::Assign` carrying a
+/// `SuperAssign` marker around the value) and expression position
+/// (`y <- (x <<- v)`) present the marker as an `Expr::BinOp`.
+///
+/// Writes nested in closures defined inside `body` are included only
+/// when no intervening frame binds the name as a formal
+/// ([`InterveningFormals`]).
+pub(crate) fn superassignment_writes(params: &[Param], body: &[Stmt]) -> SuperassignmentWrites {
+    let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::with_root(params);
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
         },
     );
     writes
@@ -1058,22 +1164,18 @@ pub(crate) fn superassignment_writes(body: &[Stmt]) -> SuperassignmentWrites {
 /// The expression-position twin of [`superassignment_writes`], for
 /// argument-supplied code blocks (`local({...})`, testthat blocks)
 /// whose `<<-` writes -- nested closure bodies included, because those
-/// closures outlive the block -- reach the caller's frame.
+/// closures outlive the block -- reach the caller's frame. The block
+/// evaluates in a fresh child environment that binds nothing, so a
+/// depth-0 write always climbs to the caller; deeper writes are pruned
+/// by the same intervening-formal rule.
 pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrites {
     let mut writes = SuperassignmentWrites::default();
+    let mut formals = InterveningFormals::default();
     let _ = walk_expr(
         expr,
         Walk::ALL,
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::BinOp {
-                op: BinOpKind::SuperAssign,
-                lhs,
-                ..
-            }) = node
-            {
-                record_superassignment_target(lhs, &mut writes);
-            }
-            ControlFlow::Continue(Descend::Into)
+        |node: AstNode<'_>, depth: usize| -> ControlFlow<(), Descend> {
+            ControlFlow::Continue(formals.visit(node, depth, &mut writes))
         },
     );
     writes
@@ -1081,27 +1183,32 @@ pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrit
 
 /// Pins the traversal shape of [`superassignment_writes`]: statement and
 /// expression positions both present the `SuperAssign` marker, nested
-/// closure bodies contribute their targets (a closure defined inside the
-/// body writes through the body's frame when it later runs), and complex
+/// closure bodies contribute their targets (a closure defined inside
+/// the body writes through the body's frame when it later runs) unless
+/// an intervening frame's formal intercepts the write, and complex
 /// targets resolve to their root name.
 #[cfg(test)]
 mod superassignment_writes_tests {
     use super::*;
     use std::collections::HashSet;
 
-    fn names_in(body_src: &str) -> SuperassignmentWrites {
-        let src = format!("outer <- function() {{\n{body_src}\n}}\n");
+    fn writes_for(params_src: &str, body_src: &str) -> SuperassignmentWrites {
+        let src = format!("outer <- function({params_src}) {{\n{body_src}\n}}\n");
         let file = crate::tests::parse_file("superassign_test.R", &src);
         let [
             Stmt::Assign {
-                value: Expr::Function { body, .. },
+                value: Expr::Function { params, body, .. },
                 ..
             },
         ] = file.stmts.as_slice()
         else {
             panic!("test source must be a single `outer <- function()` assignment");
         };
-        superassignment_writes(body)
+        superassignment_writes(params, body)
+    }
+
+    fn names_in(body_src: &str) -> SuperassignmentWrites {
+        writes_for("", body_src)
     }
 
     fn assert_names(body_src: &str, expected: &[&str]) {
@@ -1109,6 +1216,22 @@ mod superassignment_writes_tests {
         let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
         assert_eq!(writes.names, expected, "names from body `{body_src}`");
         assert!(!writes.opaque, "no opaque target expected for `{body_src}`");
+    }
+
+    /// Like [`assert_names`], but the walked function itself binds
+    /// `params_src` as formals: its frame is the first one a depth-1
+    /// write searches before the definition scope.
+    fn assert_formal_names(params_src: &str, body_src: &str, expected: &[&str]) {
+        let writes = writes_for(params_src, body_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(
+            writes.names, expected,
+            "names from `function({params_src})` body `{body_src}`"
+        );
+        assert!(
+            !writes.opaque,
+            "no opaque target expected for `function({params_src})` body `{body_src}`"
+        );
     }
 
     /// The issue's corpus shape: a nested closure mutates the enclosing
@@ -1149,6 +1272,44 @@ mod superassignment_writes_tests {
         assert_names("inner <- function() { local_x <- 1 }", &[]);
     }
 
+    /// A nested `<<-` whose name a frame between the writing closure and
+    /// the definition scope binds as a formal never reaches the
+    /// definition scope: the write lands in that frame (verified against
+    /// R: `outer <- function(x) { inner <- function() x <<- TRUE };
+    /// outer(NULL)()` rebinds `outer`'s formal and leaves the file-level
+    /// `x` untouched), so the definition-scope binding keeps its type.
+    #[test]
+    fn excludes_targets_intercepted_by_intervening_formals() {
+        // The walked function's own formal intercepts a depth-1 write.
+        assert_formal_names("x", "inner <- function() x <<- TRUE", &[]);
+        // A middle literal's formal intercepts a depth-2 write while the
+        // walked function binds nothing.
+        assert_names("mid <- function(x) { inner <- function() x <<- TRUE }", &[]);
+        // An unrelated formal of the walked function intercepts nothing.
+        assert_formal_names("y", "inner <- function() x <<- TRUE", &["x"]);
+        // The writing literal's own formal does not intercept: `<<-`
+        // skips the writing frame, so the write still targets the
+        // definition scope (probe: `inner2 <- function(x) x <<- TRUE`
+        // rebinds the file-level `x`).
+        assert_names("inner <- function(x) x <<- TRUE", &["x"]);
+        // A sibling literal's formal must not leak into a later write:
+        // `a` and `b` are side by side, not nested.
+        assert_names("a <- function(s) NULL\nb <- function() s <<- TRUE", &["s"]);
+    }
+
+    /// A complex target is pruned by the same intervening-formal rule:
+    /// `state$key <<- v` inside a closure whose enclosing frame binds
+    /// `state` writes that frame's binding, not the definition scope's.
+    #[test]
+    fn complex_targets_follow_the_interception_rule() {
+        assert_formal_names("state", "inner <- function() state$key <<- TRUE", &[]);
+        assert_formal_names(
+            "other",
+            "inner <- function() state$key <<- TRUE",
+            &["state"],
+        );
+    }
+
     /// The expression-position twin collects from the same shapes when
     /// the code arrives as one expression (a `local({...})` argument).
     #[test]
@@ -1164,6 +1325,25 @@ mod superassignment_writes_tests {
         let writes = superassignment_writes_in_expr(&args[0].value);
         let expected: HashSet<String> = ["token"].iter().map(|s| s.to_string()).collect();
         assert_eq!(writes.names, expected);
+        assert!(!writes.opaque);
+    }
+
+    /// The expression-position twin prunes intercepted writes too: the
+    /// block itself binds nothing, but a closure defined inside it whose
+    /// formal shadows the target keeps the write in that closure's
+    /// parent chain inside the block, never the caller's frame.
+    #[test]
+    fn expression_position_prunes_intercepted_writes() {
+        let src = "json <- local({\n  outer <- function(token) {\n    inner <- function() token <<- 'EOF'\n  }\n})\n";
+        let file = crate::tests::parse_file("superassign_expr_intercept_test.R", src);
+        let [Stmt::Assign { value, .. }] = file.stmts.as_slice() else {
+            panic!("test source must be a single assignment");
+        };
+        let Expr::Call { args, .. } = value else {
+            panic!("test source must assign a call");
+        };
+        let writes = superassignment_writes_in_expr(&args[0].value);
+        assert!(writes.names.is_empty(), "{:?}", writes.names);
         assert!(!writes.opaque);
     }
 }

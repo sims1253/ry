@@ -507,7 +507,9 @@ impl Checker {
         }
         // Nested closures defined inside the block may run after `local`
         // returns and climb out through the block's frame (issue #374),
-        // so their `<<-` targets reach the caller too.
+        // so their `<<-` targets reach the caller too -- except the
+        // writes an intervening frame's formal intercepts, which the
+        // collector prunes.
         index::superassignment_writes_in_expr(&args[expression].value).apply(scope);
         Some(result)
     }
@@ -588,7 +590,9 @@ impl Checker {
         }
         // Nested closures defined inside the block may run after the
         // block completes and climb out through its frame (issue #374),
-        // so their `<<-` targets reach the caller too.
+        // so their `<<-` targets reach the caller too -- except the
+        // writes an intervening frame's formal intercepts, which the
+        // collector prunes.
         index::superassignment_writes_in_expr(&args[code].value).apply(scope);
         Some(RType::unknown())
     }

@@ -5,8 +5,11 @@
 //! it did or did not run before a given read. The conservative model:
 //! every `<<-` target anywhere in a function body (nested closure bodies
 //! included) becomes unknown-typed in the definition scope once the
-//! definition is walked. Reads before the definition keep the prior
-//! type, so a provably-invalid condition still fires there.
+//! definition is walked -- except a write whose name an intervening
+//! function frame binds as a formal: `<<-` searches that frame before
+//! the definition scope, so the write lands there and never reaches the
+//! outer binding. Reads before the definition keep the prior type, so a
+//! provably-invalid condition still fires there.
 //!
 //! Every silent shape below was runtime-verified in R 4.6: at the point
 //! each condition evaluates, the `<<-` writes have executed, so the
@@ -124,5 +127,41 @@ fn superassignment_does_not_touch_the_writing_frame() {
     assert!(
         !diagnostics.iter().any(|d| d.code == "RY001"),
         "{diagnostics:?}"
+    );
+}
+
+/// A `<<-` nested inside a closure whose intervening frame binds the
+/// name as a formal lands in that frame, never the definition scope:
+/// verified in R (`outer <- function(x) { inner <- function() x <<-
+/// TRUE; inner }; outer(NULL)()` rebinds `outer`'s formal, the
+/// file-level `x` stays NULL, and `while (x)` errors with "argument is
+/// of length zero"), so the definition-scope binding keeps its provable
+/// type and RY001 still fires.
+#[test]
+fn intervening_formals_keep_the_definition_scope_diagnosable() {
+    let source = "x <- NULL\nouter <- function(x) { inner <- function() x <<- TRUE; inner }\nouter(NULL)()\nwhile (x) break";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "{source}: {:?}",
+        codes(&diagnostics)
+    );
+}
+
+/// The flip side, one nesting level shallower: the writing closure's own
+/// formals never intercept because `<<-` skips the writing frame, so the
+/// outer binding is still marked. R agrees that the write reaches it
+/// (`inner2 <- function(x) { x <<- TRUE }; inner2(NULL)` leaves the
+/// file-level `x` TRUE), the loop runs, and ry stays silent.
+#[test]
+fn writing_frame_formals_do_not_intercept() {
+    let source = "x <- NULL\ninner2 <- function(x) { x <<- TRUE }\ninner2(NULL)\nwhile (x) break";
+    let diagnostics = check(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| matches!(d.code, "RY001" | "RY010" | "RY070")),
+        "{source}: {:?}",
+        codes(&diagnostics)
     );
 }

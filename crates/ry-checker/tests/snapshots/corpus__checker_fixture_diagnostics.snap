@@ -1,5 +1,6 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
+assertion_line: 229
 expression: snapshots
 ---
 - diagnostics:
@@ -1185,6 +1186,16 @@ expression: snapshots
         start: 1977
   fixture: err_seq_defaulted_forward.R
 - diagnostics:
+    - code: RY001
+      message: "loop condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 7
+        end: 277
+        line: 6
+        start: 276
+  fixture: err_superassignment_read_before_definition.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `list` and `double`"
       severity: error
@@ -1600,6 +1611,8 @@ expression: snapshots
   fixture: ok_string_containing_hash_noqa.R
 - diagnostics: []
   fixture: ok_subsetting.R
+- diagnostics: []
+  fixture: ok_superassignment_enclosing_binding.R
 - diagnostics: []
   fixture: ok_survfit_quantile_fields.R
 - diagnostics: []

@@ -1,0 +1,128 @@
+//! Issue #374: `<<-` modeled as a type update to the enclosing binding.
+//!
+//! A closure that superassigns (`x <<- v` / `v ->> x`) may run any time
+//! after its definition, and the checker has no call-graph evidence that
+//! it did or did not run before a given read. The conservative model:
+//! every `<<-` target anywhere in a function body (nested closure bodies
+//! included) becomes unknown-typed in the definition scope once the
+//! definition is walked. Reads before the definition keep the prior
+//! type, so a provably-invalid condition still fires there.
+//!
+//! Every silent shape below was runtime-verified in R 4.6: at the point
+//! each condition evaluates, the `<<-` writes have executed, so the
+//! loop or branch really does run.
+
+use super::*;
+
+fn codes(diagnostics: &[Diagnostic]) -> Vec<&str> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
+/// The corpus loop-condition shapes from the issue: a binding
+/// initialized to `NULL` (or never bound in the file) and mutated only
+/// through `<<-` in a nested closure must not keep its stale type at a
+/// later condition.
+#[test]
+fn superassignment_targets_are_unknown_after_the_definition() {
+    for source in [
+        // pak/remotes vendored json parser: the issue's minimal shape.
+        "token <- NULL\nread <- function(v) token <<- v\nread(TRUE)\nwhile (token) break",
+        // The binding may not exist in the file at all until `<<-`
+        // creates it (the RY010 family): the call runs first at runtime.
+        "setup <- function() flag <<- TRUE\nsetup()\nwhile (flag) break",
+        // flexdashboard: the stale NULL flowed through a base stub
+        // (`file.exists(NULL)` is logical(0)).
+        "source_file <- NULL\npre_knit <- function(input) source_file <<- input\npre_knit('a.R')\nif (!file.exists(source_file)) stop('missing')",
+        // pak's actual wrapper: definitions inside local({...}) and the
+        // condition in a closure defined after the writer.
+        "json <- local({\n  token <- NULL\n  read <- function(v) token <<- v\n  parse <- function() { read('x'); while (token != '}') break; TRUE }\n})",
+        // Doubly-nested closure: the writer is defined one level deeper
+        // than the reader's enclosing scope.
+        "done <- NULL\nouter <- function() { inner <- function() done <<- TRUE; inner }\nouter()()\nwhile (done) break",
+        // fastmap R6 / curl vector roots: a subscripted target rebinds
+        // its root, whose members are then unprovable.
+        "state <- list(key = NULL)\nset <- function(v) state$key <<- v\nset(TRUE)\nif (state$key) 1L",
+        "success <- rep(FALSE, 2)\nlapply(seq_along(success), function(i) success[i] <<- TRUE)\nif (all(success)) 1L",
+        // jsonlite stream_in: the writer is the value of an if
+        // expression's branch, and the read is later in the same
+        // function or after the definition at file level.
+        "make <- function(handler) {\n  cb <- if (is.null(handler)) {\n    out <- new.env()\n    function(x) out[[as.character(length(x))]] <<- x\n  } else {\n    function(x) x\n  }\n  length(out)\n}",
+        "make <- function(handler) {\n  cb <- if (is.null(handler)) function(x) out[[as.character(length(x))]] <<- x else function(x) x\n}\nmake(NULL)\nlength(out)",
+        // Both spellings and expression position.
+        "done <- NULL\nwriter <- function() 1 ->> done\nif (done) 1L",
+        "done <- NULL\nwriter <- function() { other <- (done <<- TRUE) }\nif (done) 1L",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| matches!(d.code, "RY001" | "RY010" | "RY070")),
+            "{source}: {:?}",
+            codes(&diagnostics)
+        );
+    }
+}
+
+/// The update lands at the definition's position in the sequential
+/// walk: a read that precedes the `<<-`-writing definition cannot have
+/// seen the write at runtime either, so its stale type still fires.
+#[test]
+fn reads_before_the_definition_keep_the_prior_type() {
+    let source = "x <- NULL\nwhile (x) break\nwriter <- function() x <<- TRUE";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "{diagnostics:?}"
+    );
+
+    let source = "while (late) break\nwriter <- function() late <<- TRUE";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY010"),
+        "{diagnostics:?}"
+    );
+}
+
+/// Plain assignment inside a nested closure binds only the closure's
+/// own frame (#350's write-side territory): the enclosing read stays
+/// unbound and the model here must not absorb it.
+#[test]
+fn plain_assignment_in_a_closure_does_not_publish() {
+    let source = "f <- function() { g <- function() { v <- 1L; v } }\nif (v) 1L";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY010"),
+        "{diagnostics:?}"
+    );
+}
+
+/// A target whose rebound root cannot be named (`f()$a <<- v`) discards
+/// all value facts in the definition scope: even an unrelated binding's
+/// known-NULL type is no longer provable after the definition.
+#[test]
+fn unnameable_targets_invalidate_value_facts() {
+    let before = "x <- NULL\nwhile (x) break";
+    assert!(
+        check(before).iter().any(|d| d.code == "RY001"),
+        "{before:?}"
+    );
+    let after = "x <- NULL\nf <- function() make()$key <<- 1\nwhile (x) break";
+    assert!(!check(after).iter().any(|d| d.code == "RY001"), "{after:?}");
+}
+
+/// `<<-` never writes the writing closure's own frame (verified in R:
+/// `f <- function(x) { x <<- 10; x }` leaves the formal untouched), so
+/// a defaulted formal that stays NULL inside the closure keeps its
+/// provable type there even while the same name is being superassigned.
+#[test]
+fn superassignment_does_not_touch_the_writing_frame() {
+    // The forwarded_superassignment oracle fixture pins the RY001 side
+    // of this (the formal stays NULL, so the callee errors); here the
+    // check is that the file-level binding, not the formal, updates.
+    let source = "bins <- 0L\nstatement <- function(bins = NULL) { bins <<- 1L; bins }\nr <- statement()\nwhile (bins) break";
+    let diagnostics = check(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == "RY001"),
+        "{diagnostics:?}"
+    );
+}

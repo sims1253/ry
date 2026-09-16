@@ -1,5 +1,5 @@
 use super::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
 
 fn atomic_mode(member: &RType) -> bool {
@@ -958,6 +958,214 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
         },
     );
     names
+}
+
+/// The enclosing-scope bindings a function body may write through
+/// superassignment (`x <<- v` / `v ->> x`), collected syntactically at
+/// any nesting depth (issue #374).
+///
+/// `<<-` assigns in the nearest enclosing environment that already binds
+/// the name, creating it in the global environment when none does; it
+/// never writes the writing closure's own frame (verified against R:
+/// `f <- function(x) { x <<- 10; x }` leaves the formal untouched and
+/// rebinds the file-level `x`). The checker's flat scope tables cannot
+/// name that frame statically, and whether the closure has run before a
+/// given read is call-graph evidence ry does not have. The conservative
+/// model is therefore the issue's stated strategy: every name targeted
+/// anywhere in the body (nested closure bodies included -- a closure
+/// defined inside the body may itself run later and climb out through
+/// the body's frame) becomes unknown-typed in the definition scope once
+/// the definition is walked. Joining the write's type instead would keep
+/// the stale initial branch (the `token <- NULL` before `token <<-
+/// 'EOF'`) inside the union, and a union member R provably rejects as a
+/// condition (zero-length `NULL`) still flags the whole union, so the
+/// RY001/RY010 family the join targets would keep firing.
+#[derive(Debug, Default)]
+pub(crate) struct SuperassignmentWrites {
+    /// Rebound names: plain identifier or string-literal targets
+    /// (`token <<- value`), plus the root names of complex targets --
+    /// `state$key <<- v` and `class(x) <<- v` rebind or mutate the
+    /// object bound at the root, whose declared members are then
+    /// unprovable.
+    pub(crate) names: HashSet<String>,
+    /// A target whose rebound root cannot be named (`f()$a <<- v`), so
+    /// no single binding summarizes the write.
+    pub(crate) opaque: bool,
+}
+
+impl SuperassignmentWrites {
+    /// Install the collected writes as type updates in `scope`: every
+    /// rebound name becomes unknown-typed (also silencing RY010 reads of
+    /// a name that only ever materializes through `<<-`), and an opaque
+    /// target discards all value facts because no single binding
+    /// summarizes the write.
+    pub(crate) fn apply(&self, scope: &mut Scope) {
+        for name in &self.names {
+            scope.insert(name.clone(), RType::unknown());
+        }
+        if self.opaque {
+            scope.invalidate_unknown_effects();
+        }
+    }
+}
+
+/// Record one superassignment target. Mirrors the R6 member-rebinding
+/// shape in `r6_rebound_members`: a subscripted target rebinds its base
+/// (`state$key <<- v` writes `state`'s binding), and a call-form target
+/// is a replacement-function assignment rebinding its first argument
+/// (`class(x) <<- v`).
+fn record_superassignment_target(target: &Expr, writes: &mut SuperassignmentWrites) {
+    match target {
+        Expr::Ident { name, .. } | Expr::String(name, _) => {
+            writes.names.insert(name.clone());
+        }
+        Expr::Index { base, .. } => record_superassignment_target(base, writes),
+        Expr::Call { args, .. } => match args.first() {
+            Some(first) => record_superassignment_target(&first.value, writes),
+            None => writes.opaque = true,
+        },
+        _ => {
+            writes.opaque = true;
+        }
+    }
+}
+
+/// Collect every superassignment target in `body`, entering nested
+/// function bodies, control-flow tests, and block values. Both the
+/// statement form (`x <<- v` lowers to `Stmt::Assign` carrying a
+/// `SuperAssign` marker around the value) and expression position
+/// (`y <- (x <<- v)`) present the marker as an `Expr::BinOp`.
+pub(crate) fn superassignment_writes(body: &[Stmt]) -> SuperassignmentWrites {
+    let mut writes = SuperassignmentWrites::default();
+    let _ = walk_stmts(
+        body,
+        Walk::ALL,
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) = node
+            {
+                record_superassignment_target(lhs, &mut writes);
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    writes
+}
+
+/// The expression-position twin of [`superassignment_writes`], for
+/// argument-supplied code blocks (`local({...})`, testthat blocks)
+/// whose `<<-` writes -- nested closure bodies included, because those
+/// closures outlive the block -- reach the caller's frame.
+pub(crate) fn superassignment_writes_in_expr(expr: &Expr) -> SuperassignmentWrites {
+    let mut writes = SuperassignmentWrites::default();
+    let _ = walk_expr(
+        expr,
+        Walk::ALL,
+        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) = node
+            {
+                record_superassignment_target(lhs, &mut writes);
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    writes
+}
+
+/// Pins the traversal shape of [`superassignment_writes`]: statement and
+/// expression positions both present the `SuperAssign` marker, nested
+/// closure bodies contribute their targets (a closure defined inside the
+/// body writes through the body's frame when it later runs), and complex
+/// targets resolve to their root name.
+#[cfg(test)]
+mod superassignment_writes_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn names_in(body_src: &str) -> SuperassignmentWrites {
+        let src = format!("outer <- function() {{\n{body_src}\n}}\n");
+        let file = crate::tests::parse_file("superassign_test.R", &src);
+        let [
+            Stmt::Assign {
+                value: Expr::Function { body, .. },
+                ..
+            },
+        ] = file.stmts.as_slice()
+        else {
+            panic!("test source must be a single `outer <- function()` assignment");
+        };
+        superassignment_writes(body)
+    }
+
+    fn assert_names(body_src: &str, expected: &[&str]) {
+        let writes = names_in(body_src);
+        let expected: HashSet<String> = expected.iter().map(|name| name.to_string()).collect();
+        assert_eq!(writes.names, expected, "names from body `{body_src}`");
+        assert!(!writes.opaque, "no opaque target expected for `{body_src}`");
+    }
+
+    /// The issue's corpus shape: a nested closure mutates the enclosing
+    /// binding only through `<<-`.
+    #[test]
+    fn records_targets_inside_nested_closure_bodies() {
+        assert_names(
+            "token <- NULL\nread <- function() token <<- 'EOF'\nwhile (token) break",
+            &["token"],
+        );
+    }
+
+    /// Both the statement form and expression position carry the marker,
+    /// and the right-to-left spelling (`v ->> x`) lowers to the same
+    /// wrapper.
+    #[test]
+    fn records_statement_expression_and_arrow_forms() {
+        assert_names("x <<- 1", &["x"]);
+        assert_names("y <- (x <<- 1)", &["x"]);
+        assert_names("1 ->> x", &["x"]);
+    }
+
+    /// A complex target rebinds its root; a call-form target rebinds
+    /// its first argument; a root that cannot be named makes the write
+    /// opaque.
+    #[test]
+    fn resolves_complex_targets_to_their_root() {
+        assert_names("state$key <<- 1", &["state"]);
+        assert_names("class(x) <<- 1", &["x"]);
+        let opaque = names_in("make()$key <<- 1");
+        assert!(opaque.opaque, "call-rooted target must be opaque");
+    }
+
+    /// Negative control: plain assignment inside nested bodies targets
+    /// nothing outside the writing frame.
+    #[test]
+    fn ignores_plain_assignment_in_nested_bodies() {
+        assert_names("inner <- function() { local_x <- 1 }", &[]);
+    }
+
+    /// The expression-position twin collects from the same shapes when
+    /// the code arrives as one expression (a `local({...})` argument).
+    #[test]
+    fn collects_from_expression_position() {
+        let src = "json <- local({\n  token <- NULL\n  read <- function() token <<- 'EOF'\n})\n";
+        let file = crate::tests::parse_file("superassign_expr_test.R", src);
+        let [Stmt::Assign { value, .. }] = file.stmts.as_slice() else {
+            panic!("test source must be a single assignment");
+        };
+        let Expr::Call { args, .. } = value else {
+            panic!("test source must assign a call");
+        };
+        let writes = superassignment_writes_in_expr(&args[0].value);
+        let expected: HashSet<String> = ["token"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(writes.names, expected);
+        assert!(!writes.opaque);
+    }
 }
 
 /// Pins the traversal shape of [`assigned_names_in_body`] to the

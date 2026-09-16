@@ -448,6 +448,10 @@ impl Checker {
             }
             Stmt::FunctionDef { params, body, span } => {
                 self.enter_function_body(None, false, params, body, *span, scope);
+                // The bare statement literal never flows through
+                // `infer`'s `Expr::Function` arm, so its superassignment
+                // targets are applied here (issue #374).
+                self.apply_superassignment_updates(body, scope);
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
@@ -461,6 +465,28 @@ impl Checker {
                 scope.unreachable = true;
             }
         }
+    }
+
+    /// Model the enclosing-scope type updates a function definition's
+    /// body may perform through superassignment (issue #374): every
+    /// `<<-` target in the body (nested closures included) becomes
+    /// unknown-typed in the scope where the definition appears, and a
+    /// target whose root cannot be named discards all value facts.
+    ///
+    /// Called once per definition site as the literal's value is
+    /// inferred, so the update lands at the definition's position in
+    /// the sequential walk: reads before the definition keep the prior
+    /// type (a `<<-`-writing closure defined after the read cannot have
+    /// run before it, so a provably-invalid earlier condition stays
+    /// flagged), reads after it see `unknown`. Whether the closure has
+    /// actually run before a given read needs call-graph evidence the
+    /// checker does not have, and joining the written type would keep
+    /// the stale initial branch (the `token <- NULL`) in the union -- a
+    /// zero-length member R rejects as a condition still flags the
+    /// whole union, so the RY001/RY010 family would keep firing;
+    /// unknown is the conservative silence.
+    fn apply_superassignment_updates(&mut self, body: &[Stmt], scope: &mut Scope) {
+        index::superassignment_writes(body).apply(scope);
     }
 
     /// Enter a function literal's body and walk it for diagnostics.
@@ -2307,7 +2333,14 @@ impl Checker {
                 // non-emitting inference path so a function literal in a
                 // top-level expression (`g <- f(); v <- (function() 1L)()`)
                 // resolves the same way as one inside a return slot.
-                self.function_value_from_literal(params, body, scope, 0)
+                let value = self.function_value_from_literal(params, body, scope, 0);
+                // A closure defined here may later superassign into the
+                // bindings this scope flattens; its definition is the
+                // point after which those bindings are unknown-typed
+                // (issue #374). Fires for both statement and expression
+                // literals, since both infer their value through here.
+                self.apply_superassignment_updates(body, scope);
+                value
             }
             Expr::Block { body, .. } => {
                 if let Some((name, span)) = embraced_symbol(body) {

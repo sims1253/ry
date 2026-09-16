@@ -13,6 +13,7 @@ pub(crate) mod call;
 mod cloned_scope_reference;
 pub(crate) mod construct;
 pub(crate) mod custom_operator;
+pub(crate) mod dynamic_closure;
 pub(crate) mod ifelse;
 pub(crate) mod index;
 pub(crate) mod loops;
@@ -470,6 +471,18 @@ impl Checker {
     /// which is the only one that installs an S3 dispatch context. A
     /// statement-position literal is anonymous, so its walk passes no
     /// function name.
+    ///
+    /// A literal whose span is indexed as a dynamic-construction
+    /// placeholder (`x <- function(...)` followed, before any rebind of
+    /// `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same
+    /// lexical scope; see [`dynamic_closure`]) is walked normally, but
+    /// the rules whose premises the construction invalidates are dropped
+    /// afterwards: RY010 on names the `alist()` formals will bind, and —
+    /// only under a `body<-` replacement, which discards the walked body
+    /// wholesale — RY080 on its callback results. A `formals<-`-only
+    /// placeholder keeps RY080 and findings from closures nested in its
+    /// body: only the formals list was replaced, and they survive
+    /// verbatim (issue #380).
     fn enter_function_body(
         &mut self,
         function_name: Option<&str>,
@@ -479,6 +492,7 @@ impl Checker {
         span: Span,
         scope: &Scope,
     ) {
+        let diagnostic_start = self.diagnostics.len();
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
@@ -539,6 +553,46 @@ impl Checker {
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
+        if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
+            && !self.discarding
+        {
+            // Only the placeholder-specific rules go; everything else
+            // still describes source the author wrote.
+            //
+            // RY010: a name the `alist()`-installed formals bind is not
+            // unbound at runtime. A formals-only replacement leaves
+            // nested closures in place, so their findings survive by
+            // span containment — the nested walk has already finished
+            // by the time this filter runs — while a `body<-` discards
+            // the walked body wholesale.
+            //
+            // RY080: only a `body<-` replacement invalidates the
+            // callback result; a formals-only swap leaves the body (and
+            // any typed-map call inside it) verbatim, so its RY080 —
+            // anchored at the `map_*` call, never inside the nested
+            // callback the containment check exempts — is genuine.
+            let nested = match kind {
+                dynamic_closure::PlaceholderKind::FormalsOnly => {
+                    Some(dynamic_closure::nested_function_literal_spans(body))
+                }
+                dynamic_closure::PlaceholderKind::BodyReplaced => None,
+            };
+            let drop_ry080 = matches!(kind, dynamic_closure::PlaceholderKind::BodyReplaced);
+            let walked = self.diagnostics.split_off(diagnostic_start);
+            self.diagnostics
+                .extend(walked.into_iter().filter(|diagnostic| {
+                    if diagnostic.code == "RY080" {
+                        return !drop_ry080;
+                    }
+                    diagnostic.code != "RY010"
+                        || nested.as_ref().is_some_and(|literals| {
+                            literals.iter().any(|literal| {
+                                diagnostic.span.start >= literal.start
+                                    && diagnostic.span.end <= literal.end
+                            })
+                        })
+                }));
+        }
     }
 
     /// Infer a condition in place and emit its condition-diagnostic

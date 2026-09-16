@@ -73,6 +73,25 @@ All notable changes to ry are documented in this file.
   region" diagnostics, which are the actionable signal: findings derived from
   parser-repaired structure -- including the corpus's empty-name RY010
   (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
+- Silence the diagnostics that only exist because a placeholder function
+  literal was analyzed as the final closure the replacement-function
+  machinery completes: RY010 on names the `alist()`-installed formals
+  bind, and -- only under `body(x) <- v`, which discards the walked body
+  wholesale -- RY080 on its callback results. `trafo <- function()
+  return(x)` followed by `formals(trafo) <- alist(x = )` and/or
+  `body(trafo) <- substitute(...)` builds a closure whose formals and
+  body ry never sees complete, so walking the placeholder as static
+  source flagged names the construction binds at runtime -- distr6's
+  genExp trafo and makeChecks assertion builders were 17 corpus false
+  positives. Matching is lexical and source-ordered (the replacement
+  marks the literal bound to its name at that point in the statement
+  list; a rebind ends the association, and `local({...})` argument
+  blocks are separate runtime scopes in both directions). A
+  `formals<-`-only placeholder keeps RY080 and findings from closures
+  nested in its body: only the formals list is swapped, so they survive
+  verbatim. `environment(f) <-` grants no opacity; ordinary static
+  definitions are untouched (#380, the other half of #467's
+  recovered-tree suppression).
 - Flag native-pipe (`|>`) right-hand sides that base R's parser rejects
   but tree-sitter accepts, such as `x |> z[.]`, `x |> { ... }`, and
   `x |> sqrt`, as RY000 syntax errors mirroring R's own messages

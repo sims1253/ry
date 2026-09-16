@@ -1030,6 +1030,14 @@ pub struct Checker {
     // check consults, so a demand on a closure parameter does not
     // consume an enclosing function's same-named guard.
     formal_shadows: Vec<(String, Span)>,
+    // Spans of function literals that are dynamic-construction
+    // placeholders: `x <- function(...)` followed, before any rebind of
+    // `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same lexical
+    // scope (issue #380), mapped to the strongest replacement in force.
+    // Indexed once per pass-3 run by `emit_diagnostics`;
+    // `enter_function_body` drops the placeholder-invalidated rules
+    // (RY010; RY080 only under body<-) from such a literal's internals.
+    dynamic_closure_literals: FxMap<Span, infer::dynamic_closure::PlaceholderKind>,
 }
 
 impl Checker {
@@ -1178,6 +1186,7 @@ impl Checker {
             vacuous_guards: Vec::new(),
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
+            dynamic_closure_literals: FxMap::default(),
         }
     }
 
@@ -1316,6 +1325,11 @@ impl Checker {
             &file.stmts,
             &mut self.stmt_continuations,
             &mut self.formal_shadows,
+        );
+        self.dynamic_closure_literals.clear();
+        infer::dynamic_closure::index_dynamic_closure_literals(
+            &file.stmts,
+            &mut self.dynamic_closure_literals,
         );
         // Encoding problems come first: an undecodable file is the most
         // fundamental way input can be malformed, and R's parser rejects

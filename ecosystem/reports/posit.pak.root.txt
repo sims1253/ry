@@ -11,16 +11,6 @@ R/errors.R:541:40 RY010
 R/errors.R:543:20 RY010
 R/errors.R:620:30 RY010
 R/errors.R:664:24 RY010
-R/json.R:100:13 RY001
-R/json.R:108:13 RY001
-R/json.R:118:13 RY001
-R/json.R:120:20 RY001
-R/json.R:135:14 RY001
-R/json.R:141:13 RY001
-R/json.R:143:20 RY001
-R/json.R:81:11 RY001
-R/json.R:83:18 RY001
-R/json.R:98:14 RY001
 R/package.R:176:20 RY093
 R/package.R:293:20 RY093
 R/pak-sitrep-data.R:27:20 RY010

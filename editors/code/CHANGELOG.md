@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-16
+
+- Bundle ry 0.11.0 with the five new rules RY106-RY110, superassignment and
+  dynamically constructed closure modeling, and the RY000 pipe-RHS and
+  non-UTF-8 parser-trust checks.
+
 ## [0.10.0] - 2026-09-13
 
 - Bundle ry 0.10.0 with improved package imports, enclosing-function lookup,

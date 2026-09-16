@@ -4,6 +4,15 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-16
+
+This release adds five new rules (RY106-RY110) whose founding fixtures are
+shipped upstream defects, models `<<-` superassignment and
+`formals<-`/`body<-` constructed closures in the binding analysis, and extends
+RY000 to R's parser-trust boundary (native-pipe right-hand sides base R
+rejects, non-UTF-8 sources). The minimum supported Rust version is now 1.90
+for tree-sitter 0.27. Core and the VS Code extension are 0.11.0.
+
 ### Changed
 
 - The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
@@ -1592,7 +1601,8 @@ in under a second in release mode.
 
 - Initial release.
 
-[Unreleased]: https://github.com/sims1253/ry/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/sims1253/ry/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/sims1253/ry/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/sims1253/ry/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/sims1253/ry/compare/v0.9.0...v0.9.2
 [0.9.0]: https://github.com/sims1253/ry/compare/v0.8.0...v0.9.0

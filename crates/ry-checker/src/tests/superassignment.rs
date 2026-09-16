@@ -11,9 +11,16 @@
 //! outer binding. Reads before the definition keep the prior type, so a
 //! provably-invalid condition still fires there.
 //!
-//! Every silent shape below was runtime-verified in R 4.6: at the point
-//! each condition evaluates, the `<<-` writes have executed, so the
-//! loop or branch really does run.
+//! The silent shapes split by what R 4.6 actually does at runtime (each
+//! verdict reproduced with Rscript): where the writing closure is
+//! invoked before the condition, the `<<-` writes have executed when it
+//! evaluates, so the loop or branch really does run. The remaining
+//! shapes deliberately never call the writer (`writer` defined, no call
+//! before the read): in R the binding keeps its stale value and the
+//! condition errors -- `if (done)` on uncalled `writer <- function() 1
+//! ->> done` fails with "argument is of length zero" -- but the checker
+//! has no call-graph evidence the closure did not run either, so the
+//! conservative unknown-typed update keeps those silent too.
 
 use super::*;
 

@@ -1031,12 +1031,12 @@ pub struct Checker {
     // consume an enclosing function's same-named guard.
     formal_shadows: Vec<(String, Span)>,
     // Spans of function literals that are dynamic-construction
-    // placeholders: `x <- function(...)` whose name later receives
-    // `formals(x) <- ...` / `body(x) <- ...` in the same lexical scope
-    // (issue #380), mapped to the strongest replacement in force.
+    // placeholders: `x <- function(...)` followed, before any rebind of
+    // `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same lexical
+    // scope (issue #380), mapped to the strongest replacement in force.
     // Indexed once per pass-3 run by `emit_diagnostics`;
     // `enter_function_body` drops the placeholder-invalidated rules
-    // (RY010/RY080) from such a literal's internals.
+    // (RY010; RY080 only under body<-) from such a literal's internals.
     dynamic_closure_literals: FxMap<Span, infer::dynamic_closure::PlaceholderKind>,
 }
 

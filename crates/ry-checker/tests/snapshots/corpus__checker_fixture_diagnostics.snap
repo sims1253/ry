@@ -148,33 +148,73 @@ expression: snapshots
       severity: warning
       span:
         column: 2
-        end: 615
-        line: 10
-        start: 595
+        end: 1179
+        line: 19
+        start: 1159
     - code: RY010
       message: "variable `x` is not bound in this scope"
       severity: warning
       span:
         column: 24
-        end: 717
-        line: 15
-        start: 716
+        end: 1281
+        line: 24
+        start: 1280
     - code: RY010
       message: "variable `still_unbound` is not bound in this scope"
       severity: warning
       span:
         column: 18
-        end: 795
-        line: 21
-        start: 782
+        end: 1359
+        line: 30
+        start: 1346
     - code: RY010
       message: "variable `nested_survives_formals_replacement` is not bound in this scope"
       severity: warning
       span:
         column: 20
-        end: 951
-        line: 28
-        start: 916
+        end: 1515
+        line: 37
+        start: 1480
+    - code: RY010
+      message: "variable `rebind_keeps_finding` is not bound in this scope"
+      severity: warning
+      span:
+        column: 18
+        end: 1687
+        line: 47
+        start: 1667
+    - code: RY010
+      message: "variable `g` is not bound in this scope"
+      severity: warning
+      span:
+        column: 10
+        end: 1749
+        line: 52
+        start: 1748
+    - code: RY010
+      message: "variable `later_literal_keeps_finding` is not bound in this scope"
+      severity: warning
+      span:
+        column: 18
+        end: 1811
+        line: 53
+        start: 1784
+    - code: RY010
+      message: "variable `outer_unchanged_by_local` is not bound in this scope"
+      severity: warning
+      span:
+        column: 18
+        end: 1892
+        line: 58
+        start: 1868
+    - code: RY080
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
+      span:
+        column: 4
+        end: 2049
+        line: 66
+        start: 2017
   fixture: err_dynamic_formals_scope_precision.R
 - diagnostics:
     - code: RY040

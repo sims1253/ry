@@ -432,6 +432,151 @@ fn formals_opacity_keeps_nested_closure_findings() {
     );
 }
 
+#[test]
+fn formals_only_placeholder_keeps_typed_map_ry080() {
+    // A typed-map call in a formals-only placeholder body is genuine:
+    // the formals swap leaves the body (and the inline callback, closed
+    // over nothing the alist provides) verbatim, and R errors "Can't
+    // coerce from a string to a double". RY080 anchors at the map call,
+    // never inside the nested callback the containment check exempts,
+    // so it must survive the placeholder filter (review P1).
+    let diags = check(
+        "library(purrr)\n\
+         f <- function() {\n\
+         \x20 map_dbl(1:3, function(z) \"nope\")\n\
+         }\n\
+         formals(f) <- alist(x = )\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY080").count(),
+        1,
+        "a formals-only placeholder keeps its typed-map RY080, got {diags:?}"
+    );
+    // Only body<- invalidates the callback result: the replacement
+    // discards the walked body, the map call included.
+    let diags = check(
+        "library(purrr)\n\
+         f <- function() {\n\
+         \x20 map_dbl(1:3, function(z) \"nope\")\n\
+         }\n\
+         body(f) <- substitute(x + 1)\n",
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == "RY080"),
+        "a body<- placeholder silences its typed-map RY080, got {diags:?}"
+    );
+}
+
+#[test]
+fn placeholder_association_is_source_ordered() {
+    // A replacement marks only the literal bound to its name at that
+    // point in the statement list. A rebind ends the association --
+    // formals<- modified the first closure, and the rebound one is a
+    // fresh object whose unbound names are genuine errors (review P2).
+    let diags = check(
+        "f <- function() x\n\
+         formals(f) <- alist(x = )\n\
+         f <- function() other_unbound\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY010").count(),
+        1,
+        "the rebound literal keeps its RY010, got {diags:?}"
+    );
+    // A replacement with no preceding literal binding marks nothing:
+    // at runtime it errors (or touches some other closure), and the
+    // later literal is an ordinary definition.
+    let diags = check(
+        "formals(g) <- alist(h = )\n\
+         g <- function() later_unbound\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY010").count(),
+        1,
+        "a replacement before the literal grants no opacity, got {diags:?}"
+    );
+    // Sibling branches sharing a name: the else-branch literal is a
+    // rebind in source order and keeps its finding.
+    let diags = check(
+        "pick <- function(cond) {\n\
+         \x20 if (cond) {\n\
+         \x20   f <- function() x\n\
+         \x20   formals(f) <- alist(x = )\n\
+         \x20 } else {\n\
+         \x20   f <- function() else_unbound\n\
+         \x20 }\n\
+         \x20 f\n\
+         }\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY010").count(),
+        1,
+        "the else-branch rebind keeps its RY010, got {diags:?}"
+    );
+}
+
+#[test]
+fn local_block_replacement_stays_inside_local() {
+    // local({...}) evaluates its block in a fresh environment: the
+    // formals<- inside assigns the modified closure to that environment
+    // only, and the outer binding is untouched -- its unbound name is a
+    // genuine runtime error (review P2). The boundary holds in both
+    // directions: a literal inside the block pairs only with the
+    // block's own replacements.
+    let diags = check(
+        "f <- function() undefined_name\n\
+         local({ formals(f) <- alist(x = ) })\n",
+    );
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "RY010").count(),
+        1,
+        "a replacement inside local() must not reach an outer literal, got {diags:?}"
+    );
+    let diags = check(
+        "local({\n\
+         \x20 f <- function() x\n\
+         \x20 formals(f) <- alist(x = )\n\
+         })\n",
+    );
+    assert!(
+        diags.is_empty(),
+        "literal and replacement inside one local() block stay one scope, got {diags:?}"
+    );
+}
+
+#[test]
+fn placeholder_kind_ordering_is_upgrade_only() {
+    // body<- is the stronger replacement in either order: formals<-
+    // after body<- must not downgrade the kind back to FormalsOnly,
+    // which would resurrect the nested closure's RY010 and (per the
+    // P1 fix) keep RY080. Both orders with a nested closure go fully
+    // opaque (review P3: previously verified only by hand).
+    let diags = check(
+        "f <- function() {\n\
+         \x20 g <- function() nested_unbound\n\
+         \x20 g\n\
+         }\n\
+         formals(f) <- alist(a = )\n\
+         body(f) <- substitute(x + 1)\n",
+    );
+    assert!(
+        !diags.iter().any(|d| matches!(d.code, "RY010" | "RY080")),
+        "formals<- then body<- stays BodyReplaced (upgrade), got {diags:?}"
+    );
+    let diags = check(
+        "f <- function() {\n\
+         \x20 g <- function() nested_unbound\n\
+         \x20 g\n\
+         }\n\
+         body(f) <- substitute(x + 1)\n\
+         formals(f) <- alist(a = )\n",
+    );
+    assert!(
+        !diags.iter().any(|d| matches!(d.code, "RY010" | "RY080")),
+        "body<- then formals<- stays BodyReplaced (no downgrade), got {diags:?}"
+    );
+}
+
 // ---- invalid UTF-8 (encoding) diagnostics, #376 ----
 
 /// Parse `src` (already decoded, as the frontends hand it over) and mark

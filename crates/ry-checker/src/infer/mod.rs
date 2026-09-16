@@ -473,15 +473,16 @@ impl Checker {
     /// function name.
     ///
     /// A literal whose span is indexed as a dynamic-construction
-    /// placeholder (`x <- function(...)` later followed by
-    /// `formals(x) <- ...` / `body(x) <- ...` in the same lexical scope;
-    /// see [`dynamic_closure`]) is walked normally, but the two rules
-    /// whose premises the construction invalidates — RY010 on names the
-    /// `alist()` formals will bind and RY080 on a `body<-`-replaced
-    /// callback result — are dropped afterwards: the placeholder is not
-    /// the closure R runs (issue #380). A `formals<-`-only placeholder
-    /// keeps findings from closures nested in its body: only the
-    /// formals list was replaced, and those closures survive verbatim.
+    /// placeholder (`x <- function(...)` followed, before any rebind of
+    /// `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same
+    /// lexical scope; see [`dynamic_closure`]) is walked normally, but
+    /// the rules whose premises the construction invalidates are dropped
+    /// afterwards: RY010 on names the `alist()` formals will bind, and —
+    /// only under a `body<-` replacement, which discards the walked body
+    /// wholesale — RY080 on its callback results. A `formals<-`-only
+    /// placeholder keeps RY080 and findings from closures nested in its
+    /// body: only the formals list was replaced, and they survive
+    /// verbatim (issue #380).
     fn enter_function_body(
         &mut self,
         function_name: Option<&str>,
@@ -555,24 +556,35 @@ impl Checker {
         if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
             && !self.discarding
         {
-            // Only the placeholder-specific rules go: RY010 (a name the
-            // `alist()`-installed formals bind is not unbound at runtime)
-            // and RY080 (a `body<-`-replaced body's callback result is
-            // whatever the construction supplied). Everything else still
-            // describes source the author wrote. A formals-only
-            // replacement leaves nested closures in place, so their
-            // findings survive by span containment — the nested walk has
-            // already finished by the time this filter runs.
+            // Only the placeholder-specific rules go; everything else
+            // still describes source the author wrote.
+            //
+            // RY010: a name the `alist()`-installed formals bind is not
+            // unbound at runtime. A formals-only replacement leaves
+            // nested closures in place, so their findings survive by
+            // span containment — the nested walk has already finished
+            // by the time this filter runs — while a `body<-` discards
+            // the walked body wholesale.
+            //
+            // RY080: only a `body<-` replacement invalidates the
+            // callback result; a formals-only swap leaves the body (and
+            // any typed-map call inside it) verbatim, so its RY080 —
+            // anchored at the `map_*` call, never inside the nested
+            // callback the containment check exempts — is genuine.
             let nested = match kind {
                 dynamic_closure::PlaceholderKind::FormalsOnly => {
                     Some(dynamic_closure::nested_function_literal_spans(body))
                 }
                 dynamic_closure::PlaceholderKind::BodyReplaced => None,
             };
+            let drop_ry080 = matches!(kind, dynamic_closure::PlaceholderKind::BodyReplaced);
             let walked = self.diagnostics.split_off(diagnostic_start);
             self.diagnostics
                 .extend(walked.into_iter().filter(|diagnostic| {
-                    !matches!(diagnostic.code, "RY010" | "RY080")
+                    if diagnostic.code == "RY080" {
+                        return !drop_ry080;
+                    }
+                    diagnostic.code != "RY010"
                         || nested.as_ref().is_some_and(|literals| {
                             literals.iter().any(|literal| {
                                 diagnostic.span.start >= literal.start

@@ -1161,15 +1161,6 @@
       "severity": "warning",
       "message": "parameter `type` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
-    "flexdashboard::RY001::R/flex_dashboard.R:381:11": {
-      "package": "flexdashboard",
-      "code": "RY001",
-      "path": "R/flex_dashboard.R",
-      "line": 381,
-      "column": 11,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
     "flexdashboard::RY001::R/flex_dashboard.R:401:13": {
       "package": "flexdashboard",
       "code": "RY001",
@@ -1772,96 +1763,6 @@
       "column": 32,
       "severity": "warning",
       "message": "parameter `tz` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
-    },
-    "pak::RY001::R/json.R:100:13": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 100,
-      "column": 13,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:108:13": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 108,
-      "column": 13,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:118:13": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 118,
-      "column": 13,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:120:20": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 120,
-      "column": 20,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:135:14": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 135,
-      "column": 14,
-      "severity": "warning",
-      "message": "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:141:13": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 141,
-      "column": 13,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:143:20": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 143,
-      "column": 20,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:81:11": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 81,
-      "column": 11,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:83:18": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 83,
-      "column": 18,
-      "severity": "warning",
-      "message": "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
-    },
-    "pak::RY001::R/json.R:98:14": {
-      "package": "pak",
-      "code": "RY001",
-      "path": "R/json.R",
-      "line": 98,
-      "column": 14,
-      "severity": "warning",
-      "message": "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
     },
     "pak::RY010::R/compat-vctrs.R:231:16": {
       "package": "pak",

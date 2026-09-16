@@ -505,28 +505,12 @@ impl Checker {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();
         }
-        let _ = walk_expr(
-            &args[expression].value,
-            Walk {
-                fn_bodies: false,
-                ..Walk::ALL
-            },
-            |node, _| -> ControlFlow<(), Descend> {
-                if let AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::SuperAssign,
-                    lhs,
-                    ..
-                }) = node
-                {
-                    if let Some(name) = binding_name(lhs) {
-                        scope.insert(name.to_string(), RType::unknown());
-                    } else {
-                        scope.invalidate_unknown_effects();
-                    }
-                }
-                ControlFlow::Continue(Descend::Into)
-            },
-        );
+        // Nested closures defined inside the block may run after `local`
+        // returns and climb out through the block's frame (issue #374),
+        // so their `<<-` targets reach the caller too -- except the
+        // writes an intervening frame's formal intercepts, which the
+        // collector prunes.
+        index::superassignment_writes_in_expr(&args[expression].value).apply(scope);
         Some(result)
     }
 
@@ -604,28 +588,12 @@ impl Checker {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();
         }
-        let _ = walk_expr(
-            &args[code].value,
-            Walk {
-                fn_bodies: false,
-                ..Walk::ALL
-            },
-            |node, _| -> ControlFlow<(), Descend> {
-                if let AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::SuperAssign,
-                    lhs,
-                    ..
-                }) = node
-                {
-                    if let Some(name) = binding_name(lhs) {
-                        scope.insert(name.to_string(), RType::unknown());
-                    } else {
-                        scope.invalidate_unknown_effects();
-                    }
-                }
-                ControlFlow::Continue(Descend::Into)
-            },
-        );
+        // Nested closures defined inside the block may run after the
+        // block completes and climb out through its frame (issue #374),
+        // so their `<<-` targets reach the caller too -- except the
+        // writes an intervening frame's formal intercepts, which the
+        // collector prunes.
+        index::superassignment_writes_in_expr(&args[code].value).apply(scope);
         Some(RType::unknown())
     }
 

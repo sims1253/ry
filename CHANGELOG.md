@@ -68,6 +68,25 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Model superassignment (`x <<- v`, `v ->> x`) from a nested closure as a
+  possible type update to the enclosing binding: every `<<-` target in a
+  function body (nested closure bodies included) becomes unknown-typed in
+  the definition scope once the definition is walked, and a target whose
+  rebound root cannot be named (`f()$a <<- v`) discards all value facts.
+  The initialization idiom `token <- NULL` mutated only through `<<-`
+  inside a callback kept its stale NULL type forever, so the loop/branch
+  conditions that R runs fine were flagged -- the vendored json-parser
+  family (pak's `R/json.R`: `token <<- tokens[ptr]` in `read_token`,
+  `while (token != "}")` in `parse_object`/`parse_array`), flexdashboard's
+  `source_file <<- input` in `pre_knit`, jsonlite's `out[[...]] <<- x`
+  callback, and curl's `expected[i] <<- ...` download handlers. The
+  update lands at the definition's position in the sequential walk: a
+  read that precedes the `<<-`-writing definition cannot have seen the
+  write at runtime either and keeps its proven type. Reads of a name that
+  only ever materializes through `<<-` stop producing RY010, and calls on
+  such bindings stop producing RY070; `<<-` never writes the writing
+  closure's own frame (R semantics verified: a same-named formal stays
+  untouched), which the forwarded-default oracle fixture pins (#374).
 - Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse
   produced a recovered tree. Such files report only their RY000 "unparseable
   region" diagnostics, which are the actionable signal: findings derived from

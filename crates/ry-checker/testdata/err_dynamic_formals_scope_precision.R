@@ -1,5 +1,5 @@
 # expect: RY010, RY010, RY010, RY010, RY010, RY010, RY010, RY010, RY080
-# (the seventh RY010 is the `g` receiver itself: formals(g) <- evaluates
+# (the sixth RY010 is the `g` receiver itself: formals(g) <- evaluates
 # g before any binding exists, exactly where R errors 'object "g" not
 # found')
 # Placeholder opacity is lexically scoped, source-ordered, and

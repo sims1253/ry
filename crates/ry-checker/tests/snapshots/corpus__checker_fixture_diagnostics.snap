@@ -148,73 +148,73 @@ expression: snapshots
       severity: warning
       span:
         column: 2
-        end: 1179
+        end: 1177
         line: 19
-        start: 1159
+        start: 1157
     - code: RY010
       message: "variable `x` is not bound in this scope"
       severity: warning
       span:
         column: 24
-        end: 1281
+        end: 1279
         line: 24
-        start: 1280
+        start: 1278
     - code: RY010
       message: "variable `still_unbound` is not bound in this scope"
       severity: warning
       span:
         column: 18
-        end: 1359
+        end: 1357
         line: 30
-        start: 1346
+        start: 1344
     - code: RY010
       message: "variable `nested_survives_formals_replacement` is not bound in this scope"
       severity: warning
       span:
         column: 20
-        end: 1515
+        end: 1513
         line: 37
-        start: 1480
+        start: 1478
     - code: RY010
       message: "variable `rebind_keeps_finding` is not bound in this scope"
       severity: warning
       span:
         column: 18
-        end: 1687
+        end: 1685
         line: 47
-        start: 1667
+        start: 1665
     - code: RY010
       message: "variable `g` is not bound in this scope"
       severity: warning
       span:
         column: 10
-        end: 1749
+        end: 1747
         line: 52
-        start: 1748
+        start: 1746
     - code: RY010
       message: "variable `later_literal_keeps_finding` is not bound in this scope"
       severity: warning
       span:
         column: 18
-        end: 1811
+        end: 1809
         line: 53
-        start: 1784
+        start: 1782
     - code: RY010
       message: "variable `outer_unchanged_by_local` is not bound in this scope"
       severity: warning
       span:
         column: 18
-        end: 1892
+        end: 1890
         line: 58
-        start: 1868
+        start: 1866
     - code: RY080
       message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
       severity: error
       span:
         column: 4
-        end: 2049
+        end: 2047
         line: 66
-        start: 2017
+        start: 2015
   fixture: err_dynamic_formals_scope_precision.R
 - diagnostics:
     - code: RY040

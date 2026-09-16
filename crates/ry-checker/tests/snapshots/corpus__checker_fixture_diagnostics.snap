@@ -1,6 +1,6 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
-assertion_line: 229
+assertion_line: 238
 expression: snapshots
 ---
 - diagnostics:
@@ -51,6 +51,16 @@ expression: snapshots
         line: 1
         start: 21
   fixture: err_argument_type_mismatch.R
+- diagnostics:
+    - code: RY000
+      message: "unexpected input at 1:1: file starts with a UTF-8 byte order mark (R's parser rejects it)"
+      severity: error
+      span:
+        column: 0
+        end: 3
+        line: 0
+        start: 0
+  fixture: err_bom.R
 - diagnostics:
     - code: RY070
       message: "cannot call a value of mode `double`"
@@ -1385,6 +1395,8 @@ expression: snapshots
   fixture: ok_assign_literal.R
 - diagnostics: []
   fixture: ok_block_expr_scope.R
+- diagnostics: []
+  fixture: ok_bom_elsewhere.R
 - diagnostics: []
   fixture: ok_bound_var.R
 - diagnostics: []

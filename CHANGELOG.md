@@ -4,6 +4,20 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Flag a leading UTF-8 byte order mark as `RY000` instead of checking
+  clean (#474): a BOM (`EF BB BF`) is valid UTF-8, but R's parser
+  rejects the file with "unexpected input" at 1:1 in three of four
+  execution contexts — `parse()`, `source()`, and `Rscript file.R`;
+  only `parse(keep.source = TRUE)` strips it (verified against R
+  4.6.1, including comment-only files, which R rejects unlike
+  invalid bytes in comments). The shared read boundary behind the
+  non-UTF-8 flag (#376) now also reports the BOM, so `ry check` and
+  the LSP agree; a flagged file reports only its `RY000`. A U+FEFF
+  character anywhere after the first byte is an ordinary character R
+  accepts, and stays clean.
+
 ## [0.11.0] - 2026-09-16
 
 This release adds five new rules (RY106-RY110) whose founding fixtures are

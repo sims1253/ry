@@ -709,6 +709,93 @@ fn encoding_ry000_suppresses_semantic_diagnostics() {
     assert!(diags[0].message.contains("not valid UTF-8"), "{diags:?}");
 }
 
+// ---- leading UTF-8 BOM diagnostics, #474 ----
+
+/// Parse `src` (already decoded, with the BOM surviving as a leading
+/// U+FEFF, as the read boundary hands it over) and set the boundary's
+/// leading-BOM flag, exactly like the CLI/LSP attach it for a
+/// BOM-prefixed disk file.
+fn parse_bom_flagged(src: &str) -> SourceFile {
+    let mut file = parse_file("test.R", src);
+    file.leading_bom = true;
+    file
+}
+
+/// A leading BOM is flagged as one RY000 at 1:1 spanning the BOM's
+/// three decoded bytes, with the wording of R's own parse error.
+#[test]
+fn leading_bom_is_flagged_as_ry000_at_1_1() {
+    let mut checker = Checker::new("test.R");
+    let file = parse_bom_flagged("\u{feff}x <- 1\n");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "RY000");
+    assert_eq!(diags[0].severity, Severity::Error);
+    assert!(
+        diags[0].message.contains("byte order mark"),
+        "message should name the BOM: {}",
+        diags[0].message
+    );
+    assert_eq!(diags[0].span, Span::new(0, 3, 0, 0));
+}
+
+/// R rejects a BOM-prefixed file even when the rest is comment-only
+/// (verified against R 4.6.1, unlike invalid bytes which comments
+/// tolerate), so a comment-only BOM file still flags.
+#[test]
+fn leading_bom_before_only_comments_still_flags() {
+    let mut checker = Checker::new("test.R");
+    let file = parse_bom_flagged("\u{feff}# just a comment\n");
+    checker.check(&file);
+    assert_eq!(checker.take_diagnostics().len(), 1);
+}
+
+/// Like #376's encoding flag, a BOM-flagged file reports only its
+/// RY000: R rejects the whole file at 1:1, so semantic findings over
+/// the surviving tree are noise.
+#[test]
+fn leading_bom_suppresses_semantic_diagnostics() {
+    let mut checker = Checker::new("test.R");
+    let file = parse_bom_flagged("\u{feff}missing_name\n");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "RY000");
+    assert!(diags[0].message.contains("byte order mark"), "{diags:?}");
+}
+
+/// R reports the BOM (1:1) before any later invalid multibyte
+/// character, so when a file carries both findings the BOM's RY000 is
+/// the only one emitted.
+#[test]
+fn leading_bom_takes_precedence_over_invalid_utf8_spans() {
+    let mut file = parse_file("test.R", "\u{feff}s <- \"café\"\n");
+    file.leading_bom = true;
+    // The `é` at decoded bytes 12..14 (after the 3-byte BOM).
+    file.invalid_utf8 = vec![Span::new(12, 14, 0, 12)];
+    let mut checker = Checker::new("test.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert!(diags[0].message.contains("byte order mark"), "{diags:?}");
+}
+
+/// The adjacent idiom that must stay quiet: the same U+FEFF character
+/// anywhere but the first bytes of the file is an ordinary character R's
+/// parser accepts (inside strings and comments), and text without a
+/// leading BOM never sets the flag.
+#[test]
+fn bom_character_elsewhere_and_plain_source_stay_clean() {
+    for src in ["s <- \"\u{feff}\"\n", "x <- 1 # \u{feff} comment\n", ""] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY000"),
+            "no leading BOM must not be flagged: {diags:?}"
+        );
+    }
+}
+
 // ---- comparison-in-call & format arity (moved from packages_typeshed) ----
 #[test]
 fn comparison_directly_inside_length_is_diagnosed() {

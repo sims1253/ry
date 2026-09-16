@@ -386,6 +386,15 @@ fn r3_inert_blank_and_comment_insertion_is_diagnostic_neutral() {
         {
             continue; // skip unparseable
         }
+        // Skip BOM-prefixed fixtures (#474): their RY000 comes from the
+        // read boundary, which this in-memory harness bypasses, and an
+        // insertion at offset 0 moves the BOM off byte 0 -- in ry the
+        // flagger switches from the boundary (encoding RY000) to
+        // tree-sitter's mid-file U+FEFF error (syntax RY000), and R
+        // rejects both shapes, so text insertion is not neutral here.
+        if src.starts_with('\u{feff}') {
+            continue;
+        }
         let orig_diags = {
             let mut c = Checker::new(&name);
             c.check(&original);

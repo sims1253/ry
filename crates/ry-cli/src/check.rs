@@ -1052,6 +1052,55 @@ mod tests {
         );
     }
 
+    /// A leading UTF-8 BOM is valid UTF-8, but R's parser rejects the
+    /// file with "unexpected input" at 1:1 (#474): `ry check` must flag
+    /// it like the non-UTF-8 case (#376) instead of checking clean.
+    #[test]
+    fn leading_bom_is_flagged_as_an_encoding_ry000() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("bom.R");
+        std::fs::write(&file, b"\xef\xbb\xbfx <- 1\nmissing_name\n").unwrap();
+
+        let result = check_files(&[file], Some(temp.path()));
+
+        // Like recovered-tree and non-UTF-8 files, a BOM-flagged file
+        // reports only its RY000: the unbound name below it is noise on
+        // a file R refuses at 1:1.
+        let encoding: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "RY000")
+            .collect();
+        assert_eq!(encoding.len(), 1, "{:?}", result.diagnostics);
+        assert_eq!(result.diagnostics.len(), 1, "{:?}", result.diagnostics);
+        assert!(
+            encoding[0].message.contains("byte order mark"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
+    /// The adjacent idiom that must stay quiet: the same U+FEFF character
+    /// anywhere but the file's first bytes is an ordinary character R's
+    /// parser accepts.
+    #[test]
+    fn bom_character_elsewhere_in_the_file_stays_clean() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("bom_midfile.R");
+        std::fs::write(&file, "s <- \"\u{feff}\"\nx <- 1 # \u{feff} comment\n").unwrap();
+
+        let result = check_files(&[file], Some(temp.path()));
+
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY000"),
+            "{:?}",
+            result.diagnostics
+        );
+    }
+
     #[test]
     fn fifty_statement_r_file_with_three_syntax_errors_does_not_collapse() {
         let temp = tempfile::tempdir().unwrap();

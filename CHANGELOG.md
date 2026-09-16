@@ -4,6 +4,18 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The LSP now assembles its multi-file project in one canonical order:
+  indexed disk files sorted by path, then open documents sorted by path —
+  the CLI's sorted discovery order, with the editor's buffers layered
+  last so an open document's definitions shadow same-named on-disk ones.
+  The order used to come from unsorted HashMaps and close/reopen
+  re-appended the reopened file at the end, so when two files defined
+  the same top-level function the winning definition — and with it
+  inferred calls and diagnostics — depended on the process's hash seed
+  and flipped after closing and reopening an unchanged file (#490).
+
 ## [0.11.0] - 2026-09-16
 
 This release adds five new rules (RY106-RY110) whose founding fixtures are

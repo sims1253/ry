@@ -1,8 +1,21 @@
 import * as util from "util";
 import * as vscode from "vscode";
 
-class ExtensionLogger {
-  readonly channel = vscode.window.createOutputChannel("ry", { log: true });
+class ExtensionLogger implements vscode.Disposable {
+  private _channel: vscode.LogOutputChannel | undefined;
+
+  // Created on first use: module load must not touch the output panel,
+  // and a disabled extension never creates a channel at all.
+  get channel(): vscode.LogOutputChannel {
+    return (this._channel ??= vscode.window.createOutputChannel("ry", {
+      log: true,
+    }));
+  }
+
+  dispose(): void {
+    this._channel?.dispose();
+    this._channel = undefined;
+  }
 
   private readonly isCI = process.env.CI === "true";
 

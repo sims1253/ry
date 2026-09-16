@@ -11,11 +11,19 @@ import { RY_SETTINGS_NAMESPACE } from "./common/constants";
 import type { Runtime } from "./common/runtime";
 
 let runtimePromise: Promise<Runtime> | null = null;
+let bootImmediate: NodeJS.Immediate | null = null;
 
 function runtime(context: vscode.ExtensionContext): Promise<Runtime> {
-  runtimePromise ??= import("./common/runtime").then((module) =>
-    module.start(context),
-  );
+  if (runtimePromise == null) {
+    runtimePromise = import("./common/runtime")
+      .then((module) => module.start(context))
+      .catch((error) => {
+        // Do not cache the rejection: a later command or deactivate()
+        // retries the load instead of failing permanently.
+        runtimePromise = null;
+        throw error;
+      });
+  }
   return runtimePromise;
 }
 
@@ -44,13 +52,29 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   // Boot the runtime shortly after activation.
-  setImmediate(() => {
-    void runtime(context);
+  bootImmediate = setImmediate(() => {
+    bootImmediate = null;
+    void runtime(context).catch((error) => {
+      console.error("Failed to initialize the ry runtime.", error);
+      void vscode.window.showErrorMessage(
+        "Failed to initialize the ry extension.",
+      );
+    });
   });
 }
 
 export function deactivate(): Promise<void> {
+  // Cancel a still-pending boot so it cannot load the runtime after
+  // deactivation.
+  if (bootImmediate != null) {
+    clearImmediate(bootImmediate);
+    bootImmediate = null;
+  }
   return runtimePromise == null
     ? Promise.resolve()
-    : runtimePromise.then((instance) => instance.shutdown());
+    : runtimePromise.then(
+        (instance) => instance.shutdown(),
+        // A failed runtime load leaves nothing to shut down.
+        () => {},
+      );
 }

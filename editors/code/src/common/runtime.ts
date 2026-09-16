@@ -58,6 +58,20 @@ const disabledRuntime = (): Runtime => ({
 export function start(context: vscode.ExtensionContext): Runtime {
   const serverId = RY_SETTINGS_NAMESPACE;
 
+  const enable = vscode.workspace
+    .getConfiguration(serverId)
+    .get<boolean>("enable", true);
+  if (!enable) {
+    // Disabled: create only the status item needed for the warning. No
+    // logging or server channels, so the lazy client channel stays
+    // uncreated; it appears only if `showLogs` is invoked explicitly,
+    // and is then disposed through the logger pushed here.
+    const statusItem = new StatusItem("ry-status");
+    context.subscriptions.push(statusItem, logger);
+    statusItem.setWarning("Extension disabled");
+    return disabledRuntime();
+  }
+
   logger.info(`Name: ${LOG_CHANNEL_NAME}`);
   logger.info(`Module: ${serverId}`);
 
@@ -68,31 +82,20 @@ export function start(context: vscode.ExtensionContext): Runtime {
     `${LOG_CHANNEL_NAME} Language Server Trace`,
   );
 
-  context.subscriptions.push(outputChannel);
-  context.subscriptions.push(traceOutputChannel);
-  context.subscriptions.push(logger);
+  context.subscriptions.push(outputChannel, traceOutputChannel, logger);
 
   // Status item shows the resolved binary path and version.
   const statusItem = new StatusItem("ry-status");
   statusItem.setBusy();
   context.subscriptions.push(statusItem);
 
-  const enable = vscode.workspace
-    .getConfiguration(serverId)
-    .get<boolean>("enable", true);
-  if (!enable) {
-    logger.info(
-      `Extension is disabled. To enable, change \`${serverId}.enable\` to \`true\` and restart VS Code.`,
-    );
-    statusItem.setWarning("Extension disabled");
-    return disabledRuntime();
-  }
-
   let serverState: LanguageClient | null = null;
   let restartQueued = false;
   let restartPromise: Promise<void> | null = null;
   let resolvedBinary: ResolvedBinary | null = null;
   let settings: ISettings | undefined;
+  let shutdownStarted = false;
+  let bootImmediate: NodeJS.Immediate | null = null;
   const readSettings = () => {
     const folder = vscode.workspace.workspaceFolders?.[0];
     return folder
@@ -168,6 +171,7 @@ export function start(context: vscode.ExtensionContext): Runtime {
 
   // Restart orchestration: at most one restart runs, at most one pends.
   const requestRestart = async () => {
+    if (shutdownStarted) return;
     if (restartPromise != null) {
       if (!restartQueued) {
         logger.info(
@@ -234,8 +238,12 @@ export function start(context: vscode.ExtensionContext): Runtime {
     }),
   );
 
-  // Start the server shortly after boot.
-  setImmediate(() => {
+  // Start the server shortly after boot. shutdown() cancels a still
+  // pending immediate, and the callback is a no-op once shutdown has
+  // begun, so the first start can never recreate state after teardown.
+  bootImmediate = setImmediate(() => {
+    bootImmediate = null;
+    if (shutdownStarted) return;
     if (serverState == null && restartPromise == null) {
       void requestRestart();
     }
@@ -253,8 +261,13 @@ export function start(context: vscode.ExtensionContext): Runtime {
       resolvedBinary
         ? Effect.runPromise(explainRuleCommand(resolvedBinary.path))
         : Promise.resolve(),
-    shutdown: () =>
-      Effect.runPromise(
+    shutdown: () => {
+      shutdownStarted = true;
+      if (bootImmediate != null) {
+        clearImmediate(bootImmediate);
+        bootImmediate = null;
+      }
+      return Effect.runPromise(
         Effect.gen(function* () {
           const pendingRestart = restartPromise;
           if (pendingRestart != null) {
@@ -267,6 +280,7 @@ export function start(context: vscode.ExtensionContext): Runtime {
             serverState = null;
           }
         }),
-      ),
+      );
+    },
   };
 }

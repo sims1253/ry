@@ -298,35 +298,6 @@ pub const SOURCE: &str = include_str!("../vendor/SOURCE");
 // Stubs stay uncompressed in vendor/ and inflate lazily at runtime.
 const BASE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/base.json.deflate"));
 
-/// ry-side annotations layered on top of the synced vendor snapshot.
-///
-/// `scripts/sync_typeshed.sh` (and the weekly `Typeshed bump` workflow)
-/// wholesale-replaces `vendor/` from the r-typeshed checkout, so an
-/// annotation that only exists in a vendored stub is silently stripped
-/// on the next bump. Entries in `overlay/base.json` are merged over the
-/// vendored base at load time instead; the file lives outside `vendor/`
-/// and the sync never touches it. Each entry replaces its same-named
-/// vendored entry wholesale, and a drift test pins every non-overlay
-/// field to the vendored stub so an upstream change cannot hide behind a
-/// stale copy. The eventual home for this data is r-typeshed itself (the
-/// `seq_len` `param_value` precedent: upstream 99581c8, vendored in ry
-/// by 5aab09a); upstreaming is the maintainer's call.
-const LOCAL_OVERLAY_JSON: &str = include_str!("../overlay/base.json");
-
-/// Merge [`LOCAL_OVERLAY_JSON`] over a parsed base typeshed. The file is
-/// committed and compile-time-embedded, so a parse failure is a repo bug
-/// and panics with the same contract as an unparseable embedded stub.
-fn apply_local_overlay(base: &mut Typeshed) {
-    let overlay = parse_typeshed(
-        LOCAL_OVERLAY_JSON,
-        Path::new("crates/ry-typeshed/overlay/base.json"),
-    )
-    .expect("local typeshed overlay must parse");
-    for (name, signature) in overlay.functions {
-        base.functions.insert(name, signature);
-    }
-}
-
 /// One embedded non-base package: its name, its deflated vendored JSON,
 /// a process-wide parse cache for the parsed [`Typeshed`], and a
 /// process-wide cache for the conservative prefilter flags.
@@ -672,9 +643,7 @@ fn inflate_embedded(data: &[u8], name: &str) -> String {
 
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
     let json = inflate_embedded(BASE_JSON, "<embedded base>");
-    let mut typeshed = parse_typeshed(&json, Path::new("<embedded base>"))?;
-    apply_local_overlay(&mut typeshed);
-    Ok(typeshed)
+    parse_typeshed(&json, Path::new("<embedded base>"))
 }
 
 /// Reject duplicate JSON keys before they can overwrite a signature.
@@ -1471,55 +1440,27 @@ mod tests {
         assert!(t.functions.len() >= 40, "typeshed has at least 40 entries");
     }
 
-    /// The overlay is what keeps RY106's `return_mode` spec alive across
-    /// the weekly `Typeshed bump`: the vendored snapshot itself must stay
-    /// upstream-pristine (no `return_mode` anywhere in vendor/), while
-    /// `load_base` merges the overlay entry in. A sync that wholesale
-    /// replaces vendor/ therefore cannot strip the spec.
+    /// `base::ifelse`'s `return_mode` spec (the data behind RY106) lives
+    /// in the upstream stub itself (r-typeshed base 0.0.19, merged as
+    /// upstream PR #58), replacing the temporary ry-side overlay. The
+    /// weekly `Typeshed bump` wholesale-replaces vendor/ from the
+    /// r-typeshed checkout, so this pin surfaces an upstream regression
+    /// that would strip the spec from the snapshot ry embeds.
     #[test]
-    fn local_overlay_annotates_base_without_touching_vendor() {
+    fn vendored_base_carries_the_ifelse_return_mode() {
         let vendor_base = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/base/base.json"),
         )
         .expect("read vendored base stub");
         assert!(
-            !vendor_base.contains("\"return_mode\""),
-            "vendored base.json must stay upstream-pristine; ry-side annotations live in overlay/"
+            vendor_base.contains("\"return_mode\""),
+            "vendored base.json must keep ifelse's return_mode spec (upstream base 0.0.19)"
         );
-        let overlay_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("overlay");
-        let report = validate_stub_dirs(&[overlay_dir]);
-        assert_eq!(report.error_count(), 0, "{report:?}");
         let t = load_base().expect("loads");
         assert!(
             t.functions["ifelse"].return_mode.is_some(),
-            "load_base must merge the overlay's return_mode spec over the vendored stub"
+            "load_base must surface the vendored return_mode spec"
         );
-    }
-
-    /// Each overlay entry replaces its vendored twin wholesale, so every
-    /// field EXCEPT the annotation itself must track upstream. If this
-    /// pin fails after a typeshed bump, refresh the overlay entry from
-    /// the new vendored stub (the bump PR's CI run surfaces it).
-    #[test]
-    fn local_overlay_stays_pinned_to_the_vendored_entry() {
-        let vendored =
-            load_stub_file(&Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/base/base.json"))
-                .expect("vendored base stub parses");
-        let overlay = parse_typeshed(
-            LOCAL_OVERLAY_JSON,
-            Path::new("crates/ry-typeshed/overlay/base.json"),
-        )
-        .expect("overlay parses");
-        for (name, annotation) in &overlay.functions {
-            let Some(mut current) = vendored.functions.get(name).cloned() else {
-                panic!("overlay annotates `{name}`, which the vendored base no longer defines");
-            };
-            current.return_mode = annotation.return_mode.clone();
-            assert_eq!(
-                &current, annotation,
-                "overlay entry for `{name}` drifted from the vendored stub"
-            );
-        }
     }
 
     #[test]
@@ -2100,7 +2041,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.18");
+        assert_eq!(t.version, "0.0.19");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

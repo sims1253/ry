@@ -103,8 +103,10 @@ The tidyverse ledger’s `source_sha256` uses the same recipe over every
 non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
 entries — while the index’s “24 Packages” counts ledger packages-block
 entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
-testthat, withr) have no block entry. Six of their reports contain 46 unowned
-findings in total; only fs and withr have empty reports.
+testthat, withr) have no block entry. Three of their reports (cli, rlang,
+testthat) contain 44 unowned findings in total; the remaining five (curl, fs,
+jsonlite, scales, withr) are empty — scales since #460, curl and jsonlite
+since the #374 superassignment modeling.
 
 The Posit ledger’s `source_sha256` hashes the concatenated bytes of all
 `ecosystem/reports/posit.*.root.txt` files, sorted by filename. Recompute it

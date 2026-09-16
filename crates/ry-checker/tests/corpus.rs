@@ -34,6 +34,9 @@ fn parse_marker(src: &str) -> Option<Expectation> {
     // Only inspect the very first line for the marker; this keeps the
     // grammar unambiguous and avoids accidental matches in code samples.
     let first = src.lines().next()?;
+    // A BOM-prefixed fixture (err_bom.R) carries its BOM before the
+    // marker; skip it so the marker still reads as the first line.
+    let first = first.strip_prefix('\u{feff}').unwrap_or(first);
     let trimmed = first.trim_start_matches([' ', '\t']);
     if !trimmed.starts_with('#') {
         return None;
@@ -103,9 +106,15 @@ fn load_fixtures() -> Vec<Fixture> {
 
 fn run_diagnostics(name: &str, src: &str) -> Vec<ry_checker::Diagnostic> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser
+    let mut file = parser
         .parse(name, src)
         .unwrap_or_else(|e| panic!("parse {}: {}", name, e));
+    // The harness reads fixtures as text, so it applies the on-disk read
+    // boundary's leading-BOM rule itself (#474), the same way the CLI
+    // pipeline and the LSP index attach the boundary's findings.
+    if src.starts_with('\u{feff}') {
+        file.leading_bom = true;
+    }
     let mut c = Checker::new(name);
     c.check(&file);
     // Apply inline suppression (`# ry: ignore`, `# noqa`,

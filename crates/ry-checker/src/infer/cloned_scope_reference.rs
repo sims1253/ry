@@ -29,10 +29,12 @@ impl Checker {
         // `apply_narrowing`). A diverging arm is the exception: the
         // continuation is reachable only through its sibling, so its
         // recorded refinements are facts in the parent scope.
-        let then_diverges =
-            (scope.loop_frame.is_some() && then_scope.unreachable) || self.block_diverges(then);
+        // Return-blind, matching the journal's continuation view
+        // (`DivergenceView`).
+        let then_diverges = (scope.loop_frame.is_some() && then_scope.unreachable)
+            || self.block_diverges_for_continuation(then);
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
-            || else_.is_some_and(|statements| self.block_diverges(statements));
+            || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
         let continuation = match (then_diverges, else_, else_diverges) {
             (true, Some(_), false) | (true, None, _) => Some(&else_scope),
             (false, Some(_), true) => Some(&then_scope),

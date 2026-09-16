@@ -21,6 +21,20 @@ All notable changes to ry are documented in this file.
   stdout keeps a well-formed empty report on every failure path. An
   existing-but-empty or fully excluded tree remains a successful run
   with the informational "no .R / .r files found" note (#485).
+- Recognize a source-level `return(...)` in the shared block-divergence
+  analysis (RY108 `seq-defaulted-forward` and RY110 `vacuous-all-guard`):
+  the parser lowers the `return` keyword to an ordinary call, so the most
+  idiomatic R reject-guard -- `if (!(G)) return(NULL)` guarding the code
+  that follows -- is now judged by one shared view instead of the two
+  rule-local copies #478/#480 had to add. A `base::return(...)`
+  qualification is newly recognized by RY110 (RY108 already matched the
+  qualified form); `return` inside a nested closure or a called helper
+  still exits only that callee and never diverges the enclosing block.
+  The journal's continuation facts deliberately keep the return-blind
+  view: `if (is.null(x)) return(NULL)` still leaves `x` at its stale
+  default binding so a following condition can fire RY001 on the
+  zero-length shape, the pinned
+  `null_return_guard_alone_does_not_prove_non_empty` behavior (#482).
 
 ## [0.11.0] - 2026-09-16
 

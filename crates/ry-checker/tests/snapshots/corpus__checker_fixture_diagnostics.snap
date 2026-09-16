@@ -573,7 +573,7 @@ expression: snapshots
         line: 14
         start: 918
     - code: RY105
-      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
       severity: warning
       span:
         column: 28
@@ -581,7 +581,7 @@ expression: snapshots
         line: 15
         start: 968
     - code: RY105
-      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always FALSE"
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always FALSE"
       severity: warning
       span:
         column: 29
@@ -589,7 +589,7 @@ expression: snapshots
         line: 16
         start: 1028
     - code: RY105
-      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always FALSE"
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always FALSE"
       severity: warning
       span:
         column: 29
@@ -877,7 +877,7 @@ expression: snapshots
         line: 21
         start: 1069
     - code: RY105
-      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      message: "`u_dl` is a length-1 double, so `length(...)` is 1 here and this length guard is always TRUE"
       severity: warning
       span:
         column: 13

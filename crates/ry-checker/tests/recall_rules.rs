@@ -448,6 +448,10 @@ fn ry105_fires_on_negative_literal_bounds() {
     // A positive bound keeps the scalar-assertion reading and stays quiet.
     assert!(!fires("if (length(sum(1L)) > 1) 1\n", "RY105"));
     assert!(!fires("if (length(sum(1L)) == 1) 1\n", "RY105"));
+    // Unary `+` is dropped by the parser, so a plus-spelled bound follows
+    // its value: `+2` is a positive bound (quiet) and `+0` is zero (fires).
+    assert!(!fires("if (length(sum(1L)) > +2) 1\n", "RY105"));
+    assert!(fires("if (length(sum(1L)) > +0) 1\n", "RY105"));
 }
 
 #[test]
@@ -621,6 +625,16 @@ fn ry107_stays_silent_when_the_minus_operand_is_not_a_folded_literal() {
     // Neither bound folds, so the shape is outside this rule.
     assert!(!fires("f <- function(x) if (any(x) > -2^2) 1\n", "RY107"));
     assert!(!fires("f <- function(x) if (any(x) > 1 - 1) 1\n", "RY107"));
+}
+
+#[test]
+fn ry107_unary_plus_folds_like_the_bare_literal() {
+    // The parser drops unary `+` entirely (`+2` lowers to the bare
+    // `Integer` 2), so a plus-spelled bound matches its bare spelling:
+    // `> +2` is the same constant-FALSE comparison as `> 2`, while `+`
+    // over a non-literal leaves nothing to fold and stays quiet.
+    assert!(fires("f <- function(x) if (any(x) > +2) 1\n", "RY107"));
+    assert!(!fires("f <- function(x, k) if (any(x) > +k) 1\n", "RY107"));
 }
 
 #[test]

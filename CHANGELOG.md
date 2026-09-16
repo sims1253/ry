@@ -16,6 +16,10 @@ All notable changes to ry are documented in this file.
   report as always FALSE. Value-preserving comparisons (`any(x) > 0`) and
   deliberate scalar assertions (`length(sum(v)) == 1`) stay quiet, and a
   minus over a non-literal (`-2^2` is `-(2^2)` in R) still does not fold.
+  The RY105 message now reads "this length guard" instead of "this
+  zero-length guard", since the admitted bounds go past zero. Unary `+`
+  needs no folding of its own: the parser already lowers `+2` to the bare
+  literal, so a plus-spelled bound behaves exactly like its bare spelling.
 
 ## [0.11.0] - 2026-09-16
 

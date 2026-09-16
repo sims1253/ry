@@ -92,6 +92,13 @@ pub struct DecodedRSource {
     /// checker can flag files R's own parser rejects ("invalid multibyte
     /// character in parser").
     pub invalid_utf8: Vec<Span>,
+    /// Whether the file's bytes start with a UTF-8 BOM (`EF BB BF`). The
+    /// BOM is valid UTF-8 (it decodes to U+FEFF at the start of `text`,
+    /// which is kept: R sees and rejects it), but R's parser errors with
+    /// "unexpected input" at 1:1 in every execution context except
+    /// `parse(keep.source = TRUE)` (#474). Frontends attach this to the
+    /// parsed `SourceFile` alongside `invalid_utf8` so both flag it.
+    pub leading_bom: bool,
 }
 
 /// Read R source as UTF-8, falling back to Latin-1 for invalid UTF-8.
@@ -103,10 +110,12 @@ pub fn read_r_source(path: &Path) -> std::io::Result<String> {
 
 /// Read R source with the same UTF-8/Latin-1 policy as
 /// [`read_r_source`], additionally reporting where the invalid UTF-8
-/// sequences were. Files that were not valid UTF-8 are what this is for:
-/// the text still transcodes lossily, but callers that surface
-/// diagnostics (CLI `ry check`, the LSP's on-disk index) pass the spans
-/// along so the file is flagged instead of silently checking clean.
+/// sequences were and whether the file starts with a UTF-8 BOM. Files
+/// that were not valid UTF-8, or that carry a leading BOM, are what this
+/// is for: the text still transcodes lossily (and keeps the BOM), but
+/// callers that surface diagnostics (CLI `ry check`, the LSP's on-disk
+/// index) pass the findings along so the file is flagged instead of
+/// silently checking clean.
 pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
     Ok(decode_r_source(&std::fs::read(path)?))
 }
@@ -123,11 +132,19 @@ pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
 /// position from the accumulated text per span would be O(text x spans)
 /// -- a 1 MiB Latin-1 file took minutes. Each input byte is visited a
 /// constant number of times here instead.
+///
+/// A leading UTF-8 BOM is detected here, not as an invalid sequence: it
+/// is valid UTF-8 (and R rejects the file anyway, #474), so the text
+/// keeps it and only the flag records it. Both the valid-UTF-8 and the
+/// Latin-1 transcode path preserve the BOM's three bytes verbatim in
+/// `text`, so the flag is exactly `bytes.starts_with(BOM)`.
 fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
+    let leading_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     if let Ok(text) = std::str::from_utf8(bytes) {
         return DecodedRSource {
             text: text.to_string(),
             invalid_utf8: Vec::new(),
+            leading_bom,
         };
     }
     let mut text = String::with_capacity(bytes.len());
@@ -166,7 +183,11 @@ fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
         rest = &rest[valid_up_to + bad_len..];
     }
     text.push_str(&String::from_utf8_lossy(rest));
-    DecodedRSource { text, invalid_utf8 }
+    DecodedRSource {
+        text,
+        invalid_utf8,
+        leading_bom,
+    }
 }
 
 struct LibraryRoot {
@@ -1342,7 +1363,73 @@ mod input_tests {
         let decoded = read_r_source_decoded(&path).unwrap();
         assert_eq!(decoded.text, "s <- \"café\"\n");
         assert_eq!(decoded.invalid_utf8, vec![Span::new(9, 11, 0, 9)]);
+        assert!(!decoded.leading_bom);
         assert!(read_r_source_decoded(&dir.path().join("missing.R")).is_err());
+    }
+
+    // ---- leading UTF-8 BOM detection (#474) ----
+
+    /// The BOM is valid UTF-8, so the text keeps it (as U+FEFF) and no
+    /// invalid span is recorded: only the flag reports it, because R
+    /// rejects the file with "unexpected input" at 1:1 rather than as an
+    /// encoding error.
+    #[test]
+    fn leading_bom_flags_valid_utf8_source_without_spans() {
+        let decoded = decode_r_source(b"\xef\xbb\xbfx <- 1\n");
+        assert_eq!(decoded.text, "\u{feff}x <- 1\n");
+        assert!(decoded.invalid_utf8.is_empty());
+        assert!(decoded.leading_bom);
+    }
+
+    /// A file that starts with a BOM and also carries invalid bytes
+    /// later reports both findings: the text is still transcoded and
+    /// spanned, and the flag is independent of that path.
+    #[test]
+    fn leading_bom_survives_the_latin1_transcode_path() {
+        let decoded = decode_r_source(b"\xef\xbb\xbfs <- \"caf\xe9\"\n");
+        assert_eq!(decoded.text, "\u{feff}s <- \"café\"\n");
+        assert_eq!(decoded.invalid_utf8, vec![Span::new(12, 14, 0, 12)]);
+        assert!(decoded.leading_bom);
+    }
+
+    /// Position is what makes a BOM a BOM: the same U+FEFF character
+    /// anywhere else in the file is an ordinary character R's parser
+    /// accepts, so no flag fires (inside a comment or a string).
+    #[test]
+    fn bom_character_after_the_first_byte_does_not_flag() {
+        for bytes in [
+            &b"x <- 1 # \xef\xbb\xbf comment"[..],
+            &b"s <- \"\xef\xbb\xbf\"\n"[..],
+        ] {
+            let decoded = decode_r_source(bytes);
+            assert!(!decoded.leading_bom, "{:?}", decoded.text);
+        }
+        // A second BOM after a leading one is an ordinary character; the
+        // file still flags once for the first.
+        let decoded = decode_r_source(b"\xef\xbb\xbf\xef\xbb\xbfx <- 1\n");
+        assert_eq!(decoded.text, "\u{feff}\u{feff}x <- 1\n");
+        assert!(decoded.leading_bom);
+        assert!(decoded.invalid_utf8.is_empty());
+    }
+
+    #[test]
+    fn bom_only_file_flags() {
+        let decoded = decode_r_source(b"\xef\xbb\xbf");
+        assert_eq!(decoded.text, "\u{feff}");
+        assert!(decoded.leading_bom);
+        assert!(decoded.invalid_utf8.is_empty());
+    }
+
+    #[test]
+    fn read_r_source_decoded_flags_a_bom_disk_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bom.R");
+        std::fs::write(&path, b"\xef\xbb\xbfx <- 1\n").unwrap();
+        let decoded = read_r_source_decoded(&path).unwrap();
+        assert_eq!(decoded.text, "\u{feff}x <- 1\n");
+        assert!(decoded.leading_bom);
+        // The plain reader keeps its contract: same text, no flag.
+        assert_eq!(read_r_source(&path).unwrap(), "\u{feff}x <- 1\n");
     }
 }
 

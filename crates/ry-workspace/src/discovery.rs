@@ -138,6 +138,13 @@ pub struct DiscoveryResult {
     /// Structured cap report. Empty when no limit was reached.
     pub truncated: TruncationReport,
     pub skipped: SkippedPaths,
+    /// Directories the walk could not read (path, error). Kept apart
+    /// from an empty `files` so a caller can distinguish "this tree has
+    /// no eligible R source" from "this tree could not be walked at
+    /// all" — the latter must never look like a clean, empty check
+    /// (#485). A nonexistent root lands here too: `read_dir` on it
+    /// fails, which is the discovery-level record of the miss.
+    pub read_errors: Vec<(PathBuf, String)>,
 }
 
 /// Discover all eligible R source files under `walk_root`, applying the
@@ -171,6 +178,7 @@ pub fn discover_r_files(
     let mut files = Vec::new();
     let mut truncated = TruncationReport::default();
     let mut skipped = SkippedPaths::default();
+    let mut read_errors = Vec::new();
     let include_root = exclude_root.unwrap_or(walk_root);
     let includes = BuildIgnoredIncludes {
         root: std::path::absolute(include_root).unwrap_or_else(|_| include_root.to_path_buf()),
@@ -194,6 +202,7 @@ pub fn discover_r_files(
         &mut files,
         &mut truncated,
         &mut skipped,
+        &mut read_errors,
         &includes,
         false,
         package_root.as_deref(),
@@ -208,10 +217,13 @@ pub fn discover_r_files(
     files.sort();
     files.dedup();
     skipped.entries.sort_by(|a, b| a.0.cmp(&b.0));
+    read_errors.sort();
+    read_errors.dedup();
     DiscoveryResult {
         files,
         truncated,
         skipped,
+        read_errors,
     }
 }
 
@@ -283,6 +295,7 @@ fn discover_recursive(
     out: &mut Vec<PathBuf>,
     truncated: &mut TruncationReport,
     skipped: &mut SkippedPaths,
+    read_errors: &mut Vec<(PathBuf, String)>,
     includes: &BuildIgnoredIncludes,
     inherited_buildignore: bool,
     package_root: Option<&Path>,
@@ -294,8 +307,15 @@ fn discover_recursive(
     has_excludes: bool,
     exclude_root: Option<&Path>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+    // A failed read_dir — the root does not exist, or permissions (or a
+    // race) denied the listing — is recorded rather than swallowed: the
+    // caller decides whether an unwalkable tree fails the run (#485).
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            read_errors.push((dir.to_path_buf(), error.to_string()));
+            return;
+        }
     };
     for entry in entries.flatten() {
         // Skip symlinks and entries whose type cannot be classified;
@@ -368,6 +388,7 @@ fn discover_recursive(
                 out,
                 truncated,
                 skipped,
+                read_errors,
                 includes,
                 build_ignored,
                 nested_package_root.as_deref(),
@@ -1112,5 +1133,54 @@ mod shared_tests {
                 .unwrap()
                 .matches(r"file\x")
         );
+    }
+
+    /// A nonexistent root is a discovery failure, not an empty file set:
+    /// the failed `read_dir` is recorded so `ry check` can fail the run
+    /// instead of reporting a clean, empty check (#485).
+    #[test]
+    fn missing_root_is_a_read_error_not_an_empty_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nonexistent.R");
+        let result = discover_r_files(&missing, None, &ry_config::Config::default(), false);
+        assert!(result.files.is_empty());
+        assert_eq!(result.read_errors.len(), 1, "{:?}", result.read_errors);
+        assert_eq!(result.read_errors[0].0, missing);
+        assert!(!result.read_errors[0].1.is_empty());
+    }
+
+    /// An existing but empty (or fully excluded) tree is intentional:
+    /// `files` is empty and no read error is recorded, so the caller can
+    /// keep its success-with-note behavior for genuinely empty inputs.
+    #[test]
+    fn readable_empty_tree_records_no_read_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
+        assert!(result.files.is_empty());
+        assert!(result.read_errors.is_empty());
+    }
+
+    /// A directory that exists but cannot be listed is reported as a read
+    /// error rather than silently contributing nothing. Root (or an
+    /// exotic filesystem) lists mode-0 directories anyway; without a
+    /// real read failure there is no error path to pin.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directory_is_reported_as_a_read_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("secret.R"), "x <- 1\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            return;
+        }
+
+        let result = discover_r_files(dir.path(), None, &ry_config::Config::default(), false);
+        assert!(result.files.is_empty());
+        assert_eq!(result.read_errors.len(), 1, "{:?}", result.read_errors);
+        assert_eq!(result.read_errors[0].0, locked);
     }
 }

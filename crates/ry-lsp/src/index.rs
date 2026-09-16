@@ -91,9 +91,11 @@ fn parse_paths_with(
         let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
         let path_str = path.to_string_lossy().into_owned();
         let mut file = parse_with_worker_parser(&path_str, &decoded.text)?;
-        // Record where the on-disk bytes were not valid UTF-8 so checks
-        // over the on-disk index flag files R's parser rejects (#376).
+        // Record where the on-disk bytes were not valid UTF-8, and
+        // whether they started with a BOM, so checks over the on-disk
+        // index flag files R's parser rejects (#376, #474).
         file.invalid_utf8 = decoded.invalid_utf8;
+        file.leading_bom = decoded.leading_bom;
         Some((path_str, Arc::new(file)))
     };
     match pool {

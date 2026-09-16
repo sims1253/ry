@@ -212,6 +212,66 @@ fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
         });
 }
 
+/// The leading-BOM flag (#474) rides the same on-disk index path as the
+/// non-UTF-8 flag (#376): an unopened BOM-prefixed sibling is published
+/// with an RY000 in the LSP exactly like in the CLI, and opening it
+/// with client-supplied buffer text (the client owns decoding) clears
+/// the disk-derived flag.
+#[test]
+fn unopened_bom_sibling_is_flagged_in_both_frontends() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            let source = "value <- make_label() + 1\n";
+            fixture.write_file("main.R", source).unwrap();
+            fixture
+                .write_file("helper.R", b"\xef\xbb\xbfmake_label <- function() 1\n")
+                .unwrap();
+            assert!(
+                cli(&fixture, "helper.R")
+                    .iter()
+                    .any(|d| d["code"] == "RY000"),
+                "the CLI must flag the BOM-prefixed sibling"
+            );
+            let main_uri = file_uri(&fixture.path("main.R"));
+            let helper_uri = file_uri(&fixture.path("helper.R"));
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&main_uri, 1, source).await.unwrap();
+            let published = session
+                .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
+                .await
+                .unwrap();
+            let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
+            assert!(
+                helper.iter().any(|d| d["code"] == "RY000"),
+                "the unopened BOM sibling must carry the encoding flag: {helper:?}"
+            );
+
+            let mark = session.publication_mark();
+            session
+                .open(&helper_uri, 1, "make_label <- function() 1\n")
+                .await
+                .unwrap();
+            let republished = session
+                .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
+                .await
+                .unwrap();
+            let helper = republished
+                .get(&helper_uri)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            assert!(
+                helper.iter().all(|d| d["code"] != "RY000"),
+                "an opened buffer is client-supplied text and carries no disk-derived flag: {helper:?}"
+            );
+            join_session(session, server).await;
+        });
+}
+
 #[test]
 fn environment_paths_are_anchored_globs_in_both_frontends() {
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {

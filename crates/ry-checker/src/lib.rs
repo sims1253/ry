@@ -1331,10 +1331,10 @@ impl Checker {
             &file.stmts,
             &mut self.dynamic_closure_literals,
         );
-        // Encoding problems come first: an undecodable file is the most
-        // fundamental way input can be malformed, and R's parser rejects
-        // it before any syntax consideration.
-        let encoding_flagged = self.emit_invalid_utf8(file);
+        // Encoding problems come first: an undecodable or BOM-prefixed
+        // file is the most fundamental way input can be malformed, and
+        // R's parser rejects it before any syntax consideration.
+        let encoding_flagged = self.emit_encoding_diagnostics(file);
         self.emit_parse_errors(file);
         // A recovered tree is partly invented by parser repair: the
         // statements, calls, and identifiers the checker walks can be
@@ -1345,9 +1345,10 @@ impl Checker {
         // walk below still runs so captures (scopes, references,
         // assignment types) stay available to editor features on files
         // that are merely mid-edit; only its diagnostics are dropped.
-        // A file flagged for non-UTF-8 source is suppressed the same
-        // way (#376): its tree is a faithful parse of a lossy Latin-1
-        // transcoding, and R rejects the whole file regardless.
+        // A file flagged for non-UTF-8 source or a leading BOM is
+        // suppressed the same way (#376, #474): its tree is a faithful
+        // parse of a lossy Latin-1 transcoding (or of text R's parser
+        // refuses at 1:1), and R rejects the whole file regardless.
         let semantic_start = self.diagnostics.len();
         let mut scope = self.top_level_scope();
         if self.capture_references {

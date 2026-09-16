@@ -1960,7 +1960,7 @@
       "line": 42,
       "column": 14,
       "severity": "warning",
-      "message": "`u_dl` is a length-1 double, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      "message": "`u_dl` is a length-1 double, so `length(...)` is 1 here and this length guard is always TRUE"
     },
     "parsnip::RY109::R/aaa_models.R:483:43": {
       "package": "parsnip",
@@ -2023,7 +2023,7 @@
       "line": 219,
       "column": 7,
       "severity": "warning",
-      "message": "`template` is a length-1 character, so `length(...)` is 1 here and this zero-length guard is always FALSE"
+      "message": "`template` is a length-1 character, so `length(...)` is 1 here and this length guard is always FALSE"
     },
     "pkgdown::RY109::R/topics.R:271:16": {
       "package": "pkgdown",

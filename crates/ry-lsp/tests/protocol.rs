@@ -161,9 +161,10 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
 /// suppression must drop its occurrence before the baseline consumes
 /// the count, or the unsuppressed twin stays visible in the editor
 /// while `ry check` is quiet. `baseline-min-confidence` pairs the same
-/// baseline with `--min-confidence high` — below-threshold occurrences
-/// still consume the baseline budget before the threshold drops them,
-/// matching the CLI's order.
+/// baseline with `--min-confidence high` as a settings-wiring/parity
+/// pin: every finding on the key shares the code-derived confidence,
+/// so the quiet outcome holds under either order of subtraction and
+/// threshold (the order pins live in the `post_process` unit tests).
 #[test]
 fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
     let runtime = tokio::runtime::Builder::new_current_thread()

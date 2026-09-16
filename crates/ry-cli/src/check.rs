@@ -881,10 +881,14 @@ mod tests {
         let result = run_check_once(std::slice::from_ref(&file), &ctx).unwrap();
         assert_eq!(result.diagnostics.len(), 1);
 
-        // Threshold AFTER subtraction: with a high min-confidence the
-        // medium-confidence RY002 findings are below threshold, yet the
-        // baseline count is still consumed first — the run is quiet
-        // through subtraction plus threshold, in that order.
+        // Threshold plus baseline, as an outcome pin: with a high
+        // min-confidence the medium-confidence RY002 findings are below
+        // threshold, so the run is quiet. Real checker output gives
+        // every finding on one (path, code, message) key the same
+        // code-derived confidence, so this quiet is identical under
+        // threshold-first — the leg pins the outcome, not the order;
+        // the order pins live in the hand-built `post_process` unit
+        // tests.
         let ctx = CheckContext {
             min_confidence: ry_checker::Confidence::High,
             ..ctx

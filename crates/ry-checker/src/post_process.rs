@@ -185,13 +185,17 @@ mod tests {
     }
 
     /// The demotion seam: confidence demoted between the two phases
-    /// lands before baseline subtraction and the threshold — the CLI's
-    /// documented position.
+    /// lands before the min-confidence threshold — the CLI's documented
+    /// position. No baseline here: subtraction never reads confidence,
+    /// so demotion-versus-subtraction order is unobservable by
+    /// construction, and only the threshold can tell where demotion
+    /// happened. Demoting the `High` diagnostic to `Medium` between the
+    /// phases makes the `High` threshold drop it; demotion after
+    /// `post_demotion` (or none at all) leaves the survivor visible.
     #[test]
-    fn demotion_between_the_phases_happens_before_subtraction_and_threshold() {
+    fn demotion_between_the_phases_happens_before_the_threshold() {
         let filter = SeverityFilter::default();
-        let base = baseline(1);
-        let post = pipeline(&filter, Some(&base), Confidence::Medium);
+        let post = pipeline(&filter, None, Confidence::High);
         let before = vec![diag("a.R", Confidence::High, 0)];
         let mut diagnostics = post.pre_demotion(before, &[], "");
         for diagnostic in &mut diagnostics {
@@ -200,7 +204,7 @@ mod tests {
         post.post_demotion(&mut diagnostics);
         assert!(
             diagnostics.is_empty(),
-            "demoted confidence must matter to the threshold, got {diagnostics:?}"
+            "the demoted confidence must fall below the threshold, got {diagnostics:?}"
         );
     }
 

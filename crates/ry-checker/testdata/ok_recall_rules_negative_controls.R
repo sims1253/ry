@@ -1,5 +1,5 @@
 # no-diag
-# Negative controls for these recall rules (RY102-RY105). Every
+# Negative controls for these recall rules (RY102-RY105, RY107). Every
 # line here is correct R that a too-broad version of one of those rules
 # would flag.
 
@@ -25,6 +25,12 @@ none_missing <- function(v) if (sum(v) == 0) 1 else 2
 # emptiness guard.
 non_empty <- function(v) if (length(v) > 0) 1 else 2
 is_scalar <- function(v) if (length(sum(v)) == 1) 1 else 2
+
+# RY107: `any(x) > 0` preserves the scalar logical's value (diffobj's
+# `!all(diff(x)) == 1L` idiom), and a `length()` guard on an ordinary
+# parameter has no length known by construction, even against -1.
+preserving <- function(x) if (any(x) > 0) 1 else 2
+any_bound <- function(v) if (length(v) > -1) 1 else 2
 
 # RY095 (retired) must stay retired: R parses `!x >= y` as `!(x >= y)`,
 # because unary `!` binds *looser* than comparison.

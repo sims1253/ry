@@ -4,6 +4,24 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fail `ry check` when an explicitly requested input path does not exist,
+  or a discovery root cannot be read, instead of silently succeeding with
+  an empty or partial check. A missing path used to fall into the
+  directory branch of discovery, whose failed `read_dir` was swallowed,
+  so `ry check misspelled.R --output-format json` exited 0 with `[]` --
+  a typo'd CI path looked like a clean check. Missing inputs are now
+  each reported on stderr (`ry: <path>: no such file or directory`,
+  matching `ry dump-types`) and the run aborts with exit code 1 before
+  checking anything; `--exit-zero` still defuses it. An unreadable
+  directory is carried as a discovery read error (same `ry: <path>:
+  <error>` shape as parse read failures): it fails the exit code like a
+  parse error while readable sibling inputs still get checked, and
+  stdout keeps a well-formed empty report on every failure path. An
+  existing-but-empty or fully excluded tree remains a successful run
+  with the informational "no .R / .r files found" note (#485).
+
 ## [0.11.0] - 2026-09-16
 
 This release adds five new rules (RY106-RY110) whose founding fixtures are

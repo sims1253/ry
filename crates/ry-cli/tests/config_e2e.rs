@@ -1429,6 +1429,175 @@ fn explicitly_requested_build_ignored_directory_still_gets_checked() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("include vignettes/doc.R"));
 }
 
+/// `ry check <missing>` used to exit 0 with an empty report: the
+/// nonexistent path failed `is_file()`, fell into directory discovery,
+/// and the failed `read_dir` was swallowed. It must now fail the way
+/// `ry dump-types` does, with the miss named on stderr and stdout still
+/// a well-formed (empty) report (#485).
+#[test]
+fn check_missing_input_fails_instead_of_succeeding() {
+    let tmp = tempfile::tempdir().unwrap();
+    for input in [
+        tmp.path().join("nonexistent.R"),
+        tmp.path().join("missing_dir"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["check", "--output-format", "json"])
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}: {output:?}",
+            input.display()
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("{}: no such file or directory", input.display())),
+            "the miss must be named: {stderr}"
+        );
+        assert!(
+            !stderr.contains("no .R / .r files found"),
+            "a missing input is not an empty discovery: {stderr}"
+        );
+        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json, serde_json::json!([]));
+    }
+}
+
+/// `ry check valid.R missing.R` used to check only valid.R and never
+/// mention the miss. Every missing input is reported and the run aborts
+/// before checking anything: a partial check must not pose as a clean
+/// one, so the machine stream is a well-formed empty report rather
+/// than valid.R's diagnostics (#485).
+#[test]
+fn check_reports_every_missing_input_and_aborts_the_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("valid.R"), "genuinely_missing\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(tmp.path().join("valid.R"))
+        .arg(tmp.path().join("nope1.R"))
+        .arg(tmp.path().join("nope2.R"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nope1.R: no such file or directory"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("nope2.R: no such file or directory"),
+        "{stderr}"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json, serde_json::json!([]));
+}
+
+/// `--exit-zero` defuses the missing-input failure the same way it
+/// defuses diagnostics and parse failures (#485).
+#[test]
+fn check_exit_zero_defuses_missing_input() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--exit-zero"])
+        .arg(tmp.path().join("nonexistent.R"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no such file or directory"));
+}
+
+/// An input directory that exists but cannot be listed fails the run
+/// instead of reporting a clean, empty check — the discovery walk's
+/// read failure is carried apart from an intentionally empty file set
+/// (#485). Root (or an exotic filesystem) lists mode-0 directories
+/// anyway; without a real read failure there is no path to pin, so the
+/// test skips itself.
+#[cfg(unix)]
+#[test]
+fn check_unreadable_directory_fails_instead_of_checking_clean() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let locked = tmp.path().join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("inside.R"), "genuinely_missing\n").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(&locked)
+        .output()
+        .unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("ry: {}", locked.display())),
+        "the unreadable root must be named: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no .R / .r files found"),
+        "an unreadable root is not an empty discovery: {stderr}"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json, serde_json::json!([]));
+}
+
+/// A readable sibling next to an unreadable root is still checked — its
+/// diagnostics reach stdout — while the unreadable root fails the exit
+/// code the way a parse error would. `valid.R`'s only diagnostic is a
+/// warning, so the failure is attributable to the discovery error alone
+/// (#485).
+#[cfg(unix)]
+#[test]
+fn check_unreadable_directory_fails_the_exit_code_but_checks_the_rest() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("valid.R"), "genuinely_missing\n").unwrap();
+    let locked = tmp.path().join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("inside.R"), "also_missing\n").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(tmp.path().join("valid.R"))
+        .arg(&locked)
+        .output()
+        .unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("genuinely_missing"),
+        "the readable sibling must still be checked: {stdout}"
+    );
+    assert!(
+        !stdout.contains("also_missing"),
+        "the unreadable tree must contribute no diagnostics: {stdout}"
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("ry: {}", locked.display())),
+        "the unreadable root must be named: {stderr}"
+    );
+}
+
 #[test]
 fn c_registration_inventory_resolves_wrapper_arguments_and_keeps_typos() {
     let dir = tempfile::tempdir().unwrap();

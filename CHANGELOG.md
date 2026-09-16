@@ -46,6 +46,17 @@ All notable changes to ry are documented in this file.
   the LSP agree; a flagged file reports only its `RY000`. A U+FEFF
   character anywhere after the first byte is an ordinary character R
   accepts, and stays clean.
+- Honor `base::return(...)` in the walker's `Stmt::Expr` return arm: the
+  arm that collects a function's return types and marks the following
+  code unreachable matched only the bare `return`/`invisible`
+  identifiers, so a qualified `base::return(NULL)` set neither even
+  though the block-divergence analysis (#482) already treats it as
+  exiting. The arm now recognizes the `::`-qualified callee the same
+  way `expr_diverges` does, so code after `base::return(...)` goes
+  quiet exactly where it already does after bare `return(...)` and the
+  argument's type joins the function's return type;
+  `base::invisible(...)` likewise collects its argument type without
+  marking the block unreachable, matching the bare form (#510).
 
 ## [0.11.0] - 2026-09-16
 

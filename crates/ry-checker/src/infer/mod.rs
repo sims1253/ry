@@ -22,6 +22,7 @@ pub(crate) mod quoting;
 pub(crate) mod recall;
 mod switch;
 mod types;
+pub(crate) mod vacuous;
 
 /// Join an entire collection of types into one: the lattice join of every
 /// element, with `unknown` for an empty collection (no branch contributes
@@ -282,6 +283,15 @@ impl Checker {
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
+                // A rebound name no longer carries any armed
+                // vacuous-all guard (RY110): later demands receive the
+                // new value, not the guarded one. Complex targets
+                // (`x[1] <- v`, `x$a <- v`) invalidate the root the same
+                // way -- a coercing subassign changes the whole vector's
+                // mode -- and superassignment conservatively counts too.
+                if let Some(root) = vacuous::assignment_root_name(target) {
+                    self.note_vacuous_guard_rebind(root);
+                }
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
@@ -369,6 +379,12 @@ impl Checker {
                         }
                     }
                 }
+                // RY110: a `stopifnot(...)` argument is a validation
+                // guard whose accepted path is the continuation, and a
+                // two-argument `assign("x", v)` statement rebinds a local
+                // like `x <- v` does (guard kill).
+                self.check_vacuous_all_stopifnot(e, scope);
+                self.note_vacuous_guard_assign_rebind(e, scope);
                 self.infer(e, scope);
             }
             Stmt::If {
@@ -376,6 +392,15 @@ impl Checker {
             } => {
                 // RY103: an `if` condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::If);
+                // RY110: arm the vacuous-all guard before the branches
+                // walk, so accepted-path demands see it.
+                self.check_vacuous_all_guard_stmt(
+                    cond,
+                    then,
+                    else_.as_deref(),
+                    vacuous::stmt_span(s),
+                    scope,
+                );
                 let narrowing = self.extract_type_narrowing(cond, scope);
                 #[cfg(test)]
                 if !self.journal_branches {
@@ -390,6 +415,11 @@ impl Checker {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
                 inner.insert(name.clone(), iter_t.element());
+                // The loop variable rebinds `name` for the whole body and
+                // holds the final iterated value afterwards, so an armed
+                // vacuous-all guard over the same name no longer
+                // describes what a later demand receives (RY110).
+                self.note_vacuous_guard_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 for s in body {
@@ -916,6 +946,12 @@ impl Checker {
     /// failing to recognize divergence only misses a narrowing opportunity.
     fn block_diverges(&self, stmts: &[Stmt]) -> bool {
         self.block_diverges_with_visited(stmts, &mut HashSet::new())
+    }
+
+    /// The read-only divergence view RY110's rejecting-guard analysis
+    /// needs; see `infer::vacuous` for the `return()` extension.
+    pub(crate) fn block_diverges_for_guard(&self, stmts: &[Stmt]) -> bool {
+        self.block_diverges(stmts) || stmts.iter().any(vacuous::stmt_diverges_for_guard)
     }
 
     fn block_diverges_with_visited(&self, stmts: &[Stmt], visited: &mut HashSet<String>) -> bool {

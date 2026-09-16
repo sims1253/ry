@@ -1182,6 +1182,56 @@ expression: snapshots
         line: 2
         start: 57
   fixture: err_user_fn_missing_required.R
+- diagnostics:
+    - code: RY110
+      message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `sqrt()` cannot use as numeric; guard the emptiness too: `is.numeric(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
+      severity: warning
+      span:
+        column: 29
+        end: 792
+        line: 13
+        start: 773
+    - code: RY110
+      message: "`all(is.na(x))` is vacuously TRUE when `x` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `round()` cannot use as numeric; guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`"
+      severity: warning
+      span:
+        column: 25
+        end: 947
+        line: 19
+        start: 934
+    - code: RY110
+      message: "`all(is.na(x))` is vacuously TRUE when `x` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `round()` cannot use as numeric; guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`"
+      severity: warning
+      span:
+        column: 25
+        end: 1182
+        line: 27
+        start: 1169
+    - code: RY110
+      message: "`all(is.na(x))` is vacuously TRUE when `x` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `exp()` cannot use as numeric; guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`"
+      severity: warning
+      span:
+        column: 29
+        end: 1352
+        line: 34
+        start: 1339
+    - code: RY092
+      message: "argument `x` to `log` is `character`, expected numeric"
+      severity: error
+      span:
+        column: 16
+        end: 1511
+        line: 40
+        start: 1506
+    - code: RY110
+      message: "`empty` is empty here, so `all(is.na(empty))` is TRUE, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `log()` cannot use as numeric; guard the emptiness too: `is.numeric(empty) || (length(empty) > 0 && all(is.na(empty)))`"
+      severity: warning
+      span:
+        column: 25
+        end: 1486
+        line: 39
+        start: 1469
+  fixture: err_vacuous_all_guard.R
 - diagnostics: []
   fixture: ok_ambient_globals.R
 - diagnostics: []
@@ -1544,6 +1594,8 @@ expression: snapshots
   fixture: ok_user_fn_missing_lazy_formal.R
 - diagnostics: []
   fixture: ok_user_fn_return.R
+- diagnostics: []
+  fixture: ok_vacuous_all_guard.R
 - diagnostics: []
   fixture: ok_vector_constructors.R
 - diagnostics: []

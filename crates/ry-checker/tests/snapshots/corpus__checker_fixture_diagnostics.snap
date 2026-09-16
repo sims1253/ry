@@ -540,6 +540,64 @@ expression: snapshots
         start: 16
   fixture: err_missing_required_argument.R
 - diagnostics:
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is always TRUE; the comparison was probably meant for the elements: `any(x > -1)`"
+      severity: warning
+      span:
+        column: 29
+        end: 771
+        line: 11
+        start: 760
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is always FALSE; the comparison was probably meant for the elements: `any(x < -1)`"
+      severity: warning
+      span:
+        column: 30
+        end: 823
+        line: 12
+        start: 812
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is always FALSE; the comparison was probably meant for the elements: `any(x == -1)`"
+      severity: warning
+      span:
+        column: 30
+        end: 876
+        line: 13
+        start: 864
+    - code: RY107
+      message: "`any()` returns a length-1 logical, so this comparison is always TRUE; the comparison was probably meant for the elements: `any(x > -1)`"
+      severity: warning
+      span:
+        column: 31
+        end: 929
+        line: 14
+        start: 918
+    - code: RY105
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always TRUE"
+      severity: warning
+      span:
+        column: 28
+        end: 988
+        line: 15
+        start: 968
+    - code: RY105
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always FALSE"
+      severity: warning
+      span:
+        column: 29
+        end: 1048
+        line: 16
+        start: 1028
+    - code: RY105
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this zero-length guard is always FALSE"
+      severity: warning
+      span:
+        column: 29
+        end: 1109
+        line: 17
+        start: 1088
+  fixture: err_negative_literal_comparison.R
+- diagnostics:
     - code: RY000
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
       severity: error

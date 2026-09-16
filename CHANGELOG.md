@@ -4,6 +4,19 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- RY105 (`constant-length-comparison`) and RY107
+  (`any-all-scalar-comparison`) now fold a leading unary minus when
+  extracting the comparison literal, so constant-outcome comparisons
+  against negative bounds are reported instead of staying silent (#477):
+  `any(x) > -1` is always TRUE (FALSE and TRUE both coerce past -1) and
+  `length(sum(v)) > -1` is always TRUE for a length-1-by-construction
+  operand, so those dead guards now warn, while `any(x) < -1` / `== -1`
+  report as always FALSE. Value-preserving comparisons (`any(x) > 0`) and
+  deliberate scalar assertions (`length(sum(v)) == 1`) stay quiet, and a
+  minus over a non-literal (`-2^2` is `-(2^2)` in R) still does not fold.
+
 ## [0.11.0] - 2026-09-16
 
 This release adds five new rules (RY106-RY110) whose founding fixtures are

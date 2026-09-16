@@ -83,13 +83,30 @@ fn unary_call_callee(expr: &Expr) -> Option<(&str, &Expr)> {
     Some((name, &args[0].value))
 }
 
-/// The integer value of a whole-number numeric literal.
+/// The value of a numeric literal, with a leading unary minus folded so
+/// `-1` reads as the value -1. Only a literal operand folds: R's unary
+/// minus binds looser than `^`, so `-2^2` is `-(2^2)` and stays opaque.
 pub(crate) fn numeric_literal(expr: &Expr) -> Option<f64> {
     match expr {
         Expr::Integer(value, _) => Some(*value as f64),
         Expr::Double(value, _) => Some(*value),
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr,
+            ..
+        } => numeric_literal(expr).map(|value| -value),
         _ => None,
     }
+}
+
+/// Whether the operand is a numeric literal at most zero (`0`, `-1`,
+/// `-0.5`, ...). [`Checker::check_constant_length_comparison`] admits
+/// exactly these bounds: `length()` is never negative, so against them a
+/// length-1-by-construction operand makes the comparison constant, while
+/// a positive literal (`length(x) == 1`) can still be a deliberate scalar
+/// assertion.
+fn zero_or_negative_literal(expr: &Expr) -> bool {
+    numeric_literal(expr).is_some_and(|value| value <= 0.0)
 }
 
 /// The name a `<-` inside a container argument would have produced had `=`
@@ -267,9 +284,11 @@ impl Checker {
     /// pak `R/confirmation.R:42` — `length(sum(...)) > 0`.
     ///
     /// The guard reads as an emptiness check but its operand can never be
-    /// empty, so the branch is dead (or, for `== 0`, unreachable). Only the
-    /// literal `0` is flagged: comparisons against `1` (`length(x) == 1`) are
-    /// deliberate scalar assertions, which assertion helpers write on purpose.
+    /// empty, so the branch is dead (or, for `== 0`, unreachable). Only a
+    /// literal at most zero is flagged: comparisons against `1`
+    /// (`length(x) == 1`) are deliberate scalar assertions, which assertion
+    /// helpers write on purpose, while `length()` is never negative, so a
+    /// negative bound (`length(x) > -1`) is as dead as `0` is.
     ///
     /// "Length 1 by construction" means one of two things, both chosen so the
     /// claim does not rest on inference that could be over-narrow (the failure
@@ -309,12 +328,8 @@ impl Checker {
         }
         let (measured, measured_on_left, length_call) =
             match (length_operand(lhs), length_operand(rhs)) {
-                (Some(measured), None) if numeric_literal(rhs) == Some(0.0) => {
-                    (measured, true, lhs)
-                }
-                (None, Some(measured)) if numeric_literal(lhs) == Some(0.0) => {
-                    (measured, false, rhs)
-                }
+                (Some(measured), None) if zero_or_negative_literal(rhs) => (measured, true, lhs),
+                (None, Some(measured)) if zero_or_negative_literal(lhs) => (measured, false, rhs),
                 _ => return,
             };
         // The outer `length()` call must resolve to base::length; a
@@ -330,8 +345,8 @@ impl Checker {
         let Some(reason) = self.scalar_by_construction(measured, scope) else {
             return;
         };
-        // Normalize to `length(...) <op> 0` by mirroring the operator when
-        // the zero literal is on the left side of the comparison.
+        // Normalize to `length(...) <op> <literal>` by mirroring the
+        // operator when the literal is on the left side of the comparison.
         let effective_op = if measured_on_left {
             op
         } else {
@@ -343,6 +358,8 @@ impl Checker {
                 other => other,
             }
         };
+        // `length(...)` is exactly 1 and the admitted bound is at most 0,
+        // so the same outcome table covers 0 and every negative bound.
         let outcome = match effective_op {
             BinOpKind::Eq | BinOpKind::Lt | BinOpKind::Le => "FALSE",
             _ => "TRUE",
@@ -372,8 +389,8 @@ impl Checker {
     ///   computes `!any(x)`, which reads nothing like the source. Found in
     ///   glue `R/utils.R:32` — `any(lengths) == 0` where
     ///   `any(lengths == 0)` was meant.
-    /// * **constant** (`> 1`, `>= 2`, `< 0`, `== 2`, ...): the guard is
-    ///   always TRUE or always FALSE.
+    /// * **constant** (`> 1`, `>= 2`, `< 0`, `== 2`, `> -1`, ...): the
+    ///   guard is always TRUE or always FALSE.
     ///
     /// The negating and constant outcomes are reported with the element-level
     /// rewrite. `NA` input propagates to an `NA` result in every family,

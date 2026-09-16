@@ -431,6 +431,26 @@ fn ry105_stays_silent_when_the_comparison_is_true_for_some_lengths() {
 }
 
 #[test]
+fn ry105_fires_on_negative_literal_bounds() {
+    // `length()` is never negative, so against a negative bound a
+    // length-1-by-construction operand makes the guard just as constant
+    // as against `0`: `> -1` is a dead always-TRUE guard and `< -1` /
+    // `== -1` are dead always-FALSE branches (#477).
+    assert!(fires("if (length(sum(1L)) > -1) 1\n", "RY105"));
+    assert!(fires("if (length(sum(1L)) < -1) 1\n", "RY105"));
+    assert!(fires("if (length(sum(1L)) == -1) 1\n", "RY105"));
+    assert!(fires("if (length(sum(1L)) != -1) 1\n", "RY105"));
+    // The integer spelling and the mirrored operand order fold the same
+    // way; `-0` is still zero.
+    assert!(fires("if (length(sum(1L)) > -1L) 1\n", "RY105"));
+    assert!(fires("if (-1 < length(sum(1L))) 1\n", "RY105"));
+    assert!(fires("if (length(sum(1L)) > -0) 1\n", "RY105"));
+    // A positive bound keeps the scalar-assertion reading and stays quiet.
+    assert!(!fires("if (length(sum(1L)) > 1) 1\n", "RY105"));
+    assert!(!fires("if (length(sum(1L)) == 1) 1\n", "RY105"));
+}
+
+#[test]
 fn ry105_normalizes_operand_order_for_constant_outcome() {
     // `0 > length(sum(v))` is `0 > 1`, which is FALSE — not TRUE. The
     // operator must be mirrored when the zero literal is on the left.
@@ -552,6 +572,55 @@ fn ry107_fires_on_negating_and_constant_outcomes_only() {
     ] {
         assert!(fires(src, "RY107"), "RY107 did not fire on {src:?}");
     }
+}
+
+#[test]
+fn ry107_fires_on_negative_literal_constant_outcomes() {
+    // `any()`/`all()` coerce to 0/1, which clears any negative bound, so
+    // every negative-literal comparison is constant (#477): `> -1` is a
+    // dead always-TRUE guard and `< -1`/`== -1` are dead always-FALSE
+    // branches, regardless of the test vector.
+    for src in [
+        "f <- function(x) if (any(x) > -1) 1\n",
+        "f <- function(x) if (any(x) >= -1) 1\n",
+        "f <- function(x) if (any(x) != -1) 1\n",
+        "f <- function(x) if (any(x) < -1) 1\n",
+        "f <- function(x) if (any(x) <= -1) 1\n",
+        "f <- function(x) if (any(x) == -1) 1\n",
+        "f <- function(x) if (all(x) > -1L) 1\n",
+        "f <- function(x) if (-1 < any(x)) 1\n",
+        "f <- function(x) if (any(x) > -0.5) 1\n",
+    ] {
+        assert!(fires(src, "RY107"), "RY107 did not fire on {src:?}");
+    }
+}
+
+#[test]
+fn ry107_negative_literal_dead_guard_keeps_the_element_rewrite() {
+    // The dead always-TRUE guard still suggests moving the comparison to
+    // the elements, with the folded literal spelled as written.
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse("recall.R", "f <- function(x) if (any(x) > -1) 1\n")
+        .expect("parse");
+    let mut checker = Checker::new("recall.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == "RY107"
+            && d.message.contains("always TRUE")
+            && d.message.contains("any(x > -1)")),
+        "expected always-TRUE with the element-level rewrite: {diags:?}"
+    );
+}
+
+#[test]
+fn ry107_stays_silent_when_the_minus_operand_is_not_a_folded_literal() {
+    // Unary minus binds looser than `^`, so `-2^2` is `-(2^2)` — not a
+    // plain negative literal — and `1 - 1` is a binary subtraction.
+    // Neither bound folds, so the shape is outside this rule.
+    assert!(!fires("f <- function(x) if (any(x) > -2^2) 1\n", "RY107"));
+    assert!(!fires("f <- function(x) if (any(x) > 1 - 1) 1\n", "RY107"));
 }
 
 #[test]

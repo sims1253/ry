@@ -22,7 +22,7 @@ pub fn default_confidence_for(code: &str) -> Confidence {
     match code {
         "RY097" => Confidence::Low,
         "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096" | "RY101"
-        | "RY102" | "RY105" | "RY107" => Confidence::High,
+        | "RY102" | "RY105" | "RY107" | "RY108" => Confidence::High,
         _ => Confidence::Medium,
     }
 }

@@ -246,6 +246,12 @@ pub const RULES: &[Rule] = &[
         summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`).",
     },
     Rule {
+        code: "RY108",
+        name: "seq-defaulted-forward",
+        default_severity: Severity::Warning,
+        summary: "A `seq.*` method uses its defaulted `to` without a `missing(to)` check, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)`, as `seq.Date` does.",
+    },
+    Rule {
         code: "RY109",
         name: "self-referential-default",
         default_severity: Severity::Warning,

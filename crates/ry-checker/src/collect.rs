@@ -540,7 +540,7 @@ fn parameter_has_normal_use(body: &[Stmt], parameter: &str) -> bool {
 /// Classify actuals using only the capturing formals of embedded signatures.
 /// Bare names retain the existing inventory union, without lexical resolution.
 /// Neither this index nor qualified lookup reads per-checker user stubs.
-fn captured_arguments(function: &Expr, args: &[Arg]) -> Vec<bool> {
+pub(crate) fn captured_arguments(function: &Expr, args: &[Arg]) -> Vec<bool> {
     let Some(name) = ident_name(function) else {
         return Vec::new();
     };

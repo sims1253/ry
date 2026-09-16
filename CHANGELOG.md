@@ -55,6 +55,16 @@ All notable changes to ry are documented in this file.
   wrong and constant-outcome comparisons are dead guards. Comparisons
   that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
   keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
+- Add RY108 (`seq-defaulted-forward`): a `seq.*` S3 method that uses its
+  defaulted `to` without a `missing(to)` check, behind tidyverse/hms#231,
+  where `seq(hms(1), length.out = 3)` returned `hms(c(1, 1, 1))` because
+  the unconditional cast and forward treated the defaulted `to = hms(1)`
+  as a supplied endpoint. The rule rides a new supplied-vs-defaulted flow
+  analysis over formals (`missing()` tests refine `if` arms, early exits
+  guard continuations, cached `m <- missing(p)` tests decode like direct
+  calls), designed for reuse by the argument rules; `seq.Date`-style
+  guards, a `to` without a default, and a `NULL` default stay quiet
+  (#463).
 
 ### Fixed
 

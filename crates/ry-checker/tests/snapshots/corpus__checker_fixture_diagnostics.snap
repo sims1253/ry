@@ -1135,6 +1135,56 @@ expression: snapshots
         start: 787
   fixture: err_self_referential_default_unproven.R
 - diagnostics:
+    - code: RY108
+      message: "`seq.hms()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 19
+        end: 809
+        line: 13
+        start: 807
+    - code: RY108
+      message: "`seq.widget()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1028
+        line: 20
+        start: 1026
+    - code: RY108
+      message: "`seq.defaulted()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 14
+        end: 1249
+        line: 27
+        start: 1247
+    - code: RY108
+      message: "`seq.super()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1484
+        line: 37
+        start: 1482
+    - code: RY108
+      message: "`seq.exprlim()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 12
+        end: 1721
+        line: 44
+        start: 1719
+    - code: RY108
+      message: "`seq.demorgan()` uses `to` without a `missing(to)` check, but `to` is defaulted, so a call like `seq(x, length.out = n)` forwards the default as if supplied and hits `seq.default`'s argument precedence; guard the use with `missing(to)` first, as `seq.Date` does"
+      severity: warning
+      span:
+        column: 14
+        end: 1979
+        line: 52
+        start: 1977
+  fixture: err_seq_defaulted_forward.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `list` and `double`"
       severity: error
@@ -1528,6 +1578,8 @@ expression: snapshots
   fixture: ok_scalar_logical.R
 - diagnostics: []
   fixture: ok_scalar_single_bracket_index.R
+- diagnostics: []
+  fixture: ok_seq_defaulted_forward.R
 - diagnostics: []
   fixture: ok_seq_for_loop.R
 - diagnostics: []

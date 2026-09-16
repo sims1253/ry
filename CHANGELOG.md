@@ -46,6 +46,20 @@ All notable changes to ry are documented in this file.
   the LSP agree; a flagged file reports only its `RY000`. A U+FEFF
   character anywhere after the first byte is an ordinary character R
   accepts, and stays clean.
+- RY105 (`constant-length-comparison`) and RY107
+  (`any-all-scalar-comparison`) now fold a leading unary minus when
+  extracting the comparison literal, so constant-outcome comparisons
+  against negative bounds are reported instead of staying silent (#477):
+  `any(x) > -1` is always TRUE (FALSE and TRUE both coerce past -1) and
+  `length(sum(v)) > -1` is always TRUE for a length-1-by-construction
+  operand, so those dead guards now warn, while `any(x) < -1` / `== -1`
+  report as always FALSE. Value-preserving comparisons (`any(x) > 0`) and
+  deliberate scalar assertions (`length(sum(v)) == 1`) stay quiet, and a
+  minus over a non-literal (`-2^2` is `-(2^2)` in R) still does not fold.
+  The RY105 message now reads "this length guard" instead of "this
+  zero-length guard", since the admitted bounds go past zero. Unary `+`
+  needs no folding of its own: the parser already lowers `+2` to the bare
+  literal, so a plus-spelled bound behaves exactly like its bare spelling.
 - The LSP server now applies inline suppression comments and the
   min-confidence threshold before subtracting the baseline, matching
   `ry check`: with two identical diagnostics (same path, code, and

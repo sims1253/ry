@@ -155,6 +155,18 @@ fn purrr_vendor_snapshot() {
     // The remaining RY032 reports a scalar requirement for `before` in
     // prepend(); its earlier stopifnot check rejects invalid lengths at runtime.
     //
+    // progress-bars.R:56:16 RY109 — TRUE POSITIVE, latent. The default
+    // `caller_env = caller_env()` in as_progress() references the formal
+    // itself: forcing the promise looks up `caller_env` in the call frame,
+    // finds the promise, and errors ("promise already under evaluation"),
+    // even though a real rlang function of that name exists — the formal
+    // shadows it. Verified in R 4.6.1. Latent at 1.2.2 because every
+    // internal call site (map.R:201, map2.R:72, pmap.R:134) supplies
+    // `caller_env = .purrr_error_call` explicitly; any caller that omits
+    // it and reaches the stop_input_type() branch errors with R's
+    // recursive-default message instead of purrr's intended type error.
+    // Same class as the shipped dtplyr bug (#364).
+    //
     // purrr's own C-backed entry points (map_impl, map2_impl, pmap_impl)
     // are NOT in the snapshot and must stay out: they are passed as bare
     // symbols to `call_with_cleanup`, which the `.registration = TRUE`

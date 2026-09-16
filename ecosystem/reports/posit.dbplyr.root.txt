@@ -1,3 +1,4 @@
+R/verb-distinct.R:61:16 RY109
 tests/testthat/test-backend-.R:110:36 RY091
 tests/testthat/test-backend-.R:110:36 RY091
 tests/testthat/test-backend-.R:111:36 RY091

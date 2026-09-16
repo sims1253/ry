@@ -36,6 +36,19 @@ All notable changes to ry are documented in this file.
   Fires for definite collapses (a literal empty or `NA` test) and for
   typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
   (#461).
+- RY109 flags formal defaults that reference the formal itself, such as
+  `function(x, y, copy = copy)` or `function(n = n + 1)`. The reference can
+  only resolve to the promise, so triggering the default errors in R
+  ("promise already under evaluation: recursive default argument
+  reference") while a supplied argument is unaffected; dtplyr shipped
+  exactly this bug (parent commit bffe46e, `R/step-join.R:162` and
+  `R/tidyeval-across.R:6,20`, fixed upstream in dbe32a6). ry warns without
+  requiring a provable force in the body -- RY098 keeps its stricter
+  proven-forcing diagnosis -- because such a default can never evaluate
+  successfully; a warning, not an error, because defusing helpers such as
+  enquo() can still capture the promise unevaluated. Defaults referencing
+  a different formal (`x = y, y = 1L`) are legal and stay quiet, as do
+  quoted defaults that capture the formal (`substitute(x)`) (#364).
 - RY107 flags scalar comparisons on `any()`/`all()` results, such as
   `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
   compared instead of the elements, so negating comparisons are always

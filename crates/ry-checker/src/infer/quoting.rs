@@ -96,7 +96,9 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
 impl Checker {
     /// Diagnose the narrow, provable lazy-default ordering bug where a
     /// parameter is used by an earlier top-level statement than the direct
-    /// body assignment needed by its default expression.
+    /// body assignment needed by its default expression (RY098), and the
+    /// self-referential defaults that Promise semantics make unusable
+    /// (RY098 when the body provably forces the promise, RY109 otherwise).
     pub(crate) fn check_lazy_default_reachability(
         &mut self,
         params: &[Param],
@@ -135,23 +137,50 @@ impl Checker {
             };
 
             // A formal promise shadows every enclosing binding of the same
-            // name. Diagnose a recursive default only when the body actually
-            // forces that promise; defusing helpers such as enexpr()/enquo()
-            // may deliberately capture `function(x = x)` without evaluating
-            // the default.
-            let forced_in_body = guaranteed_force_before_replacement(self, body, &param.name);
-            if forced_in_body
-                && let Some(span) = first_executed_identifier(self, default, &param.name)
-            {
-                self.emit(
-                    Severity::Warning,
-                    span,
-                    "RY098",
-                    format!(
-                        "parameter `{}` has a self-referential default that recurses when forced",
-                        param.name
-                    ),
-                );
+            // name, so a default that references its own formal can only
+            // resolve to the promise itself: triggering it errors in R
+            // ("promise already under evaluation: recursive default
+            // argument reference") while a supplied argument skips the
+            // default entirely. When the body provably forces the promise,
+            // RY098 carries the diagnosis with its forcing proof; RY109
+            // warns on the rest, because such a default can never evaluate
+            // successfully whether or not this particular body forces it
+            // (dtplyr shipped exactly that shape, parent commit bffe46e,
+            // fixed in dbe32a6). A body that defuses the promise with a
+            // reviewed capture helper (enquo()/substitute()/...) uses the
+            // shape deliberately, so RY109 stays quiet there and keeps the
+            // diagnostic a warning everywhere else.
+            if let Some(span) = first_executed_identifier(self, default, &param.name) {
+                let forced_in_body = guaranteed_force_before_replacement(self, body, &param.name);
+                if forced_in_body {
+                    self.emit(
+                        Severity::Warning,
+                        span,
+                        "RY098",
+                        format!(
+                            "parameter `{}` has a self-referential default that recurses when forced",
+                            param.name
+                        ),
+                    );
+                } else if !body_defuses_formal(self, body, &param.name) {
+                    // The wording separates what is always true (the default
+                    // can never evaluate) from what depends on the body:
+                    // a never-forced formal (dplyr's distinct helpers,
+                    // ggplot2's densitybin) makes the call run when the
+                    // argument is missing, and only consuming the promise
+                    // would raise R's recursive-default error.
+                    self.emit(
+                        Severity::Warning,
+                        span,
+                        "RY109",
+                        format!(
+                            "parameter `{}` has a self-referential default that can never \
+                             evaluate; forcing the promise errors ('promise already under \
+                             evaluation')",
+                            param.name
+                        ),
+                    );
+                }
                 continue;
             }
 
@@ -756,6 +785,109 @@ impl Checker {
 enum DefaultCapture {
     Literal,
     Tidy,
+}
+
+/// Whether any statement of this frame hands the formal's promise to a
+/// reviewed capture helper (enquo()/enexpr()/substitute()/quote()/...) or
+/// to tidy injection (`{{ x }}`). Bodies built around
+/// `function(x = x) enquo(x)` or `mutate(..., col = f({{ x }}))` use the
+/// self-reference deliberately — the defuser receives the unevaluated
+/// default — so the self-referential default rules stay quiet for them.
+/// A qualified callee carries exact provenance; a bare callee is trusted
+/// only when it resolves through an attached or NAMESPACE-imported
+/// package AND the project does not define the same name itself (a local
+/// `quote <-` replacement is not a defuser until proven; this is also why
+/// rlang's own defusing tests warn: their bare enexpr/enquo are defined
+/// in-project). `{{ x }}` is tidy-eval syntax: as an eager argument it
+/// would be a forced `x` in pointless braces, which nobody writes. Only
+/// this frame's statements count: a nested function's own formals shadow
+/// the promise, and a nested defusing closure says nothing about this
+/// body's other reads.
+///
+/// Known misses (under-warning; both pinned as `oracle: known-gap`
+/// fixtures and acceptable because the rule is a warning):
+///
+/// - Defuse-then-force: `q <- rlang::enquo(x); rlang::eval_tidy(q)`
+///   errors in R (the captured default is evaluated later) but contains
+///   no bare read of `x`, so the credit applies.
+/// - Divergent branches: `if (flag) rlang::enquo(x) else x` errors in R
+///   on the else path but is credited for the defusing branch. Refusing
+///   the credit whenever the formal also appears in a non-capture
+///   position does NOT fall out cleanly: after `x <- enquo(x)`, later
+///   bare reads see the replacement quosure, not the promise (corrr's
+///   `stretch_unique` reads `as_label(y)` after `y <- enquo(y)`), and
+///   formula-quoted references (`stats::xtabs(val ~ x + y, data)` in
+///   corrr's `retract`) are bare only without a data-mask/formula
+///   context. A sound version needs stop-at-reassignment flow analysis
+///   plus quoting-context tracking, so the gap is pinned instead.
+fn body_defuses_formal(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
+    // `{{ wanted }}` parses as a block whose single statement is another
+    // block whose single expression is the identifier.
+    fn is_tidy_injection(expr: &Expr, wanted: &str) -> bool {
+        let Expr::Block { body, .. } = expr else {
+            return false;
+        };
+        matches!(
+            body.as_slice(),
+            [Stmt::Expr(Expr::Block {
+                body: injected, ..
+            })] if matches!(
+                injected.as_slice(),
+                [Stmt::Expr(Expr::Ident { name, .. })] if name == wanted
+            )
+        )
+    }
+    body.iter().any(|statement| {
+        walk_stmt(
+            statement,
+            Walk {
+                fn_bodies: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                match node {
+                    AstNode::Expr(expr) if is_tidy_injection(expr, wanted) => {
+                        return ControlFlow::Break(());
+                    }
+                    AstNode::Expr(Expr::Call { func, .. })
+                        if ident_name(func).is_some_and(|callee| {
+                            !callee.contains("::")
+                                && (checker.fn_table.fns.contains_key(callee)
+                                    || checker.fn_table.known_vars.contains(callee))
+                        }) =>
+                    {
+                        // A project-defined binding of the bare name replaces
+                        // the reviewed helper; do not credit its signature.
+                        // Still walk the arguments: a defusing capture or
+                        // injection nested inside remains real evidence.
+                        return ControlFlow::Continue(Descend::Into);
+                    }
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        let Some(callee) = ident_name(func) else {
+                            return ControlFlow::Continue(Descend::Into);
+                        };
+                        let Some(signature) = checker.resolve_typeshed_sig(callee) else {
+                            return ControlFlow::Continue(Descend::Into);
+                        };
+                        let bindings = match_params(&signature.params, args);
+                        let captured = args.iter().enumerate().any(|(index, argument)| {
+                            matches!(&argument.value, Expr::Ident { name, .. } if name == wanted)
+                                && matches!(
+                                    eval_mode_for_arg(&signature, &bindings, index),
+                                    Some(EvalMode::QuotedExpression | EvalMode::CapturesPromise)
+                                )
+                        });
+                        if captured {
+                            return ControlFlow::Break(());
+                        }
+                    }
+                    _ => {}
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        )
+        .is_break()
+    })
 }
 
 // EvalMode describes how an argument is received, not whether the callee

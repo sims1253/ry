@@ -278,6 +278,12 @@ static PROBES: &[Probe] = &[
         negative: "f <- function(x) if (any(x == 0)) 1 else 2\n",
     },
     Probe {
+        code: "RY109",
+        note: "self-referential default with no provable force in the body",
+        positive: "f <- function(x = x) 1L\n",
+        negative: "f <- function(x = y, y = 1L) x\n",
+    },
+    Probe {
         code: "RY110",
         note: "vacuous `all(is.na(x))` in a validation guard admitting empty non-numeric input to a stub-declared mode demand",
         positive: "f <- function(x) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\n",

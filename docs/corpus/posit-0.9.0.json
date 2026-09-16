@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "e61ddbfdee25f9a5f180c21767cb5015d2ceb208649a703a605653a35213bff4",
-  "ry_commit": "37802e696529752391a6f065efa0b711f9937a53",
+  "source_sha256": "cc59170bf2dda33f38afbb82507dc937970233ea0fbe569bb44574903755b16b",
+  "ry_commit": "6989d9fa416020e04dcb2de06b98174ee750df64",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -12,28 +12,28 @@
       "repo": "tidyverse/ggplot2",
       "stars": 6982,
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 13
+      "diagnostics": 15
     },
     {
       "name": "shiny-r",
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 50
+      "diagnostics": 52
     },
     {
       "name": "dplyr",
       "repo": "tidyverse/dplyr",
       "stars": 5054,
       "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f",
-      "diagnostics": 20
+      "diagnostics": 21
     },
     {
       "name": "gt",
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 8
+      "diagnostics": 11
     },
     {
       "name": "blogdown",
@@ -68,7 +68,7 @@
       "repo": "tidyverse/purrr",
       "stars": 1401,
       "commit": "481e829f297fd4315b386518215157f361475ad0",
-      "diagnostics": 3
+      "diagnostics": 4
     },
     {
       "name": "tensorflow",
@@ -103,14 +103,14 @@
       "repo": "r-lib/httr",
       "stars": 980,
       "commit": "34b956569ebaa20cd955150fad765cd834f38be4",
-      "diagnostics": 2
+      "diagnostics": 3
     },
     {
       "name": "sparklyr",
       "repo": "sparklyr/sparklyr",
       "stars": 972,
       "commit": "7f006a6d5c01a4e7a36d203d1ace56c53261900e",
-      "diagnostics": 7
+      "diagnostics": 9
     },
     {
       "name": "testthat",
@@ -152,21 +152,21 @@
       "repo": "tidyverse/lubridate",
       "stars": 801,
       "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370",
-      "diagnostics": 6
+      "diagnostics": 8
     },
     {
       "name": "infer",
       "repo": "tidymodels/infer",
       "stars": 795,
       "commit": "0b9c910e658a5d4ed9f6b13e4978b9c23a225cad",
-      "diagnostics": 0
+      "diagnostics": 1
     },
     {
       "name": "pkgdown",
       "repo": "r-lib/pkgdown",
       "stars": 772,
       "commit": "179cfaee3d4e17eaa9e7d7c700b1269dc62e4d46",
-      "diagnostics": 6
+      "diagnostics": 8
     },
     {
       "name": "styler",
@@ -194,7 +194,7 @@
       "repo": "tidymodels/parsnip",
       "stars": 658,
       "commit": "b992bc4f13bdb70d661dd629afee615d3711dd80",
-      "diagnostics": 0
+      "diagnostics": 1
     },
     {
       "name": "roxygen2",
@@ -215,7 +215,7 @@
       "repo": "tidyverse/ellmer",
       "stars": 612,
       "commit": "f8281bed083ff0228e9064c38fb2164cd594d3f1",
-      "diagnostics": 64
+      "diagnostics": 65
     },
     {
       "name": "corrr",
@@ -229,7 +229,7 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 13
+      "diagnostics": 15
     },
     {
       "name": "torch",
@@ -250,7 +250,7 @@
       "repo": "tidyverse/dbplyr",
       "stars": 514,
       "commit": "f478e2070c9a60f4aebcc94132048312209dd097",
-      "diagnostics": 9
+      "diagnostics": 10
     },
     {
       "name": "bookdown",
@@ -383,7 +383,7 @@
       "repo": "tidyverse/dtplyr",
       "stars": 676,
       "commit": "bffe46e664d62021e47251c158c9f02c4cd30400",
-      "diagnostics": 0
+      "diagnostics": 3
     },
     {
       "name": "stringr",
@@ -4006,27 +4006,252 @@
       "column": 36,
       "label": "true_positive",
       "audit_group": "test-fixture"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY109",
+      "path": "R/verb-distinct.R",
+      "line": 61,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY109",
+      "path": "R/distinct.R",
+      "line": 81,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/step-join.R",
+      "line": 162,
+      "column": 43,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 20,
+      "column": 47,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 6,
+      "column": 51,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ellmer",
+      "code": "RY109",
+      "path": "R/provider-claude-files.R",
+      "line": 149,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-bindot.R",
+      "line": 133,
+      "column": 68,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-quantilemethods.R",
+      "line": 81,
+      "column": 38,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/cols_align.R",
+      "line": 197,
+      "column": 14,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/cols_align.R",
+      "line": 198,
+      "column": 17,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "gt",
+      "code": "RY109",
+      "path": "R/utils_render_grid.R",
+      "line": 421,
+      "column": 37,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "httr",
+      "code": "RY109",
+      "path": "R/config.r",
+      "line": 189,
+      "column": 34,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "infer",
+      "code": "RY109",
+      "path": "R/calculate.R",
+      "line": 741,
+      "column": 42,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/guess.r",
+      "line": 265,
+      "column": 64,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/parse.r",
+      "line": 975,
+      "column": 32,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "parsnip",
+      "code": "RY109",
+      "path": "R/aaa_models.R",
+      "line": 483,
+      "column": 43,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "pkgdown",
+      "code": "RY109",
+      "path": "R/topics.R",
+      "line": 271,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "pkgdown",
+      "code": "RY109",
+      "path": "R/tweak-navbar.R",
+      "line": 32,
+      "column": 41,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "purrr",
+      "code": "RY109",
+      "path": "R/progress-bars.R",
+      "line": 56,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "shiny-r",
+      "code": "RY109",
+      "path": "R/bootstrap-layout.R",
+      "line": 609,
+      "column": 52,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "shiny-r",
+      "code": "RY109",
+      "path": "R/bootstrap-layout.R",
+      "line": 609,
+      "column": 68,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "sparklyr",
+      "code": "RY109",
+      "path": "R/connection_test.R",
+      "line": 2,
+      "column": 12,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "sparklyr",
+      "code": "RY109",
+      "path": "R/connection_test.R",
+      "line": 3,
+      "column": 12,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 329,
+      "column": 22,
+      "label": "false_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "rlang",
+      "code": "RY109",
+      "path": "tests/testthat/test-nse-defuse.R",
+      "line": 334,
+      "column": 22,
+      "label": "false_positive",
+      "audit_group": "ry109-self-defaults"
     }
   ],
   "classification": {
-    "true_positive": 42,
-    "false_positive": 354,
-    "uncertain": 0
+    "false_positive": 356,
+    "true_positive": 65
   },
   "audit_group_counts": {
+    "reassign-scope": 9,
+    "type-narrowing": 52,
     "manual-audit": 142,
     "data-masking-nse": 1,
+    "local-closure-forward-ref": 19,
+    "test-fixture": 72,
+    "s3-method-dispatch": 3,
     "delayed-assign": 15,
     "function-shadowing": 3,
-    "local-closure-forward-ref": 19,
-    "namespace-on-load": 46,
-    "numeric-if-idiom": 3,
-    "reassign-scope": 9,
-    "s3-method-dispatch": 3,
-    "test-fixture": 72,
-    "type-narrowing": 52,
     "upstream-package": 28,
-    "ifelse-mode": 3
+    "ifelse-mode": 3,
+    "numeric-if-idiom": 3,
+    "namespace-on-load": 46,
+    "ry109-self-defaults": 25
   },
   "notes": [
     "testthat block scoping (#368) makes sibling blocks reachable after a mid-test `return()`, surfacing two reviewed rlang RY040 false positives previously hidden by the flattened-scope unreachability: tests/testthat/test-cnd-message.R:481:8 quotes its operand through `enexpr()` and never forces the promise, and tests/testthat/test-trace.R:587:28 is a deliberate caught-error fixture (`identity(1 + \"\")` on the error path under `catch_cnd`). Both are test-fixture false positives; all 37 true positives are retained.",
@@ -4055,6 +4280,7 @@
     "Recovered-tree semantic suppression (#467, the second half of #380) removes seven reviewed RY010 false positives that fired over parser-repaired trees: lintr tests/testthat/dummy_packages/RConfigInvalid/lintr_test_config.R:3:1, and testthat tests/testthat/test-parallel/syntax-error/tests/testthat/test-error-1.R at 5:1, 5:5, 5:13, 5:15, 5:22, and 6:1. Both files still emit their RY000 syntax error, which is the actionable signal; no other identity moves and all 37 true positives are retained.",
     "RY107 any-all-scalar-comparison (issue #356) adds exactly one identity: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(), runtime-verified (FALSE == 0 is TRUE, so the written guard computes `!any(lengths)`; the intended `any(lengths == 0)` is written at glue.R:139,191). Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet. Reconciled on top of the #473 recovered-tree reconciliation.",
     "The non-UTF-8 source flag (#376) adds one reviewed finding: lintr tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000. At the pinned commit the file deliberately carries CP1252 bytes (a 0xe4 in a comment, a raw 0xfc opening the symbol on line 4); R 4.6.1 rejects it with \"invalid multibyte character in parser\" at 4:6, so the finding is a true_positive in the test-fixture group. No other posit identity moves: comment-confined invalid bytes stay clean like R, and no other corpus file is non-UTF-8.",
-    "RY106 (ifelse-mode-collapse, #461) adds three owned gt true positives at R/format_data.R:4057:3, R/utils_render_latex.R:69:3, and R/z_utils_render_footnotes.R:418:18: typed-NA selects whose result collapses to logical when the maybe-empty test is empty (the tidyverse/hms#231 family, runtime-verified as ifelse(logical(0), NA_character_, 'a') == logical(0)). The rule fires only for literal empty or all-NA tests and for typed-NA selects, so the testthat parallel-taskq len=0 join artifacts stay silent; all prior identities are unchanged."
+    "RY106 (ifelse-mode-collapse, #461) adds three owned gt true positives at R/format_data.R:4057:3, R/utils_render_latex.R:69:3, and R/z_utils_render_footnotes.R:418:18: typed-NA selects whose result collapses to logical when the maybe-empty test is empty (the tidyverse/hms#231 family, runtime-verified as ifelse(logical(0), NA_character_, 'a') == logical(0)). The rule fires only for literal empty or all-NA tests and for typed-NA selects, so the testthat parallel-taskq len=0 join artifacts stay silent; all prior identities are unchanged.",
+    "RY109 (self-referential-default, issue #364) adds 25 reviewed findings. 23 true positives, each runtime-verified as a default naming its own formal (or calling a same-named function, which the formal shadowing makes equivalent) that can only resolve to its own promise and can never evaluate; forcing the promise errors with R's 'promise already under evaluation'. Most identities were verified to error on a triggering call; dplyr R/distinct.R:81 and dbplyr R/verb-distinct.R:61 (`caller_env = caller_env(2)`: the formal is never consumed, so the call runs when it is missing) and ggplot2 R/stat-bindot.R:133 (`method = method`: unused in the body; `densitybin(1:3)` runs) were verified as dead-on-arrival defaults that would error the moment anyone consumed them. The flagged shapes are the dtplyr shipped bug (fixed upstream in dbe32a6), callee-named defaults whose formal shadows a real function (purrr caller_env(), httr config(), pkgdown error_call(), dplyr/dbplyr caller_env(2)), closure-capture misconceptions where the author meant an outer variable but the formal shadows it (gt data_tbl/col_classes/data, pkgdown pkg, sparklyr master/config), and eagerly-forwarded bare self-references (ellmer type, infer/parsnip call, shiny width/height, ggplot2 method/method.args, lubridate tz(x)/.select_formats). All are latent at the pinned commits: current callers supply the formals. The two false positives are rlang's own defusing tests (test-nse-defuse.R:329,334): bare enexpr/enquo defined by rlang itself cannot be credited as defusers without provenance (crediting a project-defined name would also credit a test-local `quote <- function(x) x`, which forces), so ry warns on the deliberate idiom; warning severity keeps that cost low. Deliberate defusing elsewhere stays silent through typeshed captures_promise/quoted_expression provenance or {{ }} injection recognition (corrr, dbplyr sql_runif); two suppression-side false negatives (defuse-then-force, divergent branches) are pinned as oracle known-gap fixtures."
   ]
 }

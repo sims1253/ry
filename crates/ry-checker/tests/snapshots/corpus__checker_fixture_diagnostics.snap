@@ -173,6 +173,144 @@ expression: snapshots
         start: 126
   fixture: err_fnbody_unbound.R
 - diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 23
+        end: 458
+        line: 7
+        start: 457
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 25
+        end: 523
+        line: 9
+        start: 522
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 34
+        end: 611
+        line: 11
+        start: 610
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 22
+        end: 670
+        line: 12
+        start: 669
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 26
+        end: 725
+        line: 13
+        start: 724
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 23
+        end: 768
+        line: 14
+        start: 767
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 32
+        end: 843
+        line: 15
+        start: 842
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 28
+        end: 926
+        line: 16
+        start: 925
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 27
+        end: 1012
+        line: 17
+        start: 1011
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 25
+        end: 1097
+        line: 18
+        start: 1096
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 34
+        end: 1950
+        line: 30
+        start: 1949
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 41
+        end: 2018
+        line: 31
+        start: 2017
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 32
+        end: 2079
+        line: 32
+        start: 2078
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 31
+        end: 2222
+        line: 34
+        start: 2221
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 32
+        end: 2434
+        line: 37
+        start: 2433
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 31
+        end: 2514
+        line: 38
+        start: 2513
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 31
+        end: 2646
+        line: 40
+        start: 2645
+  fixture: err_force_contract_lazy_controls.R
+- diagnostics:
     - code: RY010
       message: "variable `undefined_var` is not bound in this scope"
       severity: warning
@@ -481,6 +619,106 @@ expression: snapshots
         start: 470
   fixture: err_qualified_identity_forces_default.R
 - diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 23
+        end: 422
+        line: 7
+        start: 421
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 22
+        end: 459
+        line: 8
+        start: 458
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 23
+        end: 512
+        line: 9
+        start: 511
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 34
+        end: 586
+        line: 10
+        start: 585
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 29
+        end: 680
+        line: 12
+        start: 679
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 28
+        end: 720
+        line: 13
+        start: 719
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 29
+        end: 776
+        line: 14
+        start: 775
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 40
+        end: 853
+        line: 15
+        start: 852
+  fixture: err_qualified_identity_skips_lazy_arguments.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 27
+        end: 298
+        line: 5
+        start: 297
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 22
+        end: 350
+        line: 6
+        start: 349
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 33
+        end: 417
+        line: 7
+        start: 416
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 28
+        end: 472
+        line: 8
+        start: 471
+  fixture: err_qualified_identity_unmatched_arguments.R
+- diagnostics:
     - code: RY102
       message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
       severity: warning
@@ -524,6 +762,68 @@ expression: snapshots
         line: 6
         start: 376
   fixture: err_recovered_tree_suppresses_semantics.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 25
+        end: 367
+        line: 6
+        start: 366
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 24
+        end: 405
+        line: 7
+        start: 404
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 34
+        end: 452
+        line: 8
+        start: 451
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 33
+        end: 498
+        line: 9
+        start: 497
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 28
+        end: 539
+        line: 10
+        start: 538
+  fixture: err_recursive_default_conditional_operands.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 253
+        line: 4
+        start: 252
+  fixture: err_recursive_default_conditional_return.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 361
+        line: 6
+        start: 360
+  fixture: err_recursive_default_defused_forward.R
 - diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
@@ -577,6 +877,16 @@ expression: snapshots
         start: 266
   fixture: err_recursive_default_forced_operands.R
 - diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 287
+        line: 5
+        start: 286
+  fixture: err_recursive_default_lazy_forward.R
+- diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
@@ -596,6 +906,72 @@ expression: snapshots
         line: 3
         start: 133
   fixture: err_recursive_default_literal_false_block.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 277
+        line: 5
+        start: 276
+  fixture: err_recursive_default_missing.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 302
+        line: 5
+        start: 301
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 349
+        line: 11
+        start: 348
+  fixture: err_recursive_default_replaced.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 267
+        line: 5
+        start: 266
+  fixture: err_recursive_default_shadowed_defuser.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 203
+        line: 4
+        start: 202
+  fixture: err_recursive_default_shadowed_strict.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 196
+        line: 3
+        start: 195
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 228
+        line: 4
+        start: 227
+  fixture: err_recursive_default_short_circuit.R
 - diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
@@ -646,6 +1022,26 @@ expression: snapshots
         line: 7
         start: 361
   fixture: err_recursive_default_taken_operands.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 251
+        line: 4
+        start: 250
+  fixture: err_recursive_default_unforced_branch.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `x` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 18
+        end: 243
+        line: 4
+        start: 242
+  fixture: err_recursive_default_unreachable_block.R
 - diagnostics:
     - code: RY098
       message: "parameter `copy` has a self-referential default that recurses when forced"
@@ -704,6 +1100,40 @@ expression: snapshots
         line: 3
         start: 104
   fixture: err_scalar_logical.R
+- diagnostics:
+    - code: RY109
+      message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 42
+        end: 433
+        line: 8
+        start: 429
+    - code: RY109
+      message: "parameter `j` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 50
+        end: 619
+        line: 17
+        start: 618
+    - code: RY109
+      message: "parameter `n` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 25
+        end: 743
+        line: 20
+        start: 742
+    - code: RY109
+      message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+      severity: warning
+      span:
+        column: 30
+        end: 791
+        line: 21
+        start: 787
+  fixture: err_self_referential_default_unproven.R
 - diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `list` and `double`"
@@ -897,8 +1327,6 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_fnbody_sequential.R
 - diagnostics: []
-  fixture: ok_force_contract_lazy_controls.R
-- diagnostics: []
   fixture: ok_fractional_numeric_index_length.R
 - diagnostics: []
   fixture: ok_function_def.R
@@ -991,6 +1419,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_no_s3_collision.R
 - diagnostics: []
+  fixture: ok_non_self_referential_defaults.R
+- diagnostics: []
   fixture: ok_nse_dplyr_arrange_groupby.R
 - diagnostics: []
   fixture: ok_nse_dplyr_filter.R
@@ -1051,10 +1481,6 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_qualified_call_not_shadowed.R
 - diagnostics: []
-  fixture: ok_qualified_identity_skips_lazy_arguments.R
-- diagnostics: []
-  fixture: ok_qualified_identity_unmatched_arguments.R
-- diagnostics: []
   fixture: ok_qualified_nse_aes.R
 - diagnostics: []
   fixture: ok_quoted_default_dependencies.R
@@ -1071,31 +1497,9 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_recursive_default_captured.R
 - diagnostics: []
-  fixture: ok_recursive_default_conditional_operands.R
-- diagnostics: []
-  fixture: ok_recursive_default_conditional_return.R
-- diagnostics: []
-  fixture: ok_recursive_default_lazy_call.R
-- diagnostics: []
-  fixture: ok_recursive_default_missing.R
-- diagnostics: []
   fixture: ok_recursive_default_qualified_defuser.R
 - diagnostics: []
-  fixture: ok_recursive_default_replaced.R
-- diagnostics: []
-  fixture: ok_recursive_default_shadowed_defuser.R
-- diagnostics: []
-  fixture: ok_recursive_default_shadowed_strict.R
-- diagnostics: []
-  fixture: ok_recursive_default_short_circuit.R
-- diagnostics: []
   fixture: ok_recursive_default_skipped_operands.R
-- diagnostics: []
-  fixture: ok_recursive_default_unforced_branch.R
-- diagnostics: []
-  fixture: ok_recursive_default_unreachable_block.R
-- diagnostics: []
-  fixture: ok_recursive_default_user_defuser.R
 - diagnostics: []
   fixture: ok_regmatches_callback_lengths.R
 - diagnostics: []

@@ -794,12 +794,101 @@
       "column": 3,
       "label": "true_positive",
       "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY109",
+      "path": "R/verb-distinct.R",
+      "line": 61,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY109",
+      "path": "R/distinct.R",
+      "line": 81,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/step-join.R",
+      "line": 162,
+      "column": 43,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 20,
+      "column": 47,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 6,
+      "column": 51,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-bindot.R",
+      "line": 133,
+      "column": 68,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-quantilemethods.R",
+      "line": 81,
+      "column": 38,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/guess.r",
+      "line": 265,
+      "column": 64,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/parse.r",
+      "line": 975,
+      "column": 32,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "purrr",
+      "code": "RY109",
+      "path": "R/progress-bars.R",
+      "line": 56,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
     }
   ],
   "classification": {
-    "true_positive": 13,
+    "true_positive": 23,
     "false_positive": 41,
-    "uncertain": 0,
     "unowned": 23
   },
   "audit_group_counts": {
@@ -812,10 +901,11 @@
     "P3e": 2,
     "P8": 3,
     "P7b": 3,
+    "upstream-glue": 1,
     "plan-32-33": 23,
     "pr195-nse-stubs": 6,
-    "upstream-glue": 1,
-    "ifelse-mode": 2
+    "ifelse-mode": 2,
+    "ry109-self-defaults": 10
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -829,8 +919,9 @@
     "Regenerated after the function-mode call-head lookup change (PR #396): the only identity delta is one RY070 removed from the unaudited rlang root report (tests/testthat/helper-locale.R:134:5, verified false positive in the Posit ledger). Audited-package identities are unchanged; source digest and ry_commit reflect this full default-manifest regeneration.",
     "Class-less opaque typeshed returns now read as class-unknown instead of a proven-empty class vector, so the rlang standalone data-frame check stays silent for them: the reviewed googlesheets4 RY092 false positive at R/sheet_write.R:83:20 is removed. No other identity changes; all 10 true positives are preserved. The stale source_sha256 is replaced with the reproducible value and the recipe is documented in README.md.",
     "RY107 (any-all-scalar-comparison, issue #356) adds exactly one identity across the corpus: glue R/utils.R:32:7, the audited `any(lengths) == 0` parenthesization defect in recycle_columns(). Runtime-verified true positive: `FALSE == 0` is TRUE, so the written guard computes `!any(lengths)` and the zero-length branch never runs, while the same commit writes the intended `any(lengths == 0)` at glue.R:139,191. Value-preserving comparisons (`== 1`, `> 0`, ...) stay silent, keeping diffobj's `!all(diff(x)) == 1L` idiom quiet.",
-    "RY106 (ifelse-mode-collapse, #461) adds two owned true positives: hms R/hms.R:218:3 and blob R/format.R:43:10, the exact typed-NA select behind tidyverse/hms#231 (ifelse(is.na(x), NA_character_, <character>) over an open-world test, runtime-verified as logical(0) for empty x). The googledrive R/drive_mime_type.R:56 len=0 join artifact stays silent: inferred zero lengths are not collapse proofs, so the definite half fires only on literal empty or NA tests. The regeneration also replaces a source_sha256 that had been stale on main since the 0.5.1 vendor reconciliation regenerated ggplot2.root.txt without recomputing the digest; the recorded value now reproduces from the committed 32 non-posit root reports in filename order."
+    "RY106 (ifelse-mode-collapse, #461) adds two owned true positives: hms R/hms.R:218:3 and blob R/format.R:43:10, the exact typed-NA select behind tidyverse/hms#231 (ifelse(is.na(x), NA_character_, <character>) over an open-world test, runtime-verified as logical(0) for empty x). The googledrive R/drive_mime_type.R:56 len=0 join artifact stays silent: inferred zero lengths are not collapse proofs, so the definite half fires only on literal empty or NA tests. The regeneration also replaces a source_sha256 that had been stale on main since the 0.5.1 vendor reconciliation regenerated ggplot2.root.txt without recomputing the digest; the recorded value now reproduces from the committed 32 non-posit root reports in filename order.",
+    "RY109 (self-referential-default, issue #364) adds 10 true positives across 6 packages, each runtime-verified as a default that can only resolve to its own promise and therefore can never evaluate. The dtplyr trio (step-join.R:162 `copy = copy`, tidyeval-across.R:6,20 `j = j`) is the shipped bug upstream fixed in dbe32a6: triggering the default errors. purrr progress-bars.R:56 `caller_env = caller_env()` errors when the stop_input_type branch is reached. The dplyr R/distinct.R:81 and dbplyr R/verb-distinct.R:61 defaults `caller_env = caller_env(2)` shadow rlang's caller_env() with the formal, but neither body consumes the formal, so the calls run when it is missing: the defaults are dead on arrival and would error the moment anyone consumed them (dplyr's sibling `error_call = caller_env()` at distinct.R:82 is a legal cross-formal reference and correctly stays quiet). ggplot2 stat-bindot.R:133 `method = method` (unused in the body; `densitybin(1:3)` runs) and stat-quantilemethods.R:81 `method.args = method.args` (forced through inject), and lubridate's `tz = tz(x)` (parse.r:975, forced on the character branch) and `.select_formats = .select_formats` (guess.r:265, intent was the namespace function, shadowed by the formal) complete the set. Defusing suppression: dbplyr's sql_runif `n = n()` (body verifies the captured default via enquo) stays silent through typeshed captures_promise provenance; in the posit corpus the same mechanism keeps corrr's enquo/{{ }} idioms quiet, while rlang's own defusing tests (test-nse-defuse.R:329,334) warn because their bare enexpr/enquo are defined in-project -- 2 labeled false positives there, and this manifest's ungated rlang root report (rlang has no packages-block entry) gains exactly those two identities. Bare defuser names defined by the project itself are never credited without provenance."
   ],
-  "ry_commit": "772fb41b80e925354920cfb6f743923f6056cce1",
-  "source_sha256": "ce2bef2ee09b3a5cd693318b05553fa638bf970f07c94a2997663dd26541a33c"
+  "ry_commit": "6989d9fa416020e04dcb2de06b98174ee750df64",
+  "source_sha256": "d01e7cea326cb02f910d5161eea621369d9e063ef30d44fa2316384e88d6e31b"
 }

@@ -170,4 +170,7 @@ ry check --baseline ry-baseline.json .    # or `baseline` in ry.toml
 
 Baseline entries match on path, rule, and message. They ignore line numbers,
 so moving a finding to another line does not invalidate it. Fixed findings can be
-removed by regenerating the baseline.
+removed by regenerating the baseline. Regeneration snapshots what the check
+currently reports — the configured `baseline` is not loaded or subtracted
+first — so regenerating on an unchanged project leaves the file as it is
+while findings that no longer occur drop out.

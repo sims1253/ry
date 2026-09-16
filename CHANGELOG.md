@@ -6,6 +6,20 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stop `ry check --write-baseline` from loading and subtracting the
+  `baseline` configured in ry.toml before overwriting the file. The
+  clap-level conflict only covers the `--baseline` spelling, so a
+  configured baseline arrived through config merging anyway: on an
+  unchanged project the pre-write subtraction emptied the file
+  (`"entries": []`) and every accepted finding reappeared on the next
+  plain check — a silent wipe whose regeneration run still exited 0.
+  Regeneration now snapshots the pre-subtraction, policy-filtered
+  diagnostics (suppression comments, severity filter, path-based
+  confidence demotion, and `--min-confidence` all apply as in a plain
+  check), mirroring the clap conflict at the config level; genuinely
+  fixed findings still drop out and the regeneration run reports (and
+  fails on) the findings it writes, like the no-config path always did
+  (#484).
 - Fail `ry check` when an explicitly requested input path does not exist,
   or a discovery root cannot be read, instead of silently succeeding with
   an empty or partial check. A missing path used to fall into the

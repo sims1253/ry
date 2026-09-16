@@ -1649,3 +1649,158 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
         "{stdout}"
     );
 }
+
+// --- Baselines (--write-baseline with a configured `baseline`) ---
+
+/// Read and parse a baseline file written by `--write-baseline`.
+fn read_baseline(path: &std::path::Path) -> serde_json::Value {
+    let contents = fs::read_to_string(path).unwrap();
+    serde_json::from_str(&contents).unwrap()
+}
+
+/// Run `ry check <args>...` from `cwd` and return the raw output.
+fn ry_check_from(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(cwd)
+        .arg("check")
+        .args(args)
+        .output()
+        .expect("failed to invoke ry binary")
+}
+
+/// With `baseline` set in ry.toml, `ry check --write-baseline` used to
+/// load and subtract the configured baseline before overwriting the
+/// file: on an unchanged project the non-empty baseline became empty
+/// (`"entries": []`) and every accepted finding reappeared on the next
+/// plain check — a silent wipe whose regeneration run still exited 0.
+/// Regeneration must instead snapshot what the run reports, so a second
+/// regeneration on an unchanged project is a no-op (#484).
+#[test]
+fn write_baseline_with_configured_baseline_is_stable_across_regeneration() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "baseline = \"ry-baseline.json\"\n",
+    )
+    .unwrap();
+    // RY040 is a default-error rule, so the finding is an error.
+    fs::write(tmp.path().join("bad.R"), "x <- \"a\" + 1L\n").unwrap();
+
+    let regenerate = || ry_check_from(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+    let first = regenerate();
+    let baseline_path = tmp.path().join("ry-baseline.json");
+    let first_baseline = read_baseline(&baseline_path);
+    assert!(
+        !first_baseline["entries"].as_array().unwrap().is_empty(),
+        "regeneration must keep the accepted finding instead of subtracting it first: {first_baseline}"
+    );
+
+    let second = regenerate();
+    let second_baseline = read_baseline(&baseline_path);
+    assert_eq!(
+        first_baseline, second_baseline,
+        "a second regeneration on an unchanged project must be a no-op"
+    );
+    // The regeneration run reports (and fails on) the findings it
+    // writes — the same exit code the no-config `--write-baseline`
+    // path has always produced, since the clap conflict keeps
+    // `--baseline` out of a generating run.
+    assert_eq!(first.status.code(), Some(1), "{first:?}");
+    assert_eq!(second.status.code(), Some(1), "{second:?}");
+}
+
+/// Regeneration is also how fixed findings leave the baseline: the
+/// snapshot is rebuilt from the current diagnostics, so a fixed finding
+/// drops out and a newly introduced one enters (#484).
+#[test]
+fn write_baseline_regeneration_drops_fixed_and_adds_new_findings() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "baseline = \"ry-baseline.json\"\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("bad.R"), "x <- \"a\" + 1L\n").unwrap();
+
+    ry_check_from(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
+    assert!(
+        baseline["entries"].as_array().unwrap().iter().any(|entry| {
+            entry["path"].as_str().unwrap().ends_with("bad.R") && entry["code"] == "RY040"
+        }),
+        "the initial finding must be snapshotted: {baseline}"
+    );
+
+    // Fix bad.R and introduce the same finding in a new file.
+    fs::write(tmp.path().join("bad.R"), "x <- 1L + 2L\n").unwrap();
+    fs::write(tmp.path().join("new.R"), "y <- \"a\" + 1L\n").unwrap();
+    ry_check_from(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
+    let entries = baseline["entries"].as_array().unwrap();
+    assert!(
+        entries
+            .iter()
+            .all(|entry| !entry["path"].as_str().unwrap().ends_with("bad.R")),
+        "the fixed finding must drop out of the regenerated baseline: {baseline}"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|entry| entry["path"].as_str().unwrap().ends_with("new.R")
+                && entry["code"] == "RY040"),
+        "the new finding must enter the regenerated baseline: {baseline}"
+    );
+}
+
+/// A plain `ry check` must subtract the regenerated file correctly:
+/// nothing remains on an unchanged project, and only the surplus
+/// occurrence survives when a duplicate grows past the recorded count
+/// (#484).
+#[test]
+fn plain_check_subtracts_counts_against_regenerated_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "baseline = \"ry-baseline.json\"\n",
+    )
+    .unwrap();
+    // Two occurrences of the same finding (RY040's message names only
+    // the operand modes, so both lines share it): the entry's count is
+    // exercised, not just its presence.
+    fs::write(
+        tmp.path().join("bad.R"),
+        "x <- \"a\" + 1L\ny <- \"a\" + 1L\n",
+    )
+    .unwrap();
+
+    ry_check_from(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
+    assert_eq!(
+        baseline["entries"][0]["count"],
+        serde_json::json!(2),
+        "{baseline}"
+    );
+
+    let plain = ry_check_from(tmp.path(), &["--output-format", "json", "."]);
+    assert!(
+        plain.status.success(),
+        "every recorded occurrence must be subtracted: {:?}",
+        plain
+    );
+    let diagnostics: serde_json::Value = serde_json::from_slice(&plain.stdout).expect("valid JSON");
+    assert_eq!(diagnostics, serde_json::json!([]));
+
+    // A third occurrence exceeds the recorded count: exactly one
+    // diagnostic survives and fails the run.
+    fs::write(
+        tmp.path().join("bad.R"),
+        "x <- \"a\" + 1L\ny <- \"a\" + 1L\nz <- \"a\" + 1L\n",
+    )
+    .unwrap();
+    let surplus = ry_check_from(tmp.path(), &["--output-format", "json", "."]);
+    assert_eq!(surplus.status.code(), Some(1), "{surplus:?}");
+    let diagnostics: Vec<serde_json::Value> =
+        serde_json::from_slice(&surplus.stdout).expect("valid JSON");
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "RY040");
+}

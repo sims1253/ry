@@ -6,20 +6,6 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
-- Stop `ry check --write-baseline` from loading and subtracting the
-  `baseline` configured in ry.toml before overwriting the file. The
-  clap-level conflict only covers the `--baseline` spelling, so a
-  configured baseline arrived through config merging anyway: on an
-  unchanged project the pre-write subtraction emptied the file
-  (`"entries": []`) and every accepted finding reappeared on the next
-  plain check — a silent wipe whose regeneration run still exited 0.
-  Regeneration now snapshots the pre-subtraction, policy-filtered
-  diagnostics (suppression comments, severity filter, path-based
-  confidence demotion, and `--min-confidence` all apply as in a plain
-  check), mirroring the clap conflict at the config level; genuinely
-  fixed findings still drop out and the regeneration run reports (and
-  fails on) the findings it writes, like the no-config path always did
-  (#484).
 - Fail `ry check` when an explicitly requested input path does not exist,
   or a discovery root cannot be read, instead of silently succeeding with
   an empty or partial check. A missing path used to fall into the
@@ -35,6 +21,45 @@ All notable changes to ry are documented in this file.
   stdout keeps a well-formed empty report on every failure path. An
   existing-but-empty or fully excluded tree remains a successful run
   with the informational "no .R / .r files found" note (#485).
+- Recognize a source-level `return(...)` in the shared block-divergence
+  analysis (RY108 `seq-defaulted-forward` and RY110 `vacuous-all-guard`):
+  the parser lowers the `return` keyword to an ordinary call, so the most
+  idiomatic R reject-guard -- `if (!(G)) return(NULL)` guarding the code
+  that follows -- is now judged by one shared view instead of the two
+  rule-local copies #478/#480 had to add. A `base::return(...)`
+  qualification is newly recognized by RY110 (RY108 already matched the
+  qualified form); `return` inside a nested closure or a called helper
+  still exits only that callee and never diverges the enclosing block.
+  The journal's continuation facts deliberately keep the return-blind
+  view: `if (is.null(x)) return(NULL)` still leaves `x` at its stale
+  default binding so a following condition can fire RY001 on the
+  zero-length shape, the pinned
+  `null_return_guard_alone_does_not_prove_non_empty` behavior (#482).
+- Flag a leading UTF-8 byte order mark as `RY000` instead of checking
+  clean (#474): a BOM (`EF BB BF`) is valid UTF-8, but R's parser
+  rejects the file with "unexpected input" at 1:1 in three of four
+  execution contexts — `parse()`, `source()`, and `Rscript file.R`;
+  only `parse(keep.source = TRUE)` strips it (verified against R
+  4.6.1, including comment-only files, which R rejects unlike
+  invalid bytes in comments). The shared read boundary behind the
+  non-UTF-8 flag (#376) now also reports the BOM, so `ry check` and
+  the LSP agree; a flagged file reports only its `RY000`. A U+FEFF
+  character anywhere after the first byte is an ordinary character R
+  accepts, and stays clean.
+- Stop `ry check --write-baseline` from loading and subtracting the
+  `baseline` configured in ry.toml before overwriting the file. The
+  clap-level conflict only covers the `--baseline` spelling, so a
+  configured baseline arrived through config merging anyway: on an
+  unchanged project the pre-write subtraction emptied the file
+  (`"entries": []`) and every accepted finding reappeared on the next
+  plain check — a silent wipe whose regeneration run still exited 0.
+  Regeneration now snapshots the pre-subtraction, policy-filtered
+  diagnostics (suppression comments, severity filter, path-based
+  confidence demotion, and `--min-confidence` all apply as in a plain
+  check), mirroring the clap conflict at the config level; genuinely
+  fixed findings still drop out and the regeneration run reports (and
+  fails on) the findings it writes, like the no-config path always did
+  (#484).
 
 ## [0.11.0] - 2026-09-16
 

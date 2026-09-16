@@ -97,6 +97,10 @@ impl RParser {
                 // already-decoded text). The read boundary fills this in
                 // for files it had to transcode.
                 invalid_utf8: Vec::new(),
+                // Same for the leading-BOM flag (#474): tree-sitter sees
+                // only the decoded text (and parses the BOM cleanly), so
+                // the read boundary decides.
+                leading_bom: false,
                 special_operators,
                 syntax_violations,
                 comments,

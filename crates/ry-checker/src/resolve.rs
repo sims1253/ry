@@ -617,10 +617,26 @@ impl Checker {
         }
     }
 
-    // Surface invalid UTF-8 found while decoding the file from disk as an
-    // `RY000` (encoding) diagnostic, mirroring R's parser: a file whose
-    // bytes are not valid UTF-8 fails `parse()` in R with "invalid
-    // multibyte character in parser" instead of checking clean (#376).
+    // Surface encoding problems found while decoding the file from disk
+    // as `RY000` (encoding) diagnostics, mirroring R's parser. Returns
+    // whether the file was flagged, so `emit_diagnostics` can suppress
+    // the semantic rules for it exactly like it does for recovered trees
+    // (#380).
+    //
+    // A leading UTF-8 BOM comes first (#474): the BOM is valid UTF-8
+    // (the decoded text keeps it as a leading U+FEFF character), but R's
+    // parser still rejects the file with "unexpected input" at 1:1 in
+    // every execution context except `parse(keep.source = TRUE)`. Unlike
+    // invalid bytes, position is everything: a U+FEFF anywhere else in
+    // the file is an ordinary character R accepts, so this is a flag on
+    // the file rather than a span to tolerate per-site. Even a
+    // comment-only file is rejected (verified against R 4.6.1), so no
+    // comment tolerance applies. R reports the BOM before anything else,
+    // so it takes precedence over invalid-UTF-8 spans in the same file:
+    // one RY000 per file, at 1:1.
+    //
+    // Invalid UTF-8 (#376) otherwise mirrors `parse()` in R failing with
+    // "invalid multibyte character in parser" instead of checking clean.
     // R's lexer scans comments and `%...%` special-operator tokens as
     // raw bytes without multibyte validation, so spans contained in
     // either do not count; a legacy file whose non-ASCII bytes only
@@ -628,10 +644,17 @@ impl Checker {
     // like R. One diagnostic per file at the first surviving span: R
     // reports the first invalid multibyte character and stops, and a
     // transcoded file can otherwise produce one span per legacy byte.
-    // Returns whether the file was flagged, so `emit_diagnostics` can
-    // suppress the semantic rules for it exactly like it does for
-    // recovered trees (#380).
-    pub(crate) fn emit_invalid_utf8(&mut self, file: &SourceFile) -> bool {
+    pub(crate) fn emit_encoding_diagnostics(&mut self, file: &SourceFile) -> bool {
+        if file.leading_bom {
+            // The BOM occupies decoded bytes 0..3 on row 0, column 0.
+            self.emit(
+                Severity::Error,
+                Span::new(0, 3, 0, 0),
+                "RY000",
+                "unexpected input at 1:1: file starts with a UTF-8 byte order mark (R's parser rejects it)",
+            );
+            return true;
+        }
         let Some(span) = file
             .invalid_utf8
             .iter()

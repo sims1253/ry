@@ -67,6 +67,41 @@ impl ConditionContext {
     }
 }
 
+/// Whether a divergence query treats a source-level `return(...)` call
+/// as an exit.
+///
+/// The parser lowers the `return` keyword to an ordinary call (parsed
+/// trees carry no `Stmt::Return`), so recognizing the most idiomatic R
+/// reject-guard -- `if (!(G)) return(NULL)` -- means matching that call
+/// shape in [`Checker::expr_diverges`]. Two consumers must NOT
+/// recognize it:
+///
+/// * the journal's continuation facts: doing so would flow the
+///   else-branch narrowing of pre-existing guards into continuations
+///   (`if (is.null(x)) return(NULL)` keeps the stale default type and
+///   lets RY001 fire on a following condition, the pinned
+///   `null_return_guard_alone_does_not_prove_non_empty` behavior); and
+/// * callee bodies reached through the collected-helper recursion:
+///   `return` exits the *callee*, and its caller continues past the
+///   call site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DivergenceView {
+    /// The queried statements are the analyzed function's own control
+    /// flow: `return(...)` diverges, on top of `stop()` (its
+    /// `no_return` stub), `UseMethod`, and never-returning collected
+    /// helpers.
+    Full,
+    /// `return(...)` stays unrecognized; only the stub- and
+    /// helper-provable exits apply.
+    ReturnBlind,
+}
+
+impl DivergenceView {
+    fn recognizes_return(self) -> bool {
+        matches!(self, DivergenceView::Full)
+    }
+}
+
 /// R's `if`/`while` coercion accepts more than logical scalars: numeric
 /// and raw values coerce numerically, a complex scalar coerces by OR
 /// over its real and imaginary components, and a character scalar
@@ -873,9 +908,11 @@ impl Checker {
         let else_diverges_in_loop = scope.loop_frame.is_some() && else_delta.unreachable;
         // Continuation lookups may fall back to the original scope. Capture
         // those values before streaming independent binding merges into it.
-        let then_diverges = then_diverges_in_loop || self.block_diverges(then);
+        // Return-blind: else-branch narrowing of a `return`-guard must not
+        // flow into continuations (`DivergenceView`).
+        let then_diverges = then_diverges_in_loop || self.block_diverges_for_continuation(then);
         let else_diverges = else_diverges_in_loop
-            || else_.is_some_and(|statements| self.block_diverges(statements));
+            || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
         let continuation = match (then_diverges, has_else, else_diverges) {
             (true, true, false) | (true, false, _) => Some(&else_delta),
             (false, true, true) => Some(&then_delta),
@@ -1040,40 +1077,82 @@ impl Checker {
     /// Whether every path through a statement block stops executing the
     /// surrounding block. This is intentionally syntactic and conservative:
     /// failing to recognize divergence only misses a narrowing opportunity.
+    ///
+    /// The shared rule-level view ([`DivergenceView::Full`]): a
+    /// source-level `return(...)` diverges -- the parser lowers the
+    /// keyword to an ordinary call, so it arrives as a `Stmt::Expr`
+    /// call and never as a `Stmt::Return` -- on top of `stop()` (its
+    /// `no_return` stub), `UseMethod`, and never-returning collected
+    /// helpers. The bare `return` match mirrors the walk's own
+    /// `Stmt::Expr` treatment of the keyword, which likewise does not
+    /// consult scope resolution (a user redefinition shadowing base's
+    /// `return` is pathological, and the walk already treats its call
+    /// statements as exiting); the `base::`-qualified form is
+    /// recognized the way `UseMethod` below already is. `invisible()`
+    /// returns a value and does not exit. The journal's continuation
+    /// facts use the return-blind
+    /// [`Self::block_diverges_for_continuation`].
     fn block_diverges(&self, stmts: &[Stmt]) -> bool {
-        self.block_diverges_with_visited(stmts, &mut HashSet::new())
+        self.block_diverges_with_visited(stmts, &mut HashSet::new(), DivergenceView::Full)
     }
 
-    /// The read-only divergence view RY110's rejecting-guard analysis
-    /// needs; see `infer::vacuous` for the `return()` extension.
-    pub(crate) fn block_diverges_for_guard(&self, stmts: &[Stmt]) -> bool {
-        self.block_diverges(stmts) || stmts.iter().any(vacuous::stmt_diverges_for_guard)
+    /// Single-expression entry for the [`DivergenceView::Full`] view
+    /// (RY108's expression-position `if` arms: `lim <- if (missing(p))
+    /// return(...)`); the statement-list entry is
+    /// [`Self::block_diverges`].
+    fn expr_diverges_full(&self, expression: &Expr) -> bool {
+        self.expr_diverges(expression, &mut HashSet::new(), DivergenceView::Full)
     }
 
-    fn block_diverges_with_visited(&self, stmts: &[Stmt], visited: &mut HashSet<String>) -> bool {
+    /// The return-blind divergence view the journal's continuation
+    /// facts consume; see [`DivergenceView`] for the pinned behavior
+    /// this preserves.
+    fn block_diverges_for_continuation(&self, stmts: &[Stmt]) -> bool {
+        self.block_diverges_with_visited(stmts, &mut HashSet::new(), DivergenceView::ReturnBlind)
+    }
+
+    fn block_diverges_with_visited(
+        &self,
+        stmts: &[Stmt],
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
         stmts
             .iter()
-            .any(|statement| self.stmt_diverges(statement, visited))
+            .any(|statement| self.stmt_diverges(statement, visited, view))
     }
 
-    fn stmt_diverges(&self, statement: &Stmt, visited: &mut HashSet<String>) -> bool {
+    fn stmt_diverges(
+        &self,
+        statement: &Stmt,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
         match statement {
             Stmt::Return { .. } => true,
-            Stmt::Expr(expression) => self.expr_diverges(expression, visited),
+            Stmt::Expr(expression) => self.expr_diverges(expression, visited, view),
             Stmt::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-                self.block_diverges_with_visited(then, visited)
-                    && self.block_diverges_with_visited(else_, visited)
+                self.block_diverges_with_visited(then, visited, view)
+                    && self.block_diverges_with_visited(else_, visited, view)
             }),
             _ => false,
         }
     }
 
-    fn expr_diverges(&self, expression: &Expr, visited: &mut HashSet<String>) -> bool {
+    fn expr_diverges(
+        &self,
+        expression: &Expr,
+        visited: &mut HashSet<String>,
+        view: DivergenceView,
+    ) -> bool {
         match expression {
             Expr::Call { func, .. } => {
                 let Some(name) = ident_name(func) else {
                     return false;
                 };
+                if name == "return" || crate::semantic_lists::bare_name(name) == "return" {
+                    return view.recognizes_return();
+                }
                 if name == "UseMethod" || crate::semantic_lists::bare_name(name) == "UseMethod" {
                     return true;
                 }
@@ -1085,19 +1164,26 @@ impl Checker {
                 }
                 // A collected helper whose body itself diverges is a known
                 // never-returning function. The visited set keeps recursive
-                // helpers conservative rather than recursing forever.
+                // helpers conservative rather than recursing forever. The
+                // body is judged return-blind whatever the caller's view:
+                // its `return` exits the callee, and the call's caller
+                // continues past the call site.
                 if !visited.insert(name.to_string()) {
                     return false;
                 }
                 let diverges = self.fn_table.fns.get(name).is_some_and(|function| {
-                    self.block_diverges_with_visited(&function.body, visited)
+                    self.block_diverges_with_visited(
+                        &function.body,
+                        visited,
+                        DivergenceView::ReturnBlind,
+                    )
                 });
                 visited.remove(name);
                 diverges
             }
-            Expr::Block { body, .. } => self.block_diverges_with_visited(body, visited),
+            Expr::Block { body, .. } => self.block_diverges_with_visited(body, visited, view),
             Expr::If { then, else_, .. } => else_.as_ref().is_some_and(|else_| {
-                self.expr_diverges(then, visited) && self.expr_diverges(else_, visited)
+                self.expr_diverges(then, visited, view) && self.expr_diverges(else_, visited, view)
             }),
             _ => false,
         }

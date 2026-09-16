@@ -1470,13 +1470,15 @@ pub(super) fn build_folder_contexts(
 
 /// Rebuild a single folder's analysis context from disk.
 ///
-/// Each field is reloaded independently. On any sub-failure (config
-/// parse, stub directory load, baseline parse) the last valid value for
-/// that field is retained and the failure is logged — a corrupt reload
-/// never silently clears the baseline, and a transient unreadable
-/// typeshed directory never silently drops its stubs. Deliberate
-/// removals (a setting deleted or set to an empty list) are not
-/// failures and always take effect. `folder_settings`,
+/// Each field is reloaded independently. On a sub-failure (config parse,
+/// baseline parse, or a stub reload where EVERY configured typeshed
+/// directory failed) the last valid value for that field is retained and
+/// the failure is logged — a corrupt reload never silently clears the
+/// baseline, and a fully failed stub reload never silently drops the
+/// stub map. A partial stub failure keeps only the directories that
+/// loaded, replacing the map with what a fresh server would produce.
+/// Deliberate removals (a setting deleted or set to an empty list) are
+/// not failures and always take effect. `folder_settings`,
 /// `workspace_context`, and `project_cache` are not config-file-derived
 /// (they come from editor push / the background indexer / incremental
 /// checks respectively) and are carried over unchanged. Disk I/O

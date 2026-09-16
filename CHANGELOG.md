@@ -6,6 +6,15 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stop the language server from keeping obsolete custom typeshed stubs
+  after a config reload removes the last configured directory (#494):
+  the reload treated an intentionally empty stub map (the `typeshed`
+  setting cleared or deleted) the same as a failed one, so a warm
+  session retained signatures a fresh server no longer loaded until
+  restart. The stub loader now reports whether every configured
+  directory failed, and only that genuine failure retains the previous
+  stubs; clearing the list converges with a fresh server on the same
+  config.
 - Fail `ry check` when an explicitly requested input path does not exist,
   or a discovery root cannot be read, instead of silently succeeding with
   an empty or partial check. A missing path used to fall into the

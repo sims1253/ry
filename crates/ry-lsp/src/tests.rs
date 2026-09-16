@@ -1,10 +1,14 @@
-use crate::backend::{ProjectCache, State, uri_to_path};
+use crate::backend::{
+    FolderAnalysisContext, ProjectCache, State, build_folder_contexts, rebuild_folder_context,
+    uri_to_path,
+};
 use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
 use crate::positions::*;
+use crate::settings::ServerSettings;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
@@ -1450,5 +1454,142 @@ fn removed_file_clears_cross_file_resolution() {
     assert!(
         !caller_codes.contains(&"RY040"),
         "RY040 should disappear when my_helper returns unknown: {caller_codes:?}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Stub reload classification (#494)
+//
+// Bug being pinned: `rebuild_folder_context` treated an intentionally
+// empty reload result (the config no longer declares any typeshed
+// directory) the same as a failed one, so a warm session kept stubs a
+// fresh server no longer loads until restart. The reload must instead
+// distinguish "no directories configured" (the empty map is the new
+// state) from "directories configured but every one failed" (retain the
+// previous stubs).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A one-function stub pinning package `localdep`.
+fn localdep_stub() -> String {
+    serde_json::json!({
+        "schema_version": "1",
+        "package": "localdep",
+        "version": "test",
+        "functions": {
+            "value": {"params": [], "return": {"mode": "integer", "length": "1"}}
+        }
+    })
+    .to_string()
+}
+
+/// Build a single-folder context from a fixture whose `ry.toml` loads
+/// `stubs/localdep.json`.
+fn stub_reload_context() -> (ry_testkit::FixtureProject, FolderAnalysisContext) {
+    let fixture = ry_testkit::FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "typeshed = [\"stubs\"]\n")
+        .unwrap();
+    fixture
+        .write_file("stubs/localdep.json", localdep_stub())
+        .unwrap();
+    let mut contexts = build_folder_contexts(Some(fixture.root()), &[], &ServerSettings::default());
+    (fixture, contexts.remove(0))
+}
+
+#[test]
+fn rebuild_clears_stubs_when_the_last_typeshed_directory_is_removed() {
+    let (fixture, old) = stub_reload_context();
+    assert!(old.stubs.contains_key("localdep"));
+    // Clearing the list and deleting the setting both declare no
+    // directories: the empty reload is the intended new state, not a
+    // failure, so the previous map must be replaced (warm converges with
+    // a fresh server on the same config).
+    for (name, config) in [
+        ("empty list", Some("typeshed = []\n")),
+        ("deleted setting", Some("")),
+        ("deleted file", None),
+    ] {
+        if let Some(config) = config {
+            fixture.write_file("ry.toml", config).unwrap();
+        } else {
+            std::fs::remove_file(fixture.path("ry.toml")).unwrap();
+        }
+        let rebuilt = rebuild_folder_context(&old);
+        assert!(
+            rebuilt.stubs.is_empty(),
+            "{name}: removing the last typeshed directory must clear the stub map; got {:?}",
+            rebuilt.stubs.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            rebuilt.config.typeshed.is_empty(),
+            "{name}: the reloaded config declares no typeshed directories"
+        );
+    }
+}
+
+#[test]
+fn rebuild_retains_stubs_when_every_configured_directory_fails() {
+    let (fixture, old) = stub_reload_context();
+    assert!(old.stubs.contains_key("localdep"));
+    // A configured-but-unreadable directory (here: nonexistent) is a
+    // genuine reload failure; the previous stubs survive it.
+    fixture
+        .write_file("ry.toml", "typeshed = [\"missing\"]\n")
+        .unwrap();
+    let rebuilt = rebuild_folder_context(&old);
+    assert!(
+        rebuilt.stubs.contains_key("localdep"),
+        "a failed stub directory reload must retain the previous stub map; got {:?}",
+        rebuilt.stubs.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        rebuilt.config.typeshed,
+        vec![fixture.path("missing")],
+        "the failed config itself is the new config; only the stubs are retained"
+    );
+}
+
+#[test]
+fn rebuild_replaces_stubs_when_switching_to_a_different_directory() {
+    let (fixture, old) = stub_reload_context();
+    assert!(old.stubs.contains_key("localdep"));
+    let other = serde_json::json!({
+        "schema_version": "1",
+        "package": "otherdep",
+        "version": "test",
+        "functions": {
+            "value": {"params": [], "return": {"mode": "character", "length": "1"}}
+        }
+    });
+    fixture
+        .write_file("other/otherdep.json", other.to_string())
+        .unwrap();
+    fixture
+        .write_file("ry.toml", "typeshed = [\"other\"]\n")
+        .unwrap();
+    let rebuilt = rebuild_folder_context(&old);
+    let packages: Vec<_> = rebuilt.stubs.keys().collect();
+    assert_eq!(
+        packages,
+        vec!["otherdep"],
+        "switching directories must load only the new directory's stubs"
+    );
+}
+
+#[test]
+fn rebuild_clears_stubs_when_the_only_stub_file_is_malformed() {
+    let (fixture, old) = stub_reload_context();
+    assert!(old.stubs.contains_key("localdep"));
+    // The directory still loads; only its sole file is malformed. That
+    // is a per-file warning, not a directory failure, so the empty map
+    // is the new state — the same result a fresh server would produce.
+    fixture
+        .write_file("stubs/localdep.json", "not json")
+        .unwrap();
+    let rebuilt = rebuild_folder_context(&old);
+    assert!(
+        rebuilt.stubs.is_empty(),
+        "a malformed stub file must not retain the previous stub map; got {:?}",
+        rebuilt.stubs.keys().collect::<Vec<_>>()
     );
 }

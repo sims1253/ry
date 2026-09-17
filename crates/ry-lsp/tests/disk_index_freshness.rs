@@ -125,13 +125,68 @@ fn watcher_registration_includes_r_sources() {
             spawn_session(&[fixture.root()], watching_capabilities(), None).await;
         let globs = take_watcher_globs(&mut session).await;
         assert!(
-            globs.iter().any(|glob| {
-                glob.as_str()
-                    .is_some_and(|pattern| pattern.contains(".R") || pattern.contains(",r,"))
-                    || *glob == json!("**/*.r")
-            }),
+            globs.iter().any(|glob| *glob == json!("**/*.{R,r,S,s,q}")),
             "registration must watch R source files, got: {globs:?}"
         );
+        join_session(session, server).await;
+    });
+}
+
+/// A watched R-source event that lands while the initial background
+/// index is still in flight must not strand the session: the per-file
+/// path retires the in-flight pass via the index generation, so when the
+/// retired pass is the initial one a fresh pass takes over clearing
+/// `initial_index_pending` — otherwise publications would stay gated for
+/// the rest of the session.
+#[test]
+fn watched_event_during_initial_index_keeps_diagnostics_flowing() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        // `a.R` alone defines `f` (character), so `use.R` carries RY040
+        // once the session converges.
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        ry_lsp::test_seam::arm_initial_index();
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        ry_lsp::test_seam::wait_initial_index().await;
+
+        // Rewrite the unopened `a.R` and deliver its watched change while
+        // the initial pass is paused: this retires the pass.
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        // Opening `use.R` must still produce diagnostics: the retired
+        // initial pass is replaced, not left stranding the flag.
+        let mark = session.publication_mark();
+        session.open(&use_uri, 1, USE).await.unwrap();
+        ry_lsp::test_seam::release_initial_index();
+        let publish = session
+            .published_diagnostics_after(&use_uri, mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&publish),
+            "the refreshed integer f must win after the initial index is retired: {publish}"
+        );
+        assert_converges(
+            &publish,
+            &fresh_use_diagnostics(&fixture).await,
+            "watched event during initial index",
+        );
+
         join_session(session, server).await;
     });
 }

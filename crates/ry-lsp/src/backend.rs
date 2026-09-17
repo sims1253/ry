@@ -17,7 +17,7 @@ use crate::settings::{FolderSettings, ServerSettings};
 
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -71,6 +71,18 @@ pub(super) struct State {
     hints: HashMap<String, CachedHints>,
     /// Workspace-wide debounce generation; see `schedule_diagnostics`.
     diag_generation: u64,
+    /// Paths with a scheduled-but-unpublished diagnostics request; see
+    /// `schedule_diagnostics`. The task holding the latest generation
+    /// drains the whole set, so a burst of scheduled URIs publishes
+    /// together instead of all but the last aborting as stale (#489).
+    pending_diag_paths: HashSet<String>,
+    /// Paths whose last publication carried diagnostics. Each publish
+    /// pass reconciles this set — a URI that stopped receiving
+    /// publications (its folder was disabled, discovery now excludes
+    /// it, or a rescan dropped the closed file from the index) is
+    /// cleared with an empty publication so stale squiggles cannot
+    /// linger in the editor (#489).
+    published_paths: HashSet<String>,
     /// Index generation stamp, bumped each time `spawn_background_index`
     /// starts so results from a prior folder set are discarded. The
     /// background task captures the generation at dispatch and checks it
@@ -851,13 +863,20 @@ impl Backend {
     /// Incrementally update the project and publish diagnostics for every
     /// open document. Publishing all files is required because an edit to a
     /// function definition can change diagnostics in its cross-file callers.
-    async fn publish_diagnostics(&self, uri: Url, generation: u64) {
-        let path = uri_to_path(&uri);
-        // Snapshot the open docs and the requested file's eligibility under
-        // the lock, then drop it before checking so a slow check doesn't
-        // block other LSP requests (e.g. didOpen of a second file). Only
-        // eligible documents' versions are snapshotted.
-        let (doc_versions, requested_is_eligible, supports_diagnostic_data) = {
+    ///
+    /// `requested` is the set of paths the debounce drained for this
+    /// generation. A requested path that is no longer eligible still gets
+    /// an immediate empty publication (the didOpen acknowledgment for a
+    /// document opened into a disabled or excluded folder); every other
+    /// URI that drops out of the check is reconciled at the end of the
+    /// pass through [`Backend::clear_dropped_diagnostics`] (#489).
+    async fn publish_diagnostics(&self, requested: HashSet<String>, generation: u64) {
+        // Snapshot the open docs, each requested path's eligibility, and
+        // the capability flags under the lock, then drop it before
+        // checking so a slow check doesn't block other LSP requests
+        // (e.g. didOpen of a second file). Only eligible documents'
+        // versions are snapshotted.
+        let (doc_versions, requested_ineligible, supports_diagnostic_data) = {
             let state = self.state.lock().await;
             if state.initial_index_pending {
                 return;
@@ -875,14 +894,24 @@ impl Backend {
                             .map(|version| (p.clone(), version))
                     })
                     .collect::<Vec<_>>(),
-                state.eligibility_for_path(&path),
+                requested
+                    .iter()
+                    .filter(|p| !state.eligibility_for_path(p))
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
             )
         };
-        if !requested_is_eligible {
+        for path in &requested_ineligible {
             self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
+                .publish_diagnostics(path_to_uri(path), Vec::new(), None)
                 .await;
+        }
+        if !requested_ineligible.is_empty() {
+            let mut state = self.state.lock().await;
+            for path in &requested_ineligible {
+                state.published_paths.remove(path);
+            }
         }
 
         let mut open_files = Vec::with_capacity(doc_versions.len());
@@ -1008,7 +1037,10 @@ impl Backend {
         // filter/confidence/exclude/baseline state. The partition carried
         // the owning context through the check, so publication uses the
         // same snapshot the check ran under; files no folder owns use the
-        // snapshotted root-level values.
+        // snapshotted root-level values. `published` records what this
+        // pass sent (and whether it was non-empty) for the tracking
+        // reconciliation below.
+        let mut published: Vec<(String, bool)> = Vec::new();
         for (ctx, result) in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
@@ -1084,15 +1116,63 @@ impl Backend {
                         diagnostic
                     })
                     .collect();
-                let diagnostic_uri = if diagnostic_path == path {
-                    uri.clone()
-                } else {
-                    path_to_uri(&diagnostic_path)
-                };
+                let diagnostic_uri = path_to_uri(&diagnostic_path);
+                let non_empty = !diagnostics.is_empty();
                 self.client
                     .publish_diagnostics(diagnostic_uri, diagnostics, None)
                     .await;
+                published.push((diagnostic_path, non_empty));
             }
+        }
+
+        // Reconcile the tracked publication set against this pass: a URI
+        // whose last publication carried diagnostics but which receives
+        // none now — its folder was disabled, discovery excludes it, or a
+        // rescan dropped the closed file from the index — keeps its old
+        // squiggles in the editor forever unless it is explicitly
+        // cleared (#489).
+        {
+            let mut state = self.state.lock().await;
+            for (path, non_empty) in published {
+                if non_empty {
+                    state.published_paths.insert(path);
+                } else {
+                    state.published_paths.remove(&path);
+                }
+            }
+        }
+        self.clear_dropped_diagnostics().await;
+    }
+
+    /// Publish empty diagnostics for every tracked URI that left the
+    /// analysis set since its last publication: the path is no longer
+    /// eligible (folder disabled, file excluded by a settings or config
+    /// change), or it is neither open nor in the disk index (a closed
+    /// file deleted or dropped by a rescan). Called at the end of every
+    /// publish pass, and after a rescan no open document will follow up
+    /// on. Deciding against current state — not against one pass's
+    /// snapshot — also self-heals a slower, older pass that publishes
+    /// after a newer one already cleared a URI (#489).
+    async fn clear_dropped_diagnostics(&self) {
+        let dropped: Vec<Url> = {
+            let mut state = self.state.lock().await;
+            let dropped: Vec<String> = state
+                .published_paths
+                .iter()
+                .filter(|path| {
+                    !state.eligibility_for_path(path.as_str())
+                        || (!state.docs.contains_key(path.as_str())
+                            && !state.disk_files.contains_key(path.as_str()))
+                })
+                .cloned()
+                .collect();
+            for path in &dropped {
+                state.published_paths.remove(path);
+            }
+            dropped.iter().map(|p| path_to_uri(p)).collect()
+        };
+        for uri in dropped {
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
     }
 
@@ -1259,39 +1339,59 @@ impl Backend {
 
     /// Schedule a diagnostics republish for every open document. Used
     /// after a global state change (settings, watched files) so the new
-    /// state takes effect immediately without waiting for an edit.
+    /// state takes effect immediately without waiting for an edit. With
+    /// no open document there is nothing to drive a debounced pass, so
+    /// the dropped-URI reconciliation runs directly instead — closed
+    /// disk files the rescan just dropped must not keep their last
+    /// publications (#489).
     async fn republish_all_open_documents(&self) {
         let open_uris: Vec<Url> = {
             let state = self.state.lock().await;
             state.docs.keys().map(|p| path_to_uri(p)).collect()
         };
+        if open_uris.is_empty() {
+            self.clear_dropped_diagnostics().await;
+            return;
+        }
         for uri in open_uris {
             self.schedule_diagnostics(uri).await;
         }
     }
 
-    /// Debounce diagnostics for `uri`: bump the workspace generation
-    /// counter and spawn a task that sleeps ~180ms, then publishes
-    /// diagnostics only if its generation is still the latest. A newer
-    /// edit during the sleep window bumps the counter and the stale task
-    /// aborts, so a burst of keystrokes triggers a single check rather
-    /// than one per keystroke. Diagnostics are project-wide, so one
-    /// workspace generation coalesces edits across all open documents.
+    /// Debounce diagnostics: bump the workspace generation counter and
+    /// spawn a task that sleeps ~180ms, then publishes only if its
+    /// generation is still the latest. A newer edit during the sleep
+    /// window bumps the counter and the stale task aborts, so a burst of
+    /// keystrokes triggers a single check rather than one per keystroke.
+    /// Diagnostics are project-wide, so one workspace generation
+    /// coalesces edits across all open documents: every scheduled URI
+    /// joins `pending_diag_paths`, and the one surviving task drains and
+    /// publishes the whole set. Scheduling N URIs — exactly what
+    /// `republish_all_open_documents` does — used to leave only the last
+    /// task alive, aborting the other N-1 as stale so every URI but the
+    /// last scheduled kept its previous diagnostics (#489).
     async fn schedule_diagnostics(&self, uri: Url) {
         let generation = {
             let mut state = self.state.lock().await;
+            state.pending_diag_paths.insert(uri_to_path(&uri));
             state.diag_generation = state.diag_generation.wrapping_add(1);
             state.diag_generation
         };
         let backend = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(180)).await;
-            let stale = {
-                let state = backend.state.lock().await;
-                state.diag_generation != generation
+            // Drain under the lock so the take is atomic with the
+            // staleness check: only the task holding the latest
+            // generation publishes, and it takes every URI scheduled in
+            // the burst (a newer schedule would have made this task
+            // stale and left the set for its own task).
+            let requested = {
+                let mut state = backend.state.lock().await;
+                (state.diag_generation == generation)
+                    .then(|| std::mem::take(&mut state.pending_diag_paths))
             };
-            if !stale {
-                backend.publish_diagnostics(uri, generation).await;
+            if let Some(requested) = requested {
+                backend.publish_diagnostics(requested, generation).await;
                 #[cfg(feature = "test-util")]
                 crate::test_seam::note_initial_diagnostic_cycle();
             }

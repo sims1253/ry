@@ -30,6 +30,73 @@ fn is_file_eligible_with_excludes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Shared per-file eligibility for bounded discovery and open-buffer admission (#488)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Component depth of `path` relative to `root`: the number of components
+/// below `root` (`root` itself is 0). `None` when `path` is not under `root`.
+fn relative_depth(path: &Path, root: &Path) -> Option<usize> {
+    path.strip_prefix(root)
+        .ok()
+        .map(|relative| relative.components().count())
+}
+
+/// Whether `path` clears the `index.max-depth` gate: its containing
+/// directory sits at most `max_depth` components below `root`.
+///
+/// This is the path-property form of the walker's descent pruning
+/// (`discover_recursive` never descends into a directory deeper than
+/// `max_depth`): a file whose parent is at depth `d` is discovered exactly
+/// when `d <= max_depth`, so an opened buffer must clear the same bound or
+/// its definitions would leak into project state the closed index omitted.
+/// A path outside `root` carries no depth information and passes; callers
+/// only invoke this for rooted paths.
+pub fn is_within_depth(path: &Path, root: &Path, max_depth: usize) -> bool {
+    let parent = path.parent().unwrap_or(path);
+    relative_depth(parent, root).is_none_or(|depth| depth <= max_depth)
+}
+
+/// Whether a byte length clears the `index.max-file-bytes` gate: at most
+/// `max_file_bytes` bytes. The boundary is inclusive — discovery omits only
+/// sizes strictly above the cap, and admission matches it.
+pub fn is_within_file_bytes(file_len: u64, max_file_bytes: u64) -> bool {
+    file_len <= max_file_bytes
+}
+
+/// Full per-file eligibility combining `exclude` patterns with the
+/// bounded-discovery caps, sharing one policy between the directory walker
+/// and open-buffer admission (#488).
+///
+/// `depth_root` is the root depth counts from (the walk root for discovery,
+/// the folder root for open documents — walk depth is not a path property,
+/// so the buffer's containing-directory depth is recomputed here);
+/// `exclude_anchor` anchors the exclude patterns (`None` skips them, matching
+/// a missing config). `content_len` is the byte length of the content being
+/// admitted, or `None` to skip the size gate: open-buffer admission passes
+/// the buffer text length — unsaved pasted content can cross the boundary
+/// without touching disk, so `fs::metadata` must not stand in — while indexed
+/// disk files pass `None` because discovery already measured the file on disk
+/// and the in-memory source length is a transcode away from that measurement.
+pub fn is_file_eligible_with_limits(
+    path: &Path,
+    depth_root: &Path,
+    exclude_anchor: Option<&Path>,
+    excludes: &ry_config::Excludes,
+    limits: &DiscoveryLimits,
+    content_len: Option<u64>,
+) -> bool {
+    if exclude_anchor.is_some_and(|anchor| {
+        !is_file_eligible_with_excludes(path, anchor, excludes)
+    }) {
+        return false;
+    }
+    if !is_within_depth(path, depth_root, limits.max_depth) {
+        return false;
+    }
+    content_len.is_none_or(|len| is_within_file_bytes(len, limits.max_file_bytes))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Shared, bounded directory discovery (#48)
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -372,7 +439,14 @@ fn discover_recursive(
                 skipped.record(&path, true, "package support directory", limits.max_files);
                 continue;
             }
-            // depth cap prunes further descent.
+            // depth cap prunes further descent. This is the reference
+            // implementation of the depth half of
+            // [`is_file_eligible_with_limits`]: `depth` counts descent
+            // levels from `walk_root`, and a file whose parent sits deeper
+            // than `max_depth` never becomes discoverable here, so
+            // open-buffer admission must apply the same bound as a path
+            // property (`is_within_depth`) or the admitted buffer would leak
+            // into project state the closed index omitted (#488).
             if depth >= limits.max_depth {
                 truncated.depth_pruned_dirs.push(path);
                 continue;
@@ -410,7 +484,10 @@ fn discover_recursive(
                 truncated.max_files_hit = true;
                 break;
             }
-            // max-file-bytes cap.
+            // max-file-bytes cap. This is the reference implementation of
+            // the size half of [`is_file_eligible_with_limits`]: discovery
+            // omits only sizes strictly above the cap, and passes the
+            // measured size so admission of the same bytes agrees (#488).
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let size = metadata.len();
                 if size > limits.max_file_bytes {
@@ -693,6 +770,52 @@ mod shared_tests {
             &dir.path().join("keep.R"),
             dir.path(),
             &config
+        ));
+    }
+
+    /// The shared caps half of `is_file_eligible_with_limits` (#488): the
+    /// size boundary is inclusive and the depth bound keeps files whose
+    /// parent is exactly at `max_depth` — the same boundaries
+    /// `discover_recursive` applies to the bytes and descent levels on
+    /// disk, so buffer-text admission cannot disagree with the closed
+    /// index by a byte or a level.
+    #[test]
+    fn shared_limits_match_the_walkers_boundaries() {
+        let limits = DiscoveryLimits {
+            max_files: 100,
+            max_file_bytes: 10,
+            max_depth: 1,
+        };
+        let excludes = ry_config::Excludes::from_config(&ry_config::Config::default());
+        let root = Path::new("/root");
+        let eligible = |path: &Path, len: Option<u64>| {
+            is_file_eligible_with_limits(path, root, Some(root), &excludes, &limits, len)
+        };
+        assert!(eligible(&root.join("at.R"), Some(10)));
+        assert!(!eligible(&root.join("over.R"), Some(11)));
+        assert!(eligible(&root.join("a").join("deep.R"), None));
+        assert!(!eligible(&root.join("a").join("b").join("deeper.R"), None));
+    }
+
+    /// Depth is a path property relative to the given root, not a walk
+    /// property: nested roots see fewer components, and paths outside the
+    /// root carry no depth to judge (#488).
+    #[test]
+    fn depth_counts_directory_components_relative_to_the_root() {
+        assert!(is_within_depth(
+            Path::new("/root/a/b/file.R"),
+            Path::new("/root/a"),
+            1
+        ));
+        assert!(!is_within_depth(
+            Path::new("/root/a/b/file.R"),
+            Path::new("/root/a"),
+            0
+        ));
+        assert!(is_within_depth(
+            Path::new("/elsewhere/file.R"),
+            Path::new("/root"),
+            0
         ));
     }
 

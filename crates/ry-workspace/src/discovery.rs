@@ -2,16 +2,6 @@
 
 use super::*;
 
-/// Return whether `path` is eligible to participate in analysis under `config`.
-///
-/// Matching is always rooted at the configuration/workspace root and uses
-/// forward slashes, so callers cannot accidentally give indexing and
-/// publication different exclude semantics.
-pub fn is_file_eligible(path: &Path, root: &Path, config: &ry_config::Config) -> bool {
-    let excludes = ry_config::Excludes::from_config(config);
-    is_file_eligible_with_excludes(path, root, &excludes)
-}
-
 /// Check file eligibility with an already-compiled exclude matcher.
 /// Directory walkers should build this once per owning configuration.
 fn is_file_eligible_with_excludes(
@@ -754,8 +744,12 @@ mod shared_tests {
         );
     }
 
+    /// The shared exclude third of `is_file_eligible_with_limits` (#488):
+    /// matching is rooted at the configuration/workspace root and uses
+    /// forward slashes, so indexing and publication cannot give the same
+    /// patterns different exclude semantics.
     #[test]
-    fn eligibility_is_rooted_and_separator_independent() {
+    fn shared_policy_excludes_are_rooted_and_separator_independent() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("vendor").join("influence.R");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -764,12 +758,20 @@ mod shared_tests {
             exclude: vec!["vendor/**".into()],
             ..Default::default()
         };
-        assert!(!is_file_eligible(&file, dir.path(), &config));
-        assert!(is_file_eligible(
-            &dir.path().join("keep.R"),
-            dir.path(),
-            &config
-        ));
+        let limits = DiscoveryLimits::from_config(&config);
+        let excludes = ry_config::Excludes::from_config(&config);
+        let eligible = |path: &Path| {
+            is_file_eligible_with_limits(
+                path,
+                dir.path(),
+                Some(dir.path()),
+                &excludes,
+                &limits,
+                None,
+            )
+        };
+        assert!(!eligible(&file));
+        assert!(eligible(&dir.path().join("keep.R")));
     }
 
     /// The shared caps half of `is_file_eligible_with_limits` (#488): the
@@ -818,9 +820,13 @@ mod shared_tests {
         ));
     }
 
+    /// Exclude matching reads the workspace entry name, not a
+    /// canonicalized symlink target: an explicit exclude for `linked.R`
+    /// excludes that entry regardless of where it points (#488 pins this
+    /// on the shared policy, not the retired excludes-only wrapper).
     #[cfg(unix)]
     #[test]
-    fn eligibility_matches_a_symlink_entry_name_not_its_target() {
+    fn shared_policy_matches_a_symlink_entry_name_not_its_target() {
         use std::os::unix::fs::symlink;
 
         let dir = tempfile::tempdir().unwrap();
@@ -832,9 +838,21 @@ mod shared_tests {
             exclude: vec!["linked.R".into()],
             ..Default::default()
         };
+        let limits = DiscoveryLimits::from_config(&config);
+        let excludes = ry_config::Excludes::from_config(&config);
+        let eligible = |path: &Path| {
+            is_file_eligible_with_limits(
+                path,
+                dir.path(),
+                Some(dir.path()),
+                &excludes,
+                &limits,
+                None,
+            )
+        };
 
-        assert!(!is_file_eligible(&link, dir.path(), &config));
-        assert!(is_file_eligible(&target, dir.path(), &config));
+        assert!(!eligible(&link));
+        assert!(eligible(&target));
     }
 
     #[test]

@@ -214,6 +214,31 @@ impl Project {
         }
     }
 
+    /// Reinstall the project's files in the order given by `order`.
+    ///
+    /// Shadowing follows `files` order (the later entry wins), and that
+    /// order otherwise reflects insertion history: `update_file` replaces
+    /// an existing entry in place but appends new paths, so a
+    /// remove/re-add cycle moves a file to the end and flips which
+    /// same-named definition wins. Callers that need an order independent
+    /// of that history — the LSP feeds sorted paths, matching the CLI's
+    /// sorted discovery (#490) — call this after their updates so the
+    /// merged table follows `order` alone. Paths missing from `order`
+    /// sort after the listed ones, keeping their relative order.
+    ///
+    /// All caches are keyed by path, so reordering changes nothing but
+    /// the merge order; any shadowing flip it provokes is picked up by
+    /// the usual changed-function dirty tracking.
+    pub fn reorder_files(&mut self, order: &[String]) {
+        let rank: HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(index, path)| (path.as_str(), index))
+            .collect();
+        self.files
+            .sort_by_key(|(path, _)| rank.get(path.as_str()).copied().unwrap_or(usize::MAX));
+    }
+
     /// Remove a file and its cached pass-1 collection from the project.
     pub fn remove_file(&mut self, path: &str) {
         self.files.retain(|(existing, _)| existing != path);

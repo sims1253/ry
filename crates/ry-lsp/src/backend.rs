@@ -93,10 +93,13 @@ pub(super) struct State {
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
     /// every rebuilt Project and single-file scope check sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-    /// Persistent multi-file checker used only by diagnostics. Its own mutex
-    /// keeps project checks serialized without holding the document-state
-    /// lock used by latency-sensitive LSP requests.
-    project: Arc<Mutex<ProjectCache>>,
+    /// Persistent multi-file checkers used only by diagnostics, one per
+    /// package root for files no workspace folder owns (see
+    /// [`FolderAnalysisContext::package_caches`] for the folder-owned
+    /// equivalent). Each cache has its own mutex so package checks stay
+    /// serialized without holding the document-state lock used by
+    /// latency-sensitive LSP requests.
+    root_caches: HashMap<Option<PathBuf>, Arc<Mutex<ProjectCache>>>,
     /// Counts every actual parse (`RParser::parse`) performed by
     /// `parsed_file` -- i.e. every cache MISS. The cache acceptance test
     /// asserts that editing one file in a multi-file workspace parses
@@ -151,7 +154,8 @@ pub(super) struct State {
     // --- multi-root workspace folders ---
     /// Per-root analysis contexts, ordered by root path length descending
     /// for longest-prefix ownership. Each context owns its folder's
-    /// project cache (see [`FolderAnalysisContext::project_cache`]).
+    /// per-package project caches (see
+    /// [`FolderAnalysisContext::package_caches`]).
     folder_contexts: Vec<FolderAnalysisContext>,
     /// On-disk `.R`/`.r` files discovered by the background indexer,
     /// keyed by absolute path. Open documents shadow these.
@@ -187,8 +191,13 @@ pub(super) struct FolderAnalysisContext {
     pub folder_settings: FolderSettings,
     /// Local typeshed stubs loaded from this folder's `ry.toml`.
     pub stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-    /// Workspace resolution context for package metadata.
-    pub workspace_context: Option<ry_workspace::WorkspaceContext>,
+    /// Per-package workspace resolution contexts, keyed by nearest
+    /// `DESCRIPTION` ancestor root (`None` for files outside any package).
+    /// Each R package is a separate library scope, so the folder-wide
+    /// union used to leak one package's `library()` attachments and
+    /// package metadata into its siblings; resolving per package keeps
+    /// the per-package boundary `ry check` partitions on (#487).
+    pub workspace_contexts: HashMap<Option<PathBuf>, ry_workspace::WorkspaceContext>,
     /// The baseline loaded from `ry.toml`/editor settings, cached during
     /// context construction so the publish path performs no disk access.
     pub baseline: Option<ry_config::Baseline>,
@@ -198,12 +207,16 @@ pub(super) struct FolderAnalysisContext {
     pub min_confidence: Option<ry_checker::Confidence>,
     /// Precompiled exclude glob patterns.
     pub excludes: ry_config::Excludes,
-    /// This folder's project cache for isolated checking. Each workspace
-    /// folder gets its own `ProjectCache` so two roots defining the same
-    /// package differently never collide. Shared via `Arc` and carried
-    /// across context rebuilds so incremental check state survives a
-    /// config reload.
-    pub project_cache: Arc<Mutex<ProjectCache>>,
+    /// This folder's per-package project caches for isolated checking.
+    /// Each workspace folder gets one `ProjectCache` per package root (the
+    /// `None` key covers non-package scripts) so two packages nested under
+    /// one folder never share a `Project`: pooling them let top-level
+    /// bindings and inferred functions leak between namespaces, hiding
+    /// real RY010 findings and resolving same-named functions to the wrong
+    /// package's definition (#487). Each cache is shared via `Arc` and the
+    /// map is carried across context rebuilds so incremental check state
+    /// survives a config reload.
+    pub package_caches: HashMap<Option<PathBuf>, Arc<Mutex<ProjectCache>>>,
 }
 
 /// Compile the filter, min_confidence, and excludes for a folder from its
@@ -284,11 +297,20 @@ pub(super) struct ProjectCheckResult {
     files: HashMap<String, Arc<SourceFile>>,
 }
 
-/// Partitioned project files with the owning folder context (if any).
-type FolderPartition = (
-    Option<FolderAnalysisContext>,
-    Vec<(String, i32, Arc<SourceFile>)>,
-);
+/// One file fed into a package check: its path, the open document's
+/// version (zero for indexed disk files), and the parsed snapshot.
+type PackageFile = (String, i32, Arc<SourceFile>);
+
+/// Project files owned by one folder, sub-partitioned by package root:
+/// the owning folder context (if any), the nearest-`DESCRIPTION`
+/// ancestor root (`None` for files outside any package), and the files.
+/// Each R package is a separate library scope and checks through its own
+/// `ProjectCache` (see [`FolderAnalysisContext::package_caches`).
+struct PackagePartition {
+    ctx: Option<FolderAnalysisContext>,
+    package_root: Option<PathBuf>,
+    files: Vec<PackageFile>,
+}
 
 impl ProjectCache {
     #[cfg(test)]
@@ -985,14 +1007,12 @@ impl Backend {
         open_files.sort_by(|a, b| a.0.cmp(&b.0));
         project_files.extend(open_files);
 
-        // Check each folder partition independently through its own
+        // Check each package partition independently through its own
         // ProjectCache, stubs, and workspace context. The root-level
         // filter, confidence, exclude, baseline, and root state rides
         // along for the files no folder owns.
         let (
             folder_contexts,
-            root_project,
-            user_stubs,
             root_filter,
             root_min_confidence,
             root_excludes,
@@ -1003,8 +1023,6 @@ impl Backend {
             let state = self.state.lock().await;
             (
                 state.folder_contexts.clone(),
-                Arc::clone(&state.project),
-                Arc::clone(&state.user_stubs),
                 state.root_filter.clone(),
                 state.root_min_confidence,
                 state.root_excludes.clone(),
@@ -1014,47 +1032,129 @@ impl Backend {
             )
         };
 
-        // Partition project_files by folder root: each file goes to the
-        // first folder context whose root contains it (the same ownership
-        // rule as `folder_context_for_path`); files no folder owns go to
-        // the root project. The contexts are already clones, so every
+        // Partition project_files by folder root, then sub-partition each
+        // folder's files by nearest-`DESCRIPTION` ancestor root — the
+        // shared `ry_workspace::group_by_package_root` boundary `ry check`
+        // partitions on. Each R package is a separate library scope, so
+        // sibling packages nested under one folder must not share one
+        // `Project`: pooling them lets top-level bindings and inferred
+        // functions leak between namespaces, which can both hide real
+        // RY010 findings and resolve same-named functions to the wrong
+        // package's definition (#487). Files no folder owns go to the
+        // root project. The contexts are already clones, so every
         // partition carries its owning context instead of a map key
         // nobody reads.
-        let mut partitions: Vec<FolderPartition> = Vec::new();
-        let mut root_files: Vec<(String, i32, Arc<SourceFile>)> = Vec::new();
+        let mut folder_files: Vec<(Option<PathBuf>, Vec<PackageFile>)> = Vec::new();
         for (fp, ver, file) in project_files {
-            if let Some(ctx) = folder_contexts
+            let folder_root = folder_contexts
                 .iter()
                 .find(|c| std::path::Path::new(&fp).starts_with(&c.root))
+                .map(|c| c.root.clone());
+            // The ownership rule matches `folder_context_for_path`.
+            match folder_files
+                .iter_mut()
+                .find(|(owned, _)| *owned == folder_root)
             {
-                let partition = partitions
-                    .iter_mut()
-                    .find(|(owned, _)| owned.as_ref().is_some_and(|c| c.root == ctx.root));
-                match partition {
-                    Some((_, files)) => files.push((fp, ver, file)),
-                    None => partitions.push((Some(ctx.clone()), vec![(fp, ver, file)])),
-                }
-            } else {
-                root_files.push((fp, ver, file));
+                Some((_, files)) => files.push((fp, ver, file)),
+                None => folder_files.push((folder_root, vec![(fp, ver, file)])),
             }
         }
-        if !root_files.is_empty() {
-            partitions.push((None, root_files));
+        let mut partitions: Vec<PackagePartition> = Vec::new();
+        for (folder_root, files) in &folder_files {
+            let ctx = folder_root.as_ref().and_then(|folder_root| {
+                folder_contexts
+                    .iter()
+                    .find(|c| &c.root == folder_root)
+                    .cloned()
+            });
+            // The grouping returns indices into the folder's file list in
+            // ascending order, so each package's files keep the canonical
+            // sorted order the shadowing contract needs (#490).
+            let paths: Vec<&str> = files.iter().map(|(path, _, _)| path.as_str()).collect();
+            for (package_root, indices) in ry_workspace::group_by_package_root(paths) {
+                partitions.push(PackagePartition {
+                    ctx: ctx.clone(),
+                    package_root,
+                    files: indices.iter().map(|index| files[*index].clone()).collect(),
+                });
+            }
+        }
+
+        // Snapshot each partition's check inputs under the state lock:
+        // stubs, the package's own workspace context, and its project
+        // cache handle. Cache handles are created on first use and live in
+        // the owning folder's map (or the root map), so incremental check
+        // state survives across passes. A partition whose folder vanished
+        // mid-pass falls back to the root inputs rather than skipping the
+        // check.
+        struct PackageCheckJob {
+            ctx: Option<FolderAnalysisContext>,
+            stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+            workspace: Option<ry_workspace::WorkspaceContext>,
+            cache: Arc<Mutex<ProjectCache>>,
+            files: Vec<PackageFile>,
+        }
+        let mut jobs: Vec<PackageCheckJob> = Vec::with_capacity(partitions.len());
+        {
+            let mut state = self.state.lock().await;
+            for partition in partitions {
+                let folder_root = partition.ctx.as_ref().map(|ctx| ctx.root.clone());
+                let live = folder_root.as_ref().and_then(|folder_root| {
+                    state
+                        .folder_contexts
+                        .iter_mut()
+                        .find(|ctx| &ctx.root == folder_root)
+                });
+                match live {
+                    Some(ctx) => {
+                        let cache = ctx
+                            .package_caches
+                            .entry(partition.package_root.clone())
+                            .or_default()
+                            .clone();
+                        // A package group with no stored context (its files
+                        // arrived after the last index, e.g. a freshly
+                        // created package) checks against an empty context
+                        // until the next background index resolves it — the
+                        // same staleness any new file already had, now
+                        // scoped to its own package instead of inheriting a
+                        // sibling package's metadata.
+                        let workspace = ctx
+                            .workspace_contexts
+                            .get(&partition.package_root)
+                            .cloned()
+                            .unwrap_or_default();
+                        jobs.push(PackageCheckJob {
+                            ctx: partition.ctx,
+                            stubs: Arc::clone(&ctx.stubs),
+                            workspace: Some(workspace),
+                            cache,
+                            files: partition.files,
+                        });
+                    }
+                    None => {
+                        let cache = state
+                            .root_caches
+                            .entry(partition.package_root)
+                            .or_default()
+                            .clone();
+                        jobs.push(PackageCheckJob {
+                            ctx: partition.ctx,
+                            stubs: Arc::clone(&state.user_stubs),
+                            workspace: None,
+                            cache,
+                            files: partition.files,
+                        });
+                    }
+                }
+            }
         }
 
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
-        for (ctx, files) in partitions {
-            let (stubs, workspace_context, project_handle) = match &ctx {
-                Some(ctx) => (
-                    Arc::clone(&ctx.stubs),
-                    ctx.workspace_context.clone(),
-                    Arc::clone(&ctx.project_cache),
-                ),
-                None => (Arc::clone(&user_stubs), None, Arc::clone(&root_project)),
-            };
-            let mut project = project_handle.lock().await;
-            let result = project.check_with_workspace(files, stubs, workspace_context.as_ref());
-            all_results.push((ctx, result));
+        for job in jobs {
+            let mut project = job.cache.lock().await;
+            let result = project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref());
+            all_results.push((job.ctx, result));
         }
 
         // An edit that arrived while parsing/checking invalidates this whole
@@ -1270,18 +1370,42 @@ impl Backend {
                         all_truncated.push((root.clone(), report.clone()));
                     }
                 }
-                let files: Vec<&SourceFile> = outcome.files.values().map(AsRef::as_ref).collect();
-                match ry_workspace::resolve_workspace_context(
-                    root,
-                    config,
-                    ry_workspace::ResolutionEnvironment {
-                        files,
-                        user_stubs: stubs,
-                    },
-                ) {
-                    Ok(context) => contexts.push((root.clone(), context)),
-                    Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
+                // Per-package resolution contexts (#487): group the indexed
+                // files by nearest-`DESCRIPTION` ancestor — the same
+                // boundary `ry check` partitions on — and resolve each
+                // group against its own package root, so one package's
+                // `library()` union and NAMESPACE metadata never leak into
+                // a sibling package checked in the same folder. The `None`
+                // group (plain scripts outside any package) resolves
+                // against the folder root, preserving today's folder-wide
+                // visibility for it.
+                let mut paths: Vec<&str> = outcome.files.keys().map(String::as_str).collect();
+                paths.sort();
+                let groups = ry_workspace::group_by_package_root(paths.clone());
+                let mut folder_contexts: HashMap<Option<PathBuf>, ry_workspace::WorkspaceContext> =
+                    HashMap::with_capacity(groups.len());
+                for (package_root, indices) in &groups {
+                    let resolution_root = package_root.as_deref().unwrap_or(root);
+                    let files: Vec<&SourceFile> = indices
+                        .iter()
+                        .map(|index| outcome.files.get(paths[*index]).map(AsRef::as_ref))
+                        .collect::<Option<Vec<_>>>()
+                        .unwrap_or_default();
+                    match ry_workspace::resolve_workspace_context(
+                        resolution_root,
+                        config,
+                        ry_workspace::ResolutionEnvironment {
+                            files,
+                            user_stubs: stubs,
+                        },
+                    ) {
+                        Ok(context) => {
+                            folder_contexts.insert(package_root.clone(), context);
+                        }
+                        Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
+                    }
                 }
+                contexts.push((root.clone(), folder_contexts));
                 all_disk_files.extend(outcome.files);
             }
             (all_disk_files, contexts, all_truncated)
@@ -1335,17 +1459,19 @@ impl Backend {
                 state.disk_files = disk_files;
                 for ctx in &mut state.folder_contexts {
                     if let Some((_, wc)) = contexts.iter().find(|(root, _)| root == &ctx.root) {
-                        ctx.workspace_context = Some(wc.clone());
+                        ctx.workspace_contexts = wc.clone();
                     }
                 }
                 state.initial_index_pending = false;
                 drop(state);
-                for (_, context) in &contexts {
-                    for (path, reason) in &context.degraded_scopes {
-                        self.client.log_message(
-                            tower_lsp::lsp_types::MessageType::WARNING,
-                            format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
-                        ).await;
+                for (_, group) in &contexts {
+                    for context in group.values() {
+                        for (path, reason) in &context.degraded_scopes {
+                            self.client.log_message(
+                                tower_lsp::lsp_types::MessageType::WARNING,
+                                format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
+                            ).await;
+                        }
                     }
                 }
                 if cap_hit {
@@ -1673,12 +1799,12 @@ pub(super) fn build_folder_contexts(
             config,
             folder_settings,
             stubs,
-            workspace_context: None,
+            workspace_contexts: HashMap::new(),
             baseline,
             filter,
             min_confidence,
             excludes,
-            project_cache: Arc::new(Mutex::new(ProjectCache::default())),
+            package_caches: HashMap::new(),
         });
     }
 
@@ -1701,7 +1827,7 @@ pub(super) fn build_folder_contexts(
 /// loaded, replacing the map with what a fresh server would produce.
 /// Deliberate removals (a setting deleted or set to an empty list) are
 /// not failures and always take effect. `folder_settings`,
-/// `workspace_context`, and `project_cache` are not config-file-derived
+/// `workspace_contexts`, and `package_caches` are not config-file-derived
 /// (they come from editor push / the background indexer / incremental
 /// checks respectively) and are carried over unchanged. Disk I/O
 /// happens here; callers MUST run this outside the state lock.
@@ -1764,12 +1890,12 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
         config,
         folder_settings: old.folder_settings.clone(),
         stubs,
-        workspace_context: old.workspace_context.clone(),
+        workspace_contexts: old.workspace_contexts.clone(),
         baseline,
         filter,
         min_confidence,
         excludes,
-        project_cache: Arc::clone(&old.project_cache),
+        package_caches: old.package_caches.clone(),
     }
 }
 

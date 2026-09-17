@@ -27,6 +27,27 @@ All notable changes to ry are documented in this file.
   past the size cap also shadows its own on-disk twin (which the
   index may still hold at the old, small size) so the path cannot keep
   contributing through the stale twin.
+- Isolate nested R packages under one editor workspace folder into
+  per-package analysis scopes instead of checking the whole folder
+  through a single pooled project (#487): multiple packages sharing a
+  workspace folder used to have their top-level functions and bindings,
+  pooled `known_vars`, and `library()` attachments merged into one
+  project, so a package-private binding defined in one package resolved
+  in its sibling (hiding real RY010 findings) and a function name
+  defined in both packages resolved to whichever definition the merge
+  order preferred. Each folder now partitions its files by
+  nearest-`DESCRIPTION` ancestor — the same
+  `ry_workspace::group_by_package_root` boundary `ry check` partitions
+  on, moved into the shared workspace crate so the two frontends cannot
+  drift — and checks each package through its own project cache with
+  its own workspace resolution context. Files in the same package still
+  share definitions exactly as before, and plain multi-file scripts
+  outside any package keep the folder-wide visibility they had; only
+  the cross-package leak is closed. A package group whose files arrived
+  after the last background index (for example a freshly created
+  package) checks against an empty resolution context until the next
+  index resolves it, rather than inheriting a sibling package's
+  metadata.
 - Clear stale diagnostics from every document the language server stops
   analyzing, not just the last-scheduled one (#489): when a folder was
   disabled or files excluded, `republish_all_open_documents` scheduled

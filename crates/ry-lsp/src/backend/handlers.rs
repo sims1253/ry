@@ -413,7 +413,19 @@ impl LanguageServer for Backend {
                     || path.ends_with(".RData")
                     || path.ends_with(".rdata")
             });
-        if !resolution_changed {
+        // R source events refresh the disk index entry-by-entry (#486):
+        // an edit/create/delete of an unopened file lands here instead of
+        // sitting stale until an unrelated rescan. Deleted files leave
+        // the index; changed or created ones are re-read through the
+        // bounded decoder. Open documents keep shadowing — the refresh
+        // itself skips live buffers.
+        let r_source_paths: Vec<std::path::PathBuf> = params
+            .changes
+            .iter()
+            .filter_map(|change| change.uri.to_file_path().ok())
+            .filter(|path| ry_workspace::is_r_source_path(path))
+            .collect();
+        if !resolution_changed && r_source_paths.is_empty() {
             return;
         }
 
@@ -421,7 +433,35 @@ impl LanguageServer for Backend {
             self.reload_folder_contexts().await;
         }
 
-        self.spawn_background_index().await;
+        if resolution_changed {
+            self.spawn_background_index().await;
+        } else {
+            let mut refreshed = false;
+            for path in r_source_paths {
+                refreshed |= self.refresh_disk_entry(path).await;
+            }
+            if !refreshed {
+                return;
+            }
+            // A stale in-flight background pass must not overwrite these
+            // fresher per-file entries when it lands: the pass checks the
+            // generation before writing, so claiming a new one retires it.
+            // A newer pass started afterwards still wins, as usual. The
+            // bump happens only when a refresh actually landed — an event
+            // for an open document (e.g. every save) retires nothing.
+            // When the retired pass was the initial index, its completion
+            // can no longer clear `initial_index_pending`, so a fresh pass
+            // takes over that duty; without it publications would stay
+            // gated for the rest of the session.
+            let index_pending = {
+                let mut state = self.state.lock().await;
+                state.index_generation = state.index_generation.wrapping_add(1);
+                state.initial_index_pending
+            };
+            if index_pending {
+                self.spawn_background_index().await;
+            }
+        }
 
         self.republish_all_open_documents().await;
     }
@@ -464,6 +504,17 @@ impl LanguageServer for Backend {
                 cache.files.remove(&path);
             }
         }
+        // Re-read the closed file from disk so save-then-close converges
+        // with a fresh server: the buffer's last-saved bytes become the
+        // indexed snapshot instead of the initialize-time one (#486). A
+        // discard-then-close (disk still holds the old bytes) re-reads
+        // those same old bytes, which is exactly what "matches" means —
+        // no content comparison is needed because the decoder is a pure
+        // function of the current disk state. Unreadable files leave the
+        // index, matching the walk; a dropped entry that previously
+        // carried diagnostics is reconciled by the republish below (#489).
+        self.refresh_disk_entry(std::path::PathBuf::from(&path))
+            .await;
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
         self.client

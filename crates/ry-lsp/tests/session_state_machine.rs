@@ -615,6 +615,13 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
             }
 
             // ── state-machine extensions ──
+            // `.R` create/delete/rename events travel as the file's own
+            // watched-file event now that the server registers R source
+            // globs (#486); the `ry.toml` change rides along only to keep
+            // exercising the config-reload path on the same step, the way
+            // the original workaround did. The model never saves buffers
+            // to disk, so save-then-close stays covered by the dedicated
+            // `disk_index_freshness` protocol tests.
             Operation::CreateFile { file, source } => {
                 if model.has_disk(*file) {
                     continue;
@@ -623,10 +630,14 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .write_file(FILES[*file as usize], source.text())
                     .unwrap();
                 model.disk_files.insert(*file, source.text().to_string());
+                let created_uri = file_uri(&file_path(&fixture, *file));
                 let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
+                    json!({"changes": [
+                        {"uri": created_uri, "type": 1},
+                        {"uri": ry_toml_uri, "type": 2},
+                    ]}),
                 )
                 .await
                 .unwrap();
@@ -653,12 +664,16 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                     .unwrap();
                 }
                 let path = file_path(&fixture, *file);
+                let deleted_uri = file_uri(&path);
                 let _ = std::fs::remove_file(&path);
                 model.disk_files.remove(file);
                 let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
+                    json!({"changes": [
+                        {"uri": deleted_uri, "type": 3},
+                        {"uri": ry_toml_uri, "type": 2},
+                    ]}),
                 )
                 .await
                 .unwrap();
@@ -677,15 +692,21 @@ async fn convergence_property(operations: Vec<Operation>) -> Result<(), TestCase
                 }
                 let from_path = file_path(&fixture, *from);
                 let to_path = file_path(&fixture, *to);
+                let from_uri = file_uri(&from_path);
                 let content = model.disk_files[from].clone();
                 let _ = std::fs::remove_file(&to_path);
                 std::fs::rename(&from_path, &to_path).unwrap();
                 model.disk_files.remove(from);
                 model.disk_files.insert(*to, content);
+                let to_uri = file_uri(&to_path);
                 let ry_toml_uri = file_uri(&fixture.path("ry.toml"));
                 live.notify(
                     "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": ry_toml_uri, "type": 2}]}),
+                    json!({"changes": [
+                        {"uri": from_uri, "type": 3},
+                        {"uri": to_uri, "type": 1},
+                        {"uri": ry_toml_uri, "type": 2},
+                    ]}),
                 )
                 .await
                 .unwrap();

@@ -179,6 +179,15 @@ impl BuildIgnoredIncludes {
     }
 }
 
+/// Whether `path` carries an R source extension (the same set the
+/// directory walk treats as R source: conventional `.R`/`.r` plus the
+/// historical S-dialect `.S`/`.s`/`.q` spellings). Single-file
+/// eligibility checks that cannot afford a full walk (watched-file
+/// events, close-time refresh) classify through this.
+pub fn is_r_source_path(path: &Path) -> bool {
+    is_source_path(path)
+}
+
 fn is_source_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
@@ -281,6 +290,14 @@ pub fn discover_r_files(
         skipped,
         read_errors,
     }
+}
+
+/// Whether `path` is test data under a package's `tests/` tree rather than
+/// code the package test runner executes. Public so single-file index
+/// refreshes (watched-file events, close-time re-reads) apply the same
+/// runner-code classification as the directory walk without walking.
+pub fn is_test_fixture_path(path: &Path) -> bool {
+    is_test_fixture(path)
 }
 
 /// Whether `path` is test data under a package's `tests/` tree rather than

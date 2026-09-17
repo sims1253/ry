@@ -635,6 +635,14 @@ impl Backend {
             serde_json::json!({"globPattern": "**/NAMESPACE"}),
             serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
             serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
+            // R source, so an edit/create/delete of an unopened file
+            // reaches `did_change_watched_files` instead of sitting stale
+            // in the disk index until an unrelated rescan (#486). The
+            // extension set mirrors `ry_workspace` discovery (conventional
+            // `.R`/`.r` plus the historical S-dialect spellings); per-file
+            // walk rules (excludes, fixtures, caps) are applied when the
+            // event is processed, not in the glob.
+            serde_json::json!({"globPattern": "**/*.{R,r,S,s,q}"}),
         ];
         for path in &paths {
             let pattern = if relative {
@@ -1529,6 +1537,112 @@ impl Backend {
         }
     }
 
+    /// Refresh one `disk_files` entry from disk, applying the owning
+    /// folder's eligibility and the walk's per-file admission rules with
+    /// the same bounded decoder the background indexer parses through
+    /// (#486). A missing, ineligible, oversized, or unreadable file is
+    /// dropped from the index, so a watched-file deletion corrupts
+    /// nothing and a rescan cannot disagree about membership. Returns
+    /// whether the caller should republish open documents afterwards.
+    ///
+    /// The caller must hold no lock: the admission stats and the disk
+    /// read/parse run on the blocking pool, and only the snapshots and
+    /// the map write take the state lock. Open documents are left alone
+    /// — the editor's buffer stays authoritative for its path, and the
+    /// publish path layers it over the index.
+    async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
+        let path_string = path.to_string_lossy().into_owned();
+        // Snapshot the owning root and config once: the admission checks
+        // below must agree with each other even if a config reload lands
+        // mid-refresh (a rescan converges anything left over).
+        let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures, eligible, is_open) = {
+            let state = self.state.lock().await;
+            let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures) =
+                match state.folder_context_for_path(&path_string) {
+                    Some(ctx) => (
+                        ctx.root.clone(),
+                        ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
+                        ctx.excludes.clone(),
+                        ry_workspace::DiscoveryLimits::from_config(&ctx.config),
+                        ctx.config.check_test_fixtures,
+                    ),
+                    None => (
+                        state.root.clone().unwrap_or_default(),
+                        state
+                            .root_config_dir
+                            .clone()
+                            .or_else(|| state.root.clone())
+                            .unwrap_or_default(),
+                        state.root_excludes.clone(),
+                        ry_workspace::DiscoveryLimits::from_config(&state.file_config),
+                        state.file_config.check_test_fixtures,
+                    ),
+                };
+            let eligible = state.eligibility_for_path(&path_string);
+            let is_open = state.docs.contains_key(&path_string);
+            (
+                walk_root,
+                exclude_anchor,
+                excludes,
+                limits,
+                check_test_fixtures,
+                eligible,
+                is_open,
+            )
+        };
+        if is_open {
+            // The editor's buffer is authoritative; the watched event (or
+            // a save whose bytes the buffer already shadows) changes
+            // nothing the publish path reads.
+            return false;
+        }
+        let parsed = tokio::task::spawn_blocking(move || {
+            if !eligible
+                || !single_file_admitted(
+                    &path,
+                    &walk_root,
+                    Some(&exclude_anchor),
+                    &excludes,
+                    &limits,
+                    check_test_fixtures,
+                )
+            {
+                return None;
+            }
+            let decoded = ry_workspace::read_r_source_decoded(&path).ok()?;
+            let path_string = path.to_string_lossy().into_owned();
+            let mut parser = RParser::new().ok()?;
+            let mut file = parser.parse(&path_string, &decoded.text).ok()?;
+            file.invalid_utf8 = decoded.invalid_utf8;
+            file.leading_bom = decoded.leading_bom;
+            Some((path_string, Arc::new(file)))
+        })
+        .await
+        .ok()
+        .flatten();
+        let mut state = self.state.lock().await;
+        // A concurrent `did_open` landed while the read was in flight:
+        // installing a disk snapshot now would shadow the live buffer's
+        // entry on the next publish assembly.
+        if state.docs.contains_key(&path_string) {
+            return false;
+        }
+        match parsed {
+            Some((parsed_path, file)) => {
+                state.disk_files.insert(parsed_path, file);
+                true
+            }
+            None => {
+                // Unreadable, unparseable, or walk-inadmissible: match the
+                // walk, which never lands such a file in the map. A
+                // dropped entry that previously carried diagnostics is
+                // reconciled by the caller's republish pass (#489).
+                state.disk_files.remove(&path_string);
+                true
+            }
+        }
+    }
+
     /// Debounce diagnostics: bump the workspace generation counter and
     /// spawn a task that sleeps ~180ms, then publishes only if its
     /// generation is still the latest. A newer edit during the sleep
@@ -1568,6 +1682,105 @@ impl Backend {
             }
         });
     }
+}
+
+/// Load the root `ry.toml` and the user stubs it declares. A missing or
+/// Whether one on-disk R file would survive the directory walk's
+/// admission rules: the shared extension set, no symlink, no pruned
+/// ancestor directory (hidden, `target`, `node_modules`, `.Rcheck`, and
+/// `renv`-in-package wherever they appear; `revdep`/`src` only as direct
+/// package children; `tests/testthat/_snaps` only package-relative —
+/// exactly the walk's shapes), the testthat runner-code classification,
+/// and the shared per-file eligibility policy (excludes plus the size
+/// and depth caps, through [`ry_workspace::is_file_eligible_with_limits`]
+/// so the caps cannot drift from the walker's or the open-buffer gate's
+/// reading of them, #488). Runs on the blocking pool next to the read
+/// it guards. Deliberately narrower than a full walk in two documented
+/// ways: `.Rbuildignore` needs package-root-relative pattern state the
+/// walk builds incrementally, and directory-name `exclude` patterns
+/// match the pruned directory entry in the walk but never match a
+/// contained file path through `Excludes::matches` — so a file admitted
+/// here but skipped there converges on the next full rescan instead.
+fn single_file_admitted(
+    path: &Path,
+    walk_root: &Path,
+    exclude_anchor: Option<&Path>,
+    excludes: &ry_config::Excludes,
+    limits: &ry_workspace::DiscoveryLimits,
+    check_test_fixtures: bool,
+) -> bool {
+    if !ry_workspace::is_r_source_path(path) {
+        return false;
+    }
+    // The walk never follows symlinks; classify the entry itself.
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
+        return false;
+    }
+    let package_root = path.parent().and_then(|parent| {
+        parent
+            .ancestors()
+            .find(|candidate| candidate.join("DESCRIPTION").is_file())
+    });
+    let mut ancestor = path.parent();
+    while let Some(dir) = ancestor {
+        if dir == walk_root || walk_root.as_os_str().is_empty() {
+            break;
+        }
+        let pruned = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with('.')
+                    || name == "target"
+                    || name == "node_modules"
+                    || name.ends_with(".Rcheck")
+                    || (name == "renv" && package_root.is_some())
+                    || package_root.is_some_and(|root| {
+                        // Direct package children, like the walk's
+                        // `is_excluded_package_directory`.
+                        (name == "revdep" || name == "src") && dir.parent() == Some(root)
+                        // Package-relative `tests/testthat/_snaps`.
+                        || name == "_snaps"
+                            && dir.parent().and_then(|parent| {
+                                parent.strip_prefix(root).ok().map(|relative| {
+                                    relative == std::path::Path::new("tests").join("testthat")
+                                })
+                            }) == Some(true)
+                    })
+            });
+        if pruned {
+            return false;
+        }
+        ancestor = dir.parent();
+    }
+    if !check_test_fixtures && ry_workspace::is_test_fixture_path(path) {
+        return false;
+    }
+    // Disk files pass no content length: discovery measures the file on
+    // disk, and the decoded source length is a transcode away from that
+    // measurement — so the size gate reads `fs::metadata` here while the
+    // open-buffer gate measures buffer text (#488).
+    let content_len = None;
+    if !ry_workspace::is_file_eligible_with_limits(
+        path,
+        walk_root,
+        exclude_anchor,
+        excludes,
+        limits,
+        content_len,
+    ) {
+        return false;
+    }
+    // The shared policy's size gate is skipped for disk files (see
+    // above); apply the walk's own measurement instead: discovery omits
+    // only sizes strictly above the cap.
+    if std::fs::metadata(path)
+        .map(|metadata| metadata.len() > limits.max_file_bytes)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    true
 }
 
 /// Load the root `ry.toml` and the user stubs it declares. A missing or

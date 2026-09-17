@@ -862,6 +862,42 @@ expression: snapshots
         start: 471
   fixture: err_qualified_identity_unmatched_arguments.R
 - diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 543
+        line: 15
+        start: 532
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 565
+        line: 16
+        start: 549
+  fixture: err_qualified_invisible_type.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 538
+        line: 15
+        start: 527
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 5
+        end: 560
+        line: 16
+        start: 544
+  fixture: err_qualified_return_type.R
+- diagnostics:
     - code: RY102
       message: "`<-` inside `list()` assigns `github-ref` and leaves the element unnamed; write `\"github-ref\" = ...` to name it"
       severity: warning
@@ -1689,6 +1725,8 @@ expression: snapshots
   fixture: ok_qualified_call_not_shadowed.R
 - diagnostics: []
   fixture: ok_qualified_nse_aes.R
+- diagnostics: []
+  fixture: ok_qualified_return_dead_code.R
 - diagnostics: []
   fixture: ok_quoted_default_dependencies.R
 - diagnostics: []

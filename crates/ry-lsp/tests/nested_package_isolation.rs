@@ -322,6 +322,96 @@ fn non_package_scripts_keep_cross_file_visibility() {
     });
 }
 
+/// A mixed folder — one package plus loose scripts — isolates in both
+/// directions: the scripts still share definitions among each other, but
+/// a loose script cannot resolve a sibling package's private binding
+/// (pre-fix the folder-wide project let it, while `ry check` never
+/// did). Pins the script side of the isolation contract against the CLI
+/// oracle, mirroring `nested_packages_match_cli_diagnostics`.
+#[test]
+fn mixed_folder_scripts_do_not_see_package_bindings() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("pkgA/DESCRIPTION", DESC_A).unwrap();
+        fixture
+            .write_file("pkgA/R/a.R", "ry_review_private_a <- 1L\n")
+            .unwrap();
+        fixture
+            .write_file("s1.R", "ry_review_script_shared <- 1L\n")
+            .unwrap();
+        fixture
+            .write_file(
+                "s2.R",
+                "x <- ry_review_script_shared\ny <- ry_review_private_a\n",
+            )
+            .unwrap();
+
+        let output = CliProcess::new(ry_binary())
+            .check(&fixture, fixture.root(), ["--output-format", "json"])
+            .unwrap();
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "CLI failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cli: BTreeSet<Published> = serde_json::from_slice::<Vec<Value>>(&output.stdout)
+            .unwrap()
+            .iter()
+            .map(|value| published_from_cli_value(value, fixture.root()))
+            .collect();
+        assert!(
+            cli.iter().any(|diagnostic| diagnostic.code == "RY010"
+                && diagnostic.message.contains("ry_review_private_a")),
+            "the CLI must flag the script-to-package read"
+        );
+        assert!(
+            cli.iter()
+                .all(|diagnostic| !diagnostic.message.contains("ry_review_script_shared")),
+            "the CLI must keep the script-to-script read clean"
+        );
+
+        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+        sync_barrier(&mut session, &file_uri(&fixture.path("s2.R"))).await;
+        let a_path = fixture.path("pkgA/R/a.R");
+        let s1_path = fixture.path("s1.R");
+        let s2_path = fixture.path("s2.R");
+        let a_uri = file_uri(&a_path);
+        let s1_uri = file_uri(&s1_path);
+        let s2_uri = file_uri(&s2_path);
+        let a_text = std::fs::read_to_string(&a_path).unwrap();
+        let s1_text = std::fs::read_to_string(&s1_path).unwrap();
+        let s2_text = std::fs::read_to_string(&s2_path).unwrap();
+        let mark = session.publication_mark();
+        session.open(&a_uri, 1, &a_text).await.unwrap();
+        session.open(&s1_uri, 1, &s1_text).await.unwrap();
+        session.open(&s2_uri, 1, &s2_text).await.unwrap();
+        // One debounced pass publishes every URI; each await takes its
+        // own publication from that pass.
+        let publish_a = session
+            .published_diagnostics_after(&a_uri, mark)
+            .await
+            .unwrap();
+        let publish_s1 = session
+            .published_diagnostics_after(&s1_uri, mark)
+            .await
+            .unwrap();
+        let publish_s2 = session
+            .published_diagnostics_after(&s2_uri, mark)
+            .await
+            .unwrap();
+        let mut lsp = BTreeSet::new();
+        lsp.extend(published_from_lsp(&publish_a, &a_path, fixture.root()));
+        lsp.extend(published_from_lsp(&publish_s1, &s1_path, fixture.root()));
+        lsp.extend(published_from_lsp(&publish_s2, &s2_path, fixture.root()));
+        assert_eq!(
+            lsp, cli,
+            "the editor must publish exactly what `ry check` reports for the mixed folder"
+        );
+
+        join_session(session, server).await;
+    });
+}
+
 /// CLI/LSP parity on the nested shape: the editor must publish exactly
 /// what `ry check` reports for the same folder.
 #[test]

@@ -1381,16 +1381,17 @@ impl Backend {
                 // visibility for it.
                 let mut paths: Vec<&str> = outcome.files.keys().map(String::as_str).collect();
                 paths.sort();
-                let groups = ry_workspace::group_by_package_root(paths.clone());
+                let groups = ry_workspace::group_by_package_root(paths.iter().copied());
                 let mut folder_contexts: HashMap<Option<PathBuf>, ry_workspace::WorkspaceContext> =
                     HashMap::with_capacity(groups.len());
                 for (package_root, indices) in &groups {
                     let resolution_root = package_root.as_deref().unwrap_or(root);
+                    // `paths` comes from this same map's keys, so the index
+                    // cannot miss.
                     let files: Vec<&SourceFile> = indices
                         .iter()
-                        .map(|index| outcome.files.get(paths[*index]).map(AsRef::as_ref))
-                        .collect::<Option<Vec<_>>>()
-                        .unwrap_or_default();
+                        .map(|index| outcome.files[paths[*index]].as_ref())
+                        .collect();
                     match ry_workspace::resolve_workspace_context(
                         resolution_root,
                         config,

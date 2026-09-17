@@ -42,8 +42,10 @@ All notable changes to ry are documented in this file.
   drift — and checks each package through its own project cache with
   its own workspace resolution context. Files in the same package still
   share definitions exactly as before, and plain multi-file scripts
-  outside any package keep the folder-wide visibility they had; only
-  the cross-package leak is closed. A package group whose files arrived
+  outside any package keep their visibility among each other as before;
+  only the cross-package leak is closed — a loose script next to a
+  package no longer resolves that package's private bindings, matching
+  `ry check`. A package group whose files arrived
   after the last background index (for example a freshly created
   package) checks against an empty resolution context until the next
   index resolves it, rather than inheriting a sibling package's

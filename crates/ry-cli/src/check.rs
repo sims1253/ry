@@ -150,16 +150,28 @@ pub(crate) fn run_check(
         quiet: cli_quiet,
     });
 
-    let baseline = match cfg.baseline.as_deref() {
-        Some(path) => match config::load_baseline(path) {
-            Ok(value) => Some(value),
-            Err(error) if baseline_from_cli => return Err(error),
-            Err(error) => {
-                eprintln!("ry: warning: {error}");
-                None
-            }
-        },
-        None => None,
+    // Regeneration snapshots what the run reports as it stands, so the
+    // configured baseline is neither loaded nor subtracted: subtracting
+    // first would empty the file on an unchanged project and resurrect
+    // every accepted finding on the next plain check (#484). This
+    // mirrors at the config level the clap conflict between
+    // `--write-baseline` and `--baseline` (`baseline_from_cli` is
+    // therefore unreachable here); a genuinely fixed finding still drops
+    // out because the snapshot is rebuilt from the current diagnostics.
+    let baseline = if write_baseline.is_some() {
+        None
+    } else {
+        match cfg.baseline.as_deref() {
+            Some(path) => match config::load_baseline(path) {
+                Ok(value) => Some(value),
+                Err(error) if baseline_from_cli => return Err(error),
+                Err(error) => {
+                    eprintln!("ry: warning: {error}");
+                    None
+                }
+            },
+            None => None,
+        }
     };
 
     // Initialize after config discovery so ry.toml verbosity takes effect.

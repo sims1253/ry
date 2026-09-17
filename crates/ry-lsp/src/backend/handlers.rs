@@ -493,11 +493,9 @@ impl LanguageServer for Backend {
         // (#488). Only the enable switch gates here.
         {
             let state = self.state.lock().await;
-            let disabled = state
-                .folder_context_for_path(&path)
-                .is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
-                || (state.folder_context_for_path(&path).is_none()
-                    && state.folder_settings.enable == Some(false));
+            let folder = state.folder_context_for_path(&path);
+            let disabled = folder.is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
+                || (folder.is_none() && state.folder_settings.enable == Some(false));
             if disabled {
                 return Ok(None);
             }

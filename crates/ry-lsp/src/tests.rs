@@ -1608,3 +1608,97 @@ fn rebuild_clears_stubs_when_the_only_stub_file_is_malformed() {
         rebuilt.stubs.keys().collect::<Vec<_>>()
     );
 }
+
+/// #490 (deterministic cross-file shadowing): `a.R` and `z.R` both define
+/// `f` with different return shapes; `use.R` calls `f()`. The canonical
+/// order (paths sorted, so `z.R` after `a.R`) makes `z.R`'s integer `f`
+/// win and `use.R` clean. Closing `a.R` and reopening it unchanged must
+/// not flip the winner: `update_file` re-appends the removed path at the
+/// end, which would make `a.R`'s character `f` win and fabricate RY040.
+#[test]
+fn close_reopen_does_not_flip_cross_file_shadowing() {
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+    let (a_src, z_src, use_src) = (
+        "f <- function() \"str\"\n",
+        "f <- function() 1L\n",
+        "x <- f() + 1L\n",
+    );
+    let open_all = || {
+        vec![
+            ("a.R".to_string(), 1, parse_src("a.R", a_src)),
+            ("use.R".to_string(), 1, parse_src("use.R", use_src)),
+            ("z.R".to_string(), 1, parse_src("z.R", z_src)),
+        ]
+    };
+    let mut cache = ProjectCache::default();
+
+    let diags = cache.check(open_all(), std::sync::Arc::clone(&stubs));
+    assert!(
+        !codes_for_file(&diags, "use.R").contains(&"RY040"),
+        "z.R's integer f wins in canonical order: {:?}",
+        codes_for_file(&diags, "use.R")
+    );
+
+    // did_close: the path leaves the cache entirely (no disk entry).
+    let files = vec![
+        ("use.R".to_string(), 1, parse_src("use.R", use_src)),
+        ("z.R".to_string(), 1, parse_src("z.R", z_src)),
+    ];
+    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    // did_open of the unchanged file: re-added, content identical.
+    let diags = cache.check(open_all(), std::sync::Arc::clone(&stubs));
+    assert!(
+        !codes_for_file(&diags, "use.R").contains(&"RY040"),
+        "close/reopen must not re-append a.R at the end and flip the winner: {:?}",
+        codes_for_file(&diags, "use.R")
+    );
+
+    // The warm cache must match a cold project built in canonical order.
+    let mut cold = ry_checker::Project::new();
+    cold.add_file("a.R".to_string(), parse_src("a.R", a_src).as_ref().clone());
+    cold.add_file(
+        "use.R".to_string(),
+        parse_src("use.R", use_src).as_ref().clone(),
+    );
+    cold.add_file("z.R".to_string(), parse_src("z.R", z_src).as_ref().clone());
+    let cold_diags = cold.check();
+    for path in ["a.R", "use.R", "z.R"] {
+        assert_eq!(
+            codes_for_file(&diags, path),
+            codes_for_file(&cold_diags, path),
+            "warm and cold must agree for {path}"
+        );
+    }
+}
+
+/// #490: a file joining the project after the first check must take its
+/// canonical sorted position, not the end of the merge order. `z.R` is
+/// checked first (opened before the index delivered `a.R`); when `a.R`
+/// and `use.R` join, sorted order keeps `z.R` last, so its integer `f`
+/// keeps winning — a plain append would flip the winner to `a.R`.
+#[test]
+fn late_added_file_takes_canonical_position_not_the_end() {
+    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
+    let (a_src, z_src, use_src) = (
+        "f <- function() \"str\"\n",
+        "f <- function() 1L\n",
+        "x <- f() + 1L\n",
+    );
+    let mut cache = ProjectCache::default();
+
+    let files = vec![("z.R".to_string(), 1, parse_src("z.R", z_src))];
+    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+
+    let files = vec![
+        ("a.R".to_string(), 1, parse_src("a.R", a_src)),
+        ("use.R".to_string(), 1, parse_src("use.R", use_src)),
+        ("z.R".to_string(), 1, parse_src("z.R", z_src)),
+    ];
+    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+    assert!(
+        !codes_for_file(&diags, "use.R").contains(&"RY040"),
+        "late-joining a.R must not shadow z.R by landing at the end: {:?}",
+        codes_for_file(&diags, "use.R")
+    );
+}

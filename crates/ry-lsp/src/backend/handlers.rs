@@ -89,7 +89,7 @@ impl LanguageServer for Backend {
 
         // Root-level config and stubs for the single-root fallback.
         let root_clone2 = root.clone();
-        let (file_config, user_stubs) =
+        let (root_config_dir, file_config, user_stubs) =
             tokio::task::spawn_blocking(move || load_root_config_and_stubs(root_clone2.as_deref()))
                 .await
                 .unwrap_or_default();
@@ -111,6 +111,7 @@ impl LanguageServer for Backend {
         state.user_stubs = user_stubs;
         state.root = root;
         state.file_config = file_config;
+        state.root_config_dir = root_config_dir;
         state.root_baseline = root_baseline;
         state.root_filter = root_filter;
         state.root_min_confidence = root_min_confidence;

@@ -18,7 +18,7 @@ use crate::settings::{FolderSettings, ServerSettings};
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as LspResult;
@@ -99,6 +99,11 @@ pub(super) struct State {
     /// The full `ry-config::Config` loaded from `ry.toml` at the workspace
     /// root, stored so `publish_diagnostics` never re-reads the file.
     file_config: ry_config::Config,
+    /// Directory of the root-level fallback config's `ry.toml` (`None`
+    /// when defaults are in use). Anchors the fallback's config-relative
+    /// `exclude` patterns and baseline keys the way `ry check` anchors
+    /// them at the config directory (#493).
+    root_config_dir: Option<PathBuf>,
     /// Root-level baseline cached at initialize so the fallback publish
     /// path performs no disk access.
     root_baseline: Option<ry_config::Baseline>,
@@ -154,6 +159,15 @@ pub(super) struct State {
 pub(super) struct FolderAnalysisContext {
     /// The workspace folder root directory.
     pub root: PathBuf,
+    /// Directory of the `ry.toml` the effective config was loaded from;
+    /// `None` when defaults are in use. Every config-relative resolution
+    /// — `exclude` patterns, `include-build-ignored`, and baseline key
+    /// normalization — anchors here (the CLI's config root) instead of
+    /// the workspace folder, so an inherited or external config keeps
+    /// its own path anchor. Equals `root` whenever the config lives in
+    /// the folder itself, so only configs above or outside the folder
+    /// change behavior (#493).
+    pub config_root: Option<PathBuf>,
     /// Effective `ry.toml` config: loaded from directory discovery or
     /// the editor `configuration` override resolved relative to `root`.
     pub config: ry_config::Config,
@@ -462,7 +476,10 @@ impl State {
             if ctx.folder_settings.enable == Some(false) {
                 return false;
             }
-            return ry_workspace::is_file_eligible(path, &ctx.root, &ctx.config);
+            // Exclude patterns are relative to the originating
+            // `ry.toml`'s directory, the anchor `ry check` uses (#493).
+            let anchor = ctx.config_root.as_deref().unwrap_or(&ctx.root);
+            return ry_workspace::is_file_eligible(path, anchor, &ctx.config);
         }
         if self.folder_settings.enable == Some(false) {
             return false;
@@ -473,7 +490,8 @@ impl State {
         // this fallback.
         match &self.root {
             Some(root) if path.starts_with(root) => {
-                ry_workspace::is_file_eligible(path, root, &self.file_config)
+                let anchor = self.root_config_dir.as_deref().unwrap_or(root);
+                ry_workspace::is_file_eligible(path, anchor, &self.file_config)
             }
             _ => true,
         }
@@ -505,6 +523,7 @@ impl Backend {
             .find(|ctx| state.root.as_deref() == Some(ctx.root.as_path()))
         {
             state.file_config = ctx.config.clone();
+            state.root_config_dir = ctx.config_root.clone();
             state.user_stubs = ctx.stubs.clone();
             state.root_baseline = ctx.baseline.clone();
             state.root_filter = ctx.filter.clone();
@@ -915,6 +934,7 @@ impl Backend {
             root_excludes,
             root_baseline,
             root,
+            root_config_dir,
         ) = {
             let state = self.state.lock().await;
             (
@@ -926,6 +946,7 @@ impl Backend {
                 state.root_excludes.clone(),
                 state.root_baseline.clone(),
                 state.root.clone(),
+                state.root_config_dir.clone(),
             )
         };
 
@@ -993,25 +1014,30 @@ impl Backend {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
-            let (filter, min_confidence, excludes, baseline, folder_root) = match ctx.as_ref() {
+            let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx.as_ref() {
                 Some(ctx) => (
                     ctx.filter.clone(),
                     ctx.min_confidence,
                     ctx.excludes.clone(),
                     ctx.baseline.clone(),
-                    Some(ctx.root.clone()),
+                    // Config-relative exclude patterns and baseline keys
+                    // anchor at the originating `ry.toml`'s directory —
+                    // the same `repo_root` `ry check` derives from its
+                    // discovered config (#493) — not at the folder root.
+                    ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
                 ),
                 None => (
                     root_filter.clone(),
                     root_min_confidence,
                     root_excludes.clone(),
                     root_baseline.clone(),
-                    root.clone(),
+                    root_config_dir.clone().or(root.clone()),
                 ),
             };
             for (diagnostic_path, diagnostics) in per_file {
                 if !excludes.is_empty() {
-                    let rel = ry_config::diagnostic_path(&diagnostic_path, folder_root.as_deref());
+                    let rel =
+                        ry_config::diagnostic_path(&diagnostic_path, config_anchor.as_deref());
                     if excludes.matches(&rel) {
                         continue;
                     }
@@ -1036,7 +1062,7 @@ impl Backend {
                     filter: &filter,
                     baseline: baseline.as_ref(),
                     min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
-                    repo_root: folder_root.as_deref(),
+                    repo_root: config_anchor.as_deref(),
                 };
                 let mut diagnostics =
                     post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
@@ -1086,11 +1112,19 @@ impl Backend {
                 state
                     .folder_contexts
                     .iter()
-                    .map(|ctx| (ctx.root.clone(), ctx.config.clone(), Arc::clone(&ctx.stubs)))
+                    .map(|ctx| {
+                        (
+                            ctx.root.clone(),
+                            ctx.config_root.clone(),
+                            ctx.config.clone(),
+                            Arc::clone(&ctx.stubs),
+                        )
+                    })
                     .collect()
             } else if let Some(root) = &state.root {
                 vec![(
                     root.clone(),
+                    state.root_config_dir.clone(),
                     state.file_config.clone(),
                     Arc::clone(&state.user_stubs),
                 )]
@@ -1114,8 +1148,8 @@ impl Backend {
             let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
             let mut contexts = Vec::new();
             let mut all_truncated: Vec<(PathBuf, ry_workspace::TruncationReport)> = Vec::new();
-            for (root, config, stubs) in &roots_with_config {
-                let outcome = crate::index::index_workspace(root, config);
+            for (root, config_root, config, stubs) in &roots_with_config {
+                let outcome = crate::index::index_workspace(root, config_root.as_deref(), config);
                 if outcome.truncated.iter().any(|t| t.any_hit()) {
                     for report in &outcome.truncated {
                         all_truncated.push((root.clone(), report.clone()));
@@ -1267,31 +1301,37 @@ impl Backend {
 
 /// Load the root `ry.toml` and the user stubs it declares. A missing or
 /// broken root config degrades to defaults (with a warning on breakage)
-/// and empty stubs — never a fatal error. Disk I/O happens here; run it
-/// off the async runtime.
+/// and empty stubs — never a fatal error. Returns the config paired with
+/// the directory its `ry.toml` was loaded from (`None` when defaults are
+/// in use), anchoring the root-level fallback's config-relative paths
+/// like the CLI anchors them at the config directory (#493). Disk I/O
+/// happens here; run it off the async runtime.
 fn load_root_config_and_stubs(
     root: Option<&std::path::Path>,
 ) -> (
+    Option<PathBuf>,
     ry_config::Config,
     Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
 ) {
-    let config = match root {
+    let (config_dir, config) = match root {
+        // `load_from_dir` looks only inside `root` itself, so a found
+        // config's directory IS the root.
         Some(root) => match ry_config::Config::load_from_dir(root) {
-            Ok(Some(config)) => config,
-            Ok(None) => ry_config::Config::default(),
+            Ok(Some(config)) => (Some(root.to_path_buf()), config),
+            Ok(None) => (None, ry_config::Config::default()),
             Err(error) => {
                 tracing::warn!(
                     root = %root.display(),
                     %error,
                     "failed to load root ry.toml; using default config"
                 );
-                ry_config::Config::default()
+                (None, ry_config::Config::default())
             }
         },
-        None => ry_config::Config::default(),
+        None => (None, ry_config::Config::default()),
     };
     let stubs = load_stubs_from_config(&config).unwrap_or_default();
-    (config, stubs)
+    (config_dir, config, stubs)
 }
 
 /// Marker for a stub load where the config declares typeshed directories
@@ -1360,20 +1400,45 @@ fn escape_watch_path(path: &str) -> String {
         .collect()
 }
 
+/// Lexically normalize a config directory's dot segments
+/// (`config/../config` → `config`) without touching the filesystem, the
+/// same normalization client event URIs receive. The config anchor must
+/// prefix-match the clean absolute paths diagnostics and discovery
+/// entries carry, so a `configuration` setting containing `..` segments
+/// cannot keep them raw (#493).
+fn normalize_config_dir(dir: &Path) -> PathBuf {
+    Url::from_file_path(dir)
+        .ok()
+        .and_then(|uri| Url::parse(uri.as_str()).ok())
+        .and_then(|uri| uri.to_file_path().ok())
+        .unwrap_or_else(|| dir.to_path_buf())
+}
+
 /// Load a folder's explicit configuration or discover its nearest `ry.toml`.
 /// Missing discovered configuration uses defaults; read and parse failures
 /// reach the caller so reloads can retain the last valid configuration.
+/// Returns the effective config paired with the directory of the `ry.toml`
+/// it was loaded from (`None` when defaults are in use) — the same origin
+/// the CLI keeps as its config root — so config-relative `exclude`
+/// patterns, `include-build-ignored`, and baseline keys anchor at the
+/// config's own directory instead of the workspace folder (#493).
 /// Callers must keep this disk I/O outside the state lock.
 fn discover_folder_config(
     folder_settings: &FolderSettings,
     folder_root: &std::path::Path,
-) -> std::result::Result<ry_config::Config, ry_config::ConfigError> {
+) -> std::result::Result<(Option<PathBuf>, ry_config::Config), ry_config::ConfigError> {
     if let Some(config_path) = &folder_settings.configuration {
-        return ry_config::Config::load_file(&folder_root.join(config_path));
+        // The anchor `load_file` itself rebases `typeshed`/`baseline`
+        // against; both stay anchored at one origin, so nothing is
+        // double-rebased.
+        let path = folder_root.join(config_path);
+        let config = ry_config::Config::load_file(&path)?;
+        return Ok((path.parent().map(normalize_config_dir), config));
     }
-    Ok(ry_config::Config::discover(folder_root)?
-        .map(|(_, config)| config)
-        .unwrap_or_default())
+    match ry_config::Config::discover(folder_root)? {
+        Some((path, config)) => Ok((path.parent().map(normalize_config_dir), config)),
+        None => Ok((None, ry_config::Config::default())),
+    }
 }
 
 /// Resolve the baseline path from editor settings / `ry.toml` and load it
@@ -1441,14 +1506,14 @@ pub(super) fn build_folder_contexts(
 
         // Discover config (defaulting on failure); the baseline loads once
         // here so the publish path never touches disk.
-        let config =
-            discover_folder_config(&folder_settings, folder_root).unwrap_or_else(|error| {
+        let (config_root, config) = discover_folder_config(&folder_settings, folder_root)
+            .unwrap_or_else(|error| {
                 tracing::warn!(
                     root = %folder_root.display(),
                     %error,
                     "failed to load folder config; using default config"
                 );
-                ry_config::Config::default()
+                (None, ry_config::Config::default())
             });
         let baseline = match load_folder_baseline(&folder_settings, &config, Some(folder_root)) {
             Ok(opt) => opt,
@@ -1469,6 +1534,7 @@ pub(super) fn build_folder_contexts(
         let (filter, min_confidence, excludes) = compute_folder_filter(&config, &folder_settings);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
+            config_root,
             config,
             folder_settings,
             stubs,
@@ -1493,7 +1559,10 @@ pub(super) fn build_folder_contexts(
 /// directory failed) the last valid value for that field is retained and
 /// the failure is logged — a corrupt reload never silently clears the
 /// baseline, and a fully failed stub reload never silently drops the
-/// stub map. A partial stub failure keeps only the directories that
+/// stub map. One exception: a failed baseline reload after the config's
+/// directory changed clears the baseline instead of retaining it,
+/// because the retained keys are relative to the old anchor (#493). A
+/// partial stub failure keeps only the directories that
 /// loaded, replacing the map with what a fresh server would produce.
 /// Deliberate removals (a setting deleted or set to an empty list) are
 /// not failures and always take effect. `folder_settings`,
@@ -1502,15 +1571,15 @@ pub(super) fn build_folder_contexts(
 /// checks respectively) and are carried over unchanged. Disk I/O
 /// happens here; callers MUST run this outside the state lock.
 pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
-    let config = match discover_folder_config(&old.folder_settings, &old.root) {
-        Ok(cfg) => cfg,
+    let (config_root, config) = match discover_folder_config(&old.folder_settings, &old.root) {
+        Ok(found) => found,
         Err(error) => {
             tracing::warn!(
                 root = %old.root.display(),
                 %error,
                 "failed to reload folder config; retaining previous config"
             );
-            old.config.clone()
+            (old.config_root.clone(), old.config.clone())
         }
     };
     // Reload stubs from the (possibly retained) config. An empty result
@@ -1532,17 +1601,31 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
     let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
         Ok(opt) => opt,
         Err(error) => {
-            tracing::warn!(
-                root = %old.root.display(),
-                %error,
-                "failed to reload baseline; retaining last valid baseline"
-            );
-            old.baseline.clone()
+            // A retained baseline's keys stay relative to the anchor it
+            // was loaded under, so it may only be retained while the
+            // config origin is unchanged; pairing old keys with a new
+            // anchor would match the wrong files (#493).
+            if config_root == old.config_root {
+                tracing::warn!(
+                    root = %old.root.display(),
+                    %error,
+                    "failed to reload baseline; retaining last valid baseline"
+                );
+                old.baseline.clone()
+            } else {
+                tracing::warn!(
+                    root = %old.root.display(),
+                    %error,
+                    "failed to reload baseline after the config moved; clearing the stale baseline"
+                );
+                None
+            }
         }
     };
     let (filter, min_confidence, excludes) = compute_folder_filter(&config, &old.folder_settings);
     FolderAnalysisContext {
         root: old.root.clone(),
+        config_root,
         config,
         folder_settings: old.folder_settings.clone(),
         stubs,

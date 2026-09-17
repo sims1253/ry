@@ -6,6 +6,23 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Anchor the language server's config-relative paths at the directory of
+  the `ry.toml` being used, matching `ry check`: a parent-discovered or
+  explicitly configured `ry.toml` outside the workspace folder used to
+  have its `exclude` patterns matched, `include-build-ignored` resolved,
+  and baseline keys normalized against the folder root instead of the
+  config's own directory, so an `exclude = ["pkgA/R/generated/**"]` in
+  `/repo/ry.toml` never fired for an editor opened at `/repo/pkgA` and a
+  CLI-generated baseline's `pkgA/R/…` keys never matched the editor's
+  `R/…` keys, resurfacing baselined findings. Each folder context now
+  records the config's origin directory and every config-relative
+  resolution — exclude matching in eligibility and publication,
+  `include-build-ignored` in background indexing, and baseline key
+  normalization — anchors there, the same origin the CLI keeps from
+  `Config::discover`; an in-folder `ry.toml` still anchors at the folder
+  itself, so only inherited or external configs change behavior, and
+  sibling workspace folders sharing a parent config each anchor it
+  independently (#493).
 - Stop the language server from keeping obsolete custom typeshed stubs
   after a config reload removes the last configured directory (#494):
   the reload treated an intentionally empty stub map (the `typeshed`

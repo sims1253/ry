@@ -6,6 +6,29 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Refresh the language server's on-disk R index when R sources change
+  outside open buffers, and re-read a file from disk when it is closed.
+  The server registered no watched globs for R sources and discarded
+  their watched-file events, so editing, creating, or deleting an
+  unopened `.R` file left cross-file diagnostics stale until some
+  unrelated event (a config, `DESCRIPTION`/`NAMESPACE`, native-source, or
+  serialized-data change) triggered a full reindex; and closing an
+  edited-and-saved document fell back to the last indexed snapshot —
+  typically the initialize-time content — instead of the saved bytes.
+  R source globs now join the watcher registration, watched-file
+  create/change/delete events refresh (or drop) the affected index entry
+  through the same bounded decoder the background indexer parses with,
+  and `did_close` re-reads the closed path from disk. Open buffers stay
+  authoritative throughout: the per-file refresh never touches a live
+  document, a concurrent `did_open` racing a refresh wins, and a stale
+  in-flight background pass cannot overwrite fresher per-file entries
+  (a retired initial pass is replaced so publications never strand
+  behind `initial_index_pending`). The publish path still performs no
+  disk I/O — freshness work happens in the watcher and close handlers —
+  and admission runs through the shared per-file eligibility policy
+  (excludes plus the size and depth caps, testthat runner
+  classification, symlink and pruned-directory rules) so a rescan
+  cannot disagree about membership (#486).
 - Keep open documents the background discovery omits out of
   project-wide analysis too: a file over `index.max-file-bytes` or
   below a pruned `index.max-depth` used to enter the language server's

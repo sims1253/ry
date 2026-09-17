@@ -15,6 +15,19 @@ All notable changes to ry are documented in this file.
   directory failed, and only that genuine failure retains the previous
   stubs; clearing the list converges with a fresh server on the same
   config.
+- Demote diagnostics from a package's `tests/`, `data-raw/`, `demo/`,
+  `vignettes/`, and `inst/` trees one confidence tier in the language
+  server too, through the same shared post-processing seam `ry check`
+  uses, before the min-confidence threshold and before baseline
+  subtraction. The server previously filtered on the checker's raw
+  confidence, so equal thresholds selected different findings in the
+  editor and on the command line: a medium-confidence RY010 in
+  `tests/testthat/` was dropped by `ry check --min-confidence medium`
+  but stayed visible at `ry.minConfidence: "medium"`. The demotion
+  stage lives in `ry_checker`'s pipeline now and both frontends invoke
+  it at the seam, keeping the nearest-`DESCRIPTION` root handling for
+  nested packages and leaving severity untouched; a `tests/` directory
+  with no package root above it is still not demoted (#492).
 - Fail `ry check` when an explicitly requested input path does not exist,
   or a discovery root cannot be read, instead of silently succeeding with
   an empty or partial check. A missing path used to fall into the

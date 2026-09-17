@@ -191,6 +191,61 @@ fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
     }
 }
 
+/// (#492): support-tree findings demote one confidence tier before the
+/// min-confidence threshold in both modes. `non-source-demotion` is a
+/// package whose `tests/`, `data-raw/`, `demo/`, `vignettes/`, and
+/// `inst/` files — plus a nested package's `tests/` — carry the same
+/// medium-confidence RY010 as the two `R/` controls, so at
+/// `--min-confidence medium` the demoted files go quiet while the
+/// controls stay visible, in the CLI and the editor alike.
+/// `non-source-plain-tests` holds the same file in a `tests/`
+/// directory with no `DESCRIPTION` above it: no package root, no
+/// demotion, the finding stays visible in both modes.
+#[test]
+fn non_source_trees_demote_before_the_threshold_in_both_modes() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let cases = [
+        ("filtering/non-source-demotion", "R/control.R", true),
+        ("filtering/non-source-demotion", "subpkg/R/control.R", true),
+        (
+            "filtering/non-source-demotion",
+            "tests/testthat/helper.R",
+            false,
+        ),
+        ("filtering/non-source-demotion", "data-raw/gen.R", false),
+        ("filtering/non-source-demotion", "demo/demo.R", false),
+        ("filtering/non-source-demotion", "vignettes/vig.R", false),
+        ("filtering/non-source-demotion", "inst/doc.R", false),
+        (
+            "filtering/non-source-demotion",
+            "subpkg/tests/helper.R",
+            false,
+        ),
+        ("filtering/non-source-plain-tests", "tests/example.R", true),
+    ];
+    for (fixture_name, target, visible) in cases {
+        let fixture = FixtureProject::from_fixture(fixture_name).unwrap();
+        let settings = settings(&fixture, "lsp-settings.json");
+        let cli = cli_diagnostics(&fixture, &["--min-confidence", "medium"])
+            .into_iter()
+            .filter(|d| d.path == target)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            !cli.is_empty(),
+            visible,
+            "{fixture_name}/{target}: `ry check` visibility is wrong"
+        );
+        let lsp = runtime.block_on(run_with_diagnostics(&fixture, target, settings));
+        assert_eq!(
+            lsp, cli,
+            "{fixture_name}/{target}: the editor must demote exactly when `ry check` does"
+        );
+    }
+}
+
 /// (#46): diagnostics for indexed files that were never opened use
 /// the checked source for their UTF-16 ranges, not the (absent) in-memory
 /// document text.

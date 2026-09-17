@@ -400,7 +400,12 @@ fn no_unregistered_hardcoded_lists() {
     //   R semantic fact; the constant exists so the two qualified-lookup
     //   paths (`resolve_typeshed_sig` and `resolve_typeshed_value`) name
     //   the same standard packages.
-    let known_non_semantic: &[&str] = &["BASE_DATABASE_PACKAGES"];
+    // * `DEMOTED`: the package directory trees whose findings demote one
+    //   confidence tier (`tests/`, `data-raw/`, ...) are CRAN package
+    //   layout, not an R semantic fact; the list lives in the shared
+    //   post-processing pipeline (`post_process.rs`) and changes only
+    //   with the documented demotion policy.
+    let known_non_semantic: &[&str] = &["BASE_DATABASE_PACKAGES", "DEMOTED"];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found_lists = Vec::new();

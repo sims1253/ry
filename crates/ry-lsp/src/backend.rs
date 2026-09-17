@@ -1020,12 +1020,14 @@ impl Backend {
                 // Post-processing runs through the shared pipeline
                 // (`ry_checker::post_process`) so the editor sees exactly
                 // what `ry check` reports: inline suppression comments,
-                // then the severity filter, then baseline subtraction,
-                // then the min-confidence threshold. Subtracting the
-                // baseline before the suppression filter let a suppressed
+                // then the severity filter, then path-based confidence
+                // demotion, then baseline subtraction, then the
+                // min-confidence threshold. Subtracting the baseline
+                // before the suppression filter let a suppressed
                 // occurrence consume the count for its unsuppressed twin
-                // (#491); the LSP has no demotion stage between the
-                // severity filter and the baseline yet (#492).
+                // (#491); skipping the demotion stage kept support-tree
+                // findings above the threshold in the editor after
+                // `ry check` had dropped them (#492).
                 let checked_file = checked_files.get(&diagnostic_path);
                 let source_text = checked_file.map(|file| file.source.as_str());
                 let comments: &[ry_core::ast::Comment] =
@@ -1038,6 +1040,7 @@ impl Backend {
                 };
                 let mut diagnostics =
                     post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
+                post.demote_non_source_paths(&mut diagnostics);
                 post.post_demotion(&mut diagnostics);
                 let diagnostics: Vec<LspDiagnostic> = diagnostics
                     .into_iter()

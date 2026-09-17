@@ -1,0 +1,4 @@
+Package: nonsourcepkg
+Type: Package
+Title: Non-source tree demotion fixture
+Version: 0.0.1

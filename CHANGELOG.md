@@ -6,6 +6,27 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Keep open documents the background discovery omits out of
+  project-wide analysis too: a file over `index.max-file-bytes` or
+  below a pruned `index.max-depth` used to enter the language server's
+  shared project as soon as it was opened — the open-document
+  eligibility gate enforced `exclude` patterns and folder enablement
+  only — so the identical buffer resolved its definitions into every
+  other open file while the closed index omitted it, contradicting the
+  documented editor contract (#488). Eligibility now runs through one
+  shared policy between the walker and buffer admission: the size gate
+  measures the open buffer's text length (unsaved pasted content can
+  cross the boundary without touching disk, so on-disk metadata must
+  not stand in) and the depth gate counts the containing directory's
+  components relative to the folder root, since walk depth is not a
+  path property. Ineligible open documents stay out of binding and
+  diagnostic state while keeping single-document editor features such
+  as inlay hints; edits or configuration changes crossing a boundary
+  eject or re-admit the buffer, and its stale diagnostics clear
+  through the shared dropped-URI reconciliation. A buffer that grows
+  past the size cap also shadows its own on-disk twin (which the
+  index may still hold at the old, small size) so the path cannot keep
+  contributing through the stale twin.
 - Clear stale diagnostics from every document the language server stops
   analyzing, not just the last-scheduled one (#489): when a folder was
   disabled or files excluded, `republish_all_open_documents` scheduled

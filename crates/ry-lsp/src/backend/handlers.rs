@@ -483,12 +483,20 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let range = params.range;
 
-        // Inlay hints are on-demand analysis, so the same eligibility
-        // gate as the publish path applies: a folder set to `enable:
-        // false` (or a discovery-excluded file) gets no hints.
+        // Inlay hints are on-demand, document-local analysis (one parse
+        // plus single-file assignment inference — no project state), so
+        // they keep serving documents the project-wide gates exclude: a
+        // folder set to `enable: false` returns null (the editor
+        // intentionally disabled ry there), but a file over
+        // `max-file-bytes` or below a pruned `max-depth` still gets its
+        // own hints while staying out of every other file's resolution
+        // (#488). Only the enable switch gates here.
         {
             let state = self.state.lock().await;
-            if !state.eligibility_for_path(&path) {
+            let folder = state.folder_context_for_path(&path);
+            let disabled = folder.is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
+                || (folder.is_none() && state.folder_settings.enable == Some(false));
+            if disabled {
                 return Ok(None);
             }
         }

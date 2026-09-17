@@ -58,6 +58,10 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
 /// which can both hide real RY010 findings and activate the wrong NSE
 /// model. Non-package scripts share the `None` group so ordinary
 /// multi-file workflows keep their source()-style visibility.
+///
+/// Inputs are file paths; a directory input is resolved from the
+/// directory itself (like [`enclosing_package_root`]) and keyed by
+/// itself, so sibling directories never share a cache slot.
 pub fn group_by_package_root<'a, I>(paths: I) -> BTreeMap<Option<PathBuf>, Vec<usize>>
 where
     I: IntoIterator<Item = &'a str>,
@@ -69,7 +73,11 @@ where
     let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
     for (index, path) in paths.into_iter().enumerate() {
         let path = Path::new(path);
-        let key = path.parent();
+        let key = if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent()
+        };
         let root = root_cache
             .entry(key)
             .or_insert_with(|| enclosing_package_root(path))
@@ -1531,5 +1539,65 @@ mod s3_binding_provenance_tests {
                 assert_eq!(context.imported_bindings[path]["+"], "otherpkg");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod package_grouping_tests {
+    use super::*;
+
+    fn package_dir(parent: &Path, name: &str) -> PathBuf {
+        let root = parent.join(name);
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::write(
+            root.join("DESCRIPTION"),
+            format!("Package: {name}\nVersion: 0.0.1\n"),
+        )
+        .unwrap();
+        root
+    }
+
+    /// Files group by nearest `DESCRIPTION` ancestor: each package's
+    /// files land in their own group (indices ascending), and plain
+    /// scripts share the `None` group.
+    #[test]
+    fn files_group_by_nearest_description_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_a = package_dir(dir.path(), "pkgA");
+        let pkg_b = package_dir(dir.path(), "pkgB");
+        let a_file = pkg_a.join("R").join("a.R");
+        let b_file = pkg_b.join("R").join("b.R");
+        let script = dir.path().join("s.R");
+        for path in [&a_file, &b_file, &script] {
+            std::fs::write(path, "x <- 1L\n").unwrap();
+        }
+        let paths = [
+            a_file.to_string_lossy().into_owned(),
+            b_file.to_string_lossy().into_owned(),
+            script.to_string_lossy().into_owned(),
+        ];
+        let groups = group_by_package_root(paths.iter().map(String::as_str));
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[&Some(pkg_a)], vec![0]);
+        assert_eq!(groups[&Some(pkg_b)], vec![1]);
+        assert_eq!(groups[&None], vec![2]);
+    }
+
+    /// Directory inputs resolve from the directory itself and are keyed
+    /// by it: sibling package directories must never share a cache slot
+    /// through their common parent.
+    #[test]
+    fn directory_inputs_are_keyed_by_themselves() {
+        let dir = tempfile::tempdir().unwrap();
+        let pkg_a = package_dir(dir.path(), "pkgA");
+        let pkg_b = package_dir(dir.path(), "pkgB");
+        let paths = [
+            pkg_a.to_string_lossy().into_owned(),
+            pkg_b.to_string_lossy().into_owned(),
+        ];
+        let groups = group_by_package_root(paths.iter().map(String::as_str));
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[&Some(pkg_a)], vec![0]);
+        assert_eq!(groups[&Some(pkg_b)], vec![1]);
     }
 }

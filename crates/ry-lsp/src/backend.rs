@@ -1009,13 +1009,7 @@ impl Backend {
                     root.clone(),
                 ),
             };
-            for (diagnostic_path, mut diagnostics) in per_file {
-                ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
-
-                if let Some(min) = min_confidence {
-                    diagnostics.retain(|d| d.confidence >= min);
-                }
-
+            for (diagnostic_path, diagnostics) in per_file {
                 if !excludes.is_empty() {
                     let rel = ry_config::diagnostic_path(&diagnostic_path, folder_root.as_deref());
                     if excludes.matches(&rel) {
@@ -1023,28 +1017,30 @@ impl Backend {
                     }
                 }
 
-                if let Some(ref baseline) = baseline {
-                    ry_config::subtract_baseline(
-                        &mut diagnostics,
-                        baseline,
-                        folder_root.as_deref(),
-                    );
-                }
-
+                // Post-processing runs through the shared pipeline
+                // (`ry_checker::post_process`) so the editor sees exactly
+                // what `ry check` reports: inline suppression comments,
+                // then the severity filter, then baseline subtraction,
+                // then the min-confidence threshold. Subtracting the
+                // baseline before the suppression filter let a suppressed
+                // occurrence consume the count for its unsuppressed twin
+                // (#491); the LSP has no demotion stage between the
+                // severity filter and the baseline yet (#492).
                 let checked_file = checked_files.get(&diagnostic_path);
                 let source_text = checked_file.map(|file| file.source.as_str());
-                let (file_level, suppressions) = match checked_file {
-                    Some(file) => (
-                        ry_checker::has_file_suppression_from_comments(&file.comments),
-                        ry_checker::parse_suppressions_from_comments(&file.comments, &file.source),
-                    ),
-                    None => (false, Vec::new()),
+                let comments: &[ry_core::ast::Comment] =
+                    checked_file.map_or(&[], |file| file.comments.as_slice());
+                let post = ry_checker::PostProcess {
+                    filter: &filter,
+                    baseline: baseline.as_ref(),
+                    min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
+                    repo_root: folder_root.as_deref(),
                 };
+                let mut diagnostics =
+                    post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
+                post.post_demotion(&mut diagnostics);
                 let diagnostics: Vec<LspDiagnostic> = diagnostics
                     .into_iter()
-                    .filter(|diagnostic| {
-                        !file_level && !ry_checker::is_suppressed(diagnostic, &suppressions)
-                    })
                     .map(|diagnostic| {
                         let mut diagnostic = match source_text {
                             Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),

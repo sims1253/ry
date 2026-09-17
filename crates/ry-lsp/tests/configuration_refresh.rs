@@ -550,3 +550,103 @@ fn custom_configuration_is_watched_and_reloaded_after_path_changes() {
         }
     });
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Typeshed stub reload (#494)
+//
+// Bug being pinned: removing the LAST custom typeshed directory left the
+// old stub map active until restart — the reload treated an
+// intentionally empty result the same as a failed one. A warm session
+// must converge with a fresh server on the same config; only a reload
+// where every configured directory failed may retain the old stubs.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The stub types `my_func()` as returning a length-one list, so
+/// `if (my_func())` fires RY001 (non-logical condition) exactly while
+/// the stubs are applied — the same probe as
+/// `invalid_root_rytoml_degrades_entirely_to_defaults`.
+#[test]
+fn stub_reload_converges_when_last_typeshed_directory_is_removed() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture
+            .write_file("ry.toml", "typeshed = [\"stubs\"]\n")
+            .unwrap();
+        let stub = serde_json::to_string(&json!({
+            "schema_version": "1",
+            "package": "localdep",
+            "version": "test",
+            "functions": {
+                "my_func": {"params": [], "return": {"mode": "list", "length": "1"}}
+            }
+        }))
+        .unwrap();
+        fixture.write_file("stubs/localdep.json", &stub).unwrap();
+        let source = "library(localdep)\nif (my_func()) print(1)\n";
+        fixture.write_file("main.R", source).unwrap();
+        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+        let uri = file_uri(&fixture.path("main.R")).unwrap();
+        let config_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+
+        let mark = session.publication_mark();
+        session.open(&uri, 1, source).await.unwrap();
+        let initial = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(count_code(&initial, "RY001"), 1, "{initial}");
+
+        // Drive the watched-file reload channel through the interesting
+        // transitions. Expected counts are RY001 occurrences: the stub
+        // applies (1) or not (0).
+        for (config, expected, why) in [
+            // A configured-but-unreadable directory is a genuine reload
+            // failure: the last valid stubs are retained, deliberately
+            // diverging from a cold server (which starts with none).
+            ("typeshed = [\"missing\"]\n", 1, "failed reload retains"),
+            // Clearing the list and deleting the setting both declare no
+            // directories: the empty reload is the new state.
+            ("typeshed = []\n", 0, "clearing the list"),
+            ("", 0, "deleting the setting"),
+            // Restoring the directory reloads the stubs.
+            ("typeshed = [\"stubs\"]\n", 1, "restoring"),
+            // Back to empty so the cold comparison below checks the
+            // sticky transition itself.
+            ("typeshed = []\n", 0, "clearing again"),
+        ] {
+            fixture.write_file("ry.toml", config).unwrap();
+            harness::sync_barrier(&mut session, &uri).await;
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "workspace/didChangeWatchedFiles",
+                    json!({"changes":[{"uri":config_uri,"type":2}]}),
+                )
+                .await
+                .unwrap();
+            let after = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert_eq!(
+                count_code(&after, "RY001"),
+                expected,
+                "{why} ({config:?}): {after}"
+            );
+        }
+        harness::join_session(session, server).await;
+
+        // Warm/cold convergence: a fresh server on the final config
+        // (no typeshed directories) must agree with the warm session.
+        let (mut cold, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+        let mark = cold.publication_mark();
+        cold.open(&uri, 1, source).await.unwrap();
+        let publish = cold.published_diagnostics_after(&uri, mark).await.unwrap();
+        assert_eq!(
+            count_code(&publish, "RY001"),
+            0,
+            "cold server on the emptied config: {publish}"
+        );
+        harness::join_session(cold, server).await;
+    });
+}

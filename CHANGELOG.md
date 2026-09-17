@@ -74,6 +74,15 @@ All notable changes to ry are documented in this file.
   fixed findings still drop out and the regeneration run reports (and
   fails on) the findings it writes, like the no-config path always did
   (#484).
+- The LSP now assembles its multi-file project in one canonical order:
+  indexed disk files sorted by path, then open documents sorted by path —
+  the CLI's sorted discovery order, with the editor's buffers layered
+  last so an open document's definitions shadow same-named on-disk ones.
+  The order used to come from unsorted HashMaps and close/reopen
+  re-appended the reopened file at the end, so when two files defined
+  the same top-level function the winning definition — and with it
+  inferred calls and diagnostics — depended on the process's hash seed
+  and flipped after closing and reopening an unchanged file (#490).
 - The LSP server now applies inline suppression comments and the
   min-confidence threshold before subtracting the baseline, matching
   `ry check`: with two identical diagnostics (same path, code, and

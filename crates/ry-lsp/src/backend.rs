@@ -312,6 +312,7 @@ impl ProjectCache {
             .set_external_s3_methods(workspace.s3_methods.clone());
         self.project
             .set_load_bindings(workspace.load_bindings.clone());
+        let order: Vec<String> = files.iter().map(|(path, _, _)| path.clone()).collect();
         for (path, version, file) in files {
             let changed = self
                 .files
@@ -324,6 +325,11 @@ impl ProjectCache {
                 self.files.insert(path, (version, file));
             }
         }
+        // `update_file` appends re-added paths at the end (after
+        // did_close removed them), so insertion history would decide
+        // which same-named definition wins. The incoming sequence is
+        // the canonical one; enforce it regardless of history (#490).
+        self.project.reorder_files(&order);
         ProjectCheckResult {
             diagnostics: self.project.check_incremental(),
             files: checked_files,
@@ -860,28 +866,41 @@ impl Backend {
                 .await;
         }
 
-        let mut project_files = Vec::with_capacity(doc_versions.len());
+        let mut open_files = Vec::with_capacity(doc_versions.len());
         for (doc_path, version) in &doc_versions {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
             };
-            project_files.push((doc_path.clone(), *version, file));
+            open_files.push((doc_path.clone(), *version, file));
         }
-        // Disk files never shadow open documents; files in disabled
-        // folders are dropped by the same eligibility rule as open ones.
-        let disk_entries: Vec<(String, i32, Arc<SourceFile>)> = {
+        // Canonical project order (#490): disk entries sorted by path,
+        // then open documents sorted by path. Project shadowing follows
+        // insertion order (the last file wins), so assembling from
+        // unsorted HashMaps made the winning definition depend on the
+        // process's hash seed, and close/reopen moved the reopened file
+        // to the end and flipped the winner. Sorting gives the LSP the
+        // CLI's contract (discovery output is sorted by path); open
+        // documents are layered last so the editor's buffer — the
+        // authoritative content for its path — shadows same-named
+        // definitions from indexed disk files. Disk files never shadow
+        // open documents; files in disabled folders are dropped by the
+        // same eligibility rule as open ones.
+        let mut project_files: Vec<(String, i32, Arc<SourceFile>)> = {
             let state = self.state.lock().await;
             let open_paths: std::collections::HashSet<&str> =
-                project_files.iter().map(|(p, _, _)| p.as_str()).collect();
-            state
+                doc_versions.iter().map(|(p, _)| p.as_str()).collect();
+            let mut disk_entries: Vec<(String, i32, Arc<SourceFile>)> = state
                 .disk_files
                 .iter()
                 .filter(|(p, _)| state.eligibility_for_path(p))
                 .filter(|(p, _)| !open_paths.contains(p.as_str()))
                 .map(|(p, file)| (p.clone(), 0, Arc::clone(file)))
-                .collect()
+                .collect();
+            disk_entries.sort_by(|a, b| a.0.cmp(&b.0));
+            disk_entries
         };
-        project_files.extend(disk_entries);
+        open_files.sort_by(|a, b| a.0.cmp(&b.0));
+        project_files.extend(open_files);
 
         // Check each folder partition independently through its own
         // ProjectCache, stubs, and workspace context. The root-level

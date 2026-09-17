@@ -287,6 +287,9 @@ impl LanguageServer for Backend {
             state.trees.retain(|p, _| !under_removed_root(p));
             state.parsed.retain(|p, _| !under_removed_root(p));
             state.hints.retain(|p, _| !under_removed_root(p));
+            // The explicit empty publications below clear these URIs, so
+            // they leave the tracked set too (#489).
+            state.published_paths.retain(|p| !under_removed_root(p));
 
             // Rebuild folder contexts from the surviving + added roots
             // through the shared builder used at initialize.
@@ -350,6 +353,12 @@ impl LanguageServer for Backend {
         // Not `republish_all_open_documents`: documents under removed roots
         // were just cleared and, falling back to root-level eligibility, a
         // blanket reschedule would re-publish results for them.
+        if docs_to_republish.is_empty() {
+            // No open document will drive a debounced pass, so reconcile
+            // directly: closed disk files the folder removal dropped from
+            // the index must not keep their publications (#489).
+            self.clear_dropped_diagnostics().await;
+        }
         for uri in &docs_to_republish {
             self.schedule_diagnostics(uri.clone()).await;
         }
@@ -408,6 +417,9 @@ impl LanguageServer for Backend {
             state.parsed.remove(&path);
             state.hints.remove(&path);
             state.trees.remove(&path);
+            // The empty publication below clears this URI, so it must
+            // leave the tracked set too (#489).
+            state.published_paths.remove(&path);
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
             state.docs.keys().cloned().collect::<Vec<_>>()

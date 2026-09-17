@@ -6,6 +6,19 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Clear stale diagnostics from every document the language server stops
+  analyzing, not just the last-scheduled one (#489): when a folder was
+  disabled or files excluded, `republish_all_open_documents` scheduled
+  one debounced task per open document, but the debounce's single
+  workspace-wide generation kept only the last task alive, so every
+  URI but the last scheduled kept its previous squiggles indefinitely
+  (which one survived followed HashMap iteration order), and closed
+  disk files a rescan dropped from the index were never published
+  again either. Every scheduled URI now joins one pending set that the
+  surviving debounce task drains and publishes together, and the server
+  tracks which URIs last received diagnostics so each publish pass —
+  or a rescan with no open document to drive one — sends an empty
+  publication for URIs that left the eligible set.
 - Anchor the language server's config-relative paths at the directory of
   the `ry.toml` being used, matching `ry check`: a parent-discovered or
   explicitly configured `ry.toml` outside the workspace folder used to

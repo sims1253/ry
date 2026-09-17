@@ -20,6 +20,7 @@ mod higher_order;
 mod infer;
 mod literal_values;
 mod nse;
+pub mod post_process;
 pub mod project;
 mod reference_facts;
 mod resolve;
@@ -40,6 +41,7 @@ pub use diagnostics::{
     filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
     parse_suppressions_from_comments,
 };
+pub use post_process::PostProcess;
 
 // These builders live here, not in ry-config, because ry-checker depends
 // on ry-config and the reverse direction would be a cycle.

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "diagnostic.R",
+      "code": "RY002",
+      "message": "`if` condition has length 2; R requires a length-1 condition",
+      "count": 1
+    }
+  ]
+}

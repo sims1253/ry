@@ -6,6 +6,15 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Stop the language server from keeping obsolete custom typeshed stubs
+  after a config reload removes the last configured directory (#494):
+  the reload treated an intentionally empty stub map (the `typeshed`
+  setting cleared or deleted) the same as a failed one, so a warm
+  session retained signatures a fresh server no longer loaded until
+  restart. The stub loader now reports whether every configured
+  directory failed, and only that genuine failure retains the previous
+  stubs; clearing the list converges with a fresh server on the same
+  config.
 - Demote diagnostics from a package's `tests/`, `data-raw/`, `demo/`,
   `vignettes/`, and `inst/` trees one confidence tier in the language
   server too, through the same shared post-processing seam `ry check`
@@ -106,6 +115,17 @@ All notable changes to ry are documented in this file.
   pipeline (`ry_checker::post_process`) with a single specified order:
   suppression, severity filter, confidence demotion (CLI only, for
   now), baseline subtraction, min-confidence threshold.
+- Honor `base::return(...)` in the walker's `Stmt::Expr` return arm: the
+  arm that collects a function's return types and marks the following
+  code unreachable matched only the bare `return`/`invisible`
+  identifiers, so a qualified `base::return(NULL)` set neither even
+  though the block-divergence analysis (#482) already treats it as
+  exiting. The arm now recognizes the `::`-qualified callee the same
+  way `expr_diverges` does, so code after `base::return(...)` goes
+  quiet exactly where it already does after bare `return(...)` and the
+  argument's type joins the function's return type;
+  `base::invisible(...)` likewise collects its argument type without
+  marking the block unreachable, matching the bare form (#510).
 
 ## [0.11.0] - 2026-09-16
 

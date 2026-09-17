@@ -1290,20 +1290,32 @@ fn load_root_config_and_stubs(
         },
         None => ry_config::Config::default(),
     };
-    let stubs = load_stubs_from_config(&config);
+    let stubs = load_stubs_from_config(&config).unwrap_or_default();
     (config, stubs)
 }
 
+/// Marker for a stub load where the config declares typeshed directories
+/// and every one of them failed. Each per-directory failure is logged
+/// where it happens; the marker exists only so reload callers can tell a
+/// genuine reload failure apart from an intentionally empty stub map.
+#[derive(Debug)]
+struct AllStubDirsFailed;
+
 /// Load the stubs a loaded config's typeshed directories declare;
 /// per-folder use keeps two roots defining the same package differently
-/// isolated.
+/// isolated. `Ok` is the intended new state — empty when the config
+/// declares no directories, or when the loaded ones ship no (valid)
+/// stubs. `Err` means directories were configured and every one failed
+/// to load, letting reload callers retain their previous stub snapshot.
 fn load_stubs_from_config(
     config: &ry_config::Config,
-) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
+) -> Result<Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>, AllStubDirsFailed> {
     let mut merged = std::collections::BTreeMap::new();
+    let mut loaded_any = false;
     for dir in &config.typeshed {
         match ry_typeshed::load_stub_dir_with_warnings(dir) {
             Ok((stubs, warnings)) => {
+                loaded_any = true;
                 merged.extend(stubs);
                 for warning in warnings {
                     tracing::warn!(%warning, "skipping malformed user stub");
@@ -1312,7 +1324,11 @@ fn load_stubs_from_config(
             Err(error) => tracing::warn!(%error, "failed to load user stub directory"),
         }
     }
-    Arc::new(merged)
+    if loaded_any || config.typeshed.is_empty() {
+        Ok(Arc::new(merged))
+    } else {
+        Err(AllStubDirsFailed)
+    }
 }
 
 fn custom_config_paths(state: &State) -> Vec<PathBuf> {
@@ -1401,7 +1417,7 @@ fn load_folder_baseline(
 /// override), editor [`FolderSettings`], local typesheds, and the cached
 /// baseline. When `workspace_folders` is empty, `root_uri` becomes the
 /// single folder.
-fn build_folder_contexts(
+pub(super) fn build_folder_contexts(
     root: Option<&std::path::Path>,
     workspace_folders: &[(usize, PathBuf)],
     server_settings: &ServerSettings,
@@ -1446,7 +1462,9 @@ fn build_folder_contexts(
             }
         };
 
-        let stubs = load_stubs_from_config(&config);
+        // A fresh build has no previous snapshot to retain, so a failed
+        // directory load degrades to empty stubs.
+        let stubs = load_stubs_from_config(&config).unwrap_or_default();
 
         let (filter, min_confidence, excludes) = compute_folder_filter(&config, &folder_settings);
         contexts.push(FolderAnalysisContext {
@@ -1470,15 +1488,20 @@ fn build_folder_contexts(
 
 /// Rebuild a single folder's analysis context from disk.
 ///
-/// Each field is reloaded independently. On any sub-failure (config parse,
-/// baseline parse) the last valid value for that field is retained and the
-/// failure is logged — a corrupt reload never silently clears the
-/// baseline. `folder_settings`, `workspace_context`, and `project_cache`
-/// are not config-file-derived (they come from editor push / the background
-/// indexer / incremental checks respectively) and are carried over
-/// unchanged. Disk I/O happens here; callers MUST run this outside the
-/// state lock.
-fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
+/// Each field is reloaded independently. On a sub-failure (config parse,
+/// baseline parse, or a stub reload where EVERY configured typeshed
+/// directory failed) the last valid value for that field is retained and
+/// the failure is logged — a corrupt reload never silently clears the
+/// baseline, and a fully failed stub reload never silently drops the
+/// stub map. A partial stub failure keeps only the directories that
+/// loaded, replacing the map with what a fresh server would produce.
+/// Deliberate removals (a setting deleted or set to an empty list) are
+/// not failures and always take effect. `folder_settings`,
+/// `workspace_context`, and `project_cache` are not config-file-derived
+/// (they come from editor push / the background indexer / incremental
+/// checks respectively) and are carried over unchanged. Disk I/O
+/// happens here; callers MUST run this outside the state lock.
+pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
     let config = match discover_folder_config(&old.folder_settings, &old.root) {
         Ok(cfg) => cfg,
         Err(error) => {
@@ -1490,18 +1513,21 @@ fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext 
             old.config.clone()
         }
     };
-    // Reload stubs from the (possibly retained) config. If the reload
-    // returns fewer stubs than before (e.g. a malformed stub directory),
-    // retain the previous stubs to avoid silently degrading analysis.
-    let new_stubs = load_stubs_from_config(&config);
-    let stubs = if new_stubs.is_empty() && !old.stubs.is_empty() {
-        tracing::warn!(
-            root = %old.root.display(),
-            "stub reload returned empty; retaining previous stubs"
-        );
-        old.stubs.clone()
-    } else {
-        new_stubs
+    // Reload stubs from the (possibly retained) config. An empty result
+    // is the intended new state — the config declares no typeshed
+    // directories, or the loaded ones ship no stubs — so removing the
+    // last directory clears the map and a warm session converges with a
+    // fresh server. Only a reload where every configured directory
+    // failed retains the previous stubs.
+    let stubs = match load_stubs_from_config(&config) {
+        Ok(new_stubs) => new_stubs,
+        Err(AllStubDirsFailed) => {
+            tracing::warn!(
+                root = %old.root.display(),
+                "every configured typeshed directory failed to reload; retaining previous stubs"
+            );
+            old.stubs.clone()
+        }
     };
     let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
         Ok(opt) => opt,

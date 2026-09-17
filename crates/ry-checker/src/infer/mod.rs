@@ -398,10 +398,18 @@ impl Checker {
                     }
                 }
                 // Detect `return(...)` / `invisible(...)` calls and collect
-                // the argument type (the function's return type).
+                // the argument type (the function's return type). The
+                // `base::`-qualified forms are recognized through
+                // `bare_name` the same way `expr_diverges` recognizes
+                // them, so `scope.unreachable` and the collected return
+                // type stay consistent with the divergence view:
+                // `base::return(...)` exits in R just like the bare
+                // keyword, while `base::invisible(...)` (like bare
+                // `invisible(...)`) returns a value and does not.
                 if let Expr::Call { func, args, .. } = e {
                     if let Expr::Ident { name, .. } = func.as_ref() {
-                        if name == "return" || name == "invisible" {
+                        let bare = crate::semantic_lists::bare_name(name);
+                        if bare == "return" || bare == "invisible" {
                             let t = args
                                 .first()
                                 .map(|a| self.infer(&a.value, scope))
@@ -409,7 +417,7 @@ impl Checker {
                             if let Some(r) = returns {
                                 r.push(t);
                             }
-                            if name == "return" {
+                            if bare == "return" {
                                 scope.unreachable = true;
                             }
                             return;

@@ -24,11 +24,19 @@ pub(crate) struct IndexOutcome {
 }
 
 /// Discover and parse all eligible R files under `root`, honouring
-/// `exclude` patterns and bounded caps. Returns parsed files plus
-/// any cap reports for the caller to surface as warnings.
-pub(crate) fn index_workspace(root: &Path, config: &Config) -> IndexOutcome {
+/// `exclude` patterns and bounded caps. `exclude_root` anchors those
+/// patterns and `include-build-ignored`: it is the directory of the
+/// `ry.toml` the config was loaded from (the CLI's config root), which
+/// only equals `root` when the config lives in the folder itself (#493).
+/// Returns parsed files plus any cap reports for the caller to surface
+/// as warnings.
+pub(crate) fn index_workspace(
+    walk_root: &Path,
+    exclude_root: Option<&Path>,
+    config: &Config,
+) -> IndexOutcome {
     let discovery =
-        ry_workspace::discover_r_files(root, Some(root), config, config.check_test_fixtures);
+        ry_workspace::discover_r_files(walk_root, exclude_root, config, config.check_test_fixtures);
     let files = parse_paths(&discovery.files);
     IndexOutcome {
         files,
@@ -160,7 +168,7 @@ mod tests {
         std::fs::write(hidden.join("e.R"), "hidden <- TRUE\n").unwrap();
 
         let config = Config::default();
-        let discovered = index_workspace(dir, &config);
+        let discovered = index_workspace(dir, Some(dir), &config);
 
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
         assert_eq!(paths.len(), 3, "a.R, b.r and sub/d.R: {paths:?}");
@@ -193,7 +201,7 @@ mod tests {
             exclude: vec!["vendor".to_string()],
             ..Default::default()
         };
-        let discovered = index_workspace(dir, &cfg);
+        let discovered = index_workspace(dir, Some(dir), &cfg);
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
 
         assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
@@ -218,7 +226,7 @@ mod tests {
         std::fs::write(target.join("skip.R"), "y <- 2\n").unwrap();
 
         let config = Config::default();
-        let discovered = index_workspace(dir, &config);
+        let discovered = index_workspace(dir, Some(dir), &config);
 
         let paths: Vec<&str> = discovered.files.keys().map(String::as_str).collect();
         assert_eq!(paths.len(), 1, "only keep.R: {paths:?}");
@@ -267,7 +275,7 @@ mod tests {
             std::fs::write(dir.join(format!("f{i:02}.R")), format!("x_{i} <- {i}\n")).unwrap();
         }
         let config = Config::default();
-        let outcome = index_workspace(dir, &config);
+        let outcome = index_workspace(dir, Some(dir), &config);
         assert_eq!(outcome.files.len(), count, "every file must be indexed");
         for i in 0..count {
             assert!(
@@ -299,7 +307,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let outcome = index_workspace(dir, &config);
+        let outcome = index_workspace(dir, Some(dir), &config);
 
         assert!(
             outcome.truncated.iter().any(|t| t.max_files_hit),

@@ -481,9 +481,25 @@ impl State {
 
     /// Whether the server should analyze and publish diagnostics for
     /// `doc_path`: a folder set to `enable: false` is skipped entirely;
-    /// otherwise eligibility follows the owning folder's discovery rules.
+    /// otherwise eligibility follows the owning folder's discovery rules —
+    /// `exclude` patterns plus the `index.max-file-bytes` and
+    /// `index.max-depth` caps the background indexer enforces, through the
+    /// shared [`ry_workspace::is_file_eligible_with_limits`] policy, so an
+    /// opened buffer cannot leak definitions the closed index omitted into
+    /// project-wide state (#488).
+    ///
+    /// The size gate measures the open buffer's text length, never
+    /// `fs::metadata`: unsaved pasted content can cross the boundary
+    /// without touching disk. Closed paths carry no buffer; they entered
+    /// through the capped walker, so only the exclude and depth thirds
+    /// apply to them. Depth counts the containing directory's components
+    /// relative to the folder root — walk depth is not a path property,
+    /// so it is recomputed here.
     fn eligibility_for_path(&self, doc_path: &str) -> bool {
         let path = std::path::Path::new(doc_path);
+        // The open buffer's byte length, when the path is open. Closed
+        // paths pass `None` and skip the size gate (see above).
+        let content_len = self.docs.get(doc_path).map(|text| text.len() as u64);
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
             if ctx.folder_settings.enable == Some(false) {
                 return false;
@@ -491,7 +507,14 @@ impl State {
             // Exclude patterns are relative to the originating
             // `ry.toml`'s directory, the anchor `ry check` uses (#493).
             let anchor = ctx.config_root.as_deref().unwrap_or(&ctx.root);
-            return ry_workspace::is_file_eligible(path, anchor, &ctx.config);
+            return ry_workspace::is_file_eligible_with_limits(
+                path,
+                &ctx.root,
+                Some(anchor),
+                &ctx.excludes,
+                &ry_workspace::DiscoveryLimits::from_config(&ctx.config),
+                content_len,
+            );
         }
         if self.folder_settings.enable == Some(false) {
             return false;
@@ -503,7 +526,14 @@ impl State {
         match &self.root {
             Some(root) if path.starts_with(root) => {
                 let anchor = self.root_config_dir.as_deref().unwrap_or(root);
-                ry_workspace::is_file_eligible(path, anchor, &self.file_config)
+                ry_workspace::is_file_eligible_with_limits(
+                    path,
+                    root,
+                    Some(anchor),
+                    &self.root_excludes,
+                    &ry_workspace::DiscoveryLimits::from_config(&self.file_config),
+                    content_len,
+                )
             }
             _ => true,
         }
@@ -867,9 +897,10 @@ impl Backend {
     /// `requested` is the set of paths the debounce drained for this
     /// generation. A requested path that is no longer eligible still gets
     /// an immediate empty publication (the didOpen acknowledgment for a
-    /// document opened into a disabled or excluded folder); every other
-    /// URI that drops out of the check is reconciled at the end of the
-    /// pass through [`Backend::clear_dropped_diagnostics`] (#489).
+    /// document opened into a disabled folder, an excluded path, or over
+    /// a size/depth cap); every other URI that drops out of the check is
+    /// reconciled at the end of the pass through
+    /// [`Backend::clear_dropped_diagnostics`] (#489).
     async fn publish_diagnostics(&self, requested: HashSet<String>, generation: u64) {
         // Snapshot the open docs, each requested path's eligibility, and
         // the capability flags under the lock, then drop it before
@@ -932,11 +963,15 @@ impl Backend {
         // authoritative content for its path — shadows same-named
         // definitions from indexed disk files. Disk files never shadow
         // open documents; files in disabled folders are dropped by the
-        // same eligibility rule as open ones.
+        // same eligibility rule as open ones. Every open path shadows its
+        // disk twin — not just the eligible ones — so a buffer that grew
+        // past `max-file-bytes` cannot keep contributing its path through
+        // the stale small on-disk twin the index still holds (#488): the
+        // open buffer owns its path, eligible or not.
         let mut project_files: Vec<(String, i32, Arc<SourceFile>)> = {
             let state = self.state.lock().await;
             let open_paths: std::collections::HashSet<&str> =
-                doc_versions.iter().map(|(p, _)| p.as_str()).collect();
+                state.docs.keys().map(String::as_str).collect();
             let mut disk_entries: Vec<(String, i32, Arc<SourceFile>)> = state
                 .disk_files
                 .iter()

@@ -85,9 +85,8 @@ pub fn is_file_eligible_with_limits(
     limits: &DiscoveryLimits,
     content_len: Option<u64>,
 ) -> bool {
-    if exclude_anchor.is_some_and(|anchor| {
-        !is_file_eligible_with_excludes(path, anchor, excludes)
-    }) {
+    if exclude_anchor.is_some_and(|anchor| !is_file_eligible_with_excludes(path, anchor, excludes))
+    {
         return false;
     }
     if !is_within_depth(path, depth_root, limits.max_depth) {

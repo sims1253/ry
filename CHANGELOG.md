@@ -60,6 +60,20 @@ All notable changes to ry are documented in this file.
   zero-length guard", since the admitted bounds go past zero. Unary `+`
   needs no folding of its own: the parser already lowers `+2` to the bare
   literal, so a plus-spelled bound behaves exactly like its bare spelling.
+- Stop `ry check --write-baseline` from loading and subtracting the
+  `baseline` configured in ry.toml before overwriting the file. The
+  clap-level conflict only covers the `--baseline` spelling, so a
+  configured baseline arrived through config merging anyway: on an
+  unchanged project the pre-write subtraction emptied the file
+  (`"entries": []`) and every accepted finding reappeared on the next
+  plain check — a silent wipe whose regeneration run still exited 0.
+  Regeneration now snapshots the pre-subtraction, policy-filtered
+  diagnostics (suppression comments, severity filter, path-based
+  confidence demotion, and `--min-confidence` all apply as in a plain
+  check), mirroring the clap conflict at the config level; genuinely
+  fixed findings still drop out and the regeneration run reports (and
+  fails on) the findings it writes, like the no-config path always did
+  (#484).
 
 ## [0.11.0] - 2026-09-16
 

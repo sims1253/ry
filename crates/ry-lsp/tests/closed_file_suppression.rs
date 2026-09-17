@@ -16,8 +16,12 @@
 //! the reporter's directive (` # ry: ignore[RY040]`), line 3 without.
 //! While suppression holds, exactly one RY040 — the line-3 one, LSP
 //! line 2 — survives publication for `a.R`. `other.R` exists only to
-//! keep a document open: the publish it triggers is what surfaces
-//! `a.R`'s disk-state diagnostics.
+//! keep a document open, and that is a requirement, not a convenience:
+//! the server publishes closed-file diagnostics only from a publish
+//! triggered by an open document (initialize and the watched-file
+//! reload both republish open documents only, and nothing publishes a
+//! closed file on its own), so without `other.R` the never-opened and
+//! post-close publications under test would never happen at all.
 
 mod harness;
 
@@ -61,9 +65,11 @@ where
 }
 
 /// A never-opened file's diagnostics arrive via the background disk
-/// index: opening `other.R` triggers the project-wide publish, and the
-/// publication for `a.R` must respect the inline directive — the
-/// suppressed line dropped, the control line kept.
+/// index: opening `other.R` triggers the project-wide publish — the
+/// only trigger, since no publication covers a closed file while no
+/// document is open — and the publication for `a.R` must respect the
+/// inline directive: the suppressed line dropped, the control line
+/// kept.
 #[test]
 fn never_opened_file_respects_inline_suppression() {
     run(async {

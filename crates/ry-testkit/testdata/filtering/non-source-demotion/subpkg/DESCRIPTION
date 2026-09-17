@@ -1,0 +1,4 @@
+Package: subpkg
+Type: Package
+Title: Nested package fixture
+Version: 0.0.1

@@ -545,10 +545,11 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     // (`ry_checker::post_process`) so the CLI and the LSP apply one
     // specified order: inline suppression comments (`# ry: ignore`,
     // `# noqa`, `# ry: ignore-file`), then the severity filter, then
-    // [demotion seam — `demote_non_source_paths` below], then baseline
-    // subtraction, then the min-confidence threshold. The lexical
-    // (comment-based) suppression filter keeps a `#` inside a string
-    // literal from being mistaken for a directive.
+    // [demotion seam — `demote_non_source_paths` on the pipeline, run
+    // at the seam below], then baseline subtraction, then the
+    // min-confidence threshold. The lexical (comment-based) suppression
+    // filter keeps a `#` inside a string literal from being mistaken
+    // for a directive.
     let post = ry_checker::PostProcess {
         filter: ctx.filter,
         baseline: ctx.baseline,
@@ -570,8 +571,9 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
 
     // Demotion seam: path-based confidence demotion sits between the
     // severity filter and the baseline, its documented position in the
-    // shared order (the LSP has no demotion stage yet — #492).
-    demote_non_source_paths(&mut all_diagnostics, ctx.repo_root);
+    // shared order. The stage lives in the shared pipeline, so the LSP
+    // demotes non-source paths exactly like the CLI (#492).
+    post.demote_non_source_paths(&mut all_diagnostics);
     post.post_demotion(&mut all_diagnostics);
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);
@@ -665,43 +667,6 @@ fn init_tracing(verbose: u8, quiet: u8) {
 /// effect when the CLI flag is omitted.
 fn flag_set(matches: Option<&ArgMatches>, id: &str) -> bool {
     matches.and_then(|m| m.value_source(id)) == Some(ValueSource::CommandLine)
-}
-
-/// Demote diagnostics from a package's non-source trees (`tests/`,
-/// `data-raw/`, `demo/`, `vignettes/`, `inst/`) one confidence tier:
-/// code there is not what CRAN ships or checks first.
-pub(crate) fn demote_non_source_paths(
-    diagnostics: &mut [ry_checker::Diagnostic],
-    repo_root: Option<&std::path::Path>,
-) {
-    const DEMOTED: [&str; 5] = ["tests", "data-raw", "demo", "vignettes", "inst"];
-    for diagnostic in diagnostics {
-        let path = std::path::Path::new(&diagnostic.path);
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            repo_root
-                .unwrap_or_else(|| std::path::Path::new("."))
-                .join(path)
-        };
-        let mut package_root = absolute.parent();
-        while let Some(root) = package_root {
-            if root.join("DESCRIPTION").is_file() {
-                if let Ok(relative) = absolute.strip_prefix(root)
-                    && relative.components().any(|component| {
-                        component
-                            .as_os_str()
-                            .to_str()
-                            .is_some_and(|name| DEMOTED.contains(&name))
-                    })
-                {
-                    diagnostic.confidence = diagnostic.confidence.demote();
-                }
-                break;
-            }
-            package_root = root.parent();
-        }
-    }
 }
 
 fn render_diagnostics(
@@ -904,18 +869,6 @@ mod tests {
                 ("b.R", 1, 0, "RY010"),
             ]
         );
-    }
-
-    #[test]
-    fn package_tests_path_demotes_confidence_one_tier() {
-        let temp = tempfile::tempdir().unwrap();
-        std::fs::write(temp.path().join("DESCRIPTION"), "Package: example\n").unwrap();
-        std::fs::create_dir(temp.path().join("tests")).unwrap();
-        let path = temp.path().join("tests/test.R");
-        let mut diagnostic = diag(path.to_str().unwrap(), 1, 0, "RY030");
-        assert_eq!(diagnostic.confidence, ry_checker::Confidence::High);
-        demote_non_source_paths(std::slice::from_mut(&mut diagnostic), Some(temp.path()));
-        assert_eq!(diagnostic.confidence, ry_checker::Confidence::Medium);
     }
 
     /// (#491) Pin the post-processing order `ry check` applies through

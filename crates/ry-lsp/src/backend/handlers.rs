@@ -444,21 +444,24 @@ impl LanguageServer for Backend {
             state.docs.keys().cloned().collect::<Vec<_>>()
         };
         {
-            let (root_project, folder_project_opt) = {
+            // A closed file lives in at most one package cache, but its
+            // package key may have shifted while it was open (a
+            // DESCRIPTION added or removed above it), so evict it from
+            // every cache in the owning folder's map and the root map
+            // rather than computing the key and risking the wrong one.
+            let caches: Vec<Arc<Mutex<ProjectCache>>> = {
                 let state = self.state.lock().await;
-                let root = Arc::clone(&state.project);
-                let folder = state
-                    .folder_context_for_path(&path)
-                    .map(|ctx| Arc::clone(&ctx.project_cache));
-                (root, folder)
+                let mut caches = Vec::new();
+                if let Some(ctx) = state.folder_context_for_path(&path) {
+                    caches.extend(ctx.package_caches.values().cloned());
+                }
+                caches.extend(state.root_caches.values().cloned());
+                caches
             };
-            let mut project = root_project.lock().await;
-            project.project.remove_file(&path);
-            project.files.remove(&path);
-            if let Some(folder_proj) = folder_project_opt {
-                let mut folder_proj = folder_proj.lock().await;
-                folder_proj.project.remove_file(&path);
-                folder_proj.files.remove(&path);
+            for cache in caches {
+                let mut cache = cache.lock().await;
+                cache.project.remove_file(&path);
+                cache.files.remove(&path);
             }
         }
         // Clear diagnostics for the closed document so stale squiggles

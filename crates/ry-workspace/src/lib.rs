@@ -28,7 +28,7 @@ use ry_core::SourceFile;
 use ry_core::Span;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
@@ -36,6 +36,47 @@ use std::path::{Path, PathBuf};
 pub struct ResolutionEnvironment<'a> {
     pub files: Vec<&'a SourceFile>,
     pub user_stubs: &'a std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
+}
+
+/// Nearest ancestor directory (starting at the path itself for
+/// directories, at the parent for files) holding a `DESCRIPTION` file:
+/// the enclosing R package's root, `None` outside any package. Shared by
+/// every frontend so the CLI and the language server agree on the library
+/// boundary.
+pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
+    let start = if path.is_dir() { path } else { path.parent()? };
+    start
+        .ancestors()
+        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// Group path strings by enclosing package root, keeping each group's
+/// input indices in ascending order. Each R package is a separate
+/// library scope: pooling multiple package roots into one project lets
+/// top-level bindings and inferred functions leak between namespaces,
+/// which can both hide real RY010 findings and activate the wrong NSE
+/// model. Non-package scripts share the `None` group so ordinary
+/// multi-file workflows keep their source()-style visibility.
+pub fn group_by_package_root<'a, I>(paths: I) -> BTreeMap<Option<PathBuf>, Vec<usize>>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut groups: BTreeMap<Option<PathBuf>, Vec<usize>> = BTreeMap::new();
+    // The ancestor DESCRIPTION walk is identical for every file in one
+    // directory, so run it once per distinct directory instead of once
+    // per file.
+    let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
+    for (index, path) in paths.into_iter().enumerate() {
+        let path = Path::new(path);
+        let key = path.parent();
+        let root = root_cache
+            .entry(key)
+            .or_insert_with(|| enclosing_package_root(path))
+            .clone();
+        groups.entry(root).or_default().push(index);
+    }
+    groups
 }
 
 /// Filesystem-derived state applied to a checker `Project`.

@@ -4,7 +4,7 @@
 //! these helpers so their file sets, resolution roots, and workspace
 //! models cannot drift apart.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -175,42 +175,17 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     })
 }
 
-/// Nearest ancestor directory (starting at the path itself for
-/// directories, at the parent for files) holding a DESCRIPTION file.
-fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
-    let start = if path.is_dir() { path } else { path.parent()? };
-    start
-        .ancestors()
-        .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
-        .map(Path::to_path_buf)
-}
-
 /// Group path strings by enclosing package root, keeping each group's
-/// input indices in ascending order. Each R package is a separate
-/// library scope: pooling multiple package roots into one project lets
-/// top-level bindings and inferred functions leak between namespaces,
-/// which can both hide real RY010 findings and activate the wrong NSE
-/// model. Non-package scripts share the `None` group so ordinary
-/// multi-file workflows keep their source()-style visibility.
+/// input indices in ascending order. Re-export of the shared boundary in
+/// `ry_workspace` so the CLI and the language server cannot drift apart;
+/// see there for the invariant. Non-package scripts share the `None`
+/// group so ordinary multi-file workflows keep their source()-style
+/// visibility.
 pub(crate) fn group_by_package_root<'a, I>(paths: I) -> BTreeMap<Option<PathBuf>, Vec<usize>>
 where
     I: IntoIterator<Item = &'a str>,
 {
-    let mut groups: BTreeMap<Option<PathBuf>, Vec<usize>> = BTreeMap::new();
-    // The ancestor DESCRIPTION walk is identical for every file in one
-    // directory, so run it once per distinct directory instead of once
-    // per file.
-    let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
-    for (index, path) in paths.into_iter().enumerate() {
-        let path = Path::new(path);
-        let key = path.parent();
-        let root = root_cache
-            .entry(key)
-            .or_insert_with(|| enclosing_package_root(path))
-            .clone();
-        groups.entry(root).or_default().push(index);
-    }
-    groups
+    ry_workspace::group_by_package_root(paths)
 }
 
 /// One per-package group, ready for the checker: the group's files and

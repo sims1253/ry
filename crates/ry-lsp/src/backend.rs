@@ -1132,7 +1132,7 @@ impl Backend {
                             files: partition.files,
                         });
                     }
-                    None => {
+                    None if partition.ctx.is_none() => {
                         let cache = state
                             .root_caches
                             .entry(partition.package_root)
@@ -1146,6 +1146,15 @@ impl Backend {
                             files: partition.files,
                         });
                     }
+                    // The owning folder vanished mid-pass (its removal also
+                    // clears the affected URIs without advancing the
+                    // debounce generation, which is what lets this pass run
+                    // at all). Checking the orphaned partition through the
+                    // root inputs would briefly republish diagnostics the
+                    // removal just cleared, so skip it: the pass-end
+                    // reconciliation settles the tracked URIs against
+                    // current state.
+                    None => continue,
                 }
             }
         }

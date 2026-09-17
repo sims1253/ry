@@ -480,3 +480,121 @@ fn sibling_folders_each_anchor_the_shared_parent_config() {
         join_session(session, server).await;
     })
 }
+
+/// A retained baseline must stay paired with the anchor it was loaded
+/// under. When the config moves to another directory mid-session and the
+/// new baseline fails to load, retaining the old baseline would pair its
+/// old-relative keys with the new anchor: a file that merely shares the
+/// key shape (`R/diag.R` under the new root versus `R/diag.R` under the
+/// config subdirectory) would be silently absorbed. The reload must
+/// clear the baseline instead.
+#[test]
+fn retained_baseline_stays_paired_with_its_config_origin() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        // The covered finding lives under the config directory so its
+        // baseline key (`R/diag.R`) is relative to that directory.
+        fixture
+            .write_file("cfg/ry.toml", "baseline = \"b.json\"\n")
+            .unwrap();
+        fixture
+            .write_file("cfg/R/diag.R", "x <- never_bound_here\n")
+            .unwrap();
+        // A same-shaped finding at the folder root, covered by no
+        // baseline entry while the config lives in `cfg/`.
+        fixture
+            .write_file("R/diag.R", "x <- never_bound_here\n")
+            .unwrap();
+
+        // CLI-generated baseline from the config directory: exactly one
+        // entry. The CLI writes input-relative keys (`cfg/R/diag.R` from
+        // the fixture root); re-anchor the entry to the config directory
+        // (`R/diag.R`) — the form a config-dir-relative baseline uses —
+        // keeping the CLI-derived code and message untouched.
+        let cli = cli_json(
+            &fixture,
+            "cfg",
+            &["--write-baseline", "cfg/b.json", "--output-format", "json"],
+        );
+        assert_eq!(cli.len(), 1, "one finding to baseline: {cli:?}");
+        let mut baseline: Value =
+            serde_json::from_slice(&std::fs::read(fixture.path("cfg/b.json")).unwrap()).unwrap();
+        assert_eq!(
+            baseline["entries"][0]["path"],
+            json!("cfg/R/diag.R"),
+            "keys relative to the working directory: {baseline:?}"
+        );
+        baseline["entries"][0]["path"] = json!("R/diag.R");
+        std::fs::write(
+            fixture.path("cfg/b.json"),
+            format!("{}\n", serde_json::to_string_pretty(&baseline).unwrap()),
+        )
+        .unwrap();
+
+        let (mut session, server) = spawn_session(
+            &[fixture.root()],
+            json!({}),
+            Some(json!({
+                "settings": [{"configuration": "cfg/ry.toml"}],
+                "globalSettings": {}
+            })),
+        )
+        .await;
+        let covered_uri = file_uri(&fixture.path("cfg/R/diag.R"));
+        let uncovered_uri = file_uri(&fixture.path("R/diag.R"));
+
+        let mark = session.publication_mark();
+        session
+            .open(&covered_uri, 1, "x <- never_bound_here\n")
+            .await
+            .unwrap();
+        let covered = session
+            .published_diagnostics_after(&covered_uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_code(&covered, "RY010"),
+            0,
+            "the baselined finding is suppressed under the cfg/ config: {covered}"
+        );
+        let mark = session.publication_mark();
+        session
+            .open(&uncovered_uri, 1, "x <- never_bound_here\n")
+            .await
+            .unwrap();
+        let uncovered = session
+            .published_diagnostics_after(&uncovered_uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_code(&uncovered, "RY010"),
+            1,
+            "the same-shaped finding at the root is not covered: {uncovered}"
+        );
+
+        // Move the config to the folder root with an unloadable baseline
+        // and switch the `configuration` setting to it.
+        fixture
+            .write_file("ry.toml", "baseline = \"missing.json\"\n")
+            .unwrap();
+        sync_barrier(&mut session, &uncovered_uri).await;
+        let mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeConfiguration",
+                json!({ "settings": { "configuration": "ry.toml" } }),
+            )
+            .await
+            .unwrap();
+        let after = session
+            .published_diagnostics_after(&uncovered_uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_code(&after, "RY010"),
+            1,
+            "the moved config's failed baseline must be cleared, not retained against the new anchor: {after}"
+        );
+        join_session(session, server).await;
+    })
+}

@@ -1559,7 +1559,10 @@ pub(super) fn build_folder_contexts(
 /// directory failed) the last valid value for that field is retained and
 /// the failure is logged — a corrupt reload never silently clears the
 /// baseline, and a fully failed stub reload never silently drops the
-/// stub map. A partial stub failure keeps only the directories that
+/// stub map. One exception: a failed baseline reload after the config's
+/// directory changed clears the baseline instead of retaining it,
+/// because the retained keys are relative to the old anchor (#493). A
+/// partial stub failure keeps only the directories that
 /// loaded, replacing the map with what a fresh server would produce.
 /// Deliberate removals (a setting deleted or set to an empty list) are
 /// not failures and always take effect. `folder_settings`,
@@ -1598,12 +1601,25 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
     let baseline = match load_folder_baseline(&old.folder_settings, &config, Some(&old.root)) {
         Ok(opt) => opt,
         Err(error) => {
-            tracing::warn!(
-                root = %old.root.display(),
-                %error,
-                "failed to reload baseline; retaining last valid baseline"
-            );
-            old.baseline.clone()
+            // A retained baseline's keys stay relative to the anchor it
+            // was loaded under, so it may only be retained while the
+            // config origin is unchanged; pairing old keys with a new
+            // anchor would match the wrong files (#493).
+            if config_root == old.config_root {
+                tracing::warn!(
+                    root = %old.root.display(),
+                    %error,
+                    "failed to reload baseline; retaining last valid baseline"
+                );
+                old.baseline.clone()
+            } else {
+                tracing::warn!(
+                    root = %old.root.display(),
+                    %error,
+                    "failed to reload baseline after the config moved; clearing the stale baseline"
+                );
+                None
+            }
         }
     };
     let (filter, min_confidence, excludes) = compute_folder_filter(&config, &old.folder_settings);

@@ -1684,7 +1684,6 @@ impl Backend {
     }
 }
 
-/// Load the root `ry.toml` and the user stubs it declares. A missing or
 /// Whether one on-disk R file would survive the directory walk's
 /// admission rules: the shared extension set, no symlink, no pruned
 /// ancestor directory (hidden, `target`, `node_modules`, `.Rcheck`, and

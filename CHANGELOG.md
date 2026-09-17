@@ -18,7 +18,9 @@ All notable changes to ry are documented in this file.
   surviving debounce task drains and publishes together, and the server
   tracks which URIs last received diagnostics so each publish pass —
   or a rescan with no open document to drive one — sends an empty
-  publication for URIs that left the eligible set.
+  publication for URIs that left the eligible set. Removing a
+  workspace folder likewise clears the closed, previously-published
+  disk files under the removed root, not just its open documents.
 - Anchor the language server's config-relative paths at the directory of
   the `ry.toml` being used, matching `ry check`: a parent-discovered or
   explicitly configured `ry.toml` outside the workspace folder used to

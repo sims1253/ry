@@ -142,22 +142,28 @@ fn disabling_the_folder_clears_every_open_document() {
     })
 }
 
-/// The mixed case: excluding one of two open documents. The excluded
-/// URI must be cleared even though the still-eligible one also
-/// republishes — when the surviving debounce task carried the eligible
-/// URI, the excluded one was never rescheduled at all.
+/// The mixed case: excluding two of three open documents. Both excluded
+/// URIs must be cleared even though the still-eligible one also
+/// republishes. Two excluded documents make the gap deterministic: with
+/// one, the surviving debounce task could carry exactly that URI and
+/// mask the bug, while main clears at most the single URI the
+/// surviving task carries.
 #[test]
-fn excluding_one_of_two_open_documents_clears_only_the_excluded_one() {
+fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
     run(async {
         let fixture = FixtureProject::empty().unwrap();
         fixture
             .write_file("a.R", "x <- never_bound_here\n")
             .unwrap();
         fixture
+            .write_file("c.R", "z <- never_bound_here\n")
+            .unwrap();
+        fixture
             .write_file("b.R", "y <- never_bound_here\n")
             .unwrap();
         let a_uri = file_uri(&fixture.path("a.R"));
         let b_uri = file_uri(&fixture.path("b.R"));
+        let c_uri = file_uri(&fixture.path("c.R"));
         let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
         sync_barrier(&mut session, &a_uri).await;
@@ -170,15 +176,20 @@ fn excluding_one_of_two_open_documents_clears_only_the_excluded_one() {
             .open(&b_uri, 1, "y <- never_bound_here\n")
             .await
             .unwrap();
+        session
+            .open(&c_uri, 1, "z <- never_bound_here\n")
+            .await
+            .unwrap();
         let initial = session
             .quiesce_diagnostics(&a_uri, mark, DRAIN)
             .await
             .unwrap();
         assert_ry010(&initial, &a_uri);
         assert_ry010(&initial, &b_uri);
+        assert_ry010(&initial, &c_uri);
 
         fixture
-            .write_file("ry.toml", "exclude = [\"a.R\"]\n")
+            .write_file("ry.toml", "exclude = [\"a.R\", \"c.R\"]\n")
             .unwrap();
         let mark = session.publication_mark();
         session
@@ -193,7 +204,67 @@ fn excluding_one_of_two_open_documents_clears_only_the_excluded_one() {
             .await
             .unwrap();
         assert_cleared(&excluded, &a_uri);
+        assert_cleared(&excluded, &c_uri);
         assert_ry010(&excluded, &b_uri);
+
+        join_session(session, server).await;
+    })
+}
+
+/// Removing a workspace folder must also clear the closed, previously
+/// published disk files under the removed root — not just open
+/// documents. `keep.R` in the surviving folder stays open and drives
+/// the republish; `B/a.R` was published through the background index
+/// while the folder existed.
+#[test]
+fn removing_a_folder_clears_its_closed_disk_files() {
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture
+            .write_file("A/keep.R", "w <- never_bound_here\n")
+            .unwrap();
+        fixture
+            .write_file("B/a.R", "x <- never_bound_here\n")
+            .unwrap();
+        let folder_a = fixture.path("A");
+        let folder_b = fixture.path("B");
+        let folder_b_uri = file_uri(&folder_b);
+        let a_uri = file_uri(&fixture.path("B/a.R"));
+        let keep_uri = file_uri(&fixture.path("A/keep.R"));
+        let (mut session, server) = spawn_session(&[&folder_a, &folder_b], json!({}), None).await;
+
+        sync_barrier(&mut session, &keep_uri).await;
+        let mark = session.publication_mark();
+        session
+            .open(&keep_uri, 1, "w <- never_bound_here\n")
+            .await
+            .unwrap();
+        let initial = session
+            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+            .await
+            .unwrap();
+        assert_ry010(&initial, &a_uri);
+        assert_ry010(&initial, &keep_uri);
+
+        let mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWorkspaceFolders",
+                json!({
+                    "event": {
+                        "added": [],
+                        "removed": [{"uri": folder_b_uri, "name": "B"}]
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        let removed = session
+            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+            .await
+            .unwrap();
+        assert_cleared(&removed, &a_uri);
+        assert_ry010(&removed, &keep_uri);
 
         join_session(session, server).await;
     })

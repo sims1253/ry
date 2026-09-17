@@ -266,14 +266,33 @@ impl LanguageServer for Backend {
                 .any(|r| std::path::Path::new(p).starts_with(r))
         };
 
-        // URIs for open documents owned by removed roots — diagnostics for
-        // these must be cleared.
+        // URIs owned by removed roots — diagnostics for these must be
+        // cleared: the open documents, plus closed disk files whose last
+        // publication came from the background index. The closed files
+        // are not open, so the partition below misses them, and the
+        // `published_paths` retain further down forgets them — without
+        // an explicit empty publication here they would keep their
+        // squiggles in the client while being unreachable by
+        // `clear_dropped_diagnostics` (#489).
         let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<Url>) = {
             let state = self.state.lock().await;
             let (keep, clear): (Vec<&String>, Vec<&String>) =
                 state.docs.keys().partition(|p| !under_removed_root(p));
+            let mut docs_to_clear: Vec<Url> = clear.into_iter().map(|p| path_to_uri(p)).collect();
+            // Mirror the `did_close` pattern: publish empty now, then
+            // leave the tracked set via the retain below.
+            for path in state
+                .published_paths
+                .iter()
+                .filter(|p| under_removed_root(p.as_str()))
+            {
+                let uri = path_to_uri(path);
+                if !docs_to_clear.contains(&uri) {
+                    docs_to_clear.push(uri);
+                }
+            }
             (
-                clear.into_iter().map(|p| path_to_uri(p)).collect(),
+                docs_to_clear,
                 keep.into_iter().map(|p| path_to_uri(p)).collect(),
             )
         };

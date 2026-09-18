@@ -912,7 +912,7 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 
 #[derive(Clone)]
 pub(crate) struct EnclosingFormals {
-    pub(crate) names: HashSet<String>,
+    pub(crate) names: FxSet<String>,
     pub(crate) has_dots: bool,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
@@ -1058,7 +1058,7 @@ pub struct Checker {
     // own wrapper, stringr's detect guards `if (ignore_case)` before
     // its fixed `regex(...)`, tibble's set_tidy_names forwards
     // `quiet = quiet` at the user-facing call).
-    formal_reads: FxMap<Span, HashSet<String>>,
+    formal_reads: FxMap<Span, FxSet<String>>,
     // Spans of function literals that are dynamic-construction
     // placeholders: `x <- function(...)` followed, before any rebind of
     // `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same lexical

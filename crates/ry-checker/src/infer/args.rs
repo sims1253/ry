@@ -62,7 +62,7 @@ impl Checker {
 /// caller's value; and formal default expressions (`force = na.rm`)
 /// evaluate in the function's own scope and count as reads of the
 /// sibling formals they name.
-pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, HashSet<String>>) {
+pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, FxSet<String>>) {
     let mut frames: Vec<ReadFrame> = Vec::new();
     scan_stmts(stmts, &mut frames, map);
 }
@@ -71,8 +71,8 @@ pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, HashSet<S
 /// formal names, and the reads attributed to it so far.
 struct ReadFrame {
     span: Span,
-    formals: HashSet<String>,
-    reads: HashSet<String>,
+    formals: FxSet<String>,
+    reads: FxSet<String>,
 }
 
 /// Enter one function: push its frame, scan its defaults and body, and
@@ -83,7 +83,7 @@ fn scan_function(
     body: &[Stmt],
     span: Span,
     frames: &mut Vec<ReadFrame>,
-    map: &mut FxMap<Span, HashSet<String>>,
+    map: &mut FxMap<Span, FxSet<String>>,
 ) {
     frames.push(ReadFrame {
         span,
@@ -92,7 +92,7 @@ fn scan_function(
             .filter(|parameter| parameter.name != "...")
             .map(|parameter| semantic_argument_name(&parameter.name).to_owned())
             .collect(),
-        reads: HashSet::new(),
+        reads: FxSet::default(),
     });
     // Formal defaults evaluate in the function's own scope: a default
     // naming a sibling formal (`force = na.rm`) consumes the caller's
@@ -107,13 +107,13 @@ fn scan_function(
     map.insert(frame.span, frame.reads);
 }
 
-fn scan_stmts(stmts: &[Stmt], frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+fn scan_stmts(stmts: &[Stmt], frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     for statement in stmts {
         scan_stmt(statement, frames, map);
     }
 }
 
-fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     match stmt {
         Stmt::Assign { target, value, .. } => {
             scan_target(target, frames, map);
@@ -148,8 +148,10 @@ fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, Has
             scan_expr(iter, frames, map);
             frames.push(ReadFrame {
                 span: *span,
-                formals: HashSet::from([semantic_argument_name(name).to_owned()]),
-                reads: HashSet::new(),
+                formals: [semantic_argument_name(name).to_owned()]
+                    .into_iter()
+                    .collect(),
+                reads: FxSet::default(),
             });
             scan_stmts(body, frames, map);
             frames.pop();
@@ -173,7 +175,7 @@ fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, Has
 /// promise (the caller's value is replaced without being read), so it
 /// is not a read. Complex targets keep their evaluated parts: `x[p] <- v`
 /// reads `p`, and the root identifier of each index level stays a write.
-fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     match expr {
         Expr::Ident { .. } => {}
         Expr::Index { base, args, .. } => {
@@ -186,7 +188,7 @@ fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, H
     }
 }
 
-fn scan_expr(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+fn scan_expr(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
     match expr {
         Expr::Function {
             params, body, span, ..

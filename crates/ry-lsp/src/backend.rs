@@ -1620,6 +1620,9 @@ impl Backend {
             // nothing the publish path reads.
             return false;
         }
+        // The budget check at the commit needs the owning root after the
+        // blocking read moved `walk_root` into its closure.
+        let budget_root = walk_root.clone();
         let parsed = tokio::task::spawn_blocking(move || {
             if !eligible
                 || !single_file_admitted(
@@ -1674,6 +1677,35 @@ impl Backend {
         }
         match parsed {
             Some((parsed_path, file)) => {
+                // The `index.max-files` count is not a path property, so the
+                // admission verdict above cannot enforce it: refuse a new
+                // entry once the owning root is at its budget (#525).
+                // First-come-first-served like the walk — refreshing an
+                // already-indexed path still lands (no growth), and nothing
+                // already indexed is evicted — so the incremental map never
+                // holds more per root than a fresh scan of the same tree.
+                // Decided here under the lock, not in the blocking snapshot:
+                // two concurrent refreshes racing at the cap line up on this
+                // lock, and only the first one through grows the map.
+                let over_budget = !budget_root.as_os_str().is_empty()
+                    && !state.disk_files.contains_key(&parsed_path)
+                    && state
+                        .disk_files
+                        .keys()
+                        .filter(|existing| {
+                            std::path::Path::new(existing.as_str()).starts_with(&budget_root)
+                        })
+                        .count()
+                        >= limits.max_files;
+                if over_budget {
+                    tracing::debug!(
+                        path = %parsed_path,
+                        root = %budget_root.display(),
+                        cap = limits.max_files,
+                        "discarding per-file disk refresh over index.max-files"
+                    );
+                    return false;
+                }
                 state.disk_files.insert(parsed_path, file);
                 true
             }

@@ -179,6 +179,167 @@ pub mod test_seam {
             b.did_change_fired.notify_one();
         }
     }
+
+    /// One-shot rendezvous gate sequencing a single index commit against
+    /// the test driver so overlapping index writers interleave
+    /// deterministically (#526): the first writer to arrive after arming
+    /// waits for the test to release it, then signals when its commit
+    /// decision is made. The arm is consumed atomically, so later writers
+    /// pass through. Like the barriers above this gate is thread-local
+    /// (see the module docs) and pauses only scheduling: the waiter
+    /// holds no state lock while parked. Thread-locality is load-bearing —
+    /// parallel tests on different threads stay isolated — so arm, wait,
+    /// and release must run on the test's thread, which is the server's
+    /// thread too under the `new_current_thread` runtimes every test uses.
+    struct CommitGate {
+        armed: AtomicBool,
+        arrived: Notify,
+        release: Notify,
+        landed: Notify,
+    }
+
+    impl CommitGate {
+        fn new() -> Self {
+            Self {
+                armed: AtomicBool::new(false),
+                arrived: Notify::new(),
+                release: Notify::new(),
+                landed: Notify::new(),
+            }
+        }
+
+        /// Park the first arrival after arming until the test releases
+        /// it. Returns whether this writer paused: only a paused writer
+        /// signals `landed`, so the test's post-release wait cannot
+        /// consume a pass-through writer's signal.
+        async fn maybe_pause(&self) -> bool {
+            if self.armed.swap(false, Ordering::AcqRel) {
+                self.arrived.notify_one();
+                self.release.notified().await;
+                return true;
+            }
+            false
+        }
+
+        /// Signal that a paused writer made its commit decision (landed
+        /// or discarded). Call only when `maybe_pause` returned true.
+        fn note_landed(&self) {
+            self.landed.notify_one();
+        }
+    }
+
+    thread_local! {
+        static REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+        static SCAN_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+        static POST_REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+    }
+
+    fn refresh_gate() -> Arc<CommitGate> {
+        REFRESH_COMMIT_GATE.with(Arc::clone)
+    }
+
+    fn scan_gate() -> Arc<CommitGate> {
+        SCAN_COMMIT_GATE.with(Arc::clone)
+    }
+
+    fn post_refresh_gate() -> Arc<CommitGate> {
+        POST_REFRESH_COMMIT_GATE.with(Arc::clone)
+    }
+
+    /// Arm the per-file refresh gate: the next `refresh_disk_entry`
+    /// commit pauses after its blocking read, before taking the state
+    /// lock. The test proves the read saw pre-write bytes by writing
+    /// only after `wait_refresh_commit` returns: the arrival signal is
+    /// sent after the read completed, so the write is strictly later.
+    pub fn arm_refresh_commit() {
+        refresh_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed refresh to arrive at its commit point.
+    pub async fn wait_refresh_commit() {
+        refresh_gate().arrived.notified().await;
+    }
+
+    /// Release the paused refresh commit.
+    pub fn release_refresh_commit() {
+        refresh_gate().release.notify_one();
+    }
+
+    /// Wait for the released refresh to make its commit decision. The
+    /// refresh's handler does not always republish (a discarded commit
+    /// returns false and the caller stands down), so this rendezvous —
+    /// not a publication — is the proof the commit point passed.
+    pub async fn wait_refresh_landed() {
+        refresh_gate().landed.notified().await;
+    }
+
+    /// Arm the full-scan gate: the next `spawn_background_index` commit
+    /// pauses after its blocking walk, before taking the state lock. A
+    /// scan that arrived here walked pre-save bytes whenever the test
+    /// saves only after `wait_scan_commit` returns. No `landed`
+    /// rendezvous: the scan's handler republishes unconditionally after
+    /// the spawn returns, so its publication is the landed proof.
+    pub fn arm_scan_commit() {
+        scan_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed scan to arrive at its commit point.
+    pub async fn wait_scan_commit() {
+        scan_gate().arrived.notified().await;
+    }
+
+    /// Release the paused scan commit.
+    pub fn release_scan_commit() {
+        scan_gate().release.notify_one();
+    }
+
+    /// Called by `refresh_disk_entry` (production code) between the
+    /// blocking read/parse and the commit lock. When not armed this is
+    /// a no-op (a single atomic swap plus, for pass-through writers, no
+    /// signal at all).
+    pub(crate) async fn maybe_pause_refresh_commit() {
+        let gate = refresh_gate();
+        if gate.maybe_pause().await {
+            gate.note_landed();
+        }
+    }
+
+    /// Arm the post-commit gate: the next `refresh_disk_entry` commit
+    /// pauses after its insert-and-bump critical section releases, while
+    /// still observed before the caller acts on the landed result. Lets
+    /// a test prove the generation bumped atomically with the insert:
+    /// release the refresh, wait here, and the new generation is already
+    /// visible while no caller-side bump could have run yet.
+    pub fn arm_post_refresh_commit() {
+        post_refresh_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed refresh to finish its commit critical section.
+    pub async fn wait_post_refresh_commit() {
+        post_refresh_gate().arrived.notified().await;
+    }
+
+    /// Release the paused post-commit refresh.
+    pub fn release_post_refresh_commit() {
+        post_refresh_gate().release.notify_one();
+    }
+
+    /// Called by `refresh_disk_entry` (production code) after the commit
+    /// lock releases, before returning the landed verdict. No-op when
+    /// not armed.
+    pub(crate) async fn maybe_pause_post_refresh_commit() {
+        let gate = post_refresh_gate();
+        if gate.maybe_pause().await {
+            gate.note_landed();
+        }
+    }
+
+    /// Called by `spawn_background_index` (production code) between the
+    /// blocking walk and the commit lock. Same no-op-when-unarmed
+    /// contract as the refresh gate.
+    pub(crate) async fn maybe_pause_scan_commit() {
+        scan_gate().maybe_pause().await;
+    }
 }
 
 mod backend;

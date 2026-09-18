@@ -443,21 +443,18 @@ impl LanguageServer for Backend {
             if !refreshed {
                 return;
             }
-            // A stale in-flight background pass must not overwrite these
-            // fresher per-file entries when it lands: the pass checks the
-            // generation before writing, so claiming a new one retires it.
-            // A newer pass started afterwards still wins, as usual. The
-            // bump happens only when a refresh actually landed — an event
-            // for an open document (e.g. every save) retires nothing.
-            // When the retired pass was the initial index, its completion
-            // can no longer clear `initial_index_pending`, so a fresh pass
-            // takes over that duty; without it publications would stay
-            // gated for the rest of the session.
-            let index_pending = {
-                let mut state = self.state.lock().await;
-                state.index_generation = state.index_generation.wrapping_add(1);
-                state.initial_index_pending
-            };
+            // A landed refresh already claimed the next generation inside
+            // its commit critical section, retiring any stale in-flight
+            // background pass (the pass checks the generation before
+            // writing); what remains here is the respawn duty. A newer
+            // pass started afterwards still wins, as usual. Nothing bumps
+            // when no refresh landed — an event for an open document
+            // (e.g. every save) retires nothing. When the retired pass
+            // was the initial index, its completion can no longer clear
+            // `initial_index_pending`, so a fresh pass takes over that
+            // duty; without it publications would stay gated for the rest
+            // of the session.
+            let index_pending = { self.state.lock().await.initial_index_pending };
             if index_pending {
                 self.spawn_background_index().await;
             }
@@ -513,8 +510,24 @@ impl LanguageServer for Backend {
         // function of the current disk state. Unreadable files leave the
         // index, matching the walk; a dropped entry that previously
         // carried diagnostics is reconciled by the republish below (#489).
-        self.refresh_disk_entry(std::path::PathBuf::from(&path))
+        let refreshed = self
+            .refresh_disk_entry(std::path::PathBuf::from(&path))
             .await;
+        if refreshed {
+            // The same retirement the watched-file path relies on: the
+            // close-time refresh already claimed the next generation
+            // inside its commit critical section, so a still-current
+            // in-flight background pass — whose walk may have read this
+            // file before the save — cannot replace the whole map with
+            // its older snapshot when it commits (#526). When the
+            // retired pass was the initial index, a fresh pass takes
+            // over clearing `initial_index_pending` so publications
+            // never strand.
+            let index_pending = { self.state.lock().await.initial_index_pending };
+            if index_pending {
+                self.spawn_background_index().await;
+            }
+        }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
         self.client

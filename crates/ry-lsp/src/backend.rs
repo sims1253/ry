@@ -501,6 +501,25 @@ impl State {
             .find(|ctx| path.starts_with(&ctx.root))
     }
 
+    /// Whether an indexed `disk_files` entry consumes `budget_root`'s
+    /// `index.max-files` budget: entries attribute to their INNERMOST
+    /// containing root (longest-prefix, the same ownership
+    /// [`folder_context_for_path`](Self::folder_context_for_path)
+    /// applies), so in a nested multi-root workspace a file under an
+    /// inner root counts toward the inner root's cap — never the
+    /// outer's — matching how the walk caps each root's scan
+    /// independently (#525). `Path::starts_with` is already
+    /// component-wise; the innermost rule is what the plain prefix
+    /// count gets wrong.
+    fn entry_consumes_root_budget(&self, existing: &std::path::Path, budget_root: &Path) -> bool {
+        existing.starts_with(budget_root)
+            && !self.folder_contexts.iter().any(|ctx| {
+                ctx.root.as_path() != budget_root
+                    && ctx.root.starts_with(budget_root)
+                    && existing.starts_with(&ctx.root)
+            })
+    }
+
     /// Whether the server should analyze and publish diagnostics for
     /// `doc_path`: a folder set to `enable: false` is skipped entirely;
     /// otherwise eligibility follows the owning folder's discovery rules —
@@ -1465,6 +1484,10 @@ impl Backend {
                     }
                 }
                 let cap_hit = !truncated.is_empty();
+                // Test seam: pause here (holding no lock) so a test can
+                // land a per-file commit before this scan resumes (#526).
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_scan_commit().await;
                 let mut state = self.state.lock().await;
                 if state.index_generation != index_gen {
                     tracing::debug!(
@@ -1543,51 +1566,84 @@ impl Backend {
     /// (#486). A missing, ineligible, oversized, or unreadable file is
     /// dropped from the index, so a watched-file deletion corrupts
     /// nothing and a rescan cannot disagree about membership. Returns
-    /// whether the caller should republish open documents afterwards.
-    ///
-    /// The caller must hold no lock: the admission stats and the disk
-    /// read/parse run on the blocking pool, and only the snapshots and
-    /// the map write take the state lock. Open documents are left alone
-    /// — the editor's buffer stays authoritative for its path, and the
-    /// publish path layers it over the index.
+    /// whether the refresh LANDED. A landed refresh claims the next
+    /// `index_generation` atomically with its map write inside the
+    /// commit critical section — the check, the write, and the bump
+    /// share one lock hold — so no scan can commit between the insert
+    /// and the retirement, and the caller must not bump again (#526).
+    /// Landing also retires any in-flight background pass (its commit
+    /// check fails), which is why the caller respawns the initial pass
+    /// when the landed refresh retired it. The commit lands only when
+    /// the refresh's snapshot generation is still current: a newer scan
+    /// (or a newer landed refresh) owns the fresher bytes or the
+    /// fresher map, so a delayed commit must not install older source
+    /// over them. The `did_open` guard below is a separate authority
+    /// rule, not a freshness check: an open buffer shadows its disk
+    /// twin regardless of generation. A refresh that loses the
+    /// generation race returns false — its bytes did not land — so the
+    /// caller neither republishes nor respawns scans for them.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
-        // Snapshot the owning root and config once: the admission checks
-        // below must agree with each other even if a config reload lands
-        // mid-refresh (a rescan converges anything left over).
-        let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures, eligible, is_open) = {
+        // Snapshot the owning root and config once, plus the index
+        // generation this refresh's commit must still hold when it
+        // lands: the admission checks below must agree with each other
+        // even if a config reload lands mid-refresh (a rescan converges
+        // anything left over), and the commit must not overwrite a
+        // newer scan's bytes (see the generation check at the write).
+        let (
+            walk_root,
+            exclude_anchor,
+            excludes,
+            include_build_ignored,
+            limits,
+            check_test_fixtures,
+            eligible,
+            is_open,
+            refresh_gen,
+        ) = {
             let state = self.state.lock().await;
-            let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures) =
-                match state.folder_context_for_path(&path_string) {
-                    Some(ctx) => (
-                        ctx.root.clone(),
-                        ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
-                        ctx.excludes.clone(),
-                        ry_workspace::DiscoveryLimits::from_config(&ctx.config),
-                        ctx.config.check_test_fixtures,
-                    ),
-                    None => (
-                        state.root.clone().unwrap_or_default(),
-                        state
-                            .root_config_dir
-                            .clone()
-                            .or_else(|| state.root.clone())
-                            .unwrap_or_default(),
-                        state.root_excludes.clone(),
-                        ry_workspace::DiscoveryLimits::from_config(&state.file_config),
-                        state.file_config.check_test_fixtures,
-                    ),
-                };
+            let (
+                walk_root,
+                exclude_anchor,
+                excludes,
+                include_build_ignored,
+                limits,
+                check_test_fixtures,
+            ) = match state.folder_context_for_path(&path_string) {
+                Some(ctx) => (
+                    ctx.root.clone(),
+                    ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
+                    ctx.excludes.clone(),
+                    ctx.config.include_build_ignored.clone(),
+                    ry_workspace::DiscoveryLimits::from_config(&ctx.config),
+                    ctx.config.check_test_fixtures,
+                ),
+                None => (
+                    state.root.clone().unwrap_or_default(),
+                    state
+                        .root_config_dir
+                        .clone()
+                        .or_else(|| state.root.clone())
+                        .unwrap_or_default(),
+                    state.root_excludes.clone(),
+                    state.file_config.include_build_ignored.clone(),
+                    ry_workspace::DiscoveryLimits::from_config(&state.file_config),
+                    state.file_config.check_test_fixtures,
+                ),
+            };
             let eligible = state.eligibility_for_path(&path_string);
             let is_open = state.docs.contains_key(&path_string);
+            let refresh_gen = state.index_generation;
             (
                 walk_root,
                 exclude_anchor,
                 excludes,
+                include_build_ignored,
                 limits,
                 check_test_fixtures,
                 eligible,
                 is_open,
+                refresh_gen,
             )
         };
         if is_open {
@@ -1596,6 +1652,11 @@ impl Backend {
             // nothing the publish path reads.
             return false;
         }
+        // Clone the owning root for the commit-time budget check below:
+        // `walk_root` moves into the blocking closure, and only the budget
+        // check needs it afterwards — one small allocation per watched
+        // event, not worth an `Arc` rippling through every root comparison.
+        let budget_root = walk_root.clone();
         let parsed = tokio::task::spawn_blocking(move || {
             if !eligible
                 || !single_file_admitted(
@@ -1603,6 +1664,7 @@ impl Backend {
                     &walk_root,
                     Some(&exclude_anchor),
                     &excludes,
+                    &include_build_ignored,
                     &limits,
                     check_test_fixtures,
                 )
@@ -1620,6 +1682,10 @@ impl Backend {
         .await
         .ok()
         .flatten();
+        // Test seam: pause here (holding no lock) so a test can land a
+        // newer writer before this commit resumes (#526).
+        #[cfg(feature = "test-util")]
+        crate::test_seam::maybe_pause_refresh_commit().await;
         let mut state = self.state.lock().await;
         // A concurrent `did_open` landed while the read was in flight:
         // installing a disk snapshot now would shadow the live buffer's
@@ -1627,9 +1693,70 @@ impl Backend {
         if state.docs.contains_key(&path_string) {
             return false;
         }
+        // A newer index generation started while the blocking read was
+        // in flight (a full scan, a folder change, or a landed refresh
+        // that retired in-flight writers): the newer writer owns the
+        // fresher bytes or the fresher map, and this commit's older
+        // parse must not install over them (#526). Returning false
+        // keeps the caller from republishing or retiring scans for
+        // bytes that never landed; the winning writer owns both.
+        if state.index_generation != refresh_gen {
+            tracing::debug!(
+                path = %path_string,
+                gen = refresh_gen,
+                current = state.index_generation,
+                "discarding stale per-file disk refresh"
+            );
+            return false;
+        }
         match parsed {
             Some((parsed_path, file)) => {
+                // The `index.max-files` count is not a path property, so the
+                // admission verdict above cannot enforce it: refuse a new
+                // entry once the owning root is at its budget (#525).
+                // First-come-first-served like the walk (though the orders
+                // differ — readdir vs. event arrival — so above the cap the
+                // retained subset may diverge from a fresh scan's):
+                // refreshing an already-indexed path still lands (no
+                // growth), and nothing already indexed is evicted — so the
+                // incremental map never holds more per root than a fresh
+                // scan of the same tree.
+                // Decided here under the lock, not in the blocking snapshot:
+                // two concurrent refreshes racing at the cap line up on this
+                // lock, and only the first one through grows the map.
+                let over_budget = !budget_root.as_os_str().is_empty()
+                    && !state.disk_files.contains_key(&parsed_path)
+                    && state
+                        .disk_files
+                        .keys()
+                        .filter(|existing| {
+                            state.entry_consumes_root_budget(
+                                std::path::Path::new(existing.as_str()),
+                                &budget_root,
+                            )
+                        })
+                        .count()
+                        >= limits.max_files;
+                if over_budget {
+                    tracing::warn!(
+                        path = %parsed_path,
+                        root = %budget_root.display(),
+                        cap = limits.max_files,
+                        "discarding per-file disk refresh over index.max-files"
+                    );
+                    return false;
+                }
+                // Claim the next generation in the same critical section
+                // as the insert: the check above, the write, and the bump
+                // share one lock hold, so no scan can commit between the
+                // insert and the retirement — the staleness check no later
+                // writer can slip through. The caller must not bump again;
+                // the landed `true` already carries the retirement (#526).
                 state.disk_files.insert(parsed_path, file);
+                state.index_generation = state.index_generation.wrapping_add(1);
+                drop(state);
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_post_refresh_commit().await;
                 true
             }
             None => {
@@ -1637,7 +1764,13 @@ impl Backend {
                 // walk, which never lands such a file in the map. A
                 // dropped entry that previously carried diagnostics is
                 // reconciled by the caller's republish pass (#489).
+                // The removal lands like an insert — same atomic
+                // retirement, same caller contract.
                 state.disk_files.remove(&path_string);
+                state.index_generation = state.index_generation.wrapping_add(1);
+                drop(state);
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_post_refresh_commit().await;
                 true
             }
         }
@@ -1684,102 +1817,36 @@ impl Backend {
     }
 }
 
-/// Whether one on-disk R file would survive the directory walk's
-/// admission rules: the shared extension set, no symlink, no pruned
-/// ancestor directory (hidden, `target`, `node_modules`, `.Rcheck`, and
-/// `renv`-in-package wherever they appear; `revdep`/`src` only as direct
-/// package children; `tests/testthat/_snaps` only package-relative —
-/// exactly the walk's shapes), the testthat runner-code classification,
-/// and the shared per-file eligibility policy (excludes plus the size
-/// and depth caps, through [`ry_workspace::is_file_eligible_with_limits`]
-/// so the caps cannot drift from the walker's or the open-buffer gate's
-/// reading of them, #488). Runs on the blocking pool next to the read
-/// it guards. Deliberately narrower than a full walk in two documented
-/// ways: `.Rbuildignore` needs package-root-relative pattern state the
-/// walk builds incrementally, and directory-name `exclude` patterns
-/// match the pruned directory entry in the walk but never match a
-/// contained file path through `Excludes::matches` — so a file admitted
-/// here but skipped there converges on the next full rescan instead.
+/// Whether one on-disk R file would survive the directory walk's admission
+/// rules, through the shared [`ry_workspace::is_single_file_walk_admitted`]
+/// verdict: the extension set, symlink handling, pruned ancestor shapes,
+/// testthat runner-code classification, the shared per-file eligibility
+/// policy (excludes plus the size and depth caps, so the caps cannot drift
+/// from the walker's or the open-buffer gate's reading of them, #488),
+/// ancestor `exclude` patterns, and `.Rbuildignore` with
+/// `include_build_ignored` rescue (#524). Runs on the blocking pool next to
+/// the read it guards. Deliberately narrower than a full walk in one
+/// documented way: the `index.max-files` count is not a path property, so
+/// the commit in [`Backend::refresh_disk_entry`] enforces it against live
+/// entry accounting instead (#525).
 fn single_file_admitted(
     path: &Path,
     walk_root: &Path,
     exclude_anchor: Option<&Path>,
     excludes: &ry_config::Excludes,
+    include_build_ignored: &[String],
     limits: &ry_workspace::DiscoveryLimits,
     check_test_fixtures: bool,
 ) -> bool {
-    if !ry_workspace::is_r_source_path(path) {
-        return false;
-    }
-    // The walk never follows symlinks; classify the entry itself.
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
-        return false;
-    }
-    let package_root = path.parent().and_then(|parent| {
-        parent
-            .ancestors()
-            .find(|candidate| candidate.join("DESCRIPTION").is_file())
-    });
-    let mut ancestor = path.parent();
-    while let Some(dir) = ancestor {
-        if dir == walk_root || walk_root.as_os_str().is_empty() {
-            break;
-        }
-        let pruned = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.starts_with('.')
-                    || name == "target"
-                    || name == "node_modules"
-                    || name.ends_with(".Rcheck")
-                    || (name == "renv" && package_root.is_some())
-                    || package_root.is_some_and(|root| {
-                        // Direct package children, like the walk's
-                        // `is_excluded_package_directory`.
-                        (name == "revdep" || name == "src") && dir.parent() == Some(root)
-                        // Package-relative `tests/testthat/_snaps`.
-                        || name == "_snaps"
-                            && dir.parent().and_then(|parent| {
-                                parent.strip_prefix(root).ok().map(|relative| {
-                                    relative == std::path::Path::new("tests").join("testthat")
-                                })
-                            }) == Some(true)
-                    })
-            });
-        if pruned {
-            return false;
-        }
-        ancestor = dir.parent();
-    }
-    if !check_test_fixtures && ry_workspace::is_test_fixture_path(path) {
-        return false;
-    }
-    // Disk files pass no content length: discovery measures the file on
-    // disk, and the decoded source length is a transcode away from that
-    // measurement — so the size gate reads `fs::metadata` here while the
-    // open-buffer gate measures buffer text (#488).
-    let content_len = None;
-    if !ry_workspace::is_file_eligible_with_limits(
+    ry_workspace::is_single_file_walk_admitted(
         path,
         walk_root,
         exclude_anchor,
         excludes,
+        include_build_ignored,
         limits,
-        content_len,
-    ) {
-        return false;
-    }
-    // The shared policy's size gate is skipped for disk files (see
-    // above); apply the walk's own measurement instead: discovery omits
-    // only sizes strictly above the cap.
-    if std::fs::metadata(path)
-        .map(|metadata| metadata.len() > limits.max_file_bytes)
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    true
+        check_test_fixtures,
+    )
 }
 
 /// Load the root `ry.toml` and the user stubs it declares. A missing or

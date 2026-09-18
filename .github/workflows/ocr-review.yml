@@ -1,7 +1,10 @@
 # OpenCodeReview — LLM review bot for PRs (https://open-codereview.ai).
 #
-# Reviews diffs with an LLM and posts inline review comments. Required
-# repo settings (Settings → Secrets and variables → Actions):
+# Reviews diffs with an LLM and posts inline review comments. Auto-review is
+# gated to MEMBER/OWNER/COLLABORATOR PR authors; other PRs (forks included)
+# are only reviewed when a maintainer triggers it via comment — otherwise any
+# fork could burn LLM quota just by opening PRs. Required repo settings
+# (Settings → Secrets and variables → Actions):
 #   secret    OCR_LLM_URL            LLM API endpoint
 #   secret    OCR_LLM_AUTH_TOKEN     LLM auth token
 #   variable  OCR_LLM_MODEL          model name (no default)
@@ -21,15 +24,27 @@ name: OpenCodeReview PR Review
 # single normal comment kills a running review, and you see "two runs, one
 # cancelled" in the Actions tab.
 #
-# Fix: matching events (PR events + /open-code-review comments) share a per-PR
-# group so a new review cancels any stale one for the same PR. Non-matching
-# comments land in a unique noop-<run_id> group that can never collide with a
-# real review, so they are skipped instantly without disrupting anything.
+# Fix: matching events (trusted PR events + /open-code-review comments) share
+# a per-PR group so a new review cancels any stale one for the same PR.
+# Everything else — non-matching comments, but also PR events from untrusted
+# authors — lands in a unique noop-<run_id> group that can never collide with
+# a real review, so those runs are skipped instantly without disrupting
+# anything. Untrusted PR events must stay out of the per-PR group: although
+# the job if skips them, concurrency is evaluated first, so a shared group
+# would let a fork author cancel a maintainer-triggered review just by
+# pushing.
 concurrency:
   group: >-
     ${{
       (
-        github.event_name == 'pull_request_target'
+        (
+          github.event_name == 'pull_request_target'
+          && (
+            github.event.pull_request.author_association == 'MEMBER'
+            || github.event.pull_request.author_association == 'OWNER'
+            || github.event.pull_request.author_association == 'COLLABORATOR'
+          )
+        )
         || (
           github.event_name == 'issue_comment'
           && github.event.issue.pull_request
@@ -70,13 +85,22 @@ jobs:
   code-review:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Run on PR events, or on human-authored comments starting with trigger
-    # keywords. Bot comments are excluded as a safety net: GITHUB_TOKEN already
-    # suppresses events from bot-posted comments, but a PAT/App token would not.
-    # issue_comment triggers are further gated on author_association so only
-    # MEMBER/OWNER/COLLABORATOR users can spend LLM quota via re-review.
+    # Run on PR events from trusted authors, or on human-authored comments
+    # starting with trigger keywords. Bot comments are excluded as a safety
+    # net: GITHUB_TOKEN already suppresses events from bot-posted comments,
+    # but a PAT/App token would not. Both paths are gated on
+    # author_association so only MEMBER/OWNER/COLLABORATOR users can spend
+    # LLM quota: fork PRs are not auto-reviewed — a maintainer opts them in
+    # by commenting a trigger keyword on the PR.
     if: |
-      github.event_name == 'pull_request_target'
+      (
+        github.event_name == 'pull_request_target'
+        && (
+          github.event.pull_request.author_association == 'MEMBER'
+          || github.event.pull_request.author_association == 'OWNER'
+          || github.event.pull_request.author_association == 'COLLABORATOR'
+        )
+      )
       || (
         github.event_name == 'issue_comment'
         && github.event.issue.pull_request

@@ -96,7 +96,10 @@ async fn observe_current_index_with(
         .change(uri, version, json!([{ "text": text }]))
         .await
         .unwrap();
-    session.published_diagnostics_after(uri, mark).await.unwrap()
+    session
+        .published_diagnostics_after(uri, mark)
+        .await
+        .unwrap()
 }
 
 /// Open `use2.R` and return its first publication: publications are gated
@@ -314,8 +317,7 @@ fn nested_inner_entries_do_not_consume_outer_budget() {
         // Nested workspace: the outer root and `pkg` below it are both
         // folder roots, so the inner scan caps independently while its
         // entries share the outer path prefix in the one `disk_files` map.
-        let (mut session, server) =
-            spawn_session(&[fixture.root(), &pkg], json!({}), None).await;
+        let (mut session, server) = spawn_session(&[fixture.root(), &pkg], json!({}), None).await;
         let a_uri = file_uri(&fixture.path("a.R"));
         sync_barrier(&mut session, &a_uri).await;
 

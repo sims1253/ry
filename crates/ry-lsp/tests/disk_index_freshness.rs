@@ -790,7 +790,6 @@ fn close_time_refresh_retires_in_flight_scan() {
     });
 }
 
-
 /// #526, atomic retirement: a landed refresh must claim the next
 /// generation in the same critical section as its map write — check,
 /// insert, and bump under one lock hold — so a scan committing

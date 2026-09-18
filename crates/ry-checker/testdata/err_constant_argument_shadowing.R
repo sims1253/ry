@@ -2,13 +2,19 @@
 # RY111 (constant-argument-shadowing): a `TRUE`/`FALSE` call argument for a
 # formal an enclosing function exposes under the identical name, where the
 # callee also has that formal -- the caller's value is silently ignored.
-# Founding fixture: haven @ f067fb2, R/labelled.R:111 (median.labelled
-# hardcoded `na.rm = TRUE` behind its own `na.rm = FALSE, ...` formals).
+# Founding fixture: haven @ f067fb2, R/labelled.R:111
+# (median.haven_labelled hardcoded `na.rm = TRUE`; a caller's explicit
+# `na.rm = FALSE` is silently ignored even though the method's own default
+# is also TRUE).
 vec_data <- function(x) x
+cli_abort <- function(...) NULL
 
-# The haven shape verbatim: the method's `na.rm` formal and forwarded dots
-# coexist with the hardcoded inner constant.
-median.labelled <- function(x, na.rm = FALSE, ...) {
+# The haven shape verbatim: the character guard, the TRUE-leaning default,
+# and the forwarded dots coexist with the hardcoded inner constant.
+median.haven_labelled <- function(x, na.rm = TRUE, ...) {
+  if (is.character(x)) {
+    cli_abort("Can't compute median of labelled<character>.")
+  }
   median(vec_data(x), na.rm = TRUE, ...)
 }
 

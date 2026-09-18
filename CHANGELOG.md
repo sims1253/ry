@@ -10,12 +10,13 @@ All notable changes to ry are documented in this file.
   the reserved-word literal `TRUE`/`FALSE` for a formal an enclosing
   function exposes under the identical name -- silently hardcoding
   instead of forwarding the caller's value. The founding fixture is
-  haven @ f067fb2, `R/labelled.R:111`: `median.labelled <- function(x,
-  na.rm = FALSE, ...) { ... median(vec_data(x), na.rm = TRUE, ...) }`
-  (runtime-verified in #361: `median(labelled(c(1:4, NA), c(a = 1)),
-  na.rm = FALSE)` returns 2.5 where base `median(c(1:4, NA),
-  na.rm = FALSE)` returns NA -- the user's argument is silently
-  ignored). Four gates keep the rule high-precision (#361):
+  haven @ f067fb2, `R/labelled.R:111`:
+  `median.haven_labelled <- function(x, na.rm = TRUE, ...) { ...
+  median(vec_data(x), na.rm = TRUE, ...) }` (runtime-verified in #361:
+  `median(labelled(c(1:4, NA), c(a = 1)), na.rm = FALSE)` returns 2.5
+  where base `median(c(1:4, NA), na.rm = FALSE)` returns NA -- the
+  caller's explicit argument is silently ignored, whatever the
+  default). Four gates keep the rule high-precision (#361):
   the tag must exactly name a formal of an enclosing function
   (innermost frame outward, so a capturing closure still orphans the
   outer caller's value while a closure with its own identically-named
@@ -61,7 +62,7 @@ All notable changes to ry are documented in this file.
   whose own `subquery` formal is never read even though the generic
   forwards the caller's flag into the method, and whose child renders
   pass `subquery = TRUE` to queries that may themselves be unions;
-  reticulate's `r_to_py.POSIXct` and `r_convert_dataframe_column`
+  reticulate's `r_to_py.POSIXt` (the method POSIXct/POSIXlt dispatch to) and `r_convert_dataframe_column`
   dropping their `convert` contract parameter; shiny's `observeEvent`
   pinning `autoDestroy = TRUE` while forwarding every sibling formal;
   torch's `nnf_rrelu_` forcing `training = TRUE` against its own

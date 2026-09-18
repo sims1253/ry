@@ -491,10 +491,11 @@ impl Checker {
     /// `FALSE` for a formal an enclosing function also exposes under the
     /// identical name -- silently hardcoding instead of forwarding the
     /// caller's value. The founding fixture is haven @ f067fb2,
-    /// `R/labelled.R:111`: `median.labelled <- function(x, na.rm = FALSE,
-    /// ...) { ... median(vec_data(x), na.rm = TRUE, ...) }` -- the user's
-    /// `na.rm` is silently ignored (runtime-verified: returns 2.5 where
-    /// base `median(c(1:4, NA), na.rm = FALSE)` returns NA).
+    /// `R/labelled.R:111`: `median.haven_labelled <- function(x,
+    /// na.rm = TRUE, ...) { ... median(vec_data(x), na.rm = TRUE, ...) }`
+    /// -- a caller's explicit `na.rm = FALSE` is silently ignored
+    /// (runtime-verified in #361: returns 2.5 where base
+    /// `median(c(1:4, NA), na.rm = FALSE)` returns NA).
     ///
     /// Three precision gates keep the rule narrow, all three required by
     /// issue #361, plus the dead-formal gate the tidyverse corpus
@@ -1206,9 +1207,16 @@ mod constant_shadowing_tests {
         assert!(!fires(
             "f <- function(x, na.rm = FALSE) {\n  return(if (na.rm) x else x)\n}\n"
         ));
-        // A default naming a sibling formal consumes the caller's value.
+        // A default naming a sibling formal consumes the caller's value,
+        // in the function's own signature and in a nested closure's.
         assert!(!fires(
             "f <- function(x, na.rm = FALSE, force = na.rm) {\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE, k = 2 * na.rm) {\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, keep = na.rm) NULL\n  median(x, na.rm = TRUE)\n}\n"
         ));
     }
 

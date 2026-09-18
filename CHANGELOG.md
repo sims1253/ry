@@ -52,6 +52,65 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Propagate the NULL component of a union return type into RY001's
+  condition analysis (#362). A find-or-NULL helper (`locate_input <-
+  function(input) if (is.null(input)) return(NULL) else "path"`, the
+  reprex shape) infers `character | NULL`, and the NULL member was lost
+  exactly at the condition positions where it crashes: a comparison
+  condition joins to `logical<0> | logical<1>` (`if (where == "path")`
+  — R's "argument is of length zero") and was silenced by the
+  possibly-valid-logical-member rule, while `switch(where, ...)` never
+  checked its EXPR at all (R's "EXPR must be a length 1 vector"). Two
+  changes close the gap. In the condition classifier, a PROVEN
+  zero-length union member now dominates the possibly-valid silence —
+  the error on that branch is deterministic, the diagnostic message
+  displays the union so the valid member stays visible, and the
+  documented remedy is the `is.null` guard the checker already
+  understands; longer-than-one and wrong-mode members keep the
+  possibly-valid silence, so `TRUE | list(...)` unions stay quiet as
+  before. `switch` EXPR gains its own provable-length check under
+  RY001: only proven zero or known-above-one lengths fire (directly or
+  as union members — the selector's mode never matters, since R
+  accepts a length-1 vector of any mode), so parameters, untracked
+  calls, and literal `switch("a", ...)` selectors stay silent; a
+  literal `switch(NULL, ...)` flags like `if (NULL)` always has. The
+  guard composition is exact, not just suppressed: a null-guard on a
+  union-typed binding now installs the union-minus-NULL remainder in
+  the continuation for every guard idiom — an early `return(...)`, the
+  `else return(...)` mirror, and the replacement form (`if (is.null(w))
+  w <- "default"`, where the rebind and the remainder join without the
+  stale parent) — through one shared refinement shared by the journal
+  walk and the test-only cloned-scope reference, so the parity harness
+  cannot drift. The refinement only ever installs an exact remainder
+  (the recorded branch view must equal `narrow_away_from_null` of the
+  original, or be a branch rebinding): open-world bindings keep the
+  pinned stale-type behavior (`if (is.null(x)) return(NULL)` with a
+  `x = NULL` default still flags a following `x > 0`, because a
+  non-NULL value may be `numeric(0)`), default parameters keep their
+  omitted-shape semantics, and the `&&`/`||` short-circuit guards were
+  already handled by the existing branch-local narrowing. A pure-`NULL`
+  original (not a union) admits only the replacement form, where the
+  guard's false path degrades to opaque: a defaulted parameter's
+  continuation becomes `unknown` — the caller may have supplied any
+  non-null value, and the merge's stale `NULL | rebind` union would let
+  RY001 report through the guard (scales' `minor_breaks_log`: `if
+  (is.null(detail)) detail <- c(1, 5, 10)[i]` over a `detail = NULL`
+  default) — while a local provably-`NULL` binding keeps the rebind
+  alone as its continuation. The founding reprex defects now report
+  (`R/reprex_impl.R`'s switch and `R/reprex-undo.R`'s comparison on
+  `locate_input`'s union, both R-verified crashes pinned by the new
+  oracle fixture), and the corpus gained one more member of the same
+  defect class: lubridate's `wday.numeric` conditions on
+  `as_week_start(...)`, whose implicit fall-through NULL return (an
+  unmatched day name skips every `pmatch`/`match` guard) makes
+  `if (start != 7)` throw "argument is of length zero" — R-verified
+  and recorded in the tidyverse ledger as a true positive. One
+  pre-existing limitation now visible at the founding sites: ry does
+  not resolve same-package helper signatures across files when the
+  package root has a `DESCRIPTION` (the ecosystem corpus checks
+  reprex as a package), so the reprex findings appear in single-file
+  or directory checks of the same sources but not yet in the
+  package-root corpus reports.
 - Refresh the language server's on-disk R index when R sources change
   outside open buffers, and re-read a file from disk when it is closed.
   The server registered no watched globs for R sources and discarded

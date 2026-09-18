@@ -15,4 +15,5 @@ tests/testthat/test-ignite.R:265:16 RY061
 tests/testthat/test-ignite.R:266:16 RY061
 tests/testthat/test-save.R:415:30 RY061
 tests/testthat/test-save.R:416:30 RY061
+tools/torchgen/R/cpp.R:747:9 RY001
 tools/torchgen/R/functional.R:47:15 RY010

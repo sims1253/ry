@@ -91,6 +91,15 @@
       "severity": "warning",
       "message": "comparing `character` with `integer`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
+    "bslib::RY001::R/navs-legacy.R:241:27": {
+      "package": "bslib",
+      "code": "RY001",
+      "path": "R/navs-legacy.R",
+      "line": 241,
+      "column": 27,
+      "severity": "warning",
+      "message": "`if` condition is `union[logical<len=?>, logical<len=0>]`, expected length-1 logical (or a value R coerces to logical)"
+    },
     "bslib::RY010::R/bs-dependencies.R:245:22": {
       "package": "bslib",
       "code": "RY010",
@@ -1691,6 +1700,15 @@
       "column": 73,
       "severity": "warning",
       "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
+    },
+    "lubridate::RY001::R/accessors-day.r:98:7": {
+      "package": "lubridate",
+      "code": "RY001",
+      "path": "R/accessors-day.r",
+      "line": 98,
+      "column": 7,
+      "severity": "warning",
+      "message": "`if` condition is `union[logical<len=1>, logical<len=?>, logical<len=0>]`, expected length-1 logical (or a value R coerces to logical)"
     },
     "lubridate::RY010::R/ops-compare.r:20:64": {
       "package": "lubridate",
@@ -3473,6 +3491,15 @@
       "column": 9,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+    },
+    "torch::RY001::tools/torchgen/R/cpp.R:747:9": {
+      "package": "torch",
+      "code": "RY001",
+      "path": "tools/torchgen/R/cpp.R",
+      "line": 747,
+      "column": 9,
+      "severity": "warning",
+      "message": "`if` condition is `union[logical<len=1>, logical<len=0>]`, expected length-1 logical (or a value R coerces to logical)"
     },
     "torch::RY010::R/codegen-utils.R:12:21": {
       "package": "torch",

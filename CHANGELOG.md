@@ -99,12 +99,18 @@ All notable changes to ry are documented in this file.
   alone as its continuation. The founding reprex defects now report
   (`R/reprex_impl.R`'s switch and `R/reprex-undo.R`'s comparison on
   `locate_input`'s union, both R-verified crashes pinned by the new
-  oracle fixture), and the corpus gained one more member of the same
+  oracle fixture), and the corpora gained three more members of the same
   defect class: lubridate's `wday.numeric` conditions on
   `as_week_start(...)`, whose implicit fall-through NULL return (an
   unmatched day name skips every `pmatch`/`match` guard) makes
-  `if (start != 7)` throw "argument is of length zero" — R-verified
-  and recorded in the tidyverse ledger as a true positive. One
+  `if (start != 7)` throw "argument is of length zero" (both ledgers);
+  bslib's legacy navbar computes `bg_contrast` through a `tryCatch`
+  whose error handler returns NULL, so a Sass failure makes
+  `bg_contrast == "#FFFFFF"` the same crash; and torch's code generator
+  conditions on `cpp_type(...)`, which falls through to NULL for an
+  unmatched `dynamic_type` (posit ledger). All three are R-verified
+  crashes recorded as true positives under the new `ry001-null-union`
+  audit group. One
   pre-existing limitation now visible at the founding sites: ry does
   not resolve same-package helper signatures across files when the
   package root has a `DESCRIPTION` (the ecosystem corpus checks

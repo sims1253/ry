@@ -608,7 +608,7 @@ expression: snapshots
   fixture: err_negative_literal_comparison.R
 - diagnostics:
     - code: RY001
-      message: "`switch` EXPR is `union[NULL<len=0>, character<len=1>]`, expected a length-1 character or number; R errors with \"EXPR must be a length 1 vector\""
+      message: "`switch` EXPR is `union[NULL<len=0>, character<len=1>]`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\""
       severity: warning
       span:
         column: 7

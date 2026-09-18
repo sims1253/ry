@@ -1501,6 +1501,14 @@ fn replacement_guard_on_pure_null_binding_removes_the_stale_null() {
             "local provably-NULL binding",
             "f <- function() {\n  detail <- NULL\n  if (is.null(detail)) {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
         ),
+        (
+            "mirrored guard, defaulted parameter",
+            "f <- function(detail = NULL) {\n  if (!is.null(detail)) {\n    1\n  } else {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
+        (
+            "mirrored guard, local provably-NULL binding",
+            "f <- function() {\n  detail <- NULL\n  if (!is.null(detail)) {\n    2\n  } else {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
     ] {
         let diagnostics = check(source);
         assert!(

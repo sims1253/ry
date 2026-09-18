@@ -172,8 +172,8 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
             union_guard_refinement_shapes(&views, complement)
         }
         // A pure-NULL binding: only the replacement shape refines (see
-        // the doc comment above). The return-guard shapes keep the
-        // pinned stale-type behavior.
+        // the doc comment above), in either guard orientation. The
+        // return-guard shapes keep the pinned stale-type behavior.
         Mode::Null => {
             if views.then_return_diverges
                 || views.else_return_diverges
@@ -182,12 +182,22 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
             {
                 return None;
             }
-            let rebound = rebind_view_type(views.original, &views.then)?;
-            if !is_complement_view(&complement, &views.else_) {
+            // `if (is.null(d)) d <- v` rebinds in the then arm over the
+            // guard's complement; `if (!is.null(d)) ... else d <- v`
+            // mirrors it.
+            let rebound = if let Some(rebound) = rebind_view_type(views.original, &views.then)
+                && is_complement_view(&complement, &views.else_)
+            {
+                rebound
+            } else if let Some(rebound) = rebind_view_type(views.original, &views.else_)
+                && is_complement_view(&complement, &views.then)
+            {
+                rebound
+            } else {
                 return None;
-            }
+            };
             if defaulted {
-                // The false path holds an unmodeled caller value.
+                // The caller-supplied path holds an unmodeled value.
                 return Some(RType::unknown());
             }
             Some(rebound)
@@ -211,12 +221,8 @@ fn union_guard_refinement_shapes(views: &UnionGuardViews<'_>, complement: RType)
         else_reaches,
         has_else,
     } = views;
-    let is_complement = |view: &BranchGuardView<'_>| view.narrowed && view.ty == Some(&complement);
-    let rebind_type = |view: &BranchGuardView<'_>| {
-        view.ty
-            .filter(|ty| !view.narrowed && *ty != *original)
-            .cloned()
-    };
+    let is_complement = |view: &BranchGuardView<'_>| is_complement_view(&complement, view);
+    let rebind_type = |view: &BranchGuardView<'_>| rebind_view_type(original, view);
     if *then_return_diverges && !*else_return_diverges {
         // Only the false path continues.
         if is_complement(else_) {
@@ -1111,7 +1117,10 @@ impl Checker {
     /// call site (issue #362). Only proven-bad lengths fire (see
     /// [`switch_expr_length_rejected`]); every unproven length stays
     /// silent, and a preceding `is.null` guard narrows the NULL member
-    /// away before this check runs.
+    /// away before this check runs. The message states the length
+    /// requirement only: the selector's MODE never proves the error (R
+    /// accepts a length-1 vector of every mode, a length-1 list
+    /// included), so naming accepted modes would understate the rule.
     fn emit_switch_expr_diagnostic(&mut self, selector: &Expr, selector_type: &RType) {
         if switch_expr_length_rejected(selector_type) {
             self.emit(
@@ -1119,7 +1128,7 @@ impl Checker {
                 span_of(selector),
                 "RY001",
                 format!(
-                    "`switch` EXPR is `{}`, expected a length-1 character or number; R errors with \"EXPR must be a length 1 vector\"",
+                    "`switch` EXPR is `{}`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\"",
                     selector_type
                 ),
             );

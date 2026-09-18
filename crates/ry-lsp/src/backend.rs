@@ -1560,6 +1560,28 @@ impl Backend {
         }
     }
 
+    /// Schedule one debounced project publish pass covering `paths` for
+    /// sessions with no open document (#528): a watched-file refresh that
+    /// fixes a still-indexed, still-eligible closed file lands the right
+    /// parse but never republishes — `republish_all_open_documents`
+    /// degenerates to `clear_dropped_diagnostics`, which only clears
+    /// paths that left the index. Each path joins `pending_diag_paths`
+    /// through the existing `schedule_diagnostics` debounce, so the pass
+    /// runs once per burst and never retriggers itself: the publish path
+    /// only reads state and emits notifications, and emitting never
+    /// re-enqueues. A no-op when an open document is present — that
+    /// document's own scheduling already drives the pass — and when no
+    /// path is tracked anymore.
+    async fn schedule_closed_file_publish(&self, paths: Vec<String>) {
+        let has_open_docs = { !self.state.lock().await.docs.is_empty() };
+        if has_open_docs {
+            return;
+        }
+        for path in paths {
+            self.schedule_diagnostics(path_to_uri(&path)).await;
+        }
+    }
+
     /// Refresh one `disk_files` entry from disk, applying the owning
     /// folder's eligibility and the walk's per-file admission rules with
     /// the same bounded decoder the background indexer parses through

@@ -7,7 +7,7 @@
 # (Settings → Secrets and variables → Actions):
 #   secret    OCR_LLM_URL            LLM API endpoint
 #   secret    OCR_LLM_AUTH_TOKEN     LLM auth token
-#   variable  OCR_LLM_MODEL          model name (no default)
+#   model     OCR_LLM_MODEL          model name (no default; variable or secret)
 #   variable  OCR_LLM_USE_ANTHROPIC  'true' for Anthropic, else OpenAI-compatible
 #
 # Re-review on demand: comment '/open-code-review' or '@open-code-review'
@@ -38,7 +38,7 @@ concurrency:
     ${{
       (
         (
-          github.event_name == 'pull_request_target'
+          github.event_name == 'pull_request'
           && (
             github.event.pull_request.author_association == 'MEMBER'
             || github.event.pull_request.author_association == 'OWNER'
@@ -66,13 +66,13 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  # Use pull_request_target instead of pull_request so that secrets are
-  # available even for PRs from forks. Safe because the reusable action only
-  # reads the diff and does not execute any code from the PR, and the only
-  # steps in this workflow are API calls — nothing checks out or runs
-  # PR-controlled content.
-  # zizmor: ignore[dangerous-triggers]
-  pull_request_target:
+  # Plain pull_request keeps fork-PR runs structurally cut off from secrets:
+  # GitHub runs them with an empty secrets context, so a fork cannot invoke
+  # the reviewer with OCR_LLM_AUTH_TOKEN even if the job condition ever
+  # regressed. Same-repo branches (the maintainers') get the full context.
+  # Cost: a trusted author PRing from a personal fork gets no auto-review;
+  # the comment trigger below still covers that case.
+  pull_request:
     types: [opened, synchronize, reopened]
   issue_comment:
     types: [created]
@@ -94,7 +94,7 @@ jobs:
     # by commenting a trigger keyword on the PR.
     if: |
       (
-        github.event_name == 'pull_request_target'
+        github.event_name == 'pull_request'
         && (
           github.event.pull_request.author_association == 'MEMBER'
           || github.event.pull_request.author_association == 'OWNER'
@@ -140,7 +140,8 @@ jobs:
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          # Model name accepted from either repository variables or secrets.
+          llm_model: ${{ vars.OCR_LLM_MODEL || secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
           # Review tuning: effort high = deeper multi-round review; 'max'
           # reasoning needs a model with a steerable reasoning_effort field
@@ -156,7 +157,7 @@ jobs:
           # issue_comment triggers the title comes from the API lookup.
           background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
           # For issue_comment triggers, pass the resolved refs; for
-          # pull_request_target the action resolves them from the event.
+          # pull_request the action resolves them from the event.
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           # Pinned for supply-chain hygiene; bump to update the CLI.

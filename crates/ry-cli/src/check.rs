@@ -491,6 +491,10 @@ impl WatchState {
     /// and the stubs. Failures keep the last-good inputs with a
     /// warn-once episode (never a per-poll spam, never a dead
     /// session); recovery prints one note when the file parses again.
+    /// A machine-readable `output_format` is also a failure here: the
+    /// startup path rejects non-human formats for watch mode, so a
+    /// mid-watch switch to one keeps the last-good human format
+    /// instead of interleaving JSON with the loop's screen clears.
     fn reload(&mut self) {
         match config::Config::discover(&self.search_start) {
             Ok(found) => {
@@ -500,6 +504,10 @@ impl WatchState {
                 };
                 let cfg = base.merge_cli(self.overrides.clone());
                 match ry_checker::format::OutputFormat::parse(&cfg.output_format) {
+                    Some(format) if !format.is_human() => self.warn_config_broken(&format!(
+                        "--watch requires the full or concise output format, not `{}`",
+                        cfg.output_format
+                    )),
                     Some(format) => {
                         if self.config_broken {
                             self.config_broken = false;
@@ -523,9 +531,15 @@ impl WatchState {
     }
 
     /// Reload the effective baseline after a config reload. A broken
-    /// baseline keeps the last-good entries with a warn-once episode;
-    /// a removed `baseline` key (or removed file with a config-level
-    /// baseline) settles to no baseline, matching a fresh run.
+    /// baseline keeps the last-good entries with a warn-once episode.
+    /// A config-level baseline whose file is gone is not "broken":
+    /// like a fresh run (which warns and continues without it), the
+    /// reload settles to no baseline with the same one-shot warning —
+    /// keeping stale acceptances would contradict the fresh-run
+    /// contract the method's `None` arm already honors for a removed
+    /// key. Only a `--baseline` file that vanishes keeps the previous
+    /// entries, since startup treats that flag as load-bearing enough
+    /// to abort on.
     fn reload_baseline(&mut self) {
         match self.cfg.baseline.as_deref() {
             Some(path) => match config::load_baseline(path) {
@@ -537,7 +551,18 @@ impl WatchState {
                     self.baseline = Some(value);
                 }
                 Err(error) => {
-                    if !self.baseline_broken {
+                    // A config-level baseline whose file is gone settles
+                    // to no baseline (see the method docs). `path.exists`
+                    // is the missing test rather than downcasting the
+                    // miette report: `load_baseline` wraps the I/O error
+                    // in a message report, so the chain carries no
+                    // `std::io::Error` to match on.
+                    if !path.exists() && !self.baseline_from_cli {
+                        if self.baseline.take().is_some() {
+                            eprintln!("ry: warning: {error}");
+                        }
+                        self.baseline_broken = false;
+                    } else if !self.baseline_broken {
                         self.baseline_broken = true;
                         if self.baseline_from_cli {
                             eprintln!("ry: warning: {error}; keeping the previous baseline");

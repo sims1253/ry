@@ -255,6 +255,50 @@ fn watch_reloads_baseline_without_r_file_touch() {
         "the re-check must report the un-accepted finding: {}",
         session.stdout.lock().unwrap()
     );
+
+    // Deleting the config-level baseline settles to no baseline (like a
+    // fresh run, which warns and continues without it) rather than
+    // keeping the stale acceptances: the finding is already visible, so
+    // the pin is that the session warns once and stays alive.
+    std::fs::remove_file(tmp.path().join("baseline.json")).unwrap();
+    wait_for(
+        &session.stderr,
+        "could not read baseline",
+        "deletion warning",
+    );
+    session.assert_alive("after baseline deletion");
+
+    // Restoring the seeded baseline re-accepts the finding: the next
+    // pass goes quiet although no R file changed. There is deliberately
+    // no recovery note (deletion was a settle, not a broken episode),
+    // so the pin is the second zero-warning summary line — the first
+    // came from the initial pass.
+    let quiet_before = session
+        .stderr
+        .lock()
+        .unwrap()
+        .matches("0 warning(s)")
+        .count();
+    std::fs::write(tmp.path().join("baseline.json"), &seeded).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if session
+            .stderr
+            .lock()
+            .unwrap()
+            .matches("0 warning(s)")
+            .count()
+            > quiet_before
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the post-restore quiet pass; stderr: {}",
+            session.stderr.lock().unwrap()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
     session.assert_alive("after baseline reload");
 }
 
@@ -305,6 +349,60 @@ fn watch_keeps_last_good_config_on_parse_error_and_recovers() {
     wait_for(&session.stderr, "parses again", "recovery note");
     wait_for(&session.stdout, "RY010", "post-recovery diagnostic");
     session.assert_alive("after recovery");
+}
+
+/// A mid-watch `ry.toml` switch to a machine-readable `output-format`
+/// keeps the last-good human format with one warning instead of
+/// interleaving JSON with the loop's screen clears: the startup guard
+/// (`--watch requires the full or concise output format`) runs only
+/// once, so the reload must enforce the same invariant (#530).
+#[test]
+fn watch_keeps_human_format_on_machine_format_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("watched.R"),
+        "result <- genuinely_missing_format_name\n",
+    )
+    .unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    wait_for(&session.stdout, "RY010", "initial diagnostic");
+
+    // Switch to a machine format: one warning, last-good format kept.
+    std::fs::write(tmp.path().join("ry.toml"), "output-format = \"json\"\n").unwrap();
+    wait_for(
+        &session.stderr,
+        "requires the full or concise output format",
+        "format-switch warning",
+    );
+    // Let several polls elapse, then confirm the warning fired exactly
+    // once and the human rendering (not JSON) is still in effect.
+    std::thread::sleep(Duration::from_secs(2));
+    let stderr = session.stderr.lock().unwrap().clone();
+    assert_eq!(
+        stderr
+            .matches("requires the full or concise output format")
+            .count(),
+        1,
+        "a machine format must warn once per episode, not per poll: {stderr}"
+    );
+    drop(stderr);
+    assert!(
+        !session
+            .stdout
+            .lock()
+            .unwrap()
+            .contains("\"code\": \"RY010\""),
+        "the last-good human format must stay in effect: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after format-switch attempt");
+
+    // Removing the config recovers the default human format with the
+    // usual recovery note.
+    std::fs::remove_file(tmp.path().join("ry.toml")).unwrap();
+    wait_for(&session.stderr, "parses again", "format recovery note");
+    session.assert_alive("after format recovery");
 }
 
 /// Removing NAMESPACE mid-watch re-resolves the package: a name the

@@ -88,6 +88,20 @@ pub(super) struct State {
     /// background task captures the generation at dispatch and checks it
     /// before writing.
     index_generation: u64,
+    /// Per-path refresh epoch (#538): the `refresh_epoch_counter` value
+    /// claimed when the most recent `refresh_disk_entry` for the path
+    /// STARTED, before its blocking read. A refresh's commit must still
+    /// hold its claimed epoch next to the generation check — tower-lsp
+    /// dispatches watched-file handlers concurrently, so two refreshes
+    /// for one path can snapshot the same generation, and the
+    /// generation alone would let the older read win whenever it
+    /// commits first (it lands stale bytes and bumps the generation,
+    /// making the newer read's commit look stale). Values come from one
+    /// global counter, so an entry removed with a landed removal can be
+    /// re-seeded later without ever aliasing a still-in-flight claim.
+    refresh_epochs: HashMap<String, u64>,
+    /// Monotonic source of `refresh_epochs` values; see there (#538).
+    refresh_epoch_counter: u64,
     /// Files opened during initialization wait for the first workspace context.
     initial_index_pending: bool,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
@@ -1596,22 +1610,33 @@ impl Backend {
     /// Landing also retires any in-flight background pass (its commit
     /// check fails), which is why the caller respawns the initial pass
     /// when the landed refresh retired it. The commit lands only when
-    /// the refresh's snapshot generation is still current: a newer scan
-    /// (or a newer landed refresh) owns the fresher bytes or the
-    /// fresher map, so a delayed commit must not install older source
-    /// over them. The `did_open` guard below is a separate authority
-    /// rule, not a freshness check: an open buffer shadows its disk
-    /// twin regardless of generation. A refresh that loses the
-    /// generation race returns false — its bytes did not land — so the
-    /// caller neither republishes nor respawns scans for them.
+    /// BOTH of the refresh's snapshots are still current: the snapshot
+    /// generation (a newer scan, folder change, or landed refresh owns
+    /// the fresher bytes or the fresher map, so a delayed commit must
+    /// not install older source over them) and the per-path refresh
+    /// epoch claimed at start, before the blocking read — watched-file
+    /// handlers dispatch concurrently, so two refreshes for one path
+    /// can snapshot the same generation, and without the epoch the
+    /// older read would win whenever it commits first: it lands stale
+    /// bytes, bumps the generation, and the newer read's commit then
+    /// fails the generation check (#538). With the epoch, only the
+    /// most recently started refresh for a path can commit, whichever
+    /// commit reaches the lock first. The `did_open` guard below is a
+    /// separate authority rule, not a freshness check: an open buffer
+    /// shadows its disk twin regardless of generation. A refresh that
+    /// loses the generation or epoch race returns false — its bytes
+    /// did not land — so the caller neither republishes nor respawns
+    /// scans for them.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
         // Snapshot the owning root and config once, plus the index
         // generation this refresh's commit must still hold when it
-        // lands: the admission checks below must agree with each other
+        // lands and the per-path epoch it claims for itself: the
+        // admission checks below must agree with each other
         // even if a config reload lands mid-refresh (a rescan converges
         // anything left over), and the commit must not overwrite a
-        // newer scan's bytes (see the generation check at the write).
+        // newer scan's bytes or survive a newer same-path refresh (see
+        // the two commit checks at the write).
         let (
             walk_root,
             exclude_anchor,
@@ -1622,8 +1647,9 @@ impl Backend {
             eligible,
             is_open,
             refresh_gen,
+            refresh_epoch,
         ) = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             let (
                 walk_root,
                 exclude_anchor,
@@ -1656,6 +1682,16 @@ impl Backend {
             let eligible = state.eligibility_for_path(&path_string);
             let is_open = state.docs.contains_key(&path_string);
             let refresh_gen = state.index_generation;
+            // Claim the path's refresh epoch before releasing the lock
+            // and starting the blocking read: the claim orders same-path
+            // refreshes by START, and the commit below refuses any
+            // refresh a newer one superseded, whichever commit lines up
+            // on the state lock first (#538).
+            state.refresh_epoch_counter = state.refresh_epoch_counter.wrapping_add(1);
+            let refresh_epoch = state.refresh_epoch_counter;
+            state
+                .refresh_epochs
+                .insert(path_string.clone(), refresh_epoch);
             (
                 walk_root,
                 exclude_anchor,
@@ -1666,6 +1702,7 @@ impl Backend {
                 eligible,
                 is_open,
                 refresh_gen,
+                refresh_epoch,
             )
         };
         if is_open {
@@ -1731,6 +1768,25 @@ impl Backend {
             );
             return false;
         }
+        // A newer refresh for this same path started while this one was
+        // in flight: the generation check above cannot order two
+        // same-path refreshes that snapshot one generation — the older
+        // read, committing first, would land its bytes and bump the
+        // generation, making the NEWER read's commit look stale and
+        // leaving the older contents indexed (#538). The start-time
+        // epoch claim breaks the tie: only the most recently started
+        // refresh for a path can commit, so last-write-wins is decided
+        // by read order, not commit order. A superseded refresh bumps
+        // nothing — the newer one still owns the entry and the
+        // generation.
+        if state.refresh_epochs.get(&path_string) != Some(&refresh_epoch) {
+            tracing::debug!(
+                path = %path_string,
+                epoch = refresh_epoch,
+                "discarding superseded per-file disk refresh"
+            );
+            return false;
+        }
         match parsed {
             Some((parsed_path, file)) => {
                 // The `index.max-files` count is not a path property, so the
@@ -1789,6 +1845,14 @@ impl Backend {
                 // The removal lands like an insert — same atomic
                 // retirement, same caller contract.
                 state.disk_files.remove(&path_string);
+                // The remover held the path's latest epoch (the check
+                // above), so no same-path refresh is in flight behind
+                // it: the epoch entry leaves with the index entry it
+                // ordered, keeping the map proportional to tracked
+                // paths instead of the session's event history (#538).
+                // A later refresh re-seeds from the global counter, so
+                // the reclaimed slot can never alias a live claim.
+                state.refresh_epochs.remove(&path_string);
                 state.index_generation = state.index_generation.wrapping_add(1);
                 drop(state);
                 #[cfg(feature = "test-util")]
@@ -1815,9 +1879,11 @@ impl Backend {
     /// index writer (#526). On a lost race a single retry re-snapshots
     /// from current state; a second loss falls back to a full background
     /// scan, which resolves every group. Group-keyed installs commute
-    /// (disjoint per-file keys), and same-path concurrent refreshes stay
-    /// ordered by the per-file generation protocol, so this adds no new
-    /// interleave for a future per-path refresh epoch to untangle (#538).
+    /// (disjoint per-file keys), and same-path concurrent refreshes
+    /// stay ordered by the per-path refresh epoch (#538), so this
+    /// adds no interleave left to untangle: only landed refreshes
+    /// reach this function, and the landing refresh for a path is
+    /// always its most recently started one.
     async fn refresh_package_contexts(&self, landed: &[String]) {
         // At most one group install per owning folder per package root.
         let mut groups: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();

@@ -706,6 +706,94 @@ fn overlapping_refreshes_last_event_wins() {
     });
 }
 
+/// #538, same-path refreshes under one generation: two watched events
+/// for one path start two refreshes that snapshot the SAME index
+/// generation, and the generation protocol cannot order them — the
+/// older read committing first installs its bytes and atomically bumps
+/// the generation, so the newer read's commit then fails the
+/// generation check and is discarded, leaving the stale contents
+/// indexed until the next event for the path. The per-path refresh
+/// epoch, claimed when each refresh STARTS (before its blocking read),
+/// breaks the tie: a refresh a newer same-path refresh superseded can
+/// never commit, whichever commit lines up on the state lock first.
+/// This test pins the discriminating ordering the generation check
+/// could not survive: the OLDER read commits FIRST and must lose.
+/// Both refreshes park at the one-shot commit gate (the arm is
+/// consumed per arrival, so arming again parks the second arrival
+/// too); releases wake in arrival order — tokio's `notify_one` wakes
+/// the oldest waiter — so the older refresh, which arrived first,
+/// makes its commit decision strictly before the newer one.
+#[test]
+fn older_read_committing_first_loses_to_newer_refresh() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        let first = open_use_settled(&mut session, &use_uri).await;
+        assert!(
+            has_ry040(&first),
+            "character f must win before the scenario"
+        );
+
+        // Refresh A reads the still-character `a.R` and parks at its
+        // commit gate; the arrival signal is sent after the read, so
+        // A's bytes are proven older than everything below.
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+
+        // Refresh B starts strictly after A's read — the re-armed gate
+        // parks it too — and reads the integer `f`. B's start claims a
+        // newer per-path epoch while A is still parked, but B's commit
+        // decision is held at the gate: A commits first.
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+
+        // Release in arrival order: A commits first and must be
+        // discarded WITHOUT bumping the generation, so B — epoch and
+        // generation both still current — lands the integer bytes.
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        let after = observe_current_index(&mut session, &use_uri, 2).await;
+        assert!(
+            !has_ry040(&after),
+            "the older read committing first must not defeat the newer refresh: {after}"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "older-read-first same-path refreshes",
+        );
+
+        join_session(session, server).await;
+    });
+}
+
 /// #526, the close-time hole: `did_close` re-reads the closed file,
 /// but a background scan in flight at close time — whose walk read
 /// the file before the save — must not replace the whole map with its

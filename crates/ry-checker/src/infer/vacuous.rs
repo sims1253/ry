@@ -44,9 +44,11 @@
 //! function validates, another demands) and a cross-file helper
 //! application stay silent -- the latter because the diagnostic could
 //! not point at the helper's own span without attributing a foreign byte
-//! range to the consuming file. The still-unstubbed `vec_cast` demand
-//! itself stays out of scope for the #351 flow-sensitivity cycle and
-//! r-typeshed respectively.
+//! range to the consuming file. The `vec_cast` demand itself is a
+//! ry-side overlay annotation (`crates/ry-typeshed/overlay/vctrs.json`,
+//! issue #479); the validator-summary hop stays out of scope for the
+//! #351 flow-sensitivity cycle, and upstreaming the stub is the
+//! maintainer's call.
 
 use super::*;
 

@@ -99,6 +99,28 @@ exec "$REAL_MV" "$@"
         self.assertIn("stubs-sha256:", (self.vendor / "SOURCE").read_text())
         self.assert_no_staging_directory()
 
+    def test_sync_preserves_the_local_annotation_overlay(self):
+        # ry-side stub annotations (crates/ry-typeshed/overlay, issue
+        # #479) must survive a vendor sync: the sync wholesale-replaces
+        # vendor/ from the r-typeshed checkout -- whose stubs carry no
+        # ry-only specs -- while the overlay directory sits outside
+        # vendor/ and stays put. ry merges vendor + overlay at typeshed
+        # load time, so the effective annotations are intact after every
+        # weekly bump.
+        overlay = self.repo / "crates/ry-typeshed/overlay"
+        overlay.mkdir(parents=True)
+        overlay_entry = overlay / "vctrs.json"
+        overlay_entry.write_text('{"package": "vctrs", "vec_cast": "kept"}\n')
+        result = self.run_sync(0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # vendor was replaced wholesale from upstream, which has no
+        # vec_cast annotation anywhere.
+        self.assertFalse((self.vendor / "overlay").exists())
+        # ... and the overlay directory is untouched by the sync.
+        self.assertEqual(overlay_entry.read_text(),
+                         '{"package": "vctrs", "vec_cast": "kept"}\n')
+        self.assert_no_staging_directory()
+
     @unittest.skipUnless(shutil.which("cargo"), "requires Cargo")
     def test_next_cargo_build_embeds_the_installed_snapshot(self):
         # The validator builds after staging, while the original vendor files

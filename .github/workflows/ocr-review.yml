@@ -123,6 +123,16 @@ jobs:
         )
       )
     steps:
+      # Fail fast with a clear message if the model is configured in
+      # neither place — otherwise the review fails deep inside the action
+      # (or silently uses a provider default) and the cause is obscure.
+      - name: Check OCR model is configured
+        run: |
+          if [ -z "${{ vars.OCR_LLM_MODEL || secrets.OCR_LLM_MODEL }}" ]; then
+            echo "::error::OCR_LLM_MODEL is not configured (set a repository variable or secret)"
+            exit 1
+          fi
+
       - name: Get PR context
         id: pr-context
         if: github.event_name == 'issue_comment'

@@ -617,6 +617,15 @@ impl Checker {
         for parameter in params {
             fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
         }
+        // RY110's `map`-family provenance (issue #479) resolves by bare
+        // local name: a formal of this function shadows any same-named
+        // verdict or collection from an enclosing function, so entries
+        // involving the formals are void here. (Plain shadowing, not a
+        // rebind: the outer entries are restored, not dropped, when a
+        // nested walk ends -- see the save above.)
+        for parameter in params {
+            self.note_vacuous_map_rebind(&parameter.name);
+        }
         let assigned = assigned_names_in_body(body);
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();

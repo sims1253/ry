@@ -246,19 +246,6 @@ for tree-sitter 0.27. Core and the VS Code extension are 0.11.0.
 
 ### Added
 
-- Add RY110 (`vacuous-all-guard`): `all(is.na(x))` is vacuously TRUE when
-  `x` is zero-length, so a validation guard of the shape
-  `is.numeric(x) || all(is.na(x))` accepts any empty non-numeric input --
-  the pre-fix hms guard behind tidyverse/hms#231, where
-  `hms(seconds = character())` passed validation and then failed inside
-  `vec_cast()`. Fires only when the vacuously accepted value reaches a
-  downstream mode demand a typeshed stub declares (a parameter `type`,
-  as RY092 checks) and the guard and demand share the binding (a nested
-  closure's same-named parameter never matches); the fix is hms's own
-  (`length(x) > 0 &&` before the `all()`). The founding hms shape itself
-  is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
-  the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
-  #479 (#462).
 - Extend RY110 (`vacuous-all-guard`) across the helper boundary: a
   single-formal function whose body is (or returns) the recognized guard
   chain -- hms's `is_numeric_or_na <- function(x) is.numeric(x) ||
@@ -277,12 +264,28 @@ for tree-sitter 0.27. Core and the VS Code extension are 0.11.0.
   the applying function, same binding, same shadowing and rebinding
   discipline), which is what keeps the corpus silent: discarded helper
   results, multi-formal bodies, shadowed helpers or map callees, and
-  extra call arguments all stay quiet. Two halves remain open: a guard
+  extra call arguments all stay quiet. The helper registry builds lazily
+  on first guard-condition use from the refined function table, so
+  helper-free files never pay for the scan (the `scaling_project_size`
+  perf budget guards this). Two halves remain open: a guard
   validated in one function but demanded in another (a validator-summary
   hop, for the #351 flow-sensitivity cycle) still stays silent, and the
   `vctrs::vec_cast()` demand itself is still unstubbed -- the vendored
   vctrs stub carries only the untyped `vec_cast_common`, so that stub
   belongs in r-typeshed, not here; no local overlay was added (#479).
+- Add RY110 (`vacuous-all-guard`): `all(is.na(x))` is vacuously TRUE when
+  `x` is zero-length, so a validation guard of the shape
+  `is.numeric(x) || all(is.na(x))` accepts any empty non-numeric input --
+  the pre-fix hms guard behind tidyverse/hms#231, where
+  `hms(seconds = character())` passed validation and then failed inside
+  `vec_cast()`. Fires only when the vacuously accepted value reaches a
+  downstream mode demand a typeshed stub declares (a parameter `type`,
+  as RY092 checks) and the guard and demand share the binding (a nested
+  closure's same-named parameter never matches); the fix is hms's own
+  (`length(x) > 0 &&` before the `all()`). The founding hms shape itself
+  is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
+  the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
+  #479 (#462).
 - Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
   `test` vector and only overwrites selected positions, so a zero-length or
   all-`NA` test yields a `logical` result even when `yes`/`no` agree on

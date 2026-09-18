@@ -1035,7 +1035,7 @@ pub struct Checker {
     // (`valid <- map_lgl(args, is_numeric_or_na)`), consumed by the
     // `if`/`stopifnot` hooks when the result is reduced with `all()`.
     // Rebinding drops the entry, like a guard rebind. Cleared per run.
-    vacuous_map_results: HashMap<String, infer::vacuous::VacuousMapProvenance>,
+    vacuous_map_results: FxMap<String, infer::vacuous::VacuousMapProvenance>,
     // For every statement, the byte range of the statements following it
     // in its enclosing list: the accepted path of a rejecting guard
     // (`if (!(G)) stop(...)`, `stopifnot(G)`). Indexed once per check run
@@ -1205,7 +1205,7 @@ impl Checker {
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),
             vacuous_helpers_built: false,
-            vacuous_map_results: HashMap::new(),
+            vacuous_map_results: FxMap::default(),
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
             dynamic_closure_literals: FxMap::default(),

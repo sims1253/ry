@@ -67,3 +67,28 @@ soft_reject <- function(v) {
   if (!is_numeric_or_na(v)) v <- NULL
   sqrt(v)
 }
+# A qualified helper call never resolves to the flat-registered local:
+# `other::is_numeric_or_na` applies another package's function, so the
+# local definition is blamed for nothing.
+qualified_other <- function(v) {
+  if (!other::is_numeric_or_na(v)) stop("bad")
+  sqrt(v)
+}
+# Same for the `base::` spelling: qualification bypasses locals.
+qualified_base <- function(v) {
+  if (!base::is_numeric_or_na(v)) stop("bad")
+  sqrt(v)
+}
+# Map verdicts never cross function boundaries: `g` reuses `f`'s
+# result and data names, but its `all(valid)` proves nothing about its
+# own `args`, so the demand stays silent (walk-order independent).
+# `f`'s own demand is type-agnostic, so it stays quiet too.
+cross_fn_applier <- function(args) {
+  valid <- lapply(args, is_numeric_or_na)
+  if (!all(valid)) stop("bad")
+  print(args)
+}
+cross_fn_consumer <- function(valid, args) {
+  if (!all(valid)) stop("bad")
+  sqrt(args)
+}

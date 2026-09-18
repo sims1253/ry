@@ -226,7 +226,13 @@ pub(crate) fn run_check(
     report_read_errors(&scan.read_errors);
     let mut all_paths = scan.paths;
 
-    if all_paths.is_empty() {
+    // A readable-but-empty discovery result enters the watch loop with
+    // zero files instead of exiting: the loop's rescan already detects
+    // membership growth, so the first created `.R` file triggers a
+    // re-check (#529). The read-error branch below still fails the run
+    // in watch mode (#485): an unreadable root is a discovery failure,
+    // not a quiet empty set. Non-watch behavior is unchanged.
+    if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
         // An empty discovery result still needs a complete machine-readable report.
         print!(
             "{}",

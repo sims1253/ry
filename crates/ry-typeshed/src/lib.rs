@@ -327,6 +327,11 @@ fn apply_local_overlay(package: &str, typeshed: &mut Typeshed) {
             &Path::new("crates/ry-typeshed/overlay").join(format!("{overlay_package}.json")),
         )
         .expect("local typeshed overlay must parse");
+        assert_eq!(
+            overlay.package.as_deref(),
+            Some(package),
+            "overlay entry is merged into the wrong package"
+        );
         for (name, signature) in overlay.functions {
             typeshed.functions.insert(name, signature);
         }
@@ -1549,12 +1554,11 @@ mod tests {
     /// ("Can't convert <character> to <double>").
     #[test]
     fn local_overlay_vec_cast_reaches_load_package() {
-        let vendor_vctrs = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/vctrs/vctrs.json"),
-        )
-        .expect("read vendored vctrs stub");
+        let vendored =
+            load_stub_file(&Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/vctrs/vctrs.json"))
+                .expect("vendored vctrs stub parses");
         assert!(
-            !vendor_vctrs.contains("\"vec_cast\""),
+            !vendored.functions.contains_key("vec_cast"),
             "vendored vctrs.json must stay upstream-pristine; the ry-side vec_cast stub lives in overlay/ (issue #479)"
         );
         let overlay_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("overlay");
@@ -1586,6 +1590,32 @@ mod tests {
             x.demand_only,
             "vec_cast x must be demand-only, not an RY092 assertion"
         );
+        // The prefilter flags are computed from the vendored blob alone,
+        // so an overlay entry carrying `injects` or a `captures_promise`
+        // eval mode would be silently skipped by the conservative package
+        // scans (`s3_methods` is package-level and cannot flow through a
+        // functions-only overlay at all). Today no overlay entry declares
+        // either; fail loudly the moment one does, so the flags learn
+        // about the overlay instead of silently missing it.
+        let overlay = parse_typeshed(
+            LOCAL_OVERLAYS
+                .iter()
+                .find(|(package, _)| *package == "vctrs")
+                .expect("vctrs overlay is registered")
+                .1,
+            Path::new("crates/ry-typeshed/overlay/vctrs.json"),
+        )
+        .expect("overlay parses");
+        for (name, signature) in &overlay.functions {
+            assert!(
+                signature.injects.is_empty()
+                    && !signature
+                        .eval
+                        .values()
+                        .any(|mode| *mode == EvalMode::CapturesPromise),
+                "overlay entry `{name}` declares scan-gated fields invisible to the prefilter flags"
+            );
+        }
     }
 
     #[test]

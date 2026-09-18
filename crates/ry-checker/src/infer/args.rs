@@ -197,8 +197,10 @@ impl Checker {
     /// - RY091 stays silent for every non-required or successfully bound
     ///   parameter.
     /// - RY092 stays silent without a declared type, for opaque/unknown
-    ///   actuals, whenever a union has any compatible overlap, and for R's
-    ///   logical/integer/double coercion family.
+    ///   actuals, whenever a union has any compatible overlap, for R's
+    ///   logical/integer/double coercion family, and for `demand_only`
+    ///   parameters (relational demands such as `vec_cast(x, to)`, whose
+    ///   type arms RY110 without asserting the argument's own type).
     pub(crate) fn check_typeshed_call_arguments(
         &mut self,
         function_name: &str,

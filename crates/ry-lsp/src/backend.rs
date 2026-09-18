@@ -97,8 +97,10 @@ pub(super) struct State {
     /// generation alone would let the older read win whenever it
     /// commits first (it lands stale bytes and bumps the generation,
     /// making the newer read's commit look stale). Values come from one
-    /// global counter, so an entry removed with a landed removal can be
-    /// re-seeded later without ever aliasing a still-in-flight claim.
+    /// global counter, so an entry removed with a landed removal (or a
+    /// budget refusal, which likewise passed the epoch check) is
+    /// re-seeded later with a fresh value that cannot alias a live
+    /// claim short of the u64 wrap the index generation accepts.
     refresh_epochs: HashMap<String, u64>,
     /// Monotonic source of `refresh_epochs` values; see there (#538).
     refresh_epoch_counter: u64,
@@ -1822,6 +1824,13 @@ impl Backend {
                         cap = limits.max_files,
                         "discarding per-file disk refresh over index.max-files"
                     );
+                    // The refusal passed the epoch check, so this refresh
+                    // is the path's latest and nothing newer is in
+                    // flight: reclaim the epoch entry here too — a path
+                    // the cap keeps refusing never enters the index, so
+                    // its claim would otherwise be the one entry nothing
+                    // else retires (#538).
+                    state.refresh_epochs.remove(&parsed_path);
                     return false;
                 }
                 // Claim the next generation in the same critical section
@@ -1851,7 +1860,8 @@ impl Backend {
                 // ordered, keeping the map proportional to tracked
                 // paths instead of the session's event history (#538).
                 // A later refresh re-seeds from the global counter, so
-                // the reclaimed slot can never alias a live claim.
+                // a reclaimed slot cannot alias a live claim short of
+                // the u64 wrap the index generation already accepts.
                 state.refresh_epochs.remove(&path_string);
                 state.index_generation = state.index_generation.wrapping_add(1);
                 drop(state);

@@ -721,8 +721,12 @@ fn overlapping_refreshes_last_event_wins() {
 /// Both refreshes park at the one-shot commit gate (the arm is
 /// consumed per arrival, so arming again parks the second arrival
 /// too); releases wake in arrival order — tokio's `notify_one` wakes
-/// the oldest waiter — so the older refresh, which arrived first,
-/// makes its commit decision strictly before the newer one.
+/// the oldest waiter (FIFO in the pinned implementation, not a
+/// documented API guarantee) — so the older refresh, which arrived
+/// first, makes its commit decision strictly before the newer one.
+/// Should a future tokio ever wake out of arrival order, the newer
+/// read would commit first and land in both worlds: the test would
+/// pass vacuously, never flake.
 #[test]
 fn older_read_committing_first_loses_to_newer_refresh() {
     let runtime = tokio::runtime::Builder::new_current_thread()

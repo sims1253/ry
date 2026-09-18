@@ -391,11 +391,13 @@ All notable changes to ry are documented in this file.
   last-write-wins is decided by read order rather than commit order —
   while each accepted commit keeps claiming the next generation
   atomically with its map write. A superseded refresh stands down
-  without a bump, and a landed removal reclaims the path's epoch entry
-  (the remover provably has no same-path refresh in flight behind it,
-  and later claims draw from a global counter, so a re-seeded entry can
-  never alias a live one, keeping the map proportional to tracked
-  paths instead of the session's event history). The commit-gate seam
+  without a bump, and a landed removal or cap refusal reclaims the
+  path's epoch entry (both provably hold the path's latest claim, with
+  no same-path refresh in flight behind it, and later claims draw from
+  a global counter, so a re-seeded entry cannot alias a live one short
+  of the u64 wrap the index generation accepts, keeping the map
+  proportional to tracked paths instead of the session's event
+  history). The commit-gate seam
   pins the discriminating interleaving deterministically — both
   refreshes park at the one-shot gate (armed per arrival) and are
   released in arrival order, so the older read provably commits first
@@ -405,12 +407,16 @@ All notable changes to ry are documented in this file.
   symlink status but not that it is a regular file, so a directory
   named `pkg.R/` passed the extension check and every subsequent gate
   (directory entries are small) and could be admitted for the watched
-  per-file refresh path where the walk's entry classification only
-  ever lands regular files in its file set. The verdict now requires a
-  regular file at the same metadata read that enforces the size cap —
+  per-file refresh path where the walk's landing rule — skip symlinks,
+  descend directories, land only what remains — never lands a
+  directory. The verdict now requires a regular file at the same
+  metadata read that enforces the size cap, which also refuses exotic
+  non-regular entries (a FIFO named `x.R`) the walk's file branch
+  would nominally land — the one deliberate, safe-direction
+  divergence, since no such entry can be read as a source — while
   unmeasurable entries still pass, matching the walk's
   omit-only-oversizes rule, so a missing file's removal behavior is
-  unchanged — with a parity test pinning that the directory spelling is
+  unchanged. A parity test pins that the directory spelling is
   refused while the real sources inside it stay discoverable.
 
 ## [0.11.0] - 2026-09-16

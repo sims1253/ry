@@ -98,9 +98,11 @@ pub fn is_file_eligible_with_limits(
 /// through the helpers shared with the walk, the testthat runner-code
 /// classification, the
 /// shared per-file policy's exclude and depth thirds (reused, not
-/// duplicated), the walk's regular-file entry classification (a
-/// directory named `pkg.R/` passes the extension check but is never
-/// landed, #538), the on-disk size cap measured the way the walk
+/// duplicated), the regular-file requirement mirroring the walk's
+/// never-lands-a-directory rule (a directory named `pkg.R/` passes the
+/// extension check but is descended, never landed; exotic non-regular
+/// entries are refused too — the one documented, safe-direction
+/// divergence, #538), the on-disk size cap measured the way the walk
 /// measures it, and `.Rbuildignore` with `include_build_ignored`
 /// rescue — anchored
 /// exactly like [`discover_r_files`]: excludes at `exclude_anchor`,
@@ -251,14 +253,17 @@ pub fn is_single_file_walk_admitted(
     if !is_file_eligible_with_limits(path, walk_root, exclude_anchor, excludes, limits, None) {
         return false;
     }
-    // The walk's file set holds only regular files: its entry
-    // classification descends directories and skips symlinks before the
-    // extension test, so a directory NAMED like a source (`pkg.R/`)
-    // passes the name-based checks above and, directory entries being
-    // small, the size cap too — yet no walk ever lands it (#538).
-    // Unmeasurable entries still pass, exactly like the size rule
-    // (the walk omits only sizes strictly above the cap): the caller's
-    // own read decides a missing or unreadable file.
+    // The walk's landing rule skips symlinks and DESCENDS directories
+    // before the extension test, so a directory named like a source
+    // (`pkg.R/`) is never landed — yet it passes the name-based checks
+    // above and, directory entries being small, the size cap too
+    // (#538). Requiring a regular file also refuses exotic non-regular
+    // entries (a FIFO named `x.R`) that the walk's file branch would
+    // nominally land: a deliberate divergence in the safe direction —
+    // no such entry can be read as a source. Unmeasurable entries
+    // still pass, exactly like the size rule (the walk omits only
+    // sizes strictly above the cap): the caller's own read decides a
+    // missing or unreadable file.
     if std::fs::metadata(path)
         .map(|metadata| !metadata.is_file() || metadata.len() > limits.max_file_bytes)
         .unwrap_or(false)
@@ -1646,10 +1651,10 @@ mod shared_tests {
 
     /// A directory named like an R source (`pkg.R/`) passes the
     /// extension, symlink, and size checks — directory entries are
-    /// small — but the walk's entry classification only ever lands
-    /// regular files in its file set, so the verdict must refuse the
-    /// directory spelling while still admitting the real sources
-    /// inside it (#538).
+    /// small — but the walk descends directories and never lands one
+    /// in its file set, so the verdict must refuse the directory
+    /// spelling while still admitting the real sources inside it
+    /// (#538).
     #[test]
     fn single_file_verdict_refuses_directory_named_like_a_source() {
         let dir = tempfile::tempdir().unwrap();

@@ -4,6 +4,7 @@ R/connection_test.R:2:12 RY109
 R/connection_test.R:3:12 RY109
 R/ml_utils.R:181:13 RY001
 R/spark_submit.R:34:7 RY032
+R/stream_data.R:360:15 RY111
 R/tidiers_utils.R:74:11 RY033
 R/worker_apply.R:522:40 RY103
 java/embedded_sources.R:2334:40 RY103

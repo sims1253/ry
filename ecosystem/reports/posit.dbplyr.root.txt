@@ -1,3 +1,13 @@
+R/query-join.R:164:49 RY111
+R/query-join.R:167:53 RY111
+R/query-rf-join.R:114:54 RY111
+R/query-rf-join.R:115:54 RY111
+R/query-semi-join.R:126:54 RY111
+R/query-semi-join.R:127:54 RY111
+R/query-set-op.R:54:54 RY111
+R/query-set-op.R:55:54 RY111
+R/query-union.R:58:54 RY111
+R/query-union.R:62:53 RY111
 R/verb-distinct.R:61:16 RY109
 tests/testthat/test-backend-.R:110:36 RY091
 tests/testthat/test-backend-.R:110:36 RY091

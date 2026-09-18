@@ -1,3 +1,8 @@
+R/conversion.R:618:36 RY111
+R/conversion.R:78:67 RY111
+R/conversion.R:84:42 RY111
+R/conversion.R:88:44 RY111
+R/conversion.R:95:17 RY111
 R/package.R:36:5 RY032
 R/py_require.R:579:7 RY001
 R/py_require.R:591:9 RY032

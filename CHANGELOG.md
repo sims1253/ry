@@ -53,7 +53,10 @@ All notable changes to ry are documented in this file.
   pinned by a drift test so an upstream widening forces a conscious
   merge; the entries stay untyped and non-required so no arity rule
   changes behavior. Corpus deltas (both manifests regenerated and
-  strict-gated): tidyverse +1, the founding haven defect itself; posit
+  strict-gated): tidyverse +1, the founding haven defect itself (the
+  regenerated jsonlite report also gains one unaudited, deliberate
+  identity: the package's own `stop` wrapper forcing `call. = FALSE`,
+  explained in the ledger note); posit
   +20 -- 17 true positives (the dbplyr `sql_render.*_query` family,
   whose own `subquery` formal is never read even though the generic
   forwards the caller's flag into the method, and whose child renders

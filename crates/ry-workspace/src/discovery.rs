@@ -108,6 +108,11 @@ pub fn is_file_eligible_with_limits(
 /// What stays out: the `index.max-files` count is not a path property (the
 /// walk enforces it first-come-first-served per root), so callers apply it
 /// at commit time against their own entry accounting (#525).
+///
+/// Point-in-time verdict: the checks above read the filesystem entry by
+/// entry, so concurrent edits can make them disagree with each other and
+/// with the commit. Callers re-validate under the state lock (generation
+/// plus budget), and a rescan converges anything left over.
 pub fn is_single_file_walk_admitted(
     path: &Path,
     walk_root: &Path,

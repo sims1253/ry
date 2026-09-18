@@ -187,7 +187,10 @@ pub mod test_seam {
     /// decision is made. The arm is consumed atomically, so later writers
     /// pass through. Like the barriers above this gate is thread-local
     /// (see the module docs) and pauses only scheduling: the waiter
-    /// holds no state lock while parked.
+    /// holds no state lock while parked. Thread-locality is load-bearing —
+    /// parallel tests on different threads stay isolated — so arm, wait,
+    /// and release must run on the test's thread, which is the server's
+    /// thread too under the `new_current_thread` runtimes every test uses.
     struct CommitGate {
         armed: AtomicBool,
         arrived: Notify,

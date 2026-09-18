@@ -1652,8 +1652,10 @@ impl Backend {
             // nothing the publish path reads.
             return false;
         }
-        // The budget check at the commit needs the owning root after the
-        // blocking read moved `walk_root` into its closure.
+        // Clone the owning root for the commit-time budget check below:
+        // `walk_root` moves into the blocking closure, and only the budget
+        // check needs it afterwards — one small allocation per watched
+        // event, not worth an `Arc` rippling through every root comparison.
         let budget_root = walk_root.clone();
         let parsed = tokio::task::spawn_blocking(move || {
             if !eligible
@@ -1712,10 +1714,13 @@ impl Backend {
                 // The `index.max-files` count is not a path property, so the
                 // admission verdict above cannot enforce it: refuse a new
                 // entry once the owning root is at its budget (#525).
-                // First-come-first-served like the walk — refreshing an
-                // already-indexed path still lands (no growth), and nothing
-                // already indexed is evicted — so the incremental map never
-                // holds more per root than a fresh scan of the same tree.
+                // First-come-first-served like the walk (though the orders
+                // differ — readdir vs. event arrival — so above the cap the
+                // retained subset may diverge from a fresh scan's):
+                // refreshing an already-indexed path still lands (no
+                // growth), and nothing already indexed is evicted — so the
+                // incremental map never holds more per root than a fresh
+                // scan of the same tree.
                 // Decided here under the lock, not in the blocking snapshot:
                 // two concurrent refreshes racing at the cap line up on this
                 // lock, and only the first one through grows the map.
@@ -1733,7 +1738,7 @@ impl Backend {
                         .count()
                         >= limits.max_files;
                 if over_budget {
-                    tracing::debug!(
+                    tracing::warn!(
                         path = %parsed_path,
                         root = %budget_root.display(),
                         cap = limits.max_files,

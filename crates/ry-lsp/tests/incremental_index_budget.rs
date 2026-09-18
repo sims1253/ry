@@ -104,11 +104,7 @@ async fn open_use2_settled(session: &mut harness::ClientSession, use2_uri: &str)
 /// Deliver the watched event for `uri` (created or changed per `notify`)
 /// and rendezvous with its refresh commit through the gate: when this
 /// returns, the commit decision — landed or refused — precedes.
-async fn notify_and_rendezvous(
-    session: &mut harness::ClientSession,
-    uri: &str,
-    created: bool,
-) {
+async fn notify_and_rendezvous(session: &mut harness::ClientSession, uri: &str, created: bool) {
     ry_lsp::test_seam::arm_refresh_commit();
     if created {
         notify_created(session, uri).await;
@@ -232,7 +228,9 @@ fn refresh_of_indexed_file_at_cap_still_lands() {
         fixture
             .write_file("ry.toml", "[index]\nmax-files = 2\n")
             .unwrap();
-        fixture.write_file("a.R", "f <- function() \"str\"\n").unwrap();
+        fixture
+            .write_file("a.R", "f <- function() \"str\"\n")
+            .unwrap();
         fixture.write_file("use.R", "x <- f() + 1L\n").unwrap();
         let a_uri = file_uri(&fixture.path("a.R"));
         let use_uri = file_uri(&fixture.path("use.R"));

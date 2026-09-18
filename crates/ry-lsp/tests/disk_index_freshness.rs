@@ -590,7 +590,10 @@ fn stale_refresh_loses_to_newer_scan() {
             spawn_session(&[fixture.root()], watching_capabilities(), None).await;
         take_watcher_globs(&mut session).await;
         let first = open_use_settled(&mut session, &use_uri).await;
-        assert!(has_ry040(&first), "character f must win before the scenario");
+        assert!(
+            has_ry040(&first),
+            "character f must win before the scenario"
+        );
 
         // The watched change for the still-character `a.R` starts a
         // refresh that reads the old bytes, then pauses at its commit.
@@ -607,7 +610,7 @@ fn stale_refresh_loses_to_newer_scan() {
         // The arrival signal is sent after the read completed, so this
         // write is strictly later: the refresh holds the old bytes.
         std::fs::write(fixture.path("a.R"), F_INT).unwrap();
-        trigger_full_scan(&mut session, &fixture.root()).await;
+        trigger_full_scan(&mut session, fixture.root()).await;
         sync_barrier(&mut session, &use_uri).await;
         // The scan ran to completion while the refresh waited: release
         // the stale commit and observe the surviving bytes.
@@ -650,7 +653,10 @@ fn overlapping_refreshes_last_event_wins() {
             spawn_session(&[fixture.root()], watching_capabilities(), None).await;
         take_watcher_globs(&mut session).await;
         let first = open_use_settled(&mut session, &use_uri).await;
-        assert!(has_ry040(&first), "character f must win before the scenario");
+        assert!(
+            has_ry040(&first),
+            "character f must win before the scenario"
+        );
 
         ry_lsp::test_seam::arm_refresh_commit();
         session
@@ -724,12 +730,15 @@ fn close_time_refresh_retires_in_flight_scan() {
             spawn_session(&[fixture.root()], watching_capabilities(), None).await;
         take_watcher_globs(&mut session).await;
         let first = open_use_settled(&mut session, &use_uri).await;
-        assert!(has_ry040(&first), "character f must win before the scenario");
+        assert!(
+            has_ry040(&first),
+            "character f must win before the scenario"
+        );
 
         // A full scan walks the still-character disk and pauses at its
         // commit, holding pre-save bytes.
         ry_lsp::test_seam::arm_scan_commit();
-        trigger_full_scan(&mut session, &fixture.root()).await;
+        trigger_full_scan(&mut session, fixture.root()).await;
         ry_lsp::test_seam::wait_scan_commit().await;
 
         // Strictly after the scan's walk: edit `a.R` to the integer

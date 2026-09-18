@@ -179,8 +179,7 @@ pub fn is_single_file_walk_admitted(
                         || name.ends_with(".Rcheck")
                         || (name == "renv" && package_root.is_some())
                         || package_root.as_deref().is_some_and(|root| {
-                            (name == "revdep" || name == "src")
-                                && dir.parent() == Some(root)
+                            (name == "revdep" || name == "src") && dir.parent() == Some(root)
                                 || name == "_snaps"
                                     && dir.parent().and_then(|parent| {
                                         parent.strip_prefix(root).ok().map(|relative| {

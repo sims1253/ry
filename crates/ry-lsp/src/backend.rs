@@ -1574,31 +1574,47 @@ impl Backend {
         // even if a config reload lands mid-refresh (a rescan converges
         // anything left over), and the commit must not overwrite a
         // newer scan's bytes (see the generation check at the write).
-        let (walk_root, exclude_anchor, excludes, include_build_ignored, limits, check_test_fixtures, eligible, is_open, refresh_gen) = {
+        let (
+            walk_root,
+            exclude_anchor,
+            excludes,
+            include_build_ignored,
+            limits,
+            check_test_fixtures,
+            eligible,
+            is_open,
+            refresh_gen,
+        ) = {
             let state = self.state.lock().await;
-            let (walk_root, exclude_anchor, excludes, include_build_ignored, limits, check_test_fixtures) =
-                match state.folder_context_for_path(&path_string) {
-                    Some(ctx) => (
-                        ctx.root.clone(),
-                        ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
-                        ctx.excludes.clone(),
-                        ctx.config.include_build_ignored.clone(),
-                        ry_workspace::DiscoveryLimits::from_config(&ctx.config),
-                        ctx.config.check_test_fixtures,
-                    ),
-                    None => (
-                        state.root.clone().unwrap_or_default(),
-                        state
-                            .root_config_dir
-                            .clone()
-                            .or_else(|| state.root.clone())
-                            .unwrap_or_default(),
-                        state.root_excludes.clone(),
-                        state.file_config.include_build_ignored.clone(),
-                        ry_workspace::DiscoveryLimits::from_config(&state.file_config),
-                        state.file_config.check_test_fixtures,
-                    ),
-                };
+            let (
+                walk_root,
+                exclude_anchor,
+                excludes,
+                include_build_ignored,
+                limits,
+                check_test_fixtures,
+            ) = match state.folder_context_for_path(&path_string) {
+                Some(ctx) => (
+                    ctx.root.clone(),
+                    ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
+                    ctx.excludes.clone(),
+                    ctx.config.include_build_ignored.clone(),
+                    ry_workspace::DiscoveryLimits::from_config(&ctx.config),
+                    ctx.config.check_test_fixtures,
+                ),
+                None => (
+                    state.root.clone().unwrap_or_default(),
+                    state
+                        .root_config_dir
+                        .clone()
+                        .or_else(|| state.root.clone())
+                        .unwrap_or_default(),
+                    state.root_excludes.clone(),
+                    state.file_config.include_build_ignored.clone(),
+                    ry_workspace::DiscoveryLimits::from_config(&state.file_config),
+                    state.file_config.check_test_fixtures,
+                ),
+            };
             let eligible = state.eligibility_for_path(&path_string);
             let is_open = state.docs.contains_key(&path_string);
             let refresh_gen = state.index_generation;

@@ -897,6 +897,38 @@ fn grep_position_length_predicate_is_silent_only_as_a_boolean_guard() {
 }
 
 #[test]
+fn grep_position_guard_silences_every_supported_comparison_direction() {
+    // Each arm of `proven_grep_position_call` proves `grep()` returns
+    // positions from the zero side of the comparison (`>`/`>=` against a
+    // zero right-hand side, reversed `<`/`<=` against a zero left-hand
+    // side, `!=` against a zero on either side). Pin every direction so a
+    // regression in a single arm resurfaces here. Each direction runs with
+    // both a matching (`'a'`) and a non-matching (`'z'`) pattern because
+    // the position contract — and therefore the silence — does not depend
+    // on whether `grep()` finds anything.
+    for template in [
+        "grep({pattern}, c('a', 'b')) > 0",
+        "grep({pattern}, c('a', 'b')) >= 0",
+        "0 < grep({pattern}, c('a', 'b'))",
+        "0 <= grep({pattern}, c('a', 'b'))",
+        "grep({pattern}, c('a', 'b')) != 0",
+        "0 != grep({pattern}, c('a', 'b'))",
+    ] {
+        for pattern in ["'a'", "'z'"] {
+            let source = format!(
+                "if (length({})) TRUE\n",
+                template.replace("{pattern}", pattern)
+            );
+            let diagnostics = check(&source);
+            assert!(
+                !diagnostics.iter().any(|d| d.code == "RY093"),
+                "proven grep position guard should be silent: {source}: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn confint_dispatch_does_not_claim_an_atomic_result() {
     let diagnostics = check("f <- function(model) { ci <- stats::confint(model); ci$interval }");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");

@@ -122,9 +122,9 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            // For issue_comment events, resolve PR base/head so the action
-            // can review the right diff (issue_comment has no top-level
-            // pull_request payload fields).
+            // For issue_comment events, resolve PR base/head/title so the
+            // action can review the right diff with title context
+            // (issue_comment has no top-level pull_request payload fields).
             const prNumber = context.issue.number;
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -133,6 +133,7 @@ jobs:
             });
             core.setOutput('base_ref', pullRequest.base.ref);
             core.setOutput('head_sha', pullRequest.head.sha);
+            core.setOutput('title', pullRequest.title);
 
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@189be5b024d3309dd10fdc8cd8ee31b2530c210b # main
@@ -141,6 +142,19 @@ jobs:
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
           llm_model: ${{ vars.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
+          # Review tuning: effort high = deeper multi-round review; 'max'
+          # reasoning needs a model with a steerable reasoning_effort field
+          # and only works on the OpenAI-compatible protocol — the action
+          # fails fast if the Anthropic one is selected.
+          effort: high
+          llm_reasoning_effort: max
+          # Stream live [ocr] progress to the workflow log instead of
+          # staying silent until the run finishes.
+          stream_progress: 'true'
+          # PR title as review context — the upstream docs' highest-leverage
+          # flag, especially with conventional-commit titles. On
+          # issue_comment triggers the title comes from the API lookup.
+          background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
           # For issue_comment triggers, pass the resolved refs; for
           # pull_request_target the action resolves them from the event.
           base_ref: ${{ steps.pr-context.outputs.base_ref }}

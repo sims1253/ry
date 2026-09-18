@@ -434,13 +434,32 @@ impl LanguageServer for Backend {
         }
 
         if resolution_changed {
-            self.spawn_background_index().await;
-        } else {
-            let mut refreshed = false;
-            for path in r_source_paths {
-                refreshed |= self.refresh_disk_entry(path).await;
+            if self.spawn_background_index().await {
+                // The rescan landed new index state with no open document
+                // to drive its publish (#528): schedule the tracked
+                // publications through the debounce so the refreshed bytes
+                // are republished. A superseded scan (false) leaves the
+                // republish to its supplanter.
+                let tracked: Vec<String> = {
+                    self.state
+                        .lock()
+                        .await
+                        .published_paths
+                        .iter()
+                        .cloned()
+                        .collect()
+                };
+                self.schedule_closed_file_publish(tracked).await;
             }
-            if !refreshed {
+        } else {
+            let mut landed: Vec<String> = Vec::new();
+            for path in r_source_paths {
+                let path_string = path.to_string_lossy().into_owned();
+                if self.refresh_disk_entry(path).await {
+                    landed.push(path_string);
+                }
+            }
+            if landed.is_empty() {
                 return;
             }
             // A landed refresh already claimed the next generation inside
@@ -458,6 +477,20 @@ impl LanguageServer for Backend {
             if index_pending {
                 self.spawn_background_index().await;
             }
+            // A landed refresh updates the parse but not the resolution
+            // context: advance the owning package groups through the same
+            // resolution pass the scan uses before publishing, so a
+            // watched addition resolves its configured globals, library
+            // attachments, imports, and load bindings without a rescan
+            // (#527).
+            self.refresh_package_contexts(&landed).await;
+            // A landed refresh with no open document would otherwise never
+            // be republished (#528): `republish_all_open_documents` below
+            // degenerates to dropped-URI reconciliation, which only clears
+            // paths that left the index. Schedule the landed paths through
+            // the debounce instead; a no-op when an open document drives
+            // the pass anyway.
+            self.schedule_closed_file_publish(landed).await;
         }
 
         self.republish_all_open_documents().await;
@@ -527,6 +560,10 @@ impl LanguageServer for Backend {
             if index_pending {
                 self.spawn_background_index().await;
             }
+            // Same staleness as the watched path: the saved bytes are
+            // indexed but their resolution entries are not (#527).
+            self.refresh_package_contexts(std::slice::from_ref(&path))
+                .await;
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.

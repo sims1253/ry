@@ -119,6 +119,42 @@ All notable changes to ry are documented in this file.
   package) checks against an empty resolution context until the next
   index resolves it, rather than inheriting a sibling package's
   metadata.
+- Advance the language server's per-package resolution context when a
+  watched R-source refresh lands, instead of waiting for the next full
+  background scan (#527): a created or externally edited file used to
+  reach the disk index with a fresh parse but no resolution entries, so
+  until some unrelated event triggered a rescan it checked against an
+  empty context — a configured `globals` name fired a spurious RY010,
+  its `library()` attachments stayed unbound, its package's
+  `NAMESPACE`/`DESCRIPTION`-derived imports were missing, and an edit
+  that moved a `load()` call kept the old span-keyed bindings — while
+  its neighbors and a fresh server agreed on the correct result. Each
+  landed refresh (and the close-time re-read in `did_close`) now
+  re-resolves its owning package group through the same
+  `resolve_workspace_context` pass the scan uses, over the current disk
+  index scoped to the owning folder, installing group-keyed under the
+  same generation guard every other index writer honors (one retry,
+  then a full scan converges, on a lost race). Disk-only inputs mirror
+  the scan exactly — open buffers keep shadowing at publish time — so
+  the incremental install cannot disagree with a fresh scan over the
+  same tree, existing files' entries recompute deterministically from
+  unchanged inputs, and same-path concurrent refreshes stay ordered by
+  the per-file generation protocol with no new interleave for a future
+  per-path refresh epoch to untangle (#538).
+- Republish tracked closed-file diagnostics after a watched refresh
+  lands with zero documents open (#528): the project publish pass that
+  recomputes unopened files' diagnostics only ran when an open document
+  scheduled it, so fixing an indexed file on disk (or rescanning to new
+  state) refreshed the parse without republishing — the client kept the
+  pre-fix squiggles until some unrelated document opened, the exact
+  trust failure the dropped-URI reconciliation had fixed for the
+  open-document paths. Landed refreshes and landed rescans now schedule
+  their paths through the existing debounce when no open document
+  drives a pass (a no-op otherwise), and the publish itself only reads
+  state and emits notifications, so it can never retrigger the
+  scheduling — no loop. The still-indexed, still-eligible fixed file is
+  recomputed and republished within the debounce window; made-ineligible
+  paths keep clearing through the existing reconciliation.
 - Clear stale diagnostics from every document the language server stops
   analyzing, not just the last-scheduled one (#489): when a folder was
   disabled or files excluded, `republish_all_open_documents` scheduled

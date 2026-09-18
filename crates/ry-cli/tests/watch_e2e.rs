@@ -118,7 +118,11 @@ fn watch_stays_alive_on_empty_initial_set_and_picks_up_first_file() {
 
     // The first created file must trigger a re-check that reports its
     // diagnostic: a bare unbound name is an RY010 warning.
-    std::fs::write(tmp.path().join("main.R"), "result <- genuinely_missing_name\n").unwrap();
+    std::fs::write(
+        tmp.path().join("main.R"),
+        "result <- genuinely_missing_name\n",
+    )
+    .unwrap();
     wait_for(&session.stdout, "RY010", "first-file diagnostic");
     assert!(
         session
@@ -130,4 +134,211 @@ fn watch_stays_alive_on_empty_initial_set_and_picks_up_first_file() {
         session.stdout.lock().unwrap()
     );
     session.assert_alive("after first re-check");
+}
+
+/// A `ry.toml` edit mid-watch takes effect without touching an R file:
+/// ignoring RY010 quiets the finding, un-ignoring it brings the finding
+/// back (#530). Appearance-awaiting works on the accumulating pipe;
+/// quieting is asserted after the reload lands (see below).
+#[test]
+fn watch_reloads_config_without_r_file_touch() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("ry.toml"), "ignore = [\"RY010\"]\n").unwrap();
+    std::fs::write(
+        tmp.path().join("watched.R"),
+        "result <- genuinely_missing_config_name\n",
+    )
+    .unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // The initial pass runs under the ignore: RY010 never reaches stdout.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must honor the ignore: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Drop the ignore: the next pass must report the finding although no
+    // R file changed.
+    std::fs::write(tmp.path().join("ry.toml"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-reload diagnostic");
+    assert!(
+        session
+            .stdout
+            .lock()
+            .unwrap()
+            .contains("genuinely_missing_config_name"),
+        "the re-check must name the un-ignored finding: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after config reload");
+}
+
+/// A regenerated baseline mid-watch takes effect on the next pass: the
+/// accepted finding disappears from output without touching an R file
+/// (#530). The baseline stores counts per (path, code, message), so the
+/// regenerated file must match the reported finding exactly — it is
+/// produced here by `--write-baseline`, the same way a user would.
+#[test]
+fn watch_reloads_baseline_without_r_file_touch() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("watched.R"),
+        "result <- genuinely_missing_baseline_name\n",
+    )
+    .unwrap();
+    // Seed the baseline from the current diagnostics via a one-shot run,
+    // the same way a user would (`--write-baseline` snapshots what the
+    // run reports). The config must exist BEFORE the seed run so the
+    // seed resolves the same config root (and the same repo-relative
+    // baseline paths) the watch session will use: without it the seed
+    // keys entries by absolute path and the watch pass never subtracts
+    // them. The seed passes the fixture as an absolute input path, the
+    // same form `WatchSession` hands the watch child, so the seed and
+    // the watch pass build the same diagnostic paths. The baseline
+    // destination must be absolute: the runner's working directory is
+    // elsewhere. RY010 is a warning, so the seeding run exits 0 (do NOT
+    // assert exit 1); the file it writes is what matters.
+    std::fs::write(tmp.path().join("ry.toml"), "baseline = \"baseline.json\"\n").unwrap();
+    let baseline_path = tmp.path().join("baseline.json");
+    let seed = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("check")
+        .arg("--write-baseline")
+        .arg(&baseline_path)
+        .arg(tmp.path())
+        .output()
+        .expect("failed to seed baseline");
+    assert!(seed.status.success(), "{seed:?}");
+    assert!(
+        baseline_path.is_file(),
+        "the seed run must write the baseline: {seed:?}"
+    );
+    let seeded = std::fs::read_to_string(&baseline_path).unwrap();
+    assert!(
+        !seeded.is_empty(),
+        "the seeded baseline must be non-empty: {seed:?}"
+    );
+    assert!(
+        seeded.contains("\"code\": \"RY010\""),
+        "the seeded baseline must record the RY010 entry: {seeded}"
+    );
+    assert!(
+        seeded.contains("genuinely_missing_baseline_name"),
+        "the seeded baseline must accept the finding: {seeded}"
+    );
+
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // The initial pass subtracts the seeded baseline: nothing reported.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must subtract the seeded baseline: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Empty the baseline (accept nothing): the finding reappears although
+    // no R file changed.
+    std::fs::write(
+        tmp.path().join("baseline.json"),
+        "{\"version\": 1, \"entries\": []}\n",
+    )
+    .unwrap();
+    wait_for(&session.stdout, "RY010", "post-reload diagnostic");
+    assert!(
+        session
+            .stdout
+            .lock()
+            .unwrap()
+            .contains("genuinely_missing_baseline_name"),
+        "the re-check must report the un-accepted finding: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after baseline reload");
+}
+
+/// A broken `ry.toml` mid-watch keeps the last-good configuration with
+/// exactly one warning — no dead session, no per-poll spam — and
+/// recovers when the file parses again (#530).
+#[test]
+fn watch_keeps_last_good_config_on_parse_error_and_recovers() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("ry.toml"), "ignore = [\"RY010\"]\n").unwrap();
+    std::fs::write(
+        tmp.path().join("watched.R"),
+        "result <- genuinely_missing_recovery_name\n",
+    )
+    .unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+
+    // Break the config: one warning, last-good behavior (still quiet).
+    std::fs::write(tmp.path().join("ry.toml"), "this is not = = valid toml\n").unwrap();
+    wait_for(
+        &session.stderr,
+        "keeping the last good configuration",
+        "broken-config warning",
+    );
+    // Let several polls elapse, then confirm the warning fired exactly
+    // once and the finding stayed suppressed under last-good inputs.
+    std::thread::sleep(Duration::from_secs(2));
+    let stderr = session.stderr.lock().unwrap().clone();
+    assert_eq!(
+        stderr
+            .matches("keeping the last good configuration")
+            .count(),
+        1,
+        "a broken config must warn once per episode, not per poll: {stderr}"
+    );
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "last-good inputs must stay in effect while broken: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("while config is broken");
+    drop(stderr);
+
+    // Fix the config with the ignore removed: recovery reloads and the
+    // finding appears.
+    std::fs::write(tmp.path().join("ry.toml"), "").unwrap();
+    wait_for(&session.stderr, "parses again", "recovery note");
+    wait_for(&session.stdout, "RY010", "post-recovery diagnostic");
+    session.assert_alive("after recovery");
+}
+
+/// Removing NAMESPACE mid-watch re-resolves the package: a name the
+/// `importFrom` used to bind becomes an unbound-variable finding
+/// without touching an R file (#530).
+#[test]
+fn watch_reacts_to_namespace_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join("R")).unwrap();
+    std::fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: namespacefixture\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+    std::fs::write(tmp.path().join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // The initial pass resolves `tags` through the NAMESPACE import.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("tags"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Deleting NAMESPACE must trigger a re-check that reports `tags` as
+    // unbound although no R file changed.
+    std::fs::remove_file(tmp.path().join("NAMESPACE")).unwrap();
+    wait_for(&session.stdout, "RY010", "post-removal diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after NAMESPACE removal");
 }

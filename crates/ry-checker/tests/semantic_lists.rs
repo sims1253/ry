@@ -385,10 +385,12 @@ fn quoting_forms_match_r_oracle() {
 }
 
 /// VACUOUS_MAP_FAMILY: each member applies its function argument once
-/// per element of its data argument in order -- the elementwise shape
-/// RY110 reads validation provenance from. Base members are checked
-/// against vanilla R; the purrr verbs resolve via the purrr package and
-/// are checked only when purrr is installed.
+/// per element of its data argument in order and returns the per-element
+/// results -- the elementwise shape RY110 reads validation provenance
+/// from. (`walk` calls back elementwise too but returns its input, so it
+/// is excluded from the family and has no probe here.) Base members are
+/// checked against vanilla R; the purrr verbs resolve via the purrr
+/// package and are checked only when purrr is installed.
 #[test]
 fn vacuous_map_family_match_r_oracle() {
     if !rscript_available() {
@@ -414,7 +416,6 @@ fn vacuous_map_family_match_r_oracle() {
             "purrr::map_chr(1:3, function(x) { FUN(x); \"s\" })",
         ),
         ("map_vec", "purrr::map_vec(1:3, FUN)"),
-        ("walk", "purrr::walk(1:3, FUN)"),
     ];
     let purrr_check = |call: &str| {
         if !call.starts_with("purrr::") {

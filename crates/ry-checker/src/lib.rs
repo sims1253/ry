@@ -1023,10 +1023,13 @@ pub struct Checker {
     // arguments on the accepted path. Cleared per check run.
     vacuous_guards: Vec<infer::vacuous::VacuousGuard>,
     // Guard-helpers (RY110, issue #479): single-formal functions whose
-    // body is (or returns) the recognized vacuous-all chain, indexed
-    // from the FnTable once per pass-3 run so use-before-def source
-    // order cannot hide them. Cleared per check run.
+    // body is (or returns) the recognized vacuous-all chain, built lazily
+    // on first guard-condition use from the FnTable and read-only
+    // afterwards, so helper-free files never pay for the scan.
+    // `vacuous_helpers_built` marks the registry complete for this run.
+    // Both clear per check run.
     vacuous_helpers: FxMap<String, infer::vacuous::VacuousHelper>,
+    vacuous_helpers_built: bool,
     // Elementwise-validation provenance (RY110, issue #479): locals
     // bound by a `map`-family call applying a guard-helper
     // (`valid <- map_lgl(args, is_numeric_or_na)`), consumed by the
@@ -1110,6 +1113,7 @@ impl Checker {
         self.return_slots = Arc::new(ReturnSlots::default());
         self.vacuous_guards.clear();
         self.vacuous_helpers.clear();
+        self.vacuous_helpers_built = false;
         self.vacuous_map_results.clear();
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
@@ -1200,6 +1204,7 @@ impl Checker {
             assignment_types: None,
             vacuous_guards: Vec::new(),
             vacuous_helpers: FxMap::default(),
+            vacuous_helpers_built: false,
             vacuous_map_results: HashMap::new(),
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
@@ -1335,10 +1340,11 @@ impl Checker {
         // RY110 state is per-run: guards armed in this walk consume
         // demands in this walk, against this file's continuation and
         // shadow ranges. The guard-helper registry (issue #479) builds
-        // from the refined FnTable before the walk, so use-before-def
-        // order cannot hide a helper.
+        // lazily on first guard-condition use, so the prologue only
+        // resets it.
         self.vacuous_guards.clear();
         self.vacuous_helpers.clear();
+        self.vacuous_helpers_built = false;
         self.vacuous_map_results.clear();
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
@@ -1347,7 +1353,6 @@ impl Checker {
             &mut self.stmt_continuations,
             &mut self.formal_shadows,
         );
-        self.index_vacuous_helpers();
         self.dynamic_closure_literals.clear();
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,

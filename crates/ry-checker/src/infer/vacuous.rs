@@ -440,30 +440,53 @@ fn vacuous_accept_modes(recorded: Option<&RType>, covered: &[Mode]) -> Vec<Mode>
 impl Checker {
     /// RY110's helper registry (issue #479): index every single-formal
     /// function whose body is (or returns) the recognized vacuous-all
-    /// chain over that formal. Runs once per pass-3 run from the refined
-    /// FnTable, so use-before-def source order cannot hide a helper
-    /// (hms defines `check_args` before `is_numeric_or_na`). The parse
-    /// runs against an empty scope with the checker's fully populated
-    /// tables, which resolves top-level shadowing (`all <- function...`
-    /// in the FnTable correctly disqualifies) the same way the lenient
-    /// base-resolution ladder does for inline guards.
-    pub(crate) fn index_vacuous_helpers(&mut self) {
+    /// chain over that formal. Built lazily on first guard-condition use
+    /// from the refined FnTable, so use-before-def source order cannot
+    /// hide a helper (hms defines `check_args` before `is_numeric_or_na`)
+    /// while helper-free files never pay for the scan -- the scan is
+    /// per-file O(project table), which is what the `scaling_project_size`
+    /// perf budget guards. The parse runs against an empty scope with the
+    /// checker's fully populated tables, which resolves top-level
+    /// shadowing (`all <- function...` in the FnTable correctly
+    /// disqualifies) the same way the lenient base-resolution ladder does
+    /// for inline guards. Nested helpers whose enclosing function shadows
+    /// a base name parse against the flat table (an accepted
+    /// approximation: the shadowing frame is not consulted).
+    pub(crate) fn ensure_vacuous_helpers(&mut self) {
+        if self.vacuous_helpers_built {
+            return;
+        }
+        self.vacuous_helpers_built = true;
         let empty = Scope::default();
-        // Borrow the table entries by value: the parse below needs
-        // `&self` for base resolution while the table lives in `self`.
-        let candidates: Vec<(String, Vec<UserParam>, std::sync::Arc<[Stmt]>)> = self
+        // Phase 1 filters by reference (arity, body length, statement
+        // shape): only survivors pay for owned clones, and only chain
+        // candidates reach the parser. The common synthetic shapes the
+        // perf corpus generates (single-formal arithmetic bodies) fail
+        // phase 2 before any base resolution runs.
+        let survivors: Vec<(String, String, std::sync::Arc<[Stmt]>)> = self
             .fn_table
             .fns
             .iter()
-            .map(|(name, function)| (name.clone(), function.params.clone(), function.body.clone()))
+            .filter_map(|(name, function)| {
+                let [param] = function.params.as_slice() else {
+                    return None;
+                };
+                if param.name == "..." {
+                    return None;
+                }
+                let [statement] = function.body.as_ref() else {
+                    return None;
+                };
+                if !matches!(
+                    statement,
+                    Stmt::Expr(_) | Stmt::Return { value: Some(_), .. }
+                ) {
+                    return None;
+                }
+                Some((name.clone(), param.name.clone(), function.body.clone()))
+            })
             .collect();
-        for (name, params, body) in candidates {
-            let [param] = params.as_slice() else {
-                continue;
-            };
-            if param.name == "..." {
-                continue;
-            }
+        for (name, formal, body) in &survivors {
             let [statement] = body.as_ref() else {
                 continue;
             };
@@ -501,13 +524,13 @@ impl Checker {
             };
             // The chain must guard the helper's own formal: only then
             // does applying the helper validate the passed value.
-            if ident_name(site.var) != Some(param.name.as_str()) {
+            if ident_name(site.var) != Some(formal.as_str()) {
                 continue;
             }
             // A shadowed-all twin of the helper body (the corpus
             // `own_all` shape lifted interprocedural) parses nothing.
             self.vacuous_helpers.insert(
-                name,
+                name.clone(),
                 VacuousHelper {
                     all_span: site.all_span,
                     covered_modes: site.covered_modes.clone(),
@@ -544,28 +567,6 @@ impl Checker {
             } => (expr.as_ref(), true),
             other => (other, false),
         };
-        // The interprocedural shapes first: a helper-call condition, or
-        // an `all()` reduction over a mapped guard-helper result. Either
-        // resolves to a (helper, actual-variable) pair armed exactly like
-        // an inline chain below.
-        if let Some((helper, actual)) = self.vacuous_condition_helper(chain, scope) {
-            let accept = if negated {
-                match (else_, self.block_diverges(then)) {
-                    (Some(statements), _) => stmt_list_span(statements),
-                    (None, true) => self.stmt_continuations.get(&if_span).copied(),
-                    (None, false) => None,
-                }
-            } else {
-                stmt_list_span(then)
-            };
-            if let Some(accept) = accept {
-                self.arm_vacuous_helper(&helper, &actual, span_of(chain), accept, scope);
-            }
-            return;
-        }
-        let Some(site) = vacuous_all_site(self, chain, scope) else {
-            return;
-        };
         let accept = if negated {
             match (else_, self.block_diverges(then)) {
                 (Some(statements), _) => stmt_list_span(statements),
@@ -579,8 +580,24 @@ impl Checker {
             // says nothing about `x`.
             stmt_list_span(then)
         };
-        if let Some(accept) = accept {
+        let Some(accept) = accept else {
+            return;
+        };
+        // The inline chain first (no registry needed). A helper-call
+        // condition -- or an `all()` reduction over a mapped
+        // guard-helper result -- only resolves when the inline parse
+        // fails; the two shapes are disjoint (a bare call is never an
+        // `||` chain), so the order is behavior-preserving while keeping
+        // helper-free files off the registry path entirely.
+        if let Some(site) = vacuous_all_site(self, chain, scope) {
             self.arm_vacuous_guard(&site, accept, scope);
+            return;
+        }
+        if matches!(chain, Expr::Call { .. }) {
+            self.ensure_vacuous_helpers();
+            if let Some((helper, actual)) = self.vacuous_condition_helper(chain, scope) {
+                self.arm_vacuous_helper(&helper, &actual, span_of(chain), accept, scope);
+            }
         }
     }
 
@@ -609,10 +626,21 @@ impl Checker {
         for argument in args {
             if let Some(site) = vacuous_all_site(self, &argument.value, scope) {
                 self.arm_vacuous_guard(&site, accept, scope);
-            } else if let Some((helper, actual)) =
-                self.vacuous_condition_helper(&argument.value, scope)
-            {
-                self.arm_vacuous_helper(&helper, &actual, span_of(&argument.value), accept, scope);
+            } else if matches!(argument.value, Expr::Call { .. }) {
+                // Lazy registry: only a call-shaped non-chain argument
+                // can be a helper application.
+                self.ensure_vacuous_helpers();
+                if let Some((helper, actual)) =
+                    self.vacuous_condition_helper(&argument.value, scope)
+                {
+                    self.arm_vacuous_helper(
+                        &helper,
+                        &actual,
+                        span_of(&argument.value),
+                        accept,
+                        scope,
+                    );
+                }
             }
         }
     }
@@ -653,11 +681,13 @@ impl Checker {
         // The direct helper-call shape: exactly one actual, bound to the
         // helper's single formal. A bare `H(v)` statement never arms --
         // only guard conditions (`if`, `stopifnot`) reach this hook, so
-        // a discarded result cannot validate anything here.
-        if args.len() != 1 || args[0].name.is_some() {
+        // a discarded result cannot validate anything here. A qualified
+        // `pkg::H(v)` never resolves to the flat-registered local helper
+        // (locals are not called qualified), so only bare spells arm.
+        if name.contains("::") || args.len() != 1 || args[0].name.is_some() {
             return None;
         }
-        let helper = self.vacuous_helpers.get(bare)?;
+        let helper = self.vacuous_helpers.get(name)?;
         // A lexical or shadowing local definition means this call never
         // reaches the registered helper. The one exception is the
         // helper's own top-level definition: pass 3 walks each function
@@ -672,7 +702,7 @@ impl Checker {
             || scope
                 .get(name)
                 .is_some_and(|ty| !matches!(ty.mode, Mode::Function))
-            || (!name.contains("::") && self.fn_table.fns.get(name).is_none_or(|_| bare != name));
+            || !self.fn_table.fns.contains_key(name);
         if shadowed {
             return None;
         }
@@ -818,20 +848,24 @@ impl Checker {
         // applied to a bare-identifier collection. Subset data
         // (`args[!is_null]`), anonymous callbacks, and extra actuals
         // keep no provenance -- the demand side only resolves bare
-        // identifiers, so anything else could never arm.
-        let provenance = if in_family
-            && let [data, callback, ..] = args.as_slice()
-            && data.name.is_none()
-            && callback.name.is_none()
-            && let Expr::Ident { .. } = &data.value
-            && let Expr::Ident { name: helper, .. } = &callback.value
-            && self.vacuous_helpers.contains_key(helper.as_str())
-            && !shadowed_map_callee(self, name, scope)
-        {
-            ident_name(&data.value).map(|data| VacuousMapProvenance {
-                data: data.to_owned(),
-                helper: helper.clone(),
+        // identifiers, so anything else could never arm. The shape
+        // checks run before the lazy registry build, so files without
+        // any `map`-family application never pay for the scan.
+        let shape = in_family && map_helper_shape(args);
+        let provenance = if shape {
+            self.ensure_vacuous_helpers();
+            let Expr::Ident { name: helper, .. } = &args[1].value else {
+                unreachable!("shape check matched a bare-identifier callback");
+            };
+            (self.vacuous_helpers.contains_key(helper.as_str())
+                && !shadowed_map_callee(self, name, scope))
+            .then(|| {
+                ident_name(&args[0].value).map(|data| VacuousMapProvenance {
+                    data: data.to_owned(),
+                    helper: helper.clone(),
+                })
             })
+            .flatten()
         } else {
             None
         };
@@ -1008,6 +1042,19 @@ fn shadowed_map_callee(checker: &Checker, name: &str, scope: &Scope) -> bool {
     scope.is_lexical_function(name)
         || scope.get(name).is_some()
         || checker.fn_table.fns.contains_key(name)
+}
+
+/// Whether a `map`-family call's arguments have the provenance shape:
+/// data first, a bare-identifier callback second (`vapply`'s template
+/// may follow), all unnamed. Pure syntax, no table reads.
+fn map_helper_shape(args: &[Arg]) -> bool {
+    let [data, callback, ..] = args else {
+        return false;
+    };
+    data.name.is_none()
+        && callback.name.is_none()
+        && matches!(data.value, Expr::Ident { .. })
+        && matches!(callback.value, Expr::Ident { .. })
 }
 
 /// The root identifier of an assignment target: the bound name for a

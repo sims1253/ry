@@ -180,18 +180,18 @@ pub(crate) fn is_quoting_form(name: &str) -> bool {
 }
 
 /// Elementwise `map`-family callees with a data-first, callback-second
-/// shape: base `lapply`/`sapply`/`vapply` and the purrr `map`/`walk`
-/// verbs. RY110 reads `result <- <verb>(data, helper)` as elementwise
-/// validation provenance for a guard-helper `helper`.
+/// shape: base `lapply`/`sapply`/`vapply` and the purrr `map` verbs.
+/// RY110 reads `result <- <verb>(data, helper)` as elementwise
+/// validation provenance for a guard-helper `helper`. `walk` is
+/// deliberately excluded: it returns its input, so `all(walk(...))`
+/// tests the data, not the verdicts.
 ///
 /// Checked by R oracle: each member applies its function argument once
-/// per element of its data argument in order (`walk` for side effects,
-/// discarding the results). Base members resolve in vanilla R; the purrr
-/// verbs resolve via the purrr package, skipped when it is not
-/// installed.
+/// per element of its data argument in order and returns the per-element
+/// results. Base members resolve in vanilla R; the purrr verbs resolve
+/// via the purrr package, skipped when it is not installed.
 pub const VACUOUS_MAP_FAMILY: &[&str] = &[
     "lapply", "sapply", "vapply", "map", "map_lgl", "map_int", "map_dbl", "map_chr", "map_vec",
-    "walk",
 ];
 
 /// Whether `name` is an elementwise `map`-family callee RY110 may read

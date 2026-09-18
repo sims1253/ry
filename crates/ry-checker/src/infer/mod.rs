@@ -580,6 +580,23 @@ impl Checker {
         scope: &Scope,
     ) {
         let diagnostic_start = self.diagnostics.len();
+        // RY110's `map`-family provenance (issue #479) is function-local:
+        // a `valid <- map_lgl(data, H)` verdict in one function must never
+        // validate another function's `all(valid)`. Each function body
+        // therefore walks with a fresh table -- except the outermost
+        // function, which inherits the top level's (a `map` at the top
+        // level followed by a function that consumes it reads the same
+        // bindings). Save and restore around the walk so sibling
+        // functions never observe each other's verdicts.
+        // (`enclosing_formals` is still the parent depth here: this
+        // function pushes its own frame below.)
+        let saved_vacuous_map = if self.enclosing_formals.is_empty() {
+            // Outermost function: keep the top-level table in place and
+            // restore it (plus any verdicts the walk adds) afterwards.
+            None
+        } else {
+            Some(std::mem::take(&mut self.vacuous_map_results))
+        };
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
@@ -640,6 +657,12 @@ impl Checker {
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
+        // Restore the enclosing function's RY110 `map` provenance (see
+        // the save above): a nested function's verdicts must not leak
+        // into its siblings or its parent.
+        if let Some(saved) = saved_vacuous_map {
+            self.vacuous_map_results = saved;
+        }
         if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
             && !self.discarding
         {

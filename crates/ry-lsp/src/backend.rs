@@ -1868,11 +1868,17 @@ impl Backend {
                 // The remover held the path's latest epoch (the check
                 // above), so no same-path refresh is in flight behind
                 // it: the epoch entry leaves with the index entry it
-                // ordered, keeping the map proportional to tracked
-                // paths instead of the session's event history (#538).
-                // A later refresh re-seeds from the global counter, so
-                // a reclaimed slot cannot alias a live claim short of
-                // the u64 wrap the index generation already accepts.
+                // ordered, and the map holds at most one entry per
+                // path the session has refreshed — never one per event
+                // (#538). The full scan's wholesale install deliberately
+                // does NOT prune the epoch map against its new key set:
+                // a refresh that started after the scan's generation
+                // bump may still hold genuinely newer bytes for a path
+                // the scan's walk missed, and deleting its claim would
+                // wrongly discard them. A later refresh re-seeds from
+                // the global counter, so a reclaimed slot cannot alias
+                // a live claim short of the u64 wrap the index
+                // generation already accepts.
                 state.refresh_epochs.remove(&path_string);
                 state.index_generation = state.index_generation.wrapping_add(1);
                 drop(state);

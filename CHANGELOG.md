@@ -395,9 +395,12 @@ All notable changes to ry are documented in this file.
   path's epoch entry (both provably hold the path's latest claim, with
   no same-path refresh in flight behind it, and later claims draw from
   a global counter, so a re-seeded entry cannot alias a live one short
-  of the u64 wrap the index generation accepts, keeping the map
-  proportional to tracked paths instead of the session's event
-  history). The commit-gate seam
+  of the u64 wrap the index generation accepts; the map holds at most
+  one entry per path the session has refreshed, never one per event,
+  and the full scan's wholesale install deliberately leaves it alone —
+  a refresh that started after the scan's generation bump may hold
+  genuinely newer bytes for a path the scan's walk missed). The
+  commit-gate seam
   pins the discriminating interleaving deterministically — both
   refreshes park at the one-shot gate (armed per arrival) and are
   released in arrival order, so the older read provably commits first

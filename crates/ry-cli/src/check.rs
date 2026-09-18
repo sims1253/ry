@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use clap::ArgMatches;
 use clap::parser::ValueSource;
@@ -121,23 +122,22 @@ pub(crate) fn run_check(
     // Config discovery is anchored at the first input path (itself for a
     // directory, its parent for a file — `Config::discover` applies that
     // rule) or at the working directory when no paths were given, the
-    // same anchor `ry dump-types` uses.
-    let search_start = paths
-        .first()
-        .map(|p| p.as_path())
-        .unwrap_or_else(|| std::path::Path::new("."));
+    // same anchor `ry dump-types` uses. Owned so watch mode can
+    // re-discover after `paths` moves into `search_roots` below.
+    let search_start: PathBuf = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
 
-    let (config_root, base_cfg) = match pipeline::discover_config(search_start) {
+    let (config_root, base_cfg) = match pipeline::discover_config(&search_start) {
         Ok(found) => found,
         Err(code) => return Ok(code),
     };
 
     // Forward `None` for scalars the CLI did not set explicitly, so the
-    // config file's value wins.
+    // config file's value wins. The overrides are retained for watch
+    // mode, which re-merges them over every reloaded `ry.toml` (#530).
     let m = check_matches;
     let baseline_from_cli = flag_set(m, "baseline");
 
-    let cfg = base_cfg.merge_cli(config::CliOverrides {
+    let overrides = config::CliOverrides {
         error,
         warn,
         ignore,
@@ -148,7 +148,8 @@ pub(crate) fn run_check(
         output_format: flag_set(m, "output_format").then_some(output_format.to_string()),
         verbose: cli_verbose,
         quiet: cli_quiet,
-    });
+    };
+    let cfg = base_cfg.merge_cli(overrides.clone());
 
     // Regeneration snapshots what the run reports as it stands, so the
     // configured baseline is neither loaded nor subtracted: subtracting
@@ -183,6 +184,7 @@ pub(crate) fn run_check(
             cfg.output_format
         )
     })?;
+    let color_choice = color;
     let color = color.enabled(format);
     let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
@@ -226,7 +228,13 @@ pub(crate) fn run_check(
     report_read_errors(&scan.read_errors);
     let mut all_paths = scan.paths;
 
-    if all_paths.is_empty() {
+    // A readable-but-empty discovery result enters the watch loop with
+    // zero files instead of exiting: the loop's rescan already detects
+    // membership growth, so the first created `.R` file triggers a
+    // re-check (#529). The read-error branch below still fails the run
+    // in watch mode (#485): an unreadable root is a discovery failure,
+    // not a quiet empty set. Non-watch behavior is unchanged.
+    if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
         // An empty discovery result still needs a complete machine-readable report.
         print!(
             "{}",
@@ -248,33 +256,38 @@ pub(crate) fn run_check(
         return Ok(discovery_exit_code(&cfg));
     }
 
-    // The stable inputs of every pass. Only the file set changes across
-    // watch iterations, so it stays a parameter of `run_check_once`.
-    let ctx = CheckContext {
-        filter: &filter,
+    // The reloadable inputs of every pass. In watch mode the loop below
+    // refreshes them whenever a non-R input changes (#530); the file set
+    // stays a parameter of `run_check_once` because watch iterations
+    // change it too.
+    let mut state = WatchState::new(
+        &search_start,
+        config_root,
+        cfg,
+        filter,
         format,
-        resolution_config: &cfg,
-        user_stubs: Arc::clone(&user_stubs),
-        color,
-        baseline: baseline.as_ref(),
-        repo_root: config_root.as_deref(),
-        min_confidence: min_confidence.into(),
-    };
+        color_choice,
+        user_stubs,
+        baseline,
+        overrides,
+        baseline_from_cli,
+    );
 
-    let mut result = run_check_once(&all_paths, &ctx)?;
+    let min_confidence = min_confidence.into();
+    let mut result = run_check_once(&all_paths, &state.check_context(min_confidence))?;
     // Directories the initial scan could not read fail the run like
     // parse errors do, even when every discovered file checks clean
     // (#485).
     result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
-        config::write_baseline_file(path, &result.diagnostics, config_root.as_deref())?;
+        config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
     }
-    result.print_summary(format, statistics);
+    result.print_summary(state.format(), statistics);
 
     if !watch {
-        return Ok(result.exit_code(&cfg));
+        return Ok(result.exit_code(state.config()));
     }
-    if !format.is_human() {
+    if !state.format().is_human() {
         eprintln!("ry: --watch requires the full or concise output format");
         return Ok(ExitCode::FAILURE);
     }
@@ -283,20 +296,34 @@ pub(crate) fn run_check(
         "ry: watching {} file(s) for changes (Ctrl+C to stop)...",
         all_paths.len()
     );
-    let mut stamps: HashMap<PathBuf, std::time::SystemTime> = HashMap::new();
+    let mut stamps: HashMap<PathBuf, SystemTime> = HashMap::new();
     sync_stamps(&all_paths, &mut stamps);
+    state.sync_input_stamps(&search_roots);
 
     let poll_interval = std::time::Duration::from_millis(500);
     loop {
         std::thread::sleep(poll_interval);
 
+        // Reload the non-R inputs first so the rescan below already runs
+        // under a changed discovery config (new excludes, fixture flags,
+        // index caps). Every touch between two polls coalesces into one
+        // reload and one re-check, the same debouncing the R-file mtime
+        // loop below provides.
+        let inputs_changed = state.poll_inputs(&search_roots);
+
         // Re-scan for new/deleted files via shared bounded discovery.
         // Truncation was already reported on the initial scan, so the
         // poll keeps stderr quiet.
-        let current = rescan(&search_roots, config_root.as_deref(), &cfg, false, false);
+        let current = rescan(
+            &search_roots,
+            state.config_root(),
+            state.config(),
+            false,
+            false,
+        );
 
         // Check for any file modification or file set change.
-        let mut changed = current.paths != all_paths;
+        let mut changed = inputs_changed || current.paths != all_paths;
         if !changed {
             for p in &current.paths {
                 if let Ok(meta) = std::fs::metadata(p)
@@ -323,10 +350,378 @@ pub(crate) fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &ctx)?;
-            result.print_summary(format, statistics);
+            let result = run_check_once(&all_paths, &state.check_context(min_confidence))?;
+            result.print_summary(state.format(), statistics);
         }
     }
+}
+
+/// The reloadable inputs of one watch session: everything a check pass
+/// reads *besides* the R file set. Watch mode polls the mtimes of the
+/// files these inputs come from (`ry.toml` candidates, the effective
+/// baseline, stub files under the typeshed dirs, per-root
+/// DESCRIPTION/NAMESPACE) and re-derives the affected state when one
+/// changes, so mid-watch edits take effect without a restart (#530).
+/// The LSP classifies the same inputs as resolution changes
+/// (`did_change_watched_files`); the CLI mirrors that classification
+/// with mtime polling instead of file events.
+struct WatchState {
+    /// Anchor for config re-discovery (first CLI path, or `.`).
+    search_start: PathBuf,
+    /// Directory containing the active `ry.toml`, if one was found.
+    /// Doubles as the baseline-relative repo root and the resolution
+    /// fallback, exactly like the one-shot path's `config_root`.
+    config_root: Option<PathBuf>,
+    /// Merged config (disk config + CLI overrides), filter, stubs, and
+    /// baseline of the current pass.
+    cfg: config::Config,
+    filter: ry_checker::SeverityFilter,
+    format: ry_checker::format::OutputFormat,
+    color_choice: crate::ColorChoice,
+    user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+    baseline: Option<config::Baseline>,
+    /// Retained CLI overrides, re-merged over every reloaded disk
+    /// config so flags keep winning over `ry.toml` edits.
+    overrides: config::CliOverrides,
+    /// Whether the effective baseline came from `--baseline`: startup
+    /// aborts on its load errors, and reloads report them loudly too.
+    baseline_from_cli: bool,
+    /// Last-good policy (#530): a broken `ry.toml` or baseline
+    /// mid-watch keeps the previous inputs with one warning per episode
+    /// instead of killing the session or spamming every poll. Cleared
+    /// when the file parses again, with a recovery note.
+    config_broken: bool,
+    baseline_broken: bool,
+    /// (path, mtime) snapshot of every watched non-R input; `None` is a
+    /// missing path, so creation and deletion trigger like edits do.
+    input_stamps: Vec<(PathBuf, Option<SystemTime>)>,
+}
+
+impl WatchState {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        search_start: &std::path::Path,
+        config_root: Option<PathBuf>,
+        cfg: config::Config,
+        filter: ry_checker::SeverityFilter,
+        format: ry_checker::format::OutputFormat,
+        color_choice: crate::ColorChoice,
+        user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+        baseline: Option<config::Baseline>,
+        overrides: config::CliOverrides,
+        baseline_from_cli: bool,
+    ) -> Self {
+        Self {
+            search_start: search_start.to_path_buf(),
+            config_root,
+            cfg,
+            filter,
+            format,
+            color_choice,
+            user_stubs,
+            baseline,
+            overrides,
+            baseline_from_cli,
+            config_broken: false,
+            baseline_broken: false,
+            input_stamps: Vec::new(),
+        }
+    }
+
+    fn config(&self) -> &config::Config {
+        &self.cfg
+    }
+
+    fn config_root(&self) -> Option<&std::path::Path> {
+        self.config_root.as_deref()
+    }
+
+    fn format(&self) -> ry_checker::format::OutputFormat {
+        self.format
+    }
+
+    /// Borrow the current inputs as one pass's context. Rebuilt per
+    /// pass because a reload may have replaced everything it borrows.
+    fn check_context(&self, min_confidence: ry_checker::Confidence) -> CheckContext<'_> {
+        CheckContext {
+            filter: &self.filter,
+            format: self.format,
+            resolution_config: &self.cfg,
+            user_stubs: Arc::clone(&self.user_stubs),
+            color: self.color_choice.enabled(self.format),
+            baseline: self.baseline.as_ref(),
+            repo_root: self.config_root.as_deref(),
+            min_confidence,
+        }
+    }
+
+    /// Record the current snapshot of every watched non-R input.
+    fn sync_input_stamps(&mut self, search_roots: &[PathBuf]) {
+        self.input_stamps = snapshot_inputs(
+            &config_candidates(&self.search_start),
+            self.cfg.baseline.as_deref(),
+            &self.cfg.typeshed,
+            &package_meta_paths(search_roots),
+        );
+    }
+
+    /// Compare the watched non-R inputs against the snapshot; on any
+    /// difference reload the affected state, refresh the stamp set
+    /// (a reload can change *which* paths are watched), and report
+    /// that the caller must re-run the pass. Pure R-file edits leave
+    /// the snapshot untouched, so R-only iterations skip the reload
+    /// entirely.
+    fn poll_inputs(&mut self, search_roots: &[PathBuf]) -> bool {
+        let current = snapshot_inputs(
+            &config_candidates(&self.search_start),
+            self.cfg.baseline.as_deref(),
+            &self.cfg.typeshed,
+            &package_meta_paths(search_roots),
+        );
+        if current == self.input_stamps {
+            return false;
+        }
+        self.reload();
+        self.sync_input_stamps(search_roots);
+        true
+    }
+
+    /// Re-derive every reloadable input from disk: re-discover and
+    /// re-merge the config, rebuild the filter, reload the baseline
+    /// and the stubs. Failures keep the last-good inputs with a
+    /// warn-once episode (never a per-poll spam, never a dead
+    /// session); recovery prints one note when the file parses again.
+    /// A machine-readable `output_format` is also a failure here: the
+    /// startup path rejects non-human formats for watch mode, so a
+    /// mid-watch switch to one keeps the last-good human format
+    /// instead of interleaving JSON with the loop's screen clears.
+    fn reload(&mut self) {
+        match config::Config::discover(&self.search_start) {
+            Ok(found) => {
+                let (root, base) = match found {
+                    Some((path, cfg)) => (path.parent().map(PathBuf::from), cfg),
+                    None => (None, config::Config::default()),
+                };
+                let cfg = base.merge_cli(self.overrides.clone());
+                match ry_checker::format::OutputFormat::parse(&cfg.output_format) {
+                    Some(format) if !format.is_human() => self.warn_config_broken(&format!(
+                        "--watch requires the full or concise output format, not `{}`",
+                        cfg.output_format
+                    )),
+                    Some(format) => {
+                        if self.config_broken {
+                            self.config_broken = false;
+                            eprintln!("ry: ry.toml parses again; reloaded configuration");
+                        }
+                        self.config_root = root;
+                        self.cfg = cfg;
+                        self.format = format;
+                        self.filter = ry_checker::filter_from_config(&self.cfg);
+                        self.user_stubs = load_user_stubs(&self.cfg.typeshed);
+                        self.reload_baseline();
+                    }
+                    None => self.warn_config_broken(&format!(
+                        "unknown --output-format `{}`; expected one of: full, concise, json, github, gitlab, junit",
+                        cfg.output_format
+                    )),
+                }
+            }
+            Err(error) => self.warn_config_broken(&error.to_string()),
+        }
+    }
+
+    /// Reload the effective baseline after a config reload. A broken
+    /// baseline keeps the last-good entries with a warn-once episode.
+    /// A config-level baseline whose file is gone is not "broken":
+    /// like a fresh run (which warns and continues without it), the
+    /// reload settles to no baseline with the same one-shot warning —
+    /// keeping stale acceptances would contradict the fresh-run
+    /// contract the method's `None` arm already honors for a removed
+    /// key. Only a `--baseline` file that vanishes keeps the previous
+    /// entries, since startup treats that flag as load-bearing enough
+    /// to abort on.
+    fn reload_baseline(&mut self) {
+        match self.cfg.baseline.as_deref() {
+            Some(path) => match config::load_baseline(path) {
+                Ok(value) => {
+                    if self.baseline_broken {
+                        self.baseline_broken = false;
+                        eprintln!("ry: baseline {} loads again; reloaded", path.display());
+                    }
+                    self.baseline = Some(value);
+                }
+                Err(error) => {
+                    // A config-level baseline whose file is gone settles
+                    // to no baseline (see the method docs). `path.exists`
+                    // is the missing test rather than downcasting the
+                    // miette report: `load_baseline` wraps the I/O error
+                    // in a message report, so the chain carries no
+                    // `std::io::Error` to match on.
+                    if !path.exists() && !self.baseline_from_cli {
+                        if self.baseline.take().is_some() {
+                            eprintln!("ry: warning: {error}");
+                        }
+                        self.baseline_broken = false;
+                    } else if !self.baseline_broken {
+                        self.baseline_broken = true;
+                        if self.baseline_from_cli {
+                            eprintln!("ry: warning: {error}; keeping the previous baseline");
+                        } else {
+                            eprintln!("ry: warning: {error}");
+                        }
+                    }
+                }
+            },
+            None => {
+                self.baseline = None;
+                self.baseline_broken = false;
+            }
+        }
+    }
+
+    fn warn_config_broken(&mut self, error: &str) {
+        if !self.config_broken {
+            self.config_broken = true;
+            eprintln!("ry: warning: {error}; keeping the last good configuration");
+        }
+    }
+}
+
+/// Candidate `ry.toml` paths for the upward discovery walk from
+/// `search_start` (file roots start at their parent). Watched even
+/// when absent so a newly created config triggers a reload, and wide
+/// enough that a nearer config appearing mid-watch wins on the next
+/// re-discovery, exactly as a fresh run would resolve it.
+fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
+    let abs = if search_start.is_absolute() {
+        search_start.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(search_start)
+    };
+    let mut dir: &std::path::Path = if abs.is_file() {
+        abs.parent().unwrap_or(std::path::Path::new("."))
+    } else {
+        abs.as_path()
+    };
+    let mut candidates = Vec::new();
+    loop {
+        candidates.push(dir.join(config::CONFIG_FILENAME));
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    candidates
+}
+
+/// DESCRIPTION/NAMESPACE files that affect resolution of the watched
+/// roots: each root itself (or a file root's parent) plus every
+/// ancestor, so watching a package subdirectory still reacts to the
+/// package's metadata. Watched even when absent so turning a folder
+/// into a package mid-watch (creating DESCRIPTION) triggers a
+/// re-check. Nested packages *below* a watched root are not covered:
+/// only the R-file loop observes those trees.
+fn package_meta_paths(search_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for root in search_roots {
+        let mut dir: &std::path::Path = if root.is_file() {
+            root.parent().unwrap_or(std::path::Path::new("."))
+        } else {
+            root.as_path()
+        };
+        loop {
+            paths.push(dir.join("DESCRIPTION"));
+            paths.push(dir.join("NAMESPACE"));
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// (path, mtime) over every watched non-R input: the config
+/// candidates, the effective baseline file, every stub file the
+/// loader would read (flat plus one nesting level, mirroring
+/// `discover_stub_files`), and the package metadata paths. Missing
+/// paths contribute `None` so creation and deletion register.
+/// Sorted for a stable whole-snapshot comparison.
+fn snapshot_inputs(
+    config_paths: &[PathBuf],
+    baseline: Option<&std::path::Path>,
+    stub_dirs: &[PathBuf],
+    meta_paths: &[PathBuf],
+) -> Vec<(PathBuf, Option<SystemTime>)> {
+    let mut snapshot: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
+    snapshot.extend(config_paths.iter().map(|path| {
+        (
+            path.clone(),
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok(),
+        )
+    }));
+    if let Some(path) = baseline {
+        snapshot.push((
+            path.to_path_buf(),
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok(),
+        ));
+    }
+    for dir in stub_dirs {
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // One nesting level, like the stub loader.
+                        if let Ok(nested) = std::fs::read_dir(&path) {
+                            for entry in nested.flatten() {
+                                let path = entry.path();
+                                if !path.is_dir() {
+                                    snapshot.push((
+                                        path.clone(),
+                                        std::fs::metadata(&path)
+                                            .and_then(|meta| meta.modified())
+                                            .ok(),
+                                    ));
+                                }
+                            }
+                        }
+                    } else {
+                        snapshot.push((
+                            path.clone(),
+                            std::fs::metadata(&path)
+                                .and_then(|meta| meta.modified())
+                                .ok(),
+                        ));
+                    }
+                }
+            }
+            // A missing stub dir still contributes its own entry so
+            // creating it later triggers a reload.
+            Err(_) => snapshot.push((
+                dir.clone(),
+                std::fs::metadata(dir).and_then(|meta| meta.modified()).ok(),
+            )),
+        }
+    }
+    snapshot.extend(meta_paths.iter().map(|path| {
+        (
+            path.clone(),
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok(),
+        )
+    }));
+    snapshot.sort();
+    snapshot
 }
 
 /// Result of a single check pass: the diagnostics, file count, and

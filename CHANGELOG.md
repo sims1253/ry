@@ -259,6 +259,33 @@ All notable changes to ry are documented in this file.
   argument's type joins the function's return type;
   `base::invisible(...)` likewise collects its argument type without
   marking the block unreachable, matching the bare form (#510).
+- `ry check --watch` on an empty directory used to print the empty
+  report and exit 0 without ever entering the watch loop, so the first
+  created `.R` file went unobserved until a manual re-run. A
+  readable-but-empty discovery result now enters the watch loop with
+  zero files instead of exiting: the loop's rescan already detects
+  membership growth, so the first created file triggers a re-check. An
+  unreadable root still fails the run in watch mode (a discovery
+  failure, not a quiet empty set), and non-watch behavior — the
+  machine-readable empty report, the stderr note, the exit code — is
+  unchanged (#529).
+- `ry check --watch` now reacts to non-R inputs without a restart.
+  Each poll first re-checks the mtimes of the configuration candidates
+  (every `ry.toml` on the upward walk from the search anchor, watched
+  even when absent so creation triggers), the effective baseline file,
+  every stub file under the configured typeshed directories, and the
+  `DESCRIPTION`/`NAMESPACE` files of each watched root and its
+  ancestors; on any difference it re-discovers the config, re-merges
+  the retained CLI overrides (flags keep winning over `ry.toml`
+  edits), rebuilds the severity filter, reloads the baseline and the
+  stubs, and coalesces the pass into one re-check — before the R-file
+  rescan, so the rescan already runs under a changed discovery config
+  (new excludes, fixture flags, index caps). A mid-watch-broken
+  `ry.toml` or baseline keeps the last-good inputs with one warning
+  per episode (never per-poll spam, never a dead session) and prints a
+  recovery note when the file parses again; removing the `baseline`
+  key settles to no baseline, matching a fresh run. Serialized `.rda`
+  watching stays out of scope (#530).
 
 ## [0.11.0] - 2026-09-16
 

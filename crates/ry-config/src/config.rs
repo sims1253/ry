@@ -338,7 +338,7 @@ impl Config {
 /// touch this; keep the config value". The list fields append to the
 /// config's lists; the scalar fields install only when `Some`; the
 /// verbosity counts add on top of the config's.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CliOverrides {
     /// Rules to treat as errors (`--error`).
     pub error: Vec<String>,

@@ -97,6 +97,24 @@ fn wait_for(buffer: &Mutex<String>, needle: &str, what: &str) {
     );
 }
 
+/// Wait until `buffer` contains more occurrences of `needle` than `before`.
+/// For phases whose signal is a repeated line (another summary, another
+/// screenful) rather than a first-appearing marker: returns once a new
+/// pass lands, or panics with the full capture on timeout.
+fn wait_for_more(buffer: &Mutex<String>, needle: &str, before: usize, what: &str) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if buffer.lock().unwrap().matches(needle).count() > before {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!(
+        "timed out waiting for {what} (a new {needle:?} past {before}); captured: {}",
+        buffer.lock().unwrap()
+    );
+}
+
 /// `ry check --watch` on an empty directory used to print the empty
 /// report and exit 0 without ever entering the watch loop, so the first
 /// created `.R` file went unobserved until a manual re-run (#529). The
@@ -238,41 +256,62 @@ fn watch_reloads_baseline_without_r_file_touch() {
         session.stdout.lock().unwrap()
     );
 
-    // Empty the baseline (accept nothing): the finding reappears although
-    // no R file changed.
-    std::fs::write(
-        tmp.path().join("baseline.json"),
-        "{\"version\": 1, \"entries\": []}\n",
-    )
-    .unwrap();
-    wait_for(&session.stdout, "RY010", "post-reload diagnostic");
-    assert!(
-        session
-            .stdout
-            .lock()
-            .unwrap()
-            .contains("genuinely_missing_baseline_name"),
-        "the re-check must report the un-accepted finding: {}",
-        session.stdout.lock().unwrap()
-    );
-
-    // Deleting the config-level baseline settles to no baseline (like a
-    // fresh run, which warns and continues without it) rather than
-    // keeping the stale acceptances: the finding is already visible, so
-    // the pin is that the session warns once and stays alive.
+    // Deleting the config-level baseline while its entries still accept
+    // the finding settles to no baseline (like a fresh run, which warns
+    // and continues without it) rather than keeping the stale
+    // acceptances: the finding reappears although no R file changed.
+    // Under the old keep-last-good behavior this wait times out, so the
+    // phase pins the settle instead of the harness.
     std::fs::remove_file(tmp.path().join("baseline.json")).unwrap();
     wait_for(
         &session.stderr,
         "could not read baseline",
         "deletion warning",
     );
+    wait_for(&session.stdout, "RY010", "post-deletion diagnostic");
+    assert!(
+        session
+            .stdout
+            .lock()
+            .unwrap()
+            .contains("genuinely_missing_baseline_name"),
+        "deleting the baseline must un-accept the finding: {}",
+        session.stdout.lock().unwrap()
+    );
     session.assert_alive("after baseline deletion");
+
+    // Empty the baseline (accept nothing): the finding stays reported
+    // across the reload although no R file changed. The pin is a fresh
+    // pass (a new summary line): there is deliberately no recovery
+    // note — the deletion was a settle, not a broken episode.
+    let summaries_before = session
+        .stderr
+        .lock()
+        .unwrap()
+        .matches("checked 1 file(s)")
+        .count();
+    std::fs::write(
+        tmp.path().join("baseline.json"),
+        "{\"version\": 1, \"entries\": []}\n",
+    )
+    .unwrap();
+    wait_for_more(
+        &session.stderr,
+        "checked 1 file(s)",
+        summaries_before,
+        "post-emptying pass",
+    );
+    assert!(
+        session.stdout.lock().unwrap().contains("RY010"),
+        "the emptied baseline must keep reporting the finding: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after baseline emptying");
 
     // Restoring the seeded baseline re-accepts the finding: the next
     // pass goes quiet although no R file changed. There is deliberately
     // no recovery note (deletion was a settle, not a broken episode),
-    // so the pin is the second zero-warning summary line — the first
-    // came from the initial pass.
+    // so the pin is the next zero-warning summary line.
     let quiet_before = session
         .stderr
         .lock()
@@ -280,25 +319,12 @@ fn watch_reloads_baseline_without_r_file_touch() {
         .matches("0 warning(s)")
         .count();
     std::fs::write(tmp.path().join("baseline.json"), &seeded).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if session
-            .stderr
-            .lock()
-            .unwrap()
-            .matches("0 warning(s)")
-            .count()
-            > quiet_before
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for the post-restore quiet pass; stderr: {}",
-            session.stderr.lock().unwrap()
-        );
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-restore quiet pass",
+    );
     session.assert_alive("after baseline reload");
 }
 

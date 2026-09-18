@@ -34,9 +34,21 @@ All notable changes to ry are documented in this file.
   byte range to the consuming file). Two halves remain open: a guard
   validated in one function but demanded in another (a validator-summary
   hop, for the #351 flow-sensitivity cycle) still stays silent, and the
-  `vctrs::vec_cast()` demand itself is still unstubbed -- the vendored
-  vctrs stub carries only the untyped `vec_cast_common`, so that stub
-  belongs in r-typeshed, not here; no local overlay was added (#479).
+  `vctrs::vec_cast()` demand itself is now stubbed: a ry-side
+  `overlay/vctrs.json` entry gives `vec_cast` an `x` carrying the
+  Math-group numeric union (R: `vec_cast(character(), double())`
+  errors), which arms the founding hms guard-helper shape. `vec_cast`
+  is relationally polymorphic -- `x` need only be castable to `to`, so
+  `vec_cast("foo", glue())` is legal -- and a plain numeric `x` type
+  would false-positive RY092 on such calls; the stub therefore marks
+  `x` with the new `demand_only` parameter flag, which exempts it from
+  RY092's provable-incompatibility check while the RY110 demand gate
+  still reads it. Upstream r-typeshed carries only the untyped
+  `vec_cast_common`, so the entry lives outside the synced `vendor/`
+  snapshot and is merged over it at load time -- the weekly `Typeshed
+  bump` wholesale-replaces `vendor/` without touching it -- pinned by a
+  test that fails loudly if upstream ever ships its own `vec_cast`;
+  the sync provenance (`SOURCE`) is write-only (#479).
 
 ### Fixed
 

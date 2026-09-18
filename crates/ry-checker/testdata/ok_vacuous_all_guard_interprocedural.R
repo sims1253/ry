@@ -104,3 +104,11 @@ late_applier <- function(args) {
   if (!all(valid)) stop("bad")
   print(args)
 }
+# An unqualified `vec_cast` with no `library(vctrs)` line resolves to
+# nothing, so even the stubbed demand cannot arm: qualification or
+# attachment is what connects the call to the stub.
+unresolved_vec_cast <- function(args) {
+  valid <- map_lgl(args, is_numeric_or_na)
+  if (!all(valid)) stop("bad")
+  vec_cast(args, double())
+}

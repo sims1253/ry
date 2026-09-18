@@ -1,0 +1,39 @@
+{
+  "schema_version": "2",
+  "package": "vctrs",
+  "version": "local-overlay",
+  "functions": {
+    "vec_cast": {
+      "params": [
+        {
+          "name": "x",
+          "type": {
+            "mode": "union",
+            "length": "unknown",
+            "members": [
+              "logical",
+              "integer",
+              "double",
+              "complex"
+            ]
+          },
+          "required": true,
+          "demand_only": true
+        },
+        {
+          "name": "to",
+          "required": true
+        },
+        "...",
+        "x_arg",
+        "to_arg",
+        "call"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

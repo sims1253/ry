@@ -105,6 +105,9 @@ jobs:
           # in_parallel() hard-requires at call time (carrier::crate);
           # without it in_parallel fixtures
           # error even though requireNamespace("purrr") succeeds.
+          # The vec_cast oracle fixture probes requireNamespace("vctrs");
+          # vctrs arrives today only transitively (dplyr and ggplot2 both
+          # import it), so pin it directly rather than trusting that chain.
           packages: |
             any::purrr
             any::mirai
@@ -114,7 +117,11 @@ jobs:
             any::rlang
             any::data.table
             any::testthat
+            any::vctrs
       - name: Verify oracle R packages are importable
+        # Missing fixture packages must not silently reduce CI coverage.
+        run: |
+          Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"), requireNamespace("ggplot2"), requireNamespace("rlang"), requireNamespace("data.table"), requireNamespace("testthat"), requireNamespace("vctrs"))'
         # Missing fixture packages must not silently reduce CI coverage.
         run: |
           Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"), requireNamespace("ggplot2"), requireNamespace("rlang"), requireNamespace("data.table"), requireNamespace("testthat"))'

@@ -91,8 +91,12 @@ pub fn is_file_eligible_with_limits(
 /// class the walk applies — `exclude` patterns against the file and every
 /// ancestor directory up to `walk_root` (a bare `exclude = ["vendor"]`
 /// prunes the directory entry in the walk but never matches
-/// `vendor/defs.R` through file-shape matching, #524), the fixed
-/// pruned-directory shapes, the testthat runner-code classification, the
+/// `vendor/defs.R` through file-shape matching, #524), the walk's
+/// symlink refusal for the file and every ancestor directory (the walk
+/// never descends through symlinked directories), walk-root containment
+/// (no walk reaches outside its root), the fixed pruned-directory shapes
+/// through the helpers shared with the walk, the testthat runner-code
+/// classification, the
 /// shared per-file policy's exclude and depth thirds (reused, not
 /// duplicated), the on-disk size cap measured the way the walk measures
 /// it, and `.Rbuildignore` with `include_build_ignored` rescue — anchored
@@ -118,6 +122,14 @@ pub fn is_single_file_walk_admitted(
     }
     // The walk never follows symlinks; classify the entry itself.
     if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
+        return false;
+    }
+    // No walk rooted at `walk_root` can reach a path outside it: without
+    // this the ancestor loop below over-climbs past the root and the
+    // depth gate passes non-rooted paths, admitting files no walk would
+    // ever reach. (With no floor — an empty `walk_root` — the file-shape
+    // checks below still apply.)
+    if !walk_root.as_os_str().is_empty() && path.strip_prefix(walk_root).is_err() {
         return false;
     }
     // With no floor to climb to (the server-root fallback when no root is
@@ -158,6 +170,12 @@ pub fn is_single_file_walk_admitted(
         }
         let mut inherited_buildignore = false;
         for dir in chain.into_iter().rev() {
+            // The walk prunes symlinked entries before descending, so a
+            // file reached through a symlinked directory is
+            // undiscoverable: refuse it exactly like the walk does.
+            if std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.is_symlink()) {
+                return false;
+            }
             // `ry.toml` excludes match directory entries too: this is the
             // pruned-directory half of the walk's exclusion.
             if has_excludes
@@ -172,23 +190,10 @@ pub fn is_single_file_walk_admitted(
             let pruned = dir
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with('.')
-                        || name == "target"
-                        || name == "node_modules"
-                        || name.ends_with(".Rcheck")
-                        || (name == "renv" && package_root.is_some())
-                        || package_root.as_deref().is_some_and(|root| {
-                            (name == "revdep" || name == "src") && dir.parent() == Some(root)
-                                || name == "_snaps"
-                                    && dir.parent().and_then(|parent| {
-                                        parent.strip_prefix(root).ok().map(|relative| {
-                                            relative
-                                                == std::path::Path::new("tests").join("testthat")
-                                        })
-                                    }) == Some(true)
-                        })
-                });
+                .is_some_and(|name| is_pruned_directory_name(name, package_root.is_some()))
+                || package_root
+                    .as_deref()
+                    .is_some_and(|root| is_excluded_package_directory(root, dir));
             if pruned {
                 return false;
             }
@@ -595,12 +600,10 @@ fn discover_recursive(
             continue;
         }
         if path.is_dir() {
+            // Fixed pruned-directory shapes, shared with the single-file
+            // verdict so they cannot drift (`renv` only inside a package).
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && (name.starts_with('.')
-                    || name == "target"
-                    || name == "node_modules"
-                    || (name == "renv" && package_root.is_some())
-                    || name.ends_with(".Rcheck"))
+                && is_pruned_directory_name(name, package_root.is_some())
             {
                 skipped.record(
                     &path,
@@ -730,6 +733,18 @@ pub fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
         glob_str.push('*');
     }
     glob::Pattern::new(&glob_str).ok()
+}
+
+/// Whether a directory entry is pruned by the walk's fixed shapes: hidden
+/// or generated directory names (`renv` only inside a package), shared by
+/// [`discover_recursive`] and the single-file verdict so the shapes exist
+/// once and cannot drift.
+fn is_pruned_directory_name(name: &str, in_package: bool) -> bool {
+    name.starts_with('.')
+        || name == "target"
+        || name == "node_modules"
+        || (name == "renv" && in_package)
+        || name.ends_with(".Rcheck")
 }
 
 /// Whether `path` relative to `package_root` is excluded by
@@ -1657,5 +1672,68 @@ mod shared_tests {
                 "verdict must keep {relative} like the walk does"
             );
         }
+    }
+}
+
+/// Parity between [`is_single_file_walk_admitted`] and
+/// [`discover_r_files`] for symlinked directories and walk-root
+/// containment (#524): the verdict must refuse exactly the spellings the
+/// walk never emits.
+#[cfg(test)]
+#[cfg(unix)]
+mod single_file_verdict_parity_tests {
+    use super::*;
+
+    #[test]
+    fn symlinked_ancestors_and_outside_paths_match_the_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir(root.join("real")).unwrap();
+        std::fs::write(root.join("real").join("x.R"), "x <- 1L\n").unwrap();
+        std::os::unix::fs::symlink(root.join("real"), root.join("link")).unwrap();
+
+        let config = ry_config::Config::default();
+        let excludes = ry_config::Excludes::from_config(&config);
+        let limits = DiscoveryLimits::from_config(&config);
+        let admit = |path: &std::path::Path| {
+            is_single_file_walk_admitted(path, root, Some(root), &excludes, &[], &limits, true)
+        };
+
+        let real = root.join("real").join("x.R");
+        let through_link = root.join("link").join("x.R");
+        assert!(admit(&real), "the real spelling is walk-admitted");
+        assert!(
+            !admit(&through_link),
+            "the through-link spelling is never emitted by the walk"
+        );
+
+        let walk = discover_r_files(root, Some(root), &config, true);
+        assert!(
+            walk.files.contains(&real),
+            "the walk indexes the real spelling: {:?}",
+            walk.files
+        );
+        assert!(
+            !walk.files.iter().any(|f| f == &through_link),
+            "the walk never emits the through-link spelling: {:?}",
+            walk.files
+        );
+
+        // Walk-root containment: no walk rooted at `real/` reaches
+        // outside it.
+        let outside = root.join("y.R");
+        std::fs::write(&outside, "y <- 1L\n").unwrap();
+        assert!(
+            !is_single_file_walk_admitted(
+                &outside,
+                &root.join("real"),
+                Some(root),
+                &excludes,
+                &[],
+                &limits,
+                true
+            ),
+            "paths outside the walk root are undiscoverable"
+        );
     }
 }

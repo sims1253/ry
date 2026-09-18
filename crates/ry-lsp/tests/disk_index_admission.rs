@@ -303,3 +303,55 @@ fn include_build_ignored_override_still_admits_watched_files() {
         join_session(session, server).await;
     });
 }
+
+/// A watched event addressed through a symlinked directory must not
+/// enter the index: the walk never descends through symlinks, so the
+/// per-file verdict refuses the through-link spelling exactly like the
+/// walk skips it. There is deliberately no fresh-server oracle here:
+/// the fresh walk indexes the same bytes under their real spelling, so
+/// whole-tree convergence needs a rescan; the live invariant — the
+/// RY010 survives because the through-link spelling never lands — is
+/// what the refusal guarantees.
+#[cfg(unix)]
+#[test]
+fn through_symlink_directory_stays_out_of_the_watched_index() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("main.R", MAIN).unwrap();
+        let main_uri = file_uri(&fixture.path("main.R"));
+        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+        sync_barrier(&mut session, &main_uri).await;
+
+        let mark = session.publication_mark();
+        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+        assert_eq!(
+            count_ry010(&first),
+            1,
+            "foo must be unbound before link/ exists: {first}"
+        );
+
+        // The bytes exist under their real spelling; the client watches
+        // the through-link spelling (built without the canonicalizing
+        // `file_uri`, which would resolve the link away).
+        fixture.write_file("real/defs.R", DEFS).unwrap();
+        std::os::unix::fs::symlink(fixture.path("real"), fixture.path("link")).unwrap();
+        let link_uri = format!("{}/link/defs.R", file_uri(fixture.root()).as_str());
+        let event_mark = session.publication_mark();
+        notify_created(&mut session, &link_uri).await;
+        let after = session
+            .published_diagnostics_after(&main_uri, event_mark)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_ry010(&after),
+            1,
+            "link/defs.R is skipped by the walk and must stay out of the index: {after}"
+        );
+
+        join_session(session, server).await;
+    });
+}

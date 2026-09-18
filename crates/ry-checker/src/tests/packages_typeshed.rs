@@ -905,7 +905,7 @@ fn grep_position_guard_silences_every_supported_comparison_direction() {
     // regression in a single arm resurfaces here. Each direction runs with
     // both a matching (`'a'`) and a non-matching (`'z'`) pattern because
     // the position contract — and therefore the silence — does not depend
-    // on whether `grep()` finds anything.
+    // does not depend on whether `grep()` finds anything.
     for template in [
         "grep({pattern}, c('a', 'b')) > 0",
         "grep({pattern}, c('a', 'b')) >= 0",
@@ -925,6 +925,24 @@ fn grep_position_guard_silences_every_supported_comparison_direction() {
                 "proven grep position guard should be silent: {source}: {diagnostics:?}"
             );
         }
+    }
+
+    // Pin the negative operator direction too: `==` and a zero on the
+    // wrong side (`0 > ...`, `0 >= ...`) fall through the match in
+    // `proven_grep_position_call`, so RY093 must stay even in the boolean
+    // guard. Without this, widening the match (an added `Eq` arm, a
+    // loosened `is_zero`) would pass the whole suite.
+    for template in [
+        "grep('a', c('a', 'b')) == 0",
+        "0 > grep('a', c('a', 'b'))",
+        "0 >= grep('a', c('a', 'b'))",
+    ] {
+        let source = format!("if (length({template})) TRUE\n");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY093"),
+            "unsupported grep comparison should retain RY093: {source}: {diagnostics:?}"
+        );
     }
 }
 

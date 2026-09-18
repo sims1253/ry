@@ -905,7 +905,7 @@ fn grep_position_guard_silences_every_supported_comparison_direction() {
     // regression in a single arm resurfaces here. Each direction runs with
     // both a matching (`'a'`) and a non-matching (`'z'`) pattern because
     // the position contract — and therefore the silence — does not depend
-    // does not depend on whether `grep()` finds anything.
+    // on whether `grep()` finds anything.
     for template in [
         "grep({pattern}, c('a', 'b')) > 0",
         "grep({pattern}, c('a', 'b')) >= 0",

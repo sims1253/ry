@@ -375,6 +375,52 @@ All notable changes to ry are documented in this file.
   Deterministic commit-gate test seams pin all three interleavings:
   stale refresh against newer scan, overlapping refreshes with
   last-event-wins, and close-time refresh against an in-flight scan.
+- Order the language server's same-path disk refreshes by a per-path
+  refresh epoch (#538): tower-lsp dispatches watched-file handlers
+  concurrently, so two refreshes for one path could snapshot the same
+  index generation, and the #526 generation check could not tell them
+  apart — when the refresh holding the OLDER bytes committed first it
+  installed them and atomically bumped the generation, so the newer
+  read's commit then failed the generation check and was discarded,
+  leaving the stale contents indexed until the next event for that
+  path, a didClose re-read, or any rescan. Each refresh now claims a
+  per-path epoch under the state lock when it starts, before its
+  blocking read, and the commit requires both the epoch and the scan
+  generation to remain current before inserting or removing the entry
+  — only the most recently started refresh for a path can commit, so
+  last-write-wins is decided by read order rather than commit order —
+  while each accepted commit keeps claiming the next generation
+  atomically with its map write. A superseded refresh stands down
+  without a bump, and a landed removal or cap refusal reclaims the
+  path's epoch entry (both provably hold the path's latest claim, with
+  no same-path refresh in flight behind it, and later claims draw from
+  a global counter, so a re-seeded entry cannot alias a live one short
+  of the u64 wrap the index generation accepts; the map holds at most
+  one entry per path the session has refreshed, never one per event,
+  and the full scan's wholesale install deliberately leaves it alone —
+  a refresh that started after the scan's generation bump may hold
+  genuinely newer bytes for a path the scan's walk missed). The
+  commit-gate seam
+  pins the discriminating interleaving deterministically — both
+  refreshes park at the one-shot gate (armed per arrival) and are
+  released in arrival order, so the older read provably commits first
+  and must lose to the newer one.
+- Refuse directories named like R sources in the single-file walk
+  verdict (#538): `is_single_file_walk_admitted` checked the entry's
+  symlink status but not that it is a regular file, so a directory
+  named `pkg.R/` passed the extension check and every subsequent gate
+  (directory entries are small) and could be admitted for the watched
+  per-file refresh path where the walk's landing rule — skip symlinks,
+  descend directories, land only what remains — never lands a
+  directory. The verdict now requires a regular file at the same
+  metadata read that enforces the size cap, which also refuses exotic
+  non-regular entries (a FIFO named `x.R`) the walk's file branch
+  would nominally land — the one deliberate, safe-direction
+  divergence, since no such entry can be read as a source — while
+  unmeasurable entries still pass, matching the walk's
+  omit-only-oversizes rule, so a missing file's removal behavior is
+  unchanged. A parity test pins that the directory spelling is
+  refused while the real sources inside it stay discoverable.
 
 ## [0.11.0] - 2026-09-16
 

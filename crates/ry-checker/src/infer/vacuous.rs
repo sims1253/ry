@@ -1476,6 +1476,22 @@ mod tests {
         assert!(!fires(
             "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ng <- function(valid, args) {\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  print(args)\n}\n"
         ));
+        // A nested closure's verdicts never leak into the enclosing
+        // function: `valid` is not even bound in `f`, so its `all()`
+        // cannot validate `f`'s `args` (the RY010 on `valid` is a
+        // separate, honest diagnostic).
+        let nested_leak = check(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  g <- function(args) {\n    valid <- lapply(args, is_numeric_or_na)\n    if (!all(valid)) stop(\"bad\")\n    print(args)\n  }\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n",
+        );
+        assert!(
+            nested_leak.iter().all(|d| d.code != "RY110"),
+            "nested verdicts leaked into the parent: {nested_leak:?}"
+        );
+        // A nested closure still inherits the enclosing verdicts: the
+        // `all(valid)` inside `g` reads the same binding `f` validated.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  g <- function() sqrt(args)\n  g()\n}\n"
+        ));
         // No downstream mode demand: the gate stays as strict as the
         // inline rule's.
         assert!(!fires(

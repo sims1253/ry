@@ -580,28 +580,21 @@ impl Checker {
         scope: &Scope,
     ) {
         let diagnostic_start = self.diagnostics.len();
-        // RY110's `map`-family provenance (issue #479) is function-local:
-        // a `valid <- map_lgl(data, H)` verdict in one function must never
-        // validate another function's `all(valid)`. Each body therefore
-        // walks with a fresh table: a nested closure inherits the
-        // enclosing function's table (its `all(valid)` reads the same
-        // binding -- the guard side resolves the closure's captures the
-        // same way), while a top-level sibling starts empty. Save and
-        // restore around the walk so sibling functions never observe each
-        // other's verdicts.
+        // RY110's `map`-family provenance (issue #479) resolves by bare
+        // local name, so each body walks a working copy of the incoming
+        // table: a nested closure inherits the enclosing function's
+        // entries (its `all(valid)` reads the same binding) and a
+        // top-level function reads the file's top-level mints, while
+        // whatever the walk itself mints -- or void through a
+        // colliding formal below -- is discarded by the restore at the
+        // end, in both directions. The table is empty for helper-free
+        // files, so the clone costs nothing where the perf budget is
+        // measured.
         // (`enclosing_formals` is still the parent depth here: this
-        // function pushes its own frame below.)
-        let saved_vacuous_map = if self.enclosing_formals.is_empty() {
-            // A top-level sibling starts with a fresh table; the
-            // previous top-level function's verdicts must not leak.
-            // (The top-level statements themselves keep the file's own
-            // table: they never pass through this save.)
-            Some(std::mem::take(&mut self.vacuous_map_results))
-        } else {
-            // A nested closure inherits the enclosing table; anything it
-            // records is dropped on restore.
-            None
-        };
+        // function pushes its own frame below. Only genuinely nested
+        // bodies pass through this save; the top-level statements keep
+        // the file's own table.)
+        let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);

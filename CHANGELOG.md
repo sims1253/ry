@@ -34,9 +34,15 @@ All notable changes to ry are documented in this file.
   byte range to the consuming file). Two halves remain open: a guard
   validated in one function but demanded in another (a validator-summary
   hop, for the #351 flow-sensitivity cycle) still stays silent, and the
-  `vctrs::vec_cast()` demand itself is still unstubbed -- the vendored
-  vctrs stub carries only the untyped `vec_cast_common`, so that stub
-  belongs in r-typeshed, not here; no local overlay was added (#479).
+  `vctrs::vec_cast()` demand itself is now stubbed: the vendored vctrs
+  stub gains a ry-side `vec_cast` entry whose `x` carries the Math-group
+  numeric union (R: `vec_cast(character(), double())` errors), which
+  arms the founding hms guard-helper shape with no checker change.
+  Upstream r-typeshed carries only the untyped `vec_cast_common`, so
+  the entry lives in this repo's vendored snapshot, pinned by a test
+  that fails loudly if a `Typeshed bump` overwrites it; the sync
+  provenance (`SOURCE`) is write-only, so the local addition survives
+  validation (#479).
 
 ### Fixed
 

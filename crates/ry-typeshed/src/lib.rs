@@ -1484,6 +1484,45 @@ mod tests {
         }
     }
 
+    /// `vctrs::vec_cast`'s `x` demand is a ry-side vendored addition
+    /// (issue #479): upstream carries only the untyped
+    /// `vec_cast_common`, so the weekly `Typeshed bump`
+    /// wholesale-replacing vendor/ from the r-typeshed checkout would
+    /// silently drop the stub RY110's hms-shape demand gate reads. This
+    /// pin fails loudly on that overwrite: casting `character()` to
+    /// `double()` errors in R ("Can't convert <character> to
+    /// <double>"), which is what the declared Math-group numeric union
+    /// encodes.
+    #[test]
+    fn vendored_vctrs_carries_the_vec_cast_x_demand() {
+        let vendor_vctrs = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/vctrs/vctrs.json"),
+        )
+        .expect("read vendored vctrs stub");
+        assert!(
+            vendor_vctrs.contains("\"vec_cast\""),
+            "vendored vctrs.json must keep the ry-side vec_cast stub (issue #479)"
+        );
+        let vctrs = load_package("vctrs").expect("vctrs loads");
+        let signature = vctrs
+            .functions
+            .get("vec_cast")
+            .expect("vec_cast must be stubbed");
+        let x = signature
+            .params
+            .iter()
+            .find(|param| param.name == "x")
+            .expect("vec_cast stub must declare x");
+        let declared = x.type_.as_ref().expect("vec_cast x must be typed");
+        assert_eq!(declared.mode, "union");
+        for member in ["logical", "integer", "double", "complex"] {
+            assert!(
+                declared.members.contains(&member.to_string()),
+                "vec_cast x must admit {member}"
+            );
+        }
+    }
+
     #[test]
     fn load_package_rlang_has_typed_non_function_constants() {
         let rlang = load_package("rlang").expect("rlang loads");

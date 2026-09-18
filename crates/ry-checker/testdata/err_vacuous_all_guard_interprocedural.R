@@ -1,4 +1,4 @@
-# expect: RY110, RY110
+# expect: RY110, RY110, RY110
 # Interprocedural vacuous-all guards (issue #479): the guard lives in a
 # helper, the demand in the caller. The hms args.R form behind
 # tidyverse/hms#231: `is_numeric_or_na` returns the vacuous chain,
@@ -25,4 +25,17 @@ is_double_or_na <- function(x) is.double(x) || all(is.na(x))
 to_seconds <- function(seconds) {
   if (!is_double_or_na(seconds)) stop("must be numeric or NA")
   sqrt(seconds)
+}
+# The founding hms demand itself (tidyverse/hms#231): `check_args`
+# validates elementwise through the helper, and the continuation hands
+# the values to `vctrs::vec_cast()`, whose stubbed `x` demand rejects
+# every vacuous-accept mode (R: `vec_cast(character(), double())`
+# errors). The qualified spelling resolves without any `library()`
+# line, so this site fires exactly when the stub exists -- without it
+# the demand is untyped and the guard stays silent.
+is_castable_or_na <- function(x) is.numeric(x) || all(is.na(x))
+check_cast_args <- function(args) {
+  valid <- map_lgl(args, is_castable_or_na)
+  if (!all(valid)) stop("All arguments must be numeric or NA")
+  vctrs::vec_cast(args, double())
 }

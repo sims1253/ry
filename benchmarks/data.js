@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789697528373,
+  "lastUpdate": 1789698518595,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -26120,6 +26120,184 @@ window.BENCHMARK_DATA = {
             "range": "459.88–514.91",
             "unit": "ms",
             "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 459.88063799997326, 477.74640800000634, 482.3536070000264, 489.8997129999916, 514.911662999948"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9767420536cfbaded6f3629a04431d64d05a22e",
+          "message": "ci: add OpenCodeReview LLM review bot for PRs (#531)\n\n* ci: add OpenCodeReview LLM review bot for PRs\n\nWire the alibaba/open-code-review composite action (SHA-pinned, OCR CLI\npinned to 1.12.5) to review every PR and post inline LLM comments.\nRe-review on demand via /open-code-review comments, gated to\nmaintainer associations so only maintainers can spend LLM quota.\n\nRuns until OCR_LLM_URL/OCR_LLM_AUTH_TOKEN secrets and the\nOCR_LLM_MODEL variable are configured; pull_request_target is used so\nfork PRs are covered and carries a zizmor inline-ignore justification\nper the repo's zizmor.yml convention.\n\n* Update .github/workflows/ocr-review.yml\n\nCo-authored-by: pullfrog[bot] <226033991+pullfrog[bot]@users.noreply.github.com>\n\n* ci: gate OCR auto-review to maintainer associations\n\npull_request_target previously passed the job condition for every PR,\nso any fork could invoke the reviewer and spend OCR_LLM_AUTH_TOKEN\nquota — and with concurrency scoped per PR, several fork PRs could do\nso concurrently. Gate the PR-event path to MEMBER/OWNER/COLLABORATOR\nlike the comment path, and keep untrusted PR events out of the per-PR\nconcurrency group so a fork push cannot cancel a maintainer-triggered\nreview. External PRs are still reviewable on demand: a maintainer\ncomments /open-code-review on the PR.\n\n* ci: run OCR reviews at high effort with max reasoning\n\neffort: high selects the deeper multi-round review (needs OCR v1.10.0+;\npinned at 1.12.5). llm_reasoning_effort: max merges reasoning_effort\ninto the request body for models with a steerable reasoning field —\nOpenAI-compatible protocol only, the action fails fast if\nOCR_LLM_USE_ANTHROPIC selects Anthropic.\n\nAlso stream live review progress to the workflow log and pass the PR\ntitle as review context (resolved via the API for /open-code-review\ncomment triggers), which the upstream docs call the highest-leverage\nreview-quality flag.\n\n---------\n\nCo-authored-by: pullfrog[bot] <226033991+pullfrog[bot]@users.noreply.github.com>",
+          "timestamp": "2026-09-18T04:21:24+02:00",
+          "tree_id": "fd39b301e91ca3f89a01bc80ffba4fc65bbfd60c",
+          "url": "https://github.com/sims1253/ry/commit/a9767420536cfbaded6f3629a04431d64d05a22e"
+        },
+        "date": 1789698518467,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 1523694.4071937245,
+            "range": "1514210.03–1540811.56",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 509083.46307484014,
+            "range": "508644.56–509523.28",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 5213169.437614625,
+            "range": "5205229.16–5222566.28",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 735127.8171869803,
+            "range": "734595.51–735695.85",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 9071731.587651161,
+            "range": "9063294.91–9080342.47",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1251696.4681360116,
+            "range": "1249302.80–1253963.22",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 13290824.611213673,
+            "range": "13078952.22–13567509.87",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 6830016.668156834,
+            "range": "6698416.79–7022500.83",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1432418.061114575,
+            "range": "1430389.92–1434628.91",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 2573645.604745926,
+            "range": "2566410.40–2583920.29",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 918427.9043897189,
+            "range": "913290.71–926380.93",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 6749329.939085019,
+            "range": "6737785.42–6763071.35",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1427880.369772096,
+            "range": "1426238.92–1429817.27",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 75801591.95,
+            "range": "75340742.23–76344770.67",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 12322876.977103159,
+            "range": "12253471.69–12393351.36",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6293986.458981957,
+            "range": "6271999.64–6317928.26",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 12731762.799474888,
+            "range": "12219912.73–13434775.42",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4744347.817112466,
+            "range": "4713323.33–4798152.79",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 15354994.121653479,
+            "range": "15164449.26–15602433.53",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 2762140.8355583725,
+            "range": "2739611.41–2793421.37",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 9348968,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 796379,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 385713,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 394760,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 129.44549400004325,
+            "range": "125.41–132.81",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 125.40902800002368, 125.64953900000546, 129.44549400004325, 131.97746399999596, 132.8098459999892"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 584.3173309999984,
+            "range": "555.27–606.16",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 555.2727739999536, 582.776463999995, 584.3173309999984, 598.4771860000328, 606.1635890000034"
           }
         ]
       }

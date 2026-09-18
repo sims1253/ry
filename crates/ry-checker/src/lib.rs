@@ -1022,6 +1022,17 @@ pub struct Checker {
     // `if`/`stopifnot` guard sites and consumed at stub-declared call
     // arguments on the accepted path. Cleared per check run.
     vacuous_guards: Vec<infer::vacuous::VacuousGuard>,
+    // Guard-helpers (RY110, issue #479): single-formal functions whose
+    // body is (or returns) the recognized vacuous-all chain, indexed
+    // from the FnTable once per pass-3 run so use-before-def source
+    // order cannot hide them. Cleared per check run.
+    vacuous_helpers: FxMap<String, infer::vacuous::VacuousHelper>,
+    // Elementwise-validation provenance (RY110, issue #479): locals
+    // bound by a `map`-family call applying a guard-helper
+    // (`valid <- map_lgl(args, is_numeric_or_na)`), consumed by the
+    // `if`/`stopifnot` hooks when the result is reduced with `all()`.
+    // Rebinding drops the entry, like a guard rebind. Cleared per run.
+    vacuous_map_results: HashMap<String, infer::vacuous::VacuousMapProvenance>,
     // For every statement, the byte range of the statements following it
     // in its enclosing list: the accepted path of a rejecting guard
     // (`if (!(G)) stop(...)`, `stopifnot(G)`). Indexed once per check run
@@ -1098,6 +1109,8 @@ impl Checker {
         self.fn_table = Arc::new(FnTable::default());
         self.return_slots = Arc::new(ReturnSlots::default());
         self.vacuous_guards.clear();
+        self.vacuous_helpers.clear();
+        self.vacuous_map_results.clear();
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
 
@@ -1186,6 +1199,8 @@ impl Checker {
             scope_records: Vec::new(),
             assignment_types: None,
             vacuous_guards: Vec::new(),
+            vacuous_helpers: FxMap::default(),
+            vacuous_map_results: HashMap::new(),
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
             dynamic_closure_literals: FxMap::default(),
@@ -1319,8 +1334,12 @@ impl Checker {
         }
         // RY110 state is per-run: guards armed in this walk consume
         // demands in this walk, against this file's continuation and
-        // shadow ranges.
+        // shadow ranges. The guard-helper registry (issue #479) builds
+        // from the refined FnTable before the walk, so use-before-def
+        // order cannot hide a helper.
         self.vacuous_guards.clear();
+        self.vacuous_helpers.clear();
+        self.vacuous_map_results.clear();
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
         infer::vacuous::index_statement_continuations(
@@ -1328,6 +1347,7 @@ impl Checker {
             &mut self.stmt_continuations,
             &mut self.formal_shadows,
         );
+        self.index_vacuous_helpers();
         self.dynamic_closure_literals.clear();
         infer::dynamic_closure::index_dynamic_closure_literals(
             &file.stmts,

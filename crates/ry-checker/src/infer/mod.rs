@@ -326,9 +326,15 @@ impl Checker {
                 // (`x[1] <- v`, `x$a <- v`) invalidate the root the same
                 // way -- a coercing subassign changes the whole vector's
                 // mode -- and superassignment conservatively counts too.
+                // A rebind also voids `map`-family guard-helper
+                // provenance over the name (issue #479).
                 if let Some(root) = vacuous::assignment_root_name(target) {
                     self.note_vacuous_guard_rebind(root);
+                    self.note_vacuous_map_rebind(root);
                 }
+                // A fresh `result <- map(data, helper)` verdict binding
+                // records its provenance for the `all(result)` hooks.
+                self.note_vacuous_map_result(target, value, scope);
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
@@ -465,6 +471,7 @@ impl Checker {
                 // vacuous-all guard over the same name no longer
                 // describes what a later demand receives (RY110).
                 self.note_vacuous_guard_rebind(name);
+                self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 for s in body {

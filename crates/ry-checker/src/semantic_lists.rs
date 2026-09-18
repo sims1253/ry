@@ -179,6 +179,27 @@ pub(crate) fn is_quoting_form(name: &str) -> bool {
     QUOTING_FORMS.contains(&name)
 }
 
+/// Elementwise `map`-family callees with a data-first, callback-second
+/// shape: base `lapply`/`sapply`/`vapply` and the purrr `map`/`walk`
+/// verbs. RY110 reads `result <- <verb>(data, helper)` as elementwise
+/// validation provenance for a guard-helper `helper`.
+///
+/// Checked by R oracle: each member applies its function argument once
+/// per element of its data argument in order (`walk` for side effects,
+/// discarding the results). Base members resolve in vanilla R; the purrr
+/// verbs resolve via the purrr package, skipped when it is not
+/// installed.
+pub const VACUOUS_MAP_FAMILY: &[&str] = &[
+    "lapply", "sapply", "vapply", "map", "map_lgl", "map_int", "map_dbl", "map_chr", "map_vec",
+    "walk",
+];
+
+/// Whether `name` is an elementwise `map`-family callee RY110 may read
+/// validation provenance from.
+pub(crate) fn is_vacuous_map_family(name: &str) -> bool {
+    VACUOUS_MAP_FAMILY.contains(&name)
+}
+
 /// Bindings injected for Shiny application server fragments.
 ///
 /// Checked by R oracle: these are the conventional parameters of a Shiny
@@ -310,6 +331,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: QUOTING_FORMS,
             check: CheckKind::ROracle,
             claim: "call constructors that quote their language arguments",
+        },
+        SemanticList {
+            name: "VACUOUS_MAP_FAMILY",
+            items: VACUOUS_MAP_FAMILY,
+            check: CheckKind::ROracle,
+            claim: "elementwise map verbs applying their function once per data element in order",
         },
     ]
 }

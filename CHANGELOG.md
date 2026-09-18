@@ -259,6 +259,30 @@ for tree-sitter 0.27. Core and the VS Code extension are 0.11.0.
   is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
   the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
   #479 (#462).
+- Extend RY110 (`vacuous-all-guard`) across the helper boundary: a
+  single-formal function whose body is (or returns) the recognized guard
+  chain -- hms's `is_numeric_or_na <- function(x) is.numeric(x) ||
+  all(is.na(x))` -- now registers as a guard-helper, and call sites that
+  pass the guarded value onward arm its guard over the actual argument.
+  Three application shapes qualify: a direct helper-call guard condition
+  (`if (!is_numeric_or_na(v)) stop(...)`, including the positive
+  `if (is_numeric_or_na(v))` then-branch and `stopifnot()`), and the
+  args.R elementwise form (`valid <- map_lgl(args, is_numeric_or_na)`
+  through base `lapply`/`sapply`/`vapply` or the purrr `map` verbs, read
+  resolution-independently, followed by an `all(valid)` rejection). The
+  diagnostic still points at the helper's `all()` -- that definition is
+  the defect, so each helper reports once -- while the emptiness premise
+  and the recorded type come from the caller's binding. The
+  downstream-demand gate is unchanged (a stub-declared parameter type in
+  the applying function, same binding, same shadowing and rebinding
+  discipline), which is what keeps the corpus silent: discarded helper
+  results, multi-formal bodies, shadowed helpers or map callees, and
+  extra call arguments all stay quiet. Two halves remain open: a guard
+  validated in one function but demanded in another (a validator-summary
+  hop, for the #351 flow-sensitivity cycle) still stays silent, and the
+  `vctrs::vec_cast()` demand itself is still unstubbed -- the vendored
+  vctrs stub carries only the untyped `vec_cast_common`, so that stub
+  belongs in r-typeshed, not here; no local overlay was added (#479).
 - Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
   `test` vector and only overwrites selected positions, so a zero-length or
   all-`NA` test yields a `logical` result even when `yes`/`no` agree on

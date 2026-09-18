@@ -33,16 +33,20 @@
 //!
 //! The founding hms shape is interprocedural (the guard lives in the
 //! `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast`), and
-//! issue #479 covers its helper half: a single-formal function whose
-//! body is (or returns) the recognized chain registers a
-//! [`VacuousHelper`], armed at call sites that pass the guarded value
-//! onward -- a direct `H(v)` guard condition, `stopifnot(H(v))`, or a
-//! `map`-family application whose result is reduced with `all()` (the
-//! args.R `map_lgl` + `all(valid)` + rejection form). The downstream
-//! demand must still sit in the applying function under a stub-declared
-//! parameter type: a validator-summary hop (one function validates,
-//! another demands) stays out of scope for the #351 flow-sensitivity
-//! cycle, as does the still-unstubbed `vec_cast` demand itself.
+//! issue #479 covers its same-file helper half: a single-formal function
+//! the checked file defines whose body is (or returns) the recognized
+//! chain registers a [`VacuousHelper`], armed at call sites that pass the
+//! guarded value onward -- a direct `H(v)` guard condition,
+//! `stopifnot(H(v))`, or a `map`-family application whose result is
+//! reduced with `all()` (the args.R `map_lgl` + `all(valid)` + rejection
+//! form). The downstream demand must still sit in the applying function
+//! under a stub-declared parameter type: a validator-summary hop (one
+//! function validates, another demands) and a cross-file helper
+//! application stay silent -- the latter because the diagnostic could
+//! not point at the helper's own span without attributing a foreign byte
+//! range to the consuming file. The still-unstubbed `vec_cast` demand
+//! itself stays out of scope for the #351 flow-sensitivity cycle and
+//! r-typeshed respectively.
 
 use super::*;
 
@@ -439,55 +443,60 @@ fn vacuous_accept_modes(recorded: Option<&RType>, covered: &[Mode]) -> Vec<Mode>
 
 impl Checker {
     /// RY110's helper registry (issue #479): index every single-formal
-    /// function whose body is (or returns) the recognized vacuous-all
-    /// chain over that formal. Built lazily on first guard-condition use
-    /// from the refined FnTable, so use-before-def source order cannot
-    /// hide a helper (hms defines `check_args` before `is_numeric_or_na`)
-    /// while helper-free files never pay for the scan -- the scan is
-    /// per-file O(project table), which is what the `scaling_project_size`
-    /// perf budget guards. The parse runs against an empty scope with the
-    /// checker's fully populated tables, which resolves top-level
-    /// shadowing (`all <- function...` in the FnTable correctly
-    /// disqualifies) the same way the lenient base-resolution ladder does
-    /// for inline guards. Nested helpers whose enclosing function shadows
-    /// a base name parse against the flat table (an accepted
-    /// approximation: the shadowing frame is not consulted).
-    pub(crate) fn ensure_vacuous_helpers(&mut self) {
-        if self.vacuous_helpers_built {
-            return;
-        }
-        self.vacuous_helpers_built = true;
+    /// function the file being checked defines at the top level whose
+    /// body is (or returns) the recognized vacuous-all chain over that
+    /// formal. Runs once in the pass-3 prologue from the file's own
+    /// statements, so use-before-def order cannot hide a helper (hms
+    /// defines `check_args` before `is_numeric_or_na`) while the scan
+    /// stays O(the file's own functions) -- the `scaling_project_size`
+    /// perf budget guards this. The registry is file-local by
+    /// construction: a helper in another file never arms here, so a
+    /// cross-file diagnostic can never carry a foreign byte span (the
+    /// emitter stamps the consuming file's path). The parse runs against
+    /// an empty scope with the checker's fully populated tables, which
+    /// resolves top-level shadowing (`all <- function...` disqualifies)
+    /// the same way the lenient base-resolution ladder does for inline
+    /// guards.
+    pub(crate) fn index_vacuous_helpers(&mut self, stmts: &[Stmt]) {
+        use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+        use std::ops::ControlFlow;
+        // Top-level binding statements, mirroring `collect_fns`: the
+        // traversal enters `if`/`for`/`while` bodies but never expression
+        // interiors, so a helper bound in a top-level branch registers
+        // while nested closures never do (their bare names would resolve
+        // against the wrong environment anyway).
+        let mut defs: Vec<(String, Vec<Param>, Vec<Stmt>)> = Vec::new();
+        let _ = walk_stmts(
+            stmts,
+            Walk {
+                control_tests: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let AstNode::Stmt(statement) = node else {
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                if let Stmt::Assign { target, value, .. } = statement
+                    && let (Some(name), Expr::Function { params, body, .. }) =
+                        (binding_name(target), value)
+                {
+                    defs.push((name.to_string(), params.clone(), body.clone()));
+                }
+                ControlFlow::Continue(match statement {
+                    Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,
+                    _ => Descend::Skip,
+                })
+            },
+        );
         let empty = Scope::default();
-        // Phase 1 filters by reference (arity, body length, statement
-        // shape): only survivors pay for owned clones, and only chain
-        // candidates reach the parser. The common synthetic shapes the
-        // perf corpus generates (single-formal arithmetic bodies) fail
-        // phase 2 before any base resolution runs.
-        let survivors: Vec<(String, String, std::sync::Arc<[Stmt]>)> = self
-            .fn_table
-            .fns
-            .iter()
-            .filter_map(|(name, function)| {
-                let [param] = function.params.as_slice() else {
-                    return None;
-                };
-                if param.name == "..." {
-                    return None;
-                }
-                let [statement] = function.body.as_ref() else {
-                    return None;
-                };
-                if !matches!(
-                    statement,
-                    Stmt::Expr(_) | Stmt::Return { value: Some(_), .. }
-                ) {
-                    return None;
-                }
-                Some((name.clone(), param.name.clone(), function.body.clone()))
-            })
-            .collect();
-        for (name, formal, body) in &survivors {
-            let [statement] = body.as_ref() else {
+        for (name, params, body) in &defs {
+            let [param] = params.as_slice() else {
+                continue;
+            };
+            if param.name == "..." {
+                continue;
+            }
+            let [statement] = body.as_slice() else {
                 continue;
             };
             // The body is the chain (implicit return) or returns it.
@@ -524,11 +533,12 @@ impl Checker {
             };
             // The chain must guard the helper's own formal: only then
             // does applying the helper validate the passed value.
-            if ident_name(site.var) != Some(formal.as_str()) {
+            if ident_name(site.var) != Some(param.name.as_str()) {
                 continue;
             }
             // A shadowed-all twin of the helper body (the corpus
             // `own_all` shape lifted interprocedural) parses nothing.
+            // Later definitions win, mirroring R and the FnTable.
             self.vacuous_helpers.insert(
                 name.clone(),
                 VacuousHelper {
@@ -583,18 +593,15 @@ impl Checker {
         let Some(accept) = accept else {
             return;
         };
-        // The inline chain first (no registry needed). A helper-call
-        // condition -- or an `all()` reduction over a mapped
-        // guard-helper result -- only resolves when the inline parse
-        // fails; the two shapes are disjoint (a bare call is never an
-        // `||` chain), so the order is behavior-preserving while keeping
-        // helper-free files off the registry path entirely.
+        // The inline chain first. A helper-call condition -- or an
+        // `all()` reduction over a mapped guard-helper result -- only
+        // resolves when the inline parse fails; the two shapes are
+        // disjoint (a bare call is never an `||` chain).
         if let Some(site) = vacuous_all_site(self, chain, scope) {
             self.arm_vacuous_guard(&site, accept, scope);
             return;
         }
         if matches!(chain, Expr::Call { .. }) {
-            self.ensure_vacuous_helpers();
             if let Some((helper, actual)) = self.vacuous_condition_helper(chain, scope) {
                 self.arm_vacuous_helper(&helper, &actual, span_of(chain), accept, scope);
             }
@@ -627,9 +634,6 @@ impl Checker {
             if let Some(site) = vacuous_all_site(self, &argument.value, scope) {
                 self.arm_vacuous_guard(&site, accept, scope);
             } else if matches!(argument.value, Expr::Call { .. }) {
-                // Lazy registry: only a call-shaped non-chain argument
-                // can be a helper application.
-                self.ensure_vacuous_helpers();
                 if let Some((helper, actual)) =
                     self.vacuous_condition_helper(&argument.value, scope)
                 {
@@ -848,12 +852,9 @@ impl Checker {
         // applied to a bare-identifier collection. Subset data
         // (`args[!is_null]`), anonymous callbacks, and extra actuals
         // keep no provenance -- the demand side only resolves bare
-        // identifiers, so anything else could never arm. The shape
-        // checks run before the lazy registry build, so files without
-        // any `map`-family application never pay for the scan.
+        // identifiers, so anything else could never arm.
         let shape = in_family && map_helper_shape(args);
         let provenance = if shape {
-            self.ensure_vacuous_helpers();
             let Expr::Ident { name: helper, .. } = &args[1].value else {
                 unreachable!("shape check matched a bare-identifier callback");
             };
@@ -1452,6 +1453,28 @@ mod tests {
         // is not the accepted path.
         assert!(!fires(
             "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  is_numeric_or_na(v)\n  sqrt(v)\n}\n"
+        ));
+        // A qualified helper call never resolves to the flat-registered
+        // local: qualification bypasses locals by design.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!other::is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!base::is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // `walk` returns its input, not the verdicts: `all()` over its
+        // result tests the data, so no provenance is minted.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- walk(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n"
+        ));
+        // Map verdicts never cross function boundaries, in either
+        // definition order: the consumer's `all(valid)` proves nothing
+        // about its own `args`.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  print(args)\n}\ng <- function(valid, args) {\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n"
+        ));
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ng <- function(valid, args) {\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  print(args)\n}\n"
         ));
         // No downstream mode demand: the gate stays as strict as the
         // inline rule's.

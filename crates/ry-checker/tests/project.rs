@@ -1564,3 +1564,35 @@ fn cross_file_dataset_call_without_function_keeps_error() {
         "no function anywhere keeps the dataset call error: {all:?}"
     );
 }
+
+#[test]
+fn cross_file_helper_application_stays_silent() {
+    // Issue #479: the guard-helper registry is file-local, so a helper
+    // defined in one file never arms a guard in another -- the
+    // diagnostic could not point at the helper's own span without
+    // misattributing a foreign byte range to the consuming file.
+    let mut project = Project::new();
+    project.add_file(
+        "helpers.R".to_string(),
+        parse(
+            "helpers.R",
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\n",
+        ),
+    );
+    project.add_file(
+        "consumer.R".to_string(),
+        parse(
+            "consumer.R",
+            "f <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n",
+        ),
+    );
+    let all: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        all.iter().all(|d| d.code != "RY110"),
+        "cross-file helper application must stay silent: {all:?}"
+    );
+}

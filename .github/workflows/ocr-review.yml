@@ -178,4 +178,7 @@ jobs:
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           # Pinned for supply-chain hygiene; bump to update the CLI.
-          ocr_version: '1.12.5'
+          # 1.12.4: 1.12.5's npm package intermittently installs a broken
+          # `ocr` bin (exit 127 or `Cannot find module`), failing the job
+          # before any review runs — 1.12.4 ran green.
+          ocr_version: '1.12.4'

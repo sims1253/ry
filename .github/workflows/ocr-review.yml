@@ -1,0 +1,163 @@
+# OpenCodeReview — LLM review bot for PRs (https://open-codereview.ai).
+#
+# Reviews diffs with an LLM and posts inline review comments. Auto-review is
+# gated to MEMBER/OWNER/COLLABORATOR PR authors; other PRs (forks included)
+# are only reviewed when a maintainer triggers it via comment — otherwise any
+# fork could burn LLM quota just by opening PRs. Required repo settings
+# (Settings → Secrets and variables → Actions):
+#   secret    OCR_LLM_URL            LLM API endpoint
+#   secret    OCR_LLM_AUTH_TOKEN     LLM auth token
+#   variable  OCR_LLM_MODEL          model name (no default)
+#   variable  OCR_LLM_USE_ANTHROPIC  'true' for Anthropic, else OpenAI-compatible
+#
+# Re-review on demand: comment '/open-code-review' or '@open-code-review'
+# on any PR (maintainers only).
+
+name: OpenCodeReview PR Review
+
+# Conditional concurrency group.
+#
+# GitHub Actions evaluates concurrency BEFORE job-level if-conditions. With a
+# flat group (ocr-<pr_number>), every comment on the PR — even an unrelated
+# conversation reply that will be skipped — enters the same group and, because
+# cancel-in-progress is true, cancels any in-progress review. The result: a
+# single normal comment kills a running review, and you see "two runs, one
+# cancelled" in the Actions tab.
+#
+# Fix: matching events (trusted PR events + /open-code-review comments) share
+# a per-PR group so a new review cancels any stale one for the same PR.
+# Everything else — non-matching comments, but also PR events from untrusted
+# authors — lands in a unique noop-<run_id> group that can never collide with
+# a real review, so those runs are skipped instantly without disrupting
+# anything. Untrusted PR events must stay out of the per-PR group: although
+# the job if skips them, concurrency is evaluated first, so a shared group
+# would let a fork author cancel a maintainer-triggered review just by
+# pushing.
+concurrency:
+  group: >-
+    ${{
+      (
+        (
+          github.event_name == 'pull_request_target'
+          && (
+            github.event.pull_request.author_association == 'MEMBER'
+            || github.event.pull_request.author_association == 'OWNER'
+            || github.event.pull_request.author_association == 'COLLABORATOR'
+          )
+        )
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && (
+            github.event.comment.author_association == 'MEMBER'
+            || github.event.comment.author_association == 'OWNER'
+            || github.event.comment.author_association == 'COLLABORATOR'
+          )
+          && (
+            startsWith(github.event.comment.body, '/open-code-review')
+            || startsWith(github.event.comment.body, '@open-code-review')
+          )
+        )
+      )
+      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('noop-{0}', github.run_id)
+    }}
+  cancel-in-progress: true
+
+on:
+  # Use pull_request_target instead of pull_request so that secrets are
+  # available even for PRs from forks. Safe because the reusable action only
+  # reads the diff and does not execute any code from the PR, and the only
+  # steps in this workflow are API calls — nothing checks out or runs
+  # PR-controlled content.
+  # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Run on PR events from trusted authors, or on human-authored comments
+    # starting with trigger keywords. Bot comments are excluded as a safety
+    # net: GITHUB_TOKEN already suppresses events from bot-posted comments,
+    # but a PAT/App token would not. Both paths are gated on
+    # author_association so only MEMBER/OWNER/COLLABORATOR users can spend
+    # LLM quota: fork PRs are not auto-reviewed — a maintainer opts them in
+    # by commenting a trigger keyword on the PR.
+    if: |
+      (
+        github.event_name == 'pull_request_target'
+        && (
+          github.event.pull_request.author_association == 'MEMBER'
+          || github.event.pull_request.author_association == 'OWNER'
+          || github.event.pull_request.author_association == 'COLLABORATOR'
+        )
+      )
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
+    steps:
+      - name: Get PR context
+        id: pr-context
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            // For issue_comment events, resolve PR base/head/title so the
+            // action can review the right diff with title context
+            // (issue_comment has no top-level pull_request payload fields).
+            const prNumber = context.issue.number;
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('head_sha', pullRequest.head.sha);
+            core.setOutput('title', pullRequest.title);
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@189be5b024d3309dd10fdc8cd8ee31b2530c210b # main
+        with:
+          llm_url: ${{ secrets.OCR_LLM_URL }}
+          llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
+          # Review tuning: effort high = deeper multi-round review; 'max'
+          # reasoning needs a model with a steerable reasoning_effort field
+          # and only works on the OpenAI-compatible protocol — the action
+          # fails fast if the Anthropic one is selected.
+          effort: high
+          llm_reasoning_effort: max
+          # Stream live [ocr] progress to the workflow log instead of
+          # staying silent until the run finishes.
+          stream_progress: 'true'
+          # PR title as review context — the upstream docs' highest-leverage
+          # flag, especially with conventional-commit titles. On
+          # issue_comment triggers the title comes from the API lookup.
+          background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
+          # For issue_comment triggers, pass the resolved refs; for
+          # pull_request_target the action resolves them from the event.
+          base_ref: ${{ steps.pr-context.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha }}
+          # Pinned for supply-chain hygiene; bump to update the CLI.
+          ocr_version: '1.12.5'

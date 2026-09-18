@@ -1547,25 +1547,22 @@ impl Backend {
     /// (#486). A missing, ineligible, oversized, or unreadable file is
     /// dropped from the index, so a watched-file deletion corrupts
     /// nothing and a rescan cannot disagree about membership. Returns
-    /// whether the caller should republish open documents afterwards.
-    ///
-    /// The caller must hold no lock: the admission stats and the disk
-    /// read/parse run on the blocking pool, and only the snapshots and
-    /// the map write take the state lock. Open documents are left alone
-    /// — the editor's buffer stays authoritative for its path, and the
-    /// publish path layers it over the index.
-    ///
-    /// The commit is generation-safe (#526): the snapshot captures the
-    /// current `index_generation`, and the commit lands only when the
-    /// generation has not moved since — mirroring the background scan's
-    /// staleness check. A full scan (or a folder change) that started a
-    /// newer generation while this refresh's blocking read was in flight
-    /// owns the newer bytes (or the newer map), so a delayed commit must
-    /// not install older source over them. The `did_open` guard below is
-    /// a separate authority rule, not a freshness check: an open buffer
-    /// shadows its disk twin regardless of generation. A refresh that
-    /// loses the generation race returns false — its bytes did not land —
-    /// so the caller neither republishes nor retires scans for them.
+    /// whether the refresh LANDED. A landed refresh claims the next
+    /// `index_generation` atomically with its map write inside the
+    /// commit critical section — the check, the write, and the bump
+    /// share one lock hold — so no scan can commit between the insert
+    /// and the retirement, and the caller must not bump again (#526).
+    /// Landing also retires any in-flight background pass (its commit
+    /// check fails), which is why the caller respawns the initial pass
+    /// when the landed refresh retired it. The commit lands only when
+    /// the refresh's snapshot generation is still current: a newer scan
+    /// (or a newer landed refresh) owns the fresher bytes or the
+    /// fresher map, so a delayed commit must not install older source
+    /// over them. The `did_open` guard below is a separate authority
+    /// rule, not a freshness check: an open buffer shadows its disk
+    /// twin regardless of generation. A refresh that loses the
+    /// generation race returns false — its bytes did not land — so the
+    /// caller neither republishes nor respawns scans for them.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
         // Snapshot the owning root and config once, plus the index
@@ -1722,7 +1719,17 @@ impl Backend {
                     );
                     return false;
                 }
+                // Claim the next generation in the same critical section
+                // as the insert: the check above, the write, and the bump
+                // share one lock hold, so no scan can commit between the
+                // insert and the retirement — the staleness check no later
+                // writer can slip through. The caller must not bump again;
+                // the landed `true` already carries the retirement (#526).
                 state.disk_files.insert(parsed_path, file);
+                state.index_generation = state.index_generation.wrapping_add(1);
+                drop(state);
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_post_refresh_commit().await;
                 true
             }
             None => {
@@ -1730,7 +1737,13 @@ impl Backend {
                 // walk, which never lands such a file in the map. A
                 // dropped entry that previously carried diagnostics is
                 // reconciled by the caller's republish pass (#489).
+                // The removal lands like an insert — same atomic
+                // retirement, same caller contract.
                 state.disk_files.remove(&path_string);
+                state.index_generation = state.index_generation.wrapping_add(1);
+                drop(state);
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_post_refresh_commit().await;
                 true
             }
         }

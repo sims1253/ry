@@ -789,3 +789,80 @@ fn close_time_refresh_retires_in_flight_scan() {
         join_session(session, server).await;
     });
 }
+
+
+/// #526, atomic retirement: a landed refresh must claim the next
+/// generation in the same critical section as its map write — check,
+/// insert, and bump under one lock hold — so a scan committing
+/// between the insert and a delayed caller-side bump cannot win.
+/// The scan walks the character `f` and pauses at its commit; only
+/// then does the disk move to the integer `f` and the watched event
+/// fire. The refresh's post-commit gate pauses it after its critical
+/// section releases but before the caller acts: the arrival signal
+/// proves the refresh already retired the scan. Released afterwards,
+/// the scan must lose; had the fix not bumped atomically, the scan
+/// would still be current there and its whole-map commit would
+/// overwrite the refresh's newer bytes.
+#[test]
+fn landed_refresh_bumps_generation_atomically_with_insert() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        let first = open_use_settled(&mut session, &use_uri).await;
+        assert!(
+            has_ry040(&first),
+            "character f must win before the scenario"
+        );
+
+        // The scan walks the still-character disk and pauses at its
+        // commit, holding pre-save bytes under the current generation.
+        ry_lsp::test_seam::arm_scan_commit();
+        trigger_full_scan(&mut session, fixture.root()).await;
+        ry_lsp::test_seam::wait_scan_commit().await;
+
+        // Strictly after the scan's walk: move the disk to the integer
+        // `f` and deliver the watched event. The post-commit gate
+        // pauses the refresh after its insert-and-bump critical
+        // section, before the caller-side retirement could run.
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        ry_lsp::test_seam::arm_post_refresh_commit();
+        let edit_mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_post_refresh_commit().await;
+        // The refresh's atomic bump already retired the scan, so the
+        // scan's release must land on a moved generation and lose.
+        ry_lsp::test_seam::release_scan_commit();
+        ry_lsp::test_seam::release_post_refresh_commit();
+        let after = session
+            .published_diagnostics_after(&use_uri, edit_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&after),
+            "the atomic refresh must retire the in-flight scan before the caller runs: {after}"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "atomic refresh retirement",
+        );
+
+        join_session(session, server).await;
+    });
+}

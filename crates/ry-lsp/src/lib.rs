@@ -228,6 +228,7 @@ pub mod test_seam {
     thread_local! {
         static REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
         static SCAN_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+        static POST_REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
     }
 
     fn refresh_gate() -> Arc<CommitGate> {
@@ -236,6 +237,10 @@ pub mod test_seam {
 
     fn scan_gate() -> Arc<CommitGate> {
         SCAN_COMMIT_GATE.with(Arc::clone)
+    }
+
+    fn post_refresh_gate() -> Arc<CommitGate> {
+        POST_REFRESH_COMMIT_GATE.with(Arc::clone)
     }
 
     /// Arm the per-file refresh gate: the next `refresh_disk_entry`
@@ -291,6 +296,36 @@ pub mod test_seam {
     /// signal at all).
     pub(crate) async fn maybe_pause_refresh_commit() {
         let gate = refresh_gate();
+        if gate.maybe_pause().await {
+            gate.note_landed();
+        }
+    }
+
+    /// Arm the post-commit gate: the next `refresh_disk_entry` commit
+    /// pauses after its insert-and-bump critical section releases, while
+    /// still observed before the caller acts on the landed result. Lets
+    /// a test prove the generation bumped atomically with the insert:
+    /// release the refresh, wait here, and the new generation is already
+    /// visible while no caller-side bump could have run yet.
+    pub fn arm_post_refresh_commit() {
+        post_refresh_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed refresh to finish its commit critical section.
+    pub async fn wait_post_refresh_commit() {
+        post_refresh_gate().arrived.notified().await;
+    }
+
+    /// Release the paused post-commit refresh.
+    pub fn release_post_refresh_commit() {
+        post_refresh_gate().release.notify_one();
+    }
+
+    /// Called by `refresh_disk_entry` (production code) after the commit
+    /// lock releases, before returning the landed verdict. No-op when
+    /// not armed.
+    pub(crate) async fn maybe_pause_post_refresh_commit() {
+        let gate = post_refresh_gate();
         if gate.maybe_pause().await {
             gate.note_landed();
         }

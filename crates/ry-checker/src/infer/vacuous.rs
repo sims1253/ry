@@ -886,6 +886,9 @@ impl Checker {
     /// data collection means later demands receive a new value. Runs in
     /// the pass-3 walk alongside the guard-rebind drops.
     pub(crate) fn note_vacuous_map_rebind(&mut self, name: &str) {
+        if self.discarding {
+            return;
+        }
         if !self.vacuous_map_results.is_empty() {
             self.vacuous_map_results
                 .retain(|result, provenance| result != name && provenance.data != name);

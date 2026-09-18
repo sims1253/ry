@@ -587,13 +587,11 @@ impl Checker {
         // top-level function reads the file's top-level mints, while
         // whatever the walk itself mints -- or void through a
         // colliding formal below -- is discarded by the restore at the
-        // end, in both directions. The table is empty for helper-free
-        // files, so the clone costs nothing where the perf budget is
-        // measured.
-        // (`enclosing_formals` is still the parent depth here: this
-        // function pushes its own frame below. Only genuinely nested
-        // bodies pass through this save; the top-level statements keep
-        // the file's own table.)
+        // end, in both directions -- every body walk, including a
+        // top-level function's, runs on the working copy and restores
+        // the incoming table afterward. The table is empty for
+        // helper-free files, so the clone costs nothing where the perf
+        // budget is measured.
         let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();

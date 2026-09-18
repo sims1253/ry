@@ -286,6 +286,47 @@ All notable changes to ry are documented in this file.
   recovery note when the file parses again; removing the `baseline`
   key settles to no baseline, matching a fresh run. Serialized `.rda`
   watching stays out of scope (#530).
+- Keep watched-file and close-time disk refreshes in the language server
+  from reintroducing files full discovery would never admit (#524): the
+  per-file admission check matched `exclude` patterns against the file's
+  relative path only and never consulted `.Rbuildignore`, so a bare
+  `exclude = ["vendor"]` — which prunes the directory entry in the walk —
+  never fired for `vendor/defs.R` on the per-file path, and a watched
+  create under a build-ignored tree landed files `ry check` omits until
+  some unrelated event triggered a full rescan. Admission now runs
+  through one shared workspace verdict that replays the walk's per-entry
+  rules without walking — excludes against the file and every ancestor
+  directory, `.Rbuildignore` with `include_build_ignored` rescue across
+  nested package boundaries, the fixed pruned-directory shapes resolved
+  at the current package level, and the shared exclude/depth/size thirds
+  — so a watched event for an excluded path converges with a fresh
+  server instead of disagreeing with it, while an explicit
+  `include_build_ignored` override still admits its files.
+- Enforce the `index.max-files` budget on the language server's
+  incremental disk refreshes, not just on full discovery (#525): watched
+  create/change events for files the capped walk omitted used to insert
+  unconditionally, growing the index past the configured resource bound
+  without limit and letting omitted definitions resolve again. The
+  refresh commit now refuses a new entry once the owning root is at its
+  budget — first-come-first-served, like the walk — while refreshing an
+  already-indexed path still lands and nothing indexed is evicted, so
+  the incremental map never holds more per root than a fresh scan of the
+  same tree would. The decision happens under the state lock at commit
+  time rather than in the blocking admission snapshot, so concurrent
+  refreshes racing at the cap serialize instead of each counting a stale
+  map.
+- Make the language server's per-file disk refresh commits
+  generation-safe (#526): a refresh whose blocking read saw older bytes
+  used to install its parse over whatever landed meanwhile, so a
+  full-scan commit or a second refresh's newer bytes could lose to the
+  delayed writer. The refresh snapshot now captures the index generation
+  and the commit lands only while it still holds — a stale commit stands
+  down without republishing or retiring scans — and a landed refresh
+  retires the generation it captured, including a close-time refresh
+  retiring an in-flight scan whose walk read the file before the save.
+  Deterministic commit-gate test seams pin all three interleavings:
+  stale refresh against newer scan, overlapping refreshes with
+  last-event-wins, and close-time refresh against an in-flight scan.
 
 ## [0.11.0] - 2026-09-16
 

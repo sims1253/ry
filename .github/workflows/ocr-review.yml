@@ -170,24 +170,27 @@ jobs:
       # first attempt's raw result lands in steps.ocr.outcome while the
       # job stays green, and the retry below (gated on that outcome)
       # decides the job: retry success = green, retry failure = red.
-      # Because the retry's condition names no status function it stays
-      # implicitly success()-gated, so it also does not fire when an
+      # The retry's success() gate also keeps it from firing when an
       # earlier step (e.g. the model-config check) failed and skipped the
       # first attempt.
       #
       # Duplicate-review risk: acceptable. The retry fires only when the
       # first attempt failed, and the known flake dies before any review
       # is computed or posted (no [ocr] progress, no comments), so the
-      # retry starts from nothing. The residual case — a genuine
-      # mid-review failure retried once — can at worst post a second
-      # review, visible and benign next to a merge gate that blocks every
-      # PR; the action's incremental non-destructive posting (inline
-      # comments deduped by (path, span) against review history) bounds
-      # even that.
+      # retry starts from nothing. Posting is the composite's FINAL step
+      # and is success-gated, so a failed first attempt posted nothing
+      # except in the narrow window where the posting step itself died
+      # partway — the residual case. There a retry can re-post overlapping
+      # inline comments (incremental dedup is opt-in and off here);
+      # visible and benign next to a merge gate that blocks every PR, and
+      # the default-on sticky_summary keeps the summary comment updated
+      # in place rather than duplicated.
       - name: Run OpenCodeReview
         id: ocr
         continue-on-error: true
         uses: alibaba/open-code-review@7a571b78d3493b249f6ad14d835c6a79a0a67d2e # v1.12.6
+        # NOTE: the retry step below mirrors these inputs (upload_artifacts
+        # aside) — keep the two with-blocks in lockstep when tuning.
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
@@ -214,12 +217,29 @@ jobs:
           # Pinned for supply-chain hygiene; bump to update the CLI.
           ocr_version: '1.12.6'
 
-      # The retry proper. Inputs duplicated verbatim — Actions has no YAML
-      # anchors, and a second `uses:` of the same pinned action is the
-      # whole point (its install step is what repairs a broken bin).
+      # The retry proper. Inputs mirror the first attempt's with-block
+      # verbatim except upload_artifacts — Actions has no YAML anchors,
+      # and a second `uses:` of the same pinned action is the whole point
+      # (its install step is what repairs a broken bin). The condition
+      # names success() explicitly so the intended gate (first attempt
+      # failed, everything before it green) is encoded in the expression,
+      # not only in the comment above.
+      #
+      # upload_artifacts: 'false' is load-bearing, not hygiene: the
+      # action's artifact name is run-scoped
+      # (ocr-review-result-<run_id>-<run_attempt>) and its upload step is
+      # always()-gated, so even a flake-failed first attempt uploads and
+      # CLAIMS that name. A retry that uploaded under the same name would
+      # fail on the existing artifact (upload-artifact v4 refuses
+      # duplicates) AFTER its review succeeded — failing the retry,
+      # skipping the posting step (implicitly success-gated), and turning
+      # the rescue back into a red job. The first attempt stays the sole
+      # uploader; its artifact then carries the failure-time stderr (the
+      # exit-127 / module-not-found evidence) that the triage step below
+      # points at.
       - name: Run OpenCodeReview (retry)
         id: ocr-retry
-        if: steps.ocr.outcome == 'failure'
+        if: success() && steps.ocr.outcome == 'failure'
         uses: alibaba/open-code-review@7a571b78d3493b249f6ad14d835c6a79a0a67d2e # v1.12.6
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
@@ -246,6 +266,9 @@ jobs:
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
           # Pinned for supply-chain hygiene; bump to update the CLI.
           ocr_version: '1.12.6'
+          # Retry never uploads — see the comment above the step; the
+          # quoted literal is required (the action compares strings).
+          upload_artifacts: 'false'
 
       # Cheap post-mortem triage for a still-red job: distinguish the
       # known infra flake from a genuine review failure so whoever reads
@@ -253,17 +276,19 @@ jobs:
       # above. The flake's signature is a broken or absent global `ocr`
       # bin, probed here with both observed failure modes (exit 127 /
       # module-not-found). Best-effort: the bin is re-probed now, not
-      # captured at failure time, but after two failed attempts the
-      # current state is the evidence that matters. Only runs when the
-      # retry itself failed — a rescued run (retry green) stays quiet and
-      # the job goes green; failure() alone would also fire after an
+      # captured at failure time, but the first attempt's uploaded
+      # artifact (always()-gated, survives the flake) holds the
+      # failure-time stderr as the authoritative evidence. Only runs when
+      # the retry itself failed — a rescued run (retry green) stays quiet
+      # and the job goes green; failure() alone would also fire after an
       # earlier step failed, where this probe would misreport (the CLI
       # was never installed).
       - name: Triage OCR failure
         if: failure() && steps.ocr-retry.outcome == 'failure'
+        shell: bash
         run: |
           if ! command -v ocr >/dev/null 2>&1 || ! ocr version >/dev/null 2>&1; then
-            echo "::error title=OCR infra flake::the ocr CLI is broken or absent on the runner after two attempts (known npm bin instability, #540) — not a review finding; rerun the failed jobs or fall back to the #539 substitution protocol (CodeRabbit + pullfrog + Greptile coverage)"
+            echo "::error title=OCR infra flake::the ocr CLI is broken or absent on the runner after two attempts (known npm bin instability, #540) — not a review finding; the first attempt's ocr-review-result artifact holds the failure-time stderr; rerun the failed jobs or fall back to the #539 substitution protocol (CodeRabbit + pullfrog + Greptile coverage)"
           else
-            echo "::error title=OCR review failure::ocr itself ran; the failure above is a genuine review error, not the #540 infra flake — read the review step's log"
+            echo "::error title=OCR review failure::ocr itself ran; the failure above is a genuine review error, not the #540 infra flake — read the review step's log and the uploaded artifacts"
           fi

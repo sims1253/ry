@@ -1688,7 +1688,18 @@ impl Backend {
             // and starting the blocking read: the claim orders same-path
             // refreshes by START, and the commit below refuses any
             // refresh a newer one superseded, whichever commit lines up
-            // on the state lock first (#538).
+            // on the state lock first (#538). The entry is reclaimed
+            // only on commit arms that already passed the epoch check
+            // (landed removal, cap refusal) — there the reclaimer
+            // provably holds the path's LATEST claim, so nothing newer
+            // is in flight to clobber. The early returns below the
+            // read (open-document guard, generation mismatch) run
+            // before/outside the epoch check and deliberately keep the
+            // claim: removing it there could delete a newer in-flight
+            // refresh's entry and wrongly discard the freshest bytes,
+            // so those slots persist until the path's next claim or a
+            // landed removal — one per distinct refreshed path, never
+            // per event.
             state.refresh_epoch_counter = state.refresh_epoch_counter.wrapping_add(1);
             let refresh_epoch = state.refresh_epoch_counter;
             state

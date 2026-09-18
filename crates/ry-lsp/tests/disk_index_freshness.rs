@@ -724,9 +724,12 @@ fn overlapping_refreshes_last_event_wins() {
 /// the oldest waiter (FIFO in the pinned implementation, not a
 /// documented API guarantee) — so the older refresh, which arrived
 /// first, makes its commit decision strictly before the newer one.
-/// Should a future tokio ever wake out of arrival order, the newer
-/// read would commit first and land in both worlds: the test would
-/// pass vacuously, never flake.
+/// The intermediate observation below guards that assumption itself:
+/// only in arrival order did the older refresh decide (and discard)
+/// first, so the stale character bytes must still be indexed there —
+/// if a future tokio ever woke out of arrival order, the newer bytes
+/// would have landed first and that assertion fails the test loudly
+/// instead of letting it pass vacuously.
 #[test]
 fn older_read_committing_first_loses_to_newer_refresh() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -781,9 +784,19 @@ fn older_read_committing_first_loses_to_newer_refresh() {
         // generation both still current — lands the integer bytes.
         ry_lsp::test_seam::release_refresh_commit();
         ry_lsp::test_seam::wait_refresh_landed().await;
+        // Wake-order guard: B is still parked, and A's decision was a
+        // discard, so the index must still hold the stale character
+        // bytes. If the wakes had left arrival order, B's integer
+        // bytes would have landed first and this fails the test loudly
+        // instead of letting it pass vacuously.
+        let between = observe_current_index(&mut session, &use_uri, 2).await;
+        assert!(
+            has_ry040(&between),
+            "the older refresh must have made its (discarding) commit decision first: {between}"
+        );
         ry_lsp::test_seam::release_refresh_commit();
         ry_lsp::test_seam::wait_refresh_landed().await;
-        let after = observe_current_index(&mut session, &use_uri, 2).await;
+        let after = observe_current_index(&mut session, &use_uri, 3).await;
         assert!(
             !has_ry040(&after),
             "the older read committing first must not defeat the newer refresh: {after}"

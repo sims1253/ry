@@ -1471,6 +1471,24 @@ expression: snapshots
         line: 39
         start: 1469
   fixture: err_vacuous_all_guard.R
+- diagnostics:
+    - code: RY110
+      message: "`all(is.na(args))` is vacuously TRUE when `args` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `mean()` cannot use as numeric; guard the emptiness too: `is.numeric(args) || (length(args) > 0 && all(is.na(args)))`"
+      severity: warning
+      span:
+        column: 49
+        end: 961
+        line: 15
+        start: 948
+    - code: RY110
+      message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.double` (such as an empty character) which `sqrt()` cannot use as numeric; guard the emptiness too: `is.double(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
+      severity: warning
+      span:
+        column: 47
+        end: 1282
+        line: 23
+        start: 1269
+  fixture: err_vacuous_all_guard_interprocedural.R
 - diagnostics: []
   fixture: ok_ambient_globals.R
 - diagnostics: []
@@ -1847,6 +1865,10 @@ expression: snapshots
   fixture: ok_user_fn_return.R
 - diagnostics: []
   fixture: ok_vacuous_all_guard.R
+- diagnostics: []
+  fixture: ok_vacuous_all_guard_interprocedural.R
+- diagnostics: []
+  fixture: ok_vacuous_all_guard_interprocedural_shadowed_all.R
 - diagnostics: []
   fixture: ok_vector_constructors.R
 - diagnostics: []

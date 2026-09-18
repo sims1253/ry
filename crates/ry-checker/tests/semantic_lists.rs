@@ -384,6 +384,72 @@ fn quoting_forms_match_r_oracle() {
     );
 }
 
+/// VACUOUS_MAP_FAMILY: each member applies its function argument once
+/// per element of its data argument in order and returns the per-element
+/// results -- the elementwise shape RY110 reads validation provenance
+/// from. (`walk` calls back elementwise too but returns its input, so it
+/// is excluded from the family and has no probe here.) Base members are
+/// checked against vanilla R; the purrr verbs resolve via the purrr
+/// package and are checked only when purrr is installed.
+#[test]
+fn vacuous_map_family_match_r_oracle() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    // Each probe records the visit order in a side channel: elementwise
+    // order means the visits read `1, 2, 3`. The callback returns its
+    // element untouched, so the typed verbs' result coercions succeed.
+    let probes = [
+        ("lapply", "lapply(1:3, FUN)"),
+        ("sapply", "sapply(1:3, FUN)"),
+        ("vapply", "vapply(1:3, FUN, integer(1))"),
+        ("map", "purrr::map(1:3, FUN)"),
+        (
+            "map_lgl",
+            "purrr::map_lgl(1:3, function(x) { FUN(x); TRUE })",
+        ),
+        ("map_int", "purrr::map_int(1:3, FUN)"),
+        ("map_dbl", "purrr::map_dbl(1:3, FUN)"),
+        (
+            "map_chr",
+            "purrr::map_chr(1:3, function(x) { FUN(x); \"s\" })",
+        ),
+        ("map_vec", "purrr::map_vec(1:3, FUN)"),
+    ];
+    let purrr_check = |call: &str| {
+        if !call.starts_with("purrr::") {
+            return true;
+        }
+        let output = r_eval("cat(requireNamespace(\"purrr\", quietly=TRUE), \"\\n\")");
+        if output.trim().starts_with("TRUE") {
+            return true;
+        }
+        eprintln!("purrr not installed; skipping {call} oracle check");
+        false
+    };
+    for (name, call) in probes {
+        if !purrr_check(call) {
+            continue;
+        }
+        let script = format!(
+            "visits <- c(); FUN <- function(x) {{ visits <<- c(visits, x); TRUE }}; \
+             invisible({call}); cat(paste(visits, collapse=\",\"), \"\\n\")"
+        );
+        let output = r_eval(&script);
+        assert_eq!(
+            output.trim(),
+            "1,2,3",
+            "{name} does not apply its function once per element in order"
+        );
+    }
+    assert_eq!(
+        semantic_lists::VACUOUS_MAP_FAMILY.len(),
+        probes.len(),
+        "oracle probes and VACUOUS_MAP_FAMILY drifted apart"
+    );
+}
+
 /// No hardcoded semantic list escapes the registry.
 ///
 /// This test scans the checker source for `const ... : &[&str]` and

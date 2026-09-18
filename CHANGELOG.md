@@ -4,6 +4,40 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Extend RY110 (`vacuous-all-guard`) across the same-file helper boundary:
+  a single-formal function the checked file defines whose body is (or
+  returns) the recognized guard chain -- hms's
+  `is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))` --
+  now registers as a guard-helper, and call sites that pass the guarded
+  value onward arm its guard over the actual argument. Three application
+  shapes qualify: a direct helper-call guard condition
+  (`if (!is_numeric_or_na(v)) stop(...)`, including the positive
+  `if (is_numeric_or_na(v))` then-branch and `stopifnot()`), and the
+  args.R elementwise form (`valid <- map_lgl(args, is_numeric_or_na)`
+  through base `lapply`/`sapply`/`vapply` or the purrr `map` verbs, read
+  resolution-independently, followed by an `all(valid)` rejection). The
+  registry builds per file from that file's own top-level definitions,
+  so use-before-def order cannot hide a helper while the scan stays
+  O(the file's own functions) for the `scaling_project_size` perf
+  budget. The diagnostic still points at the helper's `all()` -- that
+  definition is the defect, so each helper reports once -- while the
+  emptiness premise and the recorded type come from the caller's
+  binding. The downstream-demand gate is unchanged (a stub-declared
+  parameter type in the applying function, same binding, same shadowing
+  and rebinding discipline), which is what keeps the corpus silent:
+  discarded helper results, multi-formal bodies, shadowed helpers or
+  map callees, qualified helper calls, and extra call arguments all stay
+  quiet, as does a helper applied from another file (the diagnostic
+  could not point at the helper's span without attributing a foreign
+  byte range to the consuming file). Two halves remain open: a guard
+  validated in one function but demanded in another (a validator-summary
+  hop, for the #351 flow-sensitivity cycle) still stays silent, and the
+  `vctrs::vec_cast()` demand itself is still unstubbed -- the vendored
+  vctrs stub carries only the untyped `vec_cast_common`, so that stub
+  belongs in r-typeshed, not here; no local overlay was added (#479).
+
 ### Fixed
 
 - Refresh the language server's on-disk R index when R sources change

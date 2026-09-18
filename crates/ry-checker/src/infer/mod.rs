@@ -326,9 +326,15 @@ impl Checker {
                 // (`x[1] <- v`, `x$a <- v`) invalidate the root the same
                 // way -- a coercing subassign changes the whole vector's
                 // mode -- and superassignment conservatively counts too.
+                // A rebind also voids `map`-family guard-helper
+                // provenance over the name (issue #479).
                 if let Some(root) = vacuous::assignment_root_name(target) {
                     self.note_vacuous_guard_rebind(root);
+                    self.note_vacuous_map_rebind(root);
                 }
+                // A fresh `result <- map(data, helper)` verdict binding
+                // records its provenance for the `all(result)` hooks.
+                self.note_vacuous_map_result(target, value, scope);
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
@@ -465,6 +471,7 @@ impl Checker {
                 // vacuous-all guard over the same name no longer
                 // describes what a later demand receives (RY110).
                 self.note_vacuous_guard_rebind(name);
+                self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
                 for s in body {
@@ -573,6 +580,19 @@ impl Checker {
         scope: &Scope,
     ) {
         let diagnostic_start = self.diagnostics.len();
+        // RY110's `map`-family provenance (issue #479) resolves by bare
+        // local name, so each body walks a working copy of the incoming
+        // table: a nested closure inherits the enclosing function's
+        // entries (its `all(valid)` reads the same binding) and a
+        // top-level function reads the file's top-level mints, while
+        // whatever the walk itself mints -- or void through a
+        // colliding formal below -- is discarded by the restore at the
+        // end, in both directions -- every body walk, including a
+        // top-level function's, runs on the working copy and restores
+        // the incoming table afterward. The table is empty for
+        // helper-free files, so the clone costs nothing where the perf
+        // budget is measured.
+        let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
         self.start_reference_scope(&mut fn_scope, span);
@@ -592,6 +612,15 @@ impl Checker {
         }
         for parameter in params {
             fn_scope.insert_parameter(parameter.name.clone(), RType::unknown());
+        }
+        // RY110's `map`-family provenance (issue #479) resolves by bare
+        // local name: a formal of this function shadows any same-named
+        // verdict or collection from an enclosing function, so entries
+        // involving the formals are void here. (Plain shadowing, not a
+        // rebind: the outer entries are restored, not dropped, when a
+        // nested walk ends -- see the save above.)
+        for parameter in params {
+            self.note_vacuous_map_rebind(&parameter.name);
         }
         let assigned = assigned_names_in_body(body);
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
@@ -633,6 +662,12 @@ impl Checker {
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
+        // Restore the enclosing function's RY110 `map` provenance (see
+        // the save above): a nested function's verdicts must not leak
+        // into its siblings or its parent.
+        if let Some(saved) = saved_vacuous_map {
+            self.vacuous_map_results = saved;
+        }
         if let Some(kind) = self.dynamic_closure_literals.get(&span).copied()
             && !self.discarding
         {

@@ -32,11 +32,21 @@
 //!   the rule would cover every permissive guard in package code.
 //!
 //! The founding hms shape is interprocedural (the guard lives in the
-//! `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast`), which
-//! stays out of scope: the rule arms only guards whose accepted path is
-//! visible in the same function -- an `if` branch, the `else` of a
-//! negated guard, or the continuation of a rejecting `if`/`stopifnot`
-//! whose rejection block diverges (`stop()`, `return()`).
+//! `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast`), and
+//! issue #479 covers its same-file helper half: a single-formal function
+//! the checked file defines whose body is (or returns) the recognized
+//! chain registers a [`VacuousHelper`], armed at call sites that pass the
+//! guarded value onward -- a direct `H(v)` guard condition,
+//! `stopifnot(H(v))`, or a `map`-family application whose result is
+//! reduced with `all()` (the args.R `map_lgl` + `all(valid)` + rejection
+//! form). The downstream demand must still sit in the applying function
+//! under a stub-declared parameter type: a validator-summary hop (one
+//! function validates, another demands) and a cross-file helper
+//! application stay silent -- the latter because the diagnostic could
+//! not point at the helper's own span without attributing a foreign byte
+//! range to the consuming file. The still-unstubbed `vec_cast` demand
+//! itself stays out of scope for the #351 flow-sensitivity cycle and
+//! r-typeshed respectively.
 
 use super::*;
 
@@ -133,6 +143,15 @@ fn sole_is_na_ident(expr: &Expr) -> Option<&Expr> {
 pub(crate) struct VacuousGuard {
     var: String,
     all_span: Span,
+    /// The guard condition's own span: the `if`/`stopifnot` condition for
+    /// an inline guard, the helper-call (or `all()` reduction) condition
+    /// for a helper-armed guard. The binding-identity shadow check reads
+    /// this span -- a nested formal shadowing the name must contain the
+    /// demand without containing the guard site *in the guard's own
+    /// function*. For helper guards the diagnostic still points at
+    /// `all_span` (the defect is the helper's definition), while this
+    /// span anchors the shadow logic to the caller's guard site.
+    site_span: Span,
     /// Byte range of the accepted path. The demand's argument span must
     /// lie inside it.
     accept: Span,
@@ -152,6 +171,40 @@ pub(crate) struct VacuousGuard {
     /// binding is proven empty), not merely on the empty path.
     definite: bool,
     fired: bool,
+}
+
+/// One registered guard-helper (issue #479): a single-formal function
+/// whose body is (or returns) the recognized vacuous-all chain over that
+/// formal, e.g. hms's `is_numeric_or_na <- function(x) is.numeric(x) ||
+/// all(is.na(x))`. The fact is keyed by the helper's name and consumed at
+/// call sites that pass the guarded value onward -- a direct `H(v)` guard
+/// condition, or a `map`-family application whose result is reduced with
+/// `all()` -- where it arms an ordinary [`VacuousGuard`] over the actual
+/// argument. The diagnostic still points at the helper's `all()` operand:
+/// that definition is the defect (hms fixed the helper, not its callers),
+/// and one site per helper is all the diagnostic needs.
+#[derive(Debug, Clone)]
+pub(crate) struct VacuousHelper {
+    /// The helper's `all()` operand span: the diagnostic site.
+    all_span: Span,
+    /// Modes the chain's predicates cover; complements the caller's
+    /// recorded type into the vacuous-accept set at each arm site.
+    covered_modes: Vec<Mode>,
+    /// The first covering predicate's bare name, for the message.
+    predicate_name: String,
+}
+
+/// Elementwise-validation provenance (issue #479): `result` is bound by a
+/// `map`-family call applying a guard-helper to `data`
+/// (`valid <- map_lgl(args, is_numeric_or_na)`). An `all(result)` guard
+/// that rejects then proves every element of `data` passed the helper,
+/// so the `if`/`stopifnot` hooks arm the helper's guard over `data`.
+#[derive(Debug, Clone)]
+pub(crate) struct VacuousMapProvenance {
+    /// The mapped collection (a bare identifier at the `map` site).
+    data: String,
+    /// The applied guard-helper's registry name.
+    helper: String,
 }
 
 /// Everything the guard parser learns about one `P(x) || all(is.na(x))`
@@ -389,6 +442,114 @@ fn vacuous_accept_modes(recorded: Option<&RType>, covered: &[Mode]) -> Vec<Mode>
 }
 
 impl Checker {
+    /// RY110's helper registry (issue #479): index every single-formal
+    /// function the file being checked defines at the top level whose
+    /// body is (or returns) the recognized vacuous-all chain over that
+    /// formal. Runs once in the pass-3 prologue from the file's own
+    /// statements, so use-before-def order cannot hide a helper (hms
+    /// defines `check_args` before `is_numeric_or_na`) while the scan
+    /// stays O(the file's own functions) -- the `scaling_project_size`
+    /// perf budget guards this. The registry is file-local by
+    /// construction: a helper in another file never arms here, so a
+    /// cross-file diagnostic can never carry a foreign byte span (the
+    /// emitter stamps the consuming file's path). The parse runs against
+    /// an empty scope with the checker's fully populated tables, which
+    /// resolves top-level shadowing (`all <- function...` disqualifies)
+    /// the same way the lenient base-resolution ladder does for inline
+    /// guards.
+    pub(crate) fn index_vacuous_helpers(&mut self, stmts: &[Stmt]) {
+        use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+        use std::ops::ControlFlow;
+        // Top-level binding statements, mirroring `collect_fns`: the
+        // traversal enters `if`/`for`/`while` bodies but never expression
+        // interiors, so a helper bound in a top-level branch registers
+        // while nested closures never do (their bare names would resolve
+        // against the wrong environment anyway).
+        let mut defs: Vec<(String, Vec<Param>, Vec<Stmt>)> = Vec::new();
+        let _ = walk_stmts(
+            stmts,
+            Walk {
+                control_tests: false,
+                ..Walk::ALL
+            },
+            |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                let AstNode::Stmt(statement) = node else {
+                    return ControlFlow::Continue(Descend::Skip);
+                };
+                if let Stmt::Assign { target, value, .. } = statement
+                    && let (Some(name), Expr::Function { params, body, .. }) =
+                        (binding_name(target), value)
+                {
+                    defs.push((name.to_string(), params.clone(), body.clone()));
+                }
+                ControlFlow::Continue(match statement {
+                    Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,
+                    _ => Descend::Skip,
+                })
+            },
+        );
+        let empty = Scope::default();
+        for (name, params, body) in &defs {
+            let [param] = params.as_slice() else {
+                continue;
+            };
+            if param.name == "..." {
+                continue;
+            }
+            let [statement] = body.as_slice() else {
+                continue;
+            };
+            // The body is the chain (implicit return) or returns it.
+            // `Stmt::Return`'s value is `Option` only because bare
+            // `return()` exits with NULL; that form returns no chain.
+            // The parser lowers the `return` keyword to an ordinary
+            // call, so a braced `return(chain)` body arrives as
+            // `Stmt::Expr(Call)` -- unwrap that spelling too.
+            let chain = match statement {
+                Stmt::Expr(chain) => Some(chain),
+                Stmt::Return {
+                    value: Some(chain), ..
+                } => Some(chain),
+                _ => None,
+            };
+            let chain = chain.and_then(|chain| match chain {
+                Expr::Call { func, args, .. }
+                    if ident_name(func).is_some_and(|name| {
+                        name == "return" || crate::semantic_lists::bare_name(name) == "return"
+                    }) =>
+                {
+                    match args.as_slice() {
+                        [argument] if argument.name.is_none() => Some(&argument.value),
+                        _ => None,
+                    }
+                }
+                chain => Some(chain),
+            });
+            let Some(chain) = chain else {
+                continue;
+            };
+            let Some(site) = vacuous_all_site(self, chain, &empty) else {
+                continue;
+            };
+            // The chain must guard the helper's own formal: only then
+            // does applying the helper validate the passed value.
+            if ident_name(site.var) != Some(param.name.as_str()) {
+                continue;
+            }
+            // A shadowed-all twin of the helper body (the corpus
+            // `own_all` shape lifted interprocedural) parses nothing.
+            // Later definitions win, mirroring R and the FnTable.
+            self.vacuous_helpers.insert(
+                name.clone(),
+                VacuousHelper {
+                    all_span: site.all_span,
+                    covered_modes: site.covered_modes.clone(),
+                    predicate_name: site.predicate_name.clone(),
+                },
+            );
+        }
+    }
+
     /// RY110's statement hook: recognize the vacuous-all guard in an
     /// `if` condition and arm it for the accepted path. The accepted
     /// path is the `then` branch for a positive condition; for a
@@ -416,9 +577,6 @@ impl Checker {
             } => (expr.as_ref(), true),
             other => (other, false),
         };
-        let Some(site) = vacuous_all_site(self, chain, scope) else {
-            return;
-        };
         let accept = if negated {
             match (else_, self.block_diverges(then)) {
                 (Some(statements), _) => stmt_list_span(statements),
@@ -432,8 +590,21 @@ impl Checker {
             // says nothing about `x`.
             stmt_list_span(then)
         };
-        if let Some(accept) = accept {
+        let Some(accept) = accept else {
+            return;
+        };
+        // The inline chain first. A helper-call condition -- or an
+        // `all()` reduction over a mapped guard-helper result -- only
+        // resolves when the inline parse fails; the two shapes are
+        // disjoint (a bare call is never an `||` chain).
+        if let Some(site) = vacuous_all_site(self, chain, scope) {
             self.arm_vacuous_guard(&site, accept, scope);
+            return;
+        }
+        if matches!(chain, Expr::Call { .. }) {
+            if let Some((helper, actual)) = self.vacuous_condition_helper(chain, scope) {
+                self.arm_vacuous_helper(&helper, &actual, span_of(chain), accept, scope);
+            }
         }
     }
 
@@ -462,8 +633,87 @@ impl Checker {
         for argument in args {
             if let Some(site) = vacuous_all_site(self, &argument.value, scope) {
                 self.arm_vacuous_guard(&site, accept, scope);
+            } else if matches!(argument.value, Expr::Call { .. }) {
+                if let Some((helper, actual)) =
+                    self.vacuous_condition_helper(&argument.value, scope)
+                {
+                    self.arm_vacuous_helper(
+                        &helper,
+                        &actual,
+                        span_of(&argument.value),
+                        accept,
+                        scope,
+                    );
+                }
             }
         }
+    }
+
+    /// Resolve an interprocedural guard condition to its (helper, actual)
+    /// pair: either a direct helper call `H(v)` over a bare identifier
+    /// bound to the helper's formal, or a base `all(V)` reduction over a
+    /// local bound by a `map`-family application of a helper
+    /// (`valid <- map_lgl(args, H)` proves every element of `args`
+    /// passed `H` once the rejection below establishes `all(valid)`).
+    /// Anything else (extra call arguments, subset data, a shadowed
+    /// `all`, an unrecorded provenance) resolves to no helper.
+    fn vacuous_condition_helper(
+        &self,
+        cond: &Expr,
+        scope: &Scope,
+    ) -> Option<(VacuousHelper, Expr)> {
+        let Expr::Call { func, args, .. } = cond else {
+            return None;
+        };
+        let name = ident_name(func)?;
+        let bare = crate::semantic_lists::bare_name(name);
+        // The `all(V)` reduction shape.
+        if bare == "all"
+            && self.resolves_to_base_lenient(name, scope)
+            && let [argument] = args.as_slice()
+            && argument.name.is_none()
+            && let Expr::Ident { name: result, .. } = &argument.value
+            && let Some(provenance) = self.vacuous_map_results.get(result)
+            && let Some(helper) = self.vacuous_helpers.get(&provenance.helper)
+        {
+            let actual = Expr::Ident {
+                name: provenance.data.clone(),
+                span: span_of(&argument.value),
+            };
+            return Some((helper.clone(), actual));
+        }
+        // The direct helper-call shape: exactly one actual, bound to the
+        // helper's single formal. A bare `H(v)` statement never arms --
+        // only guard conditions (`if`, `stopifnot`) reach this hook, so
+        // a discarded result cannot validate anything here. A qualified
+        // `pkg::H(v)` never resolves to the flat-registered local helper
+        // (locals are not called qualified), so only bare spells arm.
+        if name.contains("::") || args.len() != 1 || args[0].name.is_some() {
+            return None;
+        }
+        let helper = self.vacuous_helpers.get(name)?;
+        // A lexical or shadowing local definition means this call never
+        // reaches the registered helper. The one exception is the
+        // helper's own top-level definition: pass 3 walks each function
+        // body with the name bound to a plain mode-`Function` value
+        // (and the project table holds the same entry), so a bare
+        // `Function` binding with no alias and no lexical mark is the
+        // definition itself, not a shadow. Any other binding of the
+        // name in the caller scope voids the helper reading -- the
+        // conservative direction for a cross-function fact.
+        let shadowed = scope.is_lexical_function(name)
+            || scope.function_alias(name).is_some()
+            || scope
+                .get(name)
+                .is_some_and(|ty| !matches!(ty.mode, Mode::Function))
+            || !self.fn_table.fns.contains_key(name);
+        if shadowed {
+            return None;
+        }
+        let Expr::Ident { .. } = &args[0].value else {
+            return None;
+        };
+        Some((helper.clone(), args[0].value.clone()))
     }
 
     /// Install one armed guard. The emptiness premise (`x` may be empty
@@ -471,39 +721,178 @@ impl Checker {
     /// live scope; a proven-empty binding additionally marks the accept
     /// definite through [`vacuous_aggregate_literal`]'s binding proof.
     fn arm_vacuous_guard(&mut self, site: &VacuousAllSite<'_>, accept: Span, scope: &Scope) {
-        let recorded = scope.get(ident_name(site.var).unwrap_or_default()).cloned();
-        let reference = recorded.clone().unwrap_or_else(RType::unknown);
         let definite = vacuous_aggregate_literal(self, site.all_callee, site.all_args, scope)
             == Some(AggregateLiteral::True);
-        if !definite && !self.test_may_be_empty(site.var, &reference, scope) {
+        self.arm_vacuous_guard_parsed(
+            site.var,
+            site.all_span,
+            span_of(site.var),
+            &site.covered_modes,
+            site.predicate_name.clone(),
+            definite,
+            accept,
+            scope,
+        );
+    }
+
+    /// Arm the guard of a registered helper over one actual argument
+    /// (issue #479). The fact is the helper's; the premise is the
+    /// caller's: the recorded type and the emptiness proofs come from
+    /// the actual's binding at the call site, so a proven-empty actual
+    /// still marks the accept definite. The diagnostic still points at
+    /// the helper's `all()` operand (see [`VacuousHelper`]).
+    fn arm_vacuous_helper(
+        &mut self,
+        helper: &VacuousHelper,
+        actual: &Expr,
+        site_span: Span,
+        accept: Span,
+        scope: &Scope,
+    ) {
+        let Expr::Ident { name, .. } = actual else {
+            return;
+        };
+        let definite = !self.test_binding_is_open_world(actual, scope)
+            && scope.get(name).is_some_and(|ty| ty.length == Length::Zero);
+        self.arm_vacuous_guard_parsed(
+            actual,
+            helper.all_span,
+            site_span,
+            &helper.covered_modes,
+            helper.predicate_name.clone(),
+            definite,
+            accept,
+            scope,
+        );
+    }
+
+    /// Shared installer for inline and helper guards: the emptiness
+    /// premise against the live scope, the vacuous-mode complement, and
+    /// the per-`all()` dedup. Dedup keys on (`all_span`, guarded name,
+    /// accepted path): one helper definition may arm distinct guards in
+    /// several callers, but one site needs only one guard.
+    #[allow(clippy::too_many_arguments)]
+    fn arm_vacuous_guard_parsed(
+        &mut self,
+        var: &Expr,
+        all_span: Span,
+        site_span: Span,
+        covered_modes: &[Mode],
+        predicate_name: String,
+        definite: bool,
+        accept: Span,
+        scope: &Scope,
+    ) {
+        let recorded = scope.get(ident_name(var).unwrap_or_default()).cloned();
+        let reference = recorded.clone().unwrap_or_else(RType::unknown);
+        if !definite && !self.test_may_be_empty(var, &reference, scope) {
             return;
         }
-        let vacuous_modes = vacuous_accept_modes(recorded.as_ref(), &site.covered_modes);
+        let vacuous_modes = vacuous_accept_modes(recorded.as_ref(), covered_modes);
         if vacuous_modes.is_empty() {
             return;
         }
+        let Some(var) = ident_name(var).map(str::to_owned) else {
+            return;
+        };
         // The fixpoint may walk a body more than once; one armed guard
-        // per `all()` operand is all the diagnostic needs.
+        // per (`all()`, variable, accepted path) is all the diagnostic
+        // needs.
         if self
             .vacuous_guards
             .iter()
-            .any(|guard| guard.all_span == site.all_span)
+            .any(|guard| guard.all_span == all_span && guard.var == var && guard.accept == accept)
         {
             return;
         }
-        let Some(var) = ident_name(site.var).map(str::to_owned) else {
-            return;
-        };
         self.vacuous_guards.push(VacuousGuard {
             var,
-            all_span: site.all_span,
+            all_span,
+            site_span,
             accept,
             vacuous_modes,
             recorded: reference,
-            predicate_name: site.predicate_name.clone(),
+            predicate_name,
             definite,
             fired: false,
         });
+    }
+
+    /// Record `result <- map(data, helper)` provenance (issue #479):
+    /// when a `map`-family call applies a registered guard-helper to a
+    /// bare-identifier collection, the bound result stands for the
+    /// elementwise verdicts, and an `all(result)` rejection later proves
+    /// every element of `data` passed the helper. Runs in the pass-3
+    /// walk, in source order, so a later rebind overwrites (or drops)
+    /// the entry exactly like a guard rebind. A shadowed map callee --
+    /// a lexical, project-local, or data-bound same name -- mints no
+    /// provenance: only the elementwise verbs qualify.
+    pub(crate) fn note_vacuous_map_result(&mut self, target: &Expr, value: &Expr, scope: &Scope) {
+        if self.discarding {
+            return;
+        }
+        let Some(result) = ident_name(target) else {
+            return;
+        };
+        let Expr::Call { func, args, .. } = value else {
+            self.vacuous_map_results.remove(result);
+            return;
+        };
+        let Some(name) = ident_name(func) else {
+            self.vacuous_map_results.remove(result);
+            return;
+        };
+        let bare = crate::semantic_lists::bare_name(name);
+        // Matched on the bare callee name; a project-local or lexical
+        // shadowing definition disqualifies (checked below), so a user
+        // `map_lgl` never mints provenance.
+        let in_family = crate::semantic_lists::is_vacuous_map_family(bare);
+        // Data first, helper second (`vapply`'s template third): the
+        // callback must be a bare identifier naming a registered helper,
+        // applied to a bare-identifier collection. Subset data
+        // (`args[!is_null]`), anonymous callbacks, and extra actuals
+        // keep no provenance -- the demand side only resolves bare
+        // identifiers, so anything else could never arm.
+        let shape = in_family && map_helper_shape(args);
+        let provenance = if shape {
+            let Expr::Ident { name: helper, .. } = &args[1].value else {
+                unreachable!("shape check matched a bare-identifier callback");
+            };
+            (self.vacuous_helpers.contains_key(helper.as_str())
+                && !shadowed_map_callee(self, name, scope))
+            .then(|| {
+                ident_name(&args[0].value).map(|data| VacuousMapProvenance {
+                    data: data.to_owned(),
+                    helper: helper.clone(),
+                })
+            })
+            .flatten()
+        } else {
+            None
+        };
+        match provenance {
+            Some(provenance) => {
+                self.vacuous_map_results
+                    .insert(result.to_owned(), provenance);
+            }
+            None => {
+                self.vacuous_map_results.remove(result);
+            }
+        }
+    }
+
+    /// Drop map provenance involving `name`: a reassignment of the
+    /// result variable voids its verdicts, and a reassignment of the
+    /// data collection means later demands receive a new value. Runs in
+    /// the pass-3 walk alongside the guard-rebind drops.
+    pub(crate) fn note_vacuous_map_rebind(&mut self, name: &str) {
+        if self.discarding {
+            return;
+        }
+        if !self.vacuous_map_results.is_empty() {
+            self.vacuous_map_results
+                .retain(|result, provenance| result != name && provenance.data != name);
+        }
     }
 
     /// Drop every armed guard over `name`: a reassignment between guard
@@ -536,6 +925,8 @@ impl Checker {
         }
         if let Some(Expr::String(name, _)) = args.first().map(|argument| &argument.value) {
             self.note_vacuous_guard_rebind(name);
+            // A named rebind voids map provenance too (issue #479).
+            self.note_vacuous_map_rebind(name);
         }
     }
 
@@ -568,16 +959,16 @@ impl Checker {
         // failure path at all -- vapply over empty never calls the
         // lambda). A shadow that contains the guard as well means both
         // sites read the same formal, which is the same binding.
-        let shadowed = |guard_span: Span| {
+        let shadowed = |guard: &VacuousGuard| {
             self.formal_shadows.iter().any(|(formal, function_span)| {
                 formal == name
                     && contains(*function_span, *span)
-                    && !contains(*function_span, guard_span)
+                    && !contains(*function_span, guard.site_span)
             })
         };
         let mut hit: Option<(Span, Mode, String, bool)> = None;
         for guard in &self.vacuous_guards {
-            if guard.fired || guard.var != *name || shadowed(guard.all_span) {
+            if guard.fired || guard.var != *name || shadowed(guard) {
                 continue;
             }
             if !contains(guard.accept, *span) {
@@ -640,6 +1031,34 @@ impl Checker {
             ),
         );
     }
+}
+
+/// Whether the `map`-family callee is shadowed at this site: a lexical
+/// function binding, a project-local definition, or any data binding of
+/// the bare name means the call never reaches the elementwise verb. An
+/// explicit `pkg::` qualification bypasses locals, so only a
+/// same-qualified project definition (recorded under the full spelling)
+/// disqualifies.
+fn shadowed_map_callee(checker: &Checker, name: &str, scope: &Scope) -> bool {
+    if name.contains("::") {
+        return checker.fn_table.fns.contains_key(name);
+    }
+    scope.is_lexical_function(name)
+        || scope.get(name).is_some()
+        || checker.fn_table.fns.contains_key(name)
+}
+
+/// Whether a `map`-family call's arguments have the provenance shape:
+/// data first, a bare-identifier callback second (`vapply`'s template
+/// may follow), all unnamed. Pure syntax, no table reads.
+fn map_helper_shape(args: &[Arg]) -> bool {
+    let [data, callback, ..] = args else {
+        return false;
+    };
+    data.name.is_none()
+        && callback.name.is_none()
+        && matches!(data.value, Expr::Ident { .. })
+        && matches!(callback.value, Expr::Ident { .. })
 }
 
 /// The root identifier of an assignment target: the bound name for a
@@ -974,6 +1393,156 @@ mod tests {
         // unproven.
         assert!(!fires(
             "f <- function(x) {\n  if (!(is.numeric(x) || all(is.na(x)))) x <- NULL\n  sqrt(x)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn helper_returned_guards_fire_through_call_sites() {
+        // Issue #479: the guard lives in the helper, the demand in the
+        // caller. The diagnostic points at the helper's `all()` -- that
+        // definition is the defect, as hms's fix showed.
+        let diagnostics = check(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nto_seconds <- function(seconds) {\n  if (!is_numeric_or_na(seconds)) stop(\"bad\")\n  sqrt(seconds)\n}\n",
+        );
+        let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY110").collect();
+        assert_eq!(hits.len(), 1, "diagnostics: {diagnostics:?}");
+        assert!(
+            hits[0].message.contains("fails `is.numeric`"),
+            "message must name the helper's predicate: {}",
+            hits[0].message
+        );
+        // Positive helper-call conditions arm the then branch.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (is_numeric_or_na(v)) sqrt(v)\n}\n"
+        ));
+        // stopifnot over a helper call guards the continuation.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  stopifnot(is_numeric_or_na(v))\n  mean(v)\n}\n"
+        ));
+        // Use-before-def order hides nothing: the registry indexes the
+        // file's own top-level definitions before the walk (hms defines
+        // `check_args` first).
+        assert!(fires(
+            "f <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\nis_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\n"
+        ));
+        // An explicit `return(chain)` body registers the same way.
+        // (The parser wraps a bare `return(x)` call in statement
+        // position into `Stmt::Return`; the chain sits in its value.)
+        assert!(fires(
+            "is_numeric_or_na <- function(x) {\n  return(is.numeric(x) || all(is.na(x)))\n}\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // A proven-empty actual makes the accept definite.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nv <- character()\nif (is_numeric_or_na(v)) sqrt(v)\n"
+        ));
+    }
+
+    #[test]
+    fn helper_guards_fire_through_map_lgl_indirection() {
+        // Issue #479, the hms args.R form: `check_args` applies the
+        // helper elementwise with `map_lgl`, rejects unless every
+        // element passed, and the continuation demands the values.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ncheck_args <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n"
+        ));
+        // The positive `all(valid)` form arms the then branch.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ncheck_args <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (all(valid)) sqrt(args)\n}\n"
+        ));
+    }
+
+    #[test]
+    fn helper_guards_stay_silent_without_validation() {
+        // A discarded helper result validates nothing: the continuation
+        // is not the accepted path.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  is_numeric_or_na(v)\n  sqrt(v)\n}\n"
+        ));
+        // A qualified helper call never resolves to the flat-registered
+        // local: qualification bypasses locals by design.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!other::is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!base::is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // `walk` returns its input, not the verdicts: `all()` over its
+        // result tests the data, so no provenance is minted.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- walk(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n"
+        ));
+        // Map verdicts never cross function boundaries, in either
+        // definition order: the consumer's `all(valid)` proves nothing
+        // about its own `args`.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  print(args)\n}\ng <- function(valid, args) {\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n"
+        ));
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ng <- function(valid, args) {\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  print(args)\n}\n"
+        ));
+        // A nested closure's verdicts never leak into the enclosing
+        // function: `valid` is not even bound in `f`, so its `all()`
+        // cannot validate `f`'s `args` (the RY010 on `valid` is a
+        // separate, honest diagnostic).
+        let nested_leak = check(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  g <- function(args) {\n    valid <- lapply(args, is_numeric_or_na)\n    if (!all(valid)) stop(\"bad\")\n    print(args)\n  }\n  if (!all(valid)) stop(\"bad\")\n  sqrt(args)\n}\n",
+        );
+        assert!(
+            nested_leak.iter().all(|d| d.code != "RY110"),
+            "nested verdicts leaked into the parent: {nested_leak:?}"
+        );
+        // A nested closure still inherits the enclosing verdicts: the
+        // `all(valid)` inside `g` reads the same binding `f` validated.
+        assert!(fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  g <- function() sqrt(args)\n  g()\n}\n"
+        ));
+        // No downstream mode demand: the gate stays as strict as the
+        // inline rule's.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  paste(v, collapse = \",\")\n}\n"
+        ));
+        // A demand that accepts the vacuous modes is no failure.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  print(v)\n}\n"
+        ));
+        // The fixed helper form registers nothing: its `all()` is
+        // guarded by nonemptiness.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || (length(x) > 0 && all(is.na(x)))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // A multi-formal function is not a guard-helper, even when its
+        // body is the chain over the first formal.
+        assert!(!fires(
+            "helper <- function(x, strict) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!helper(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // A shadowed helper name at the call site never reaches the
+        // registered definition.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  is_numeric_or_na <- function(x) TRUE\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // A shadowed `all` inside the helper body disqualifies it, like
+        // the inline rule's shadowed-`all` silence.
+        assert!(!fires(
+            "all <- function(x) TRUE\nis_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // Rebinding the actual between guard and demand replaces the
+        // guarded value.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  v <- 1\n  sqrt(v)\n}\n"
+        ));
+        // Rebinding the mapped collection voids the `all(valid)`
+        // verdicts.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\ncheck_args <- function(args) {\n  valid <- lapply(args, is_numeric_or_na)\n  if (!all(valid)) stop(\"bad\")\n  args <- 1\n  sqrt(args)\n}\n"
+        ));
+        // Extra call arguments do not bind the helper's single formal.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v, TRUE)) stop(\"bad\")\n  sqrt(v)\n}\n"
+        ));
+        // A non-diverging rejection block leaves the accepted path
+        // unproven, exactly like the inline rule.
+        assert!(!fires(
+            "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  if (!is_numeric_or_na(v)) v <- NULL\n  sqrt(v)\n}\n"
         ));
     }
 

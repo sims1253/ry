@@ -946,5 +946,5 @@
     "NULL union members now propagate into RY001 condition analysis (#362), adding exactly one reviewed true-positive identity under the new ry001-null-union group (true_positive 24 -> 25): lubridate R/accessors-day.r:98:7, as_week_start's implicit fall-through NULL (an unmatched day name skips every pmatch/match guard) reaching `if (start != 7)` — R errors with \"argument is of length zero\", runtime-verified. No other identity changes."
   ],
   "ry_commit": "1dc5998988aa8ae41d422df19da31f7353d73137",
-  "source_sha256": "21661fef4a99296e616422025eb0773d5c21ffea27d3ddafeb84e97375088354"
+  "source_sha256": "ea89ec7f246529177d852b870ec1b0bc60539582c255be9531a4ba990659d8a2"
 }

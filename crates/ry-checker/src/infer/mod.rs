@@ -379,10 +379,10 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
             // visible, not claimed away), and the documented remedy — an
             // `is.null` guard — is exactly what the checker's narrowing
             // already models. Longer-than-one and wrong-mode members keep
-            // the possibly-valid silence.
-            let zero_length_member = members
-                .iter()
-                .any(|member| matches!(member.length, Length::Zero));
+            // the possibly-valid silence. Nested union members recurse
+            // (see `carries_zero_length_leaf`), mirroring
+            // `switch_expr_length_rejected`.
+            let zero_length_member = members.iter().any(carries_zero_length_leaf);
             for member in members.iter() {
                 match condition_diagnostic(member) {
                     Some(ConditionDiagnostic::Invalid) => {
@@ -442,6 +442,22 @@ pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
             .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
         Mode::Opaque => false,
         _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
+    }
+}
+
+/// Whether this type carries a proven zero-length leaf — directly, or
+/// inside nested union members. Union construction flattens
+/// (`union_of`), but `RType::union` keeps exactly the members it is
+/// given, so a nested union with a zero-length leaf matters as much as
+/// a direct one. Recursion discipline mirrors the sibling
+/// [`switch_expr_length_rejected`].
+fn carries_zero_length_leaf(t: &RType) -> bool {
+    match t.mode {
+        Mode::Union => t
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(carries_zero_length_leaf)),
+        _ => matches!(t.length, Length::Zero),
     }
 }
 
@@ -1121,11 +1137,13 @@ impl Checker {
     /// requirement only: the selector's MODE never proves the error (R
     /// accepts a length-1 vector of every mode, a length-1 list
     /// included), so naming accepted modes would understate the rule.
-    fn emit_switch_expr_diagnostic(&mut self, selector: &Expr, selector_type: &RType) {
+    /// Takes the already-extracted selector span: callers either have it
+    /// (`Expr::Null`'s) or pass `span_of` of the selector expression.
+    fn emit_switch_expr_diagnostic(&mut self, span: Span, selector_type: &RType) {
         if switch_expr_length_rejected(selector_type) {
             self.emit(
                 Severity::Warning,
-                span_of(selector),
+                span,
                 "RY001",
                 format!(
                     "`switch` EXPR is `{}`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\"",
@@ -1265,12 +1283,22 @@ impl Checker {
         // excluded; unions without a NULL member have no remainder to
         // install.
         // Short-circuit: the extra full-view divergence walks only run
-        // when the guard narrowed something (the `narrowed.is_empty()`
-        // fast path keeps guard-free `if`s at their previous cost).
-        let guard_narrowed_something = !narrowed.is_empty();
+        // when the guard narrowed at least one binding whose pre-`if`
+        // type can yield an exact union-guard refinement at all — a
+        // union with a NULL member or a pure-`NULL` binding, exactly
+        // the originals `union_guard_continuation_refinement` admits
+        // (the `narrow_away_from_null` member scan is that set's cheap
+        // encoding). Guard-free `if`s and guards over NULL-free types
+        // keep their previous cost, and the refinement loop below is
+        // unchanged: for every other original it returns `None`
+        // regardless of the divergence flags.
+        let guard_narrowed_null_member = narrowed
+            .iter()
+            .filter_map(|name| scope.get(name))
+            .any(|original| narrow_away_from_null(original).is_some());
         let then_return_diverges =
-            guard_narrowed_something && !then_diverges && self.block_diverges(then);
-        let else_return_diverges = guard_narrowed_something
+            guard_narrowed_null_member && !then_diverges && self.block_diverges(then);
+        let else_return_diverges = guard_narrowed_null_member
             && !else_diverges
             && else_.is_some_and(|statements| self.block_diverges(statements));
         let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {

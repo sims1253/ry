@@ -384,7 +384,7 @@ impl Checker {
     pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         if let Some(first) = args.first() {
             let selector = self.infer(&first.value, scope);
-            self.emit_switch_expr_diagnostic(&first.value, &selector);
+            self.emit_switch_expr_diagnostic(span_of(&first.value), &selector);
         }
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {

@@ -648,6 +648,50 @@ fn condition_union_zero_length_member_dominates_a_logical_sibling() {
 }
 
 #[test]
+fn condition_union_zero_length_leaf_in_a_nested_union_dominates() {
+    // The zero-length dominance recurses into nested union members,
+    // mirroring `switch_expr_length_rejected`: a nested union carrying
+    // a proven zero-length leaf (`logical<0> | logical<1>`, the
+    // comparison join a find-or-NULL helper produces) errors on that
+    // branch exactly like a direct zero-length member instead of being
+    // silenced by a possibly-valid logical sibling of the OUTER union.
+    // Union construction flattens (`union_of`), so no end-to-end source
+    // route produces this shape today; this pins the type-level
+    // contract directly, next to the flat end-to-end shapes in
+    // `condition_union_zero_length_member_dominates_a_logical_sibling`.
+    use crate::infer::{ConditionDiagnostic, condition_diagnostic};
+    use std::sync::Arc;
+    let comparison_join = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::Zero),
+        RType::new(Mode::Logical, Length::One),
+    ]));
+    let nested = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::One),
+        comparison_join,
+    ]));
+    assert!(
+        matches!(
+            condition_diagnostic(&nested),
+            Some(ConditionDiagnostic::Invalid)
+        ),
+        "a zero-length leaf inside a nested union member dominates the outer union's logical sibling"
+    );
+    // Without the zero-length leaf the same nesting stays silent:
+    // every branch remains possibly valid.
+    let quiet = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::One),
+        RType::union(Arc::from(vec![
+            RType::new(Mode::Logical, Length::One),
+            RType::new(Mode::Logical, Length::Unknown),
+        ])),
+    ]));
+    assert!(
+        condition_diagnostic(&quiet).is_none(),
+        "a nested union without a zero-length leaf keeps the union silence"
+    );
+}
+
+#[test]
 fn vector_string_subset_preserves_non_scalar_length() {
     let (diags, scope) =
         check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[c(\"first\", \"second\")]\n");

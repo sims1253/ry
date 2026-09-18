@@ -166,10 +166,8 @@ impl Checker {
                 // A literal NULL selector always trips R's length check
                 // ("EXPR must be a length 1 vector"); same RY001 the
                 // dynamic-selector path emits for NULL unions (#362).
-                self.emit_switch_expr_diagnostic(
-                    &Expr::Null(*null_span),
-                    &RType::new(Mode::Null, Length::Zero),
-                );
+                // The span is already in hand — no reconstruction.
+                self.emit_switch_expr_diagnostic(*null_span, &RType::new(Mode::Null, Length::Zero));
                 return unknown(scope);
             }
             Expr::Missing(_) | Expr::Unknown(_) | Expr::Na(_, _) => {

@@ -60,13 +60,20 @@ impl Checker {
         // union-minus-NULL continuation refinement a null-guard proves.
         // Both walks share `union_guard_continuation_refinement`, so the
         // parity harness cannot drift on this behavior. The extra
-        // full-view divergence walks are gated on the same
-        // guard-narrowed fast path the journal walk uses (this walk is
-        // test-only, but symmetry keeps its cost profile comparable).
-        let guard_narrowed_something = !narrowed.is_empty();
+        // full-view divergence walks use the same cheap prefilter the
+        // journal walk applies (this walk is test-only, but symmetry
+        // keeps its cost profile comparable): they only run when at
+        // least one narrowed binding's pre-`if` original can yield an
+        // exact refinement at all — a union with a NULL member or a
+        // pure-`NULL` binding, the set `narrow_away_from_null` admits.
+        let guard_narrowed_null_member = narrowed_originals.iter().any(|(_, original, _)| {
+            original
+                .as_ref()
+                .is_some_and(|original| narrow_away_from_null(original).is_some())
+        });
         let then_return_diverges =
-            guard_narrowed_something && !then_diverges && self.block_diverges(then);
-        let else_return_diverges = guard_narrowed_something
+            guard_narrowed_null_member && !then_diverges && self.block_diverges(then);
+        let else_return_diverges = guard_narrowed_null_member
             && !else_diverges
             && else_.is_some_and(|statements| self.block_diverges(statements));
         for (name, original, original_default_parameter) in narrowed_originals {

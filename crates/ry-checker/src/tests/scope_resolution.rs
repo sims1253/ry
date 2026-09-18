@@ -619,8 +619,26 @@ fn list_subset_drops_stale_column_schema() {
 }
 
 #[test]
-fn condition_union_with_a_valid_logical_member_is_silent() {
+fn condition_union_zero_length_member_dominates_a_logical_sibling() {
+    // Refined contract (#362): a PROVEN zero-length member still errors
+    // deterministically on its branch ("argument is of length zero"),
+    // so it is no longer silenced by a possibly-valid logical sibling.
+    // This is the comparison shape a find-or-NULL helper produces
+    // (`where == "path"` over `character | NULL` joins to
+    // `logical<0> | logical<1>`), and the diagnostic message displays
+    // the union, so the possibly-valid member stays visible rather than
+    // being claimed away. The runtime oracle pins both branch outcomes.
     let diagnostics = check("x <- if (runif(1) > 0.5) logical(0) else TRUE\nif (x) print(1)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY001"),
+        "a zero-length member makes the condition error on that branch: {diagnostics:?}"
+    );
+    // Possibly-valid members that are NOT proven zero-length keep the
+    // whole-union silence (see also
+    // `logical_union_members_preserve_possibly_valid_conditions`).
+    let diagnostics = check("x <- if (runif(1) > 0.5) list(TRUE) else TRUE\nif (x) print(1)\n");
     assert!(
         diagnostics
             .iter()

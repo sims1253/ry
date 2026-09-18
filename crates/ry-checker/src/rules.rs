@@ -31,7 +31,7 @@ pub const RULES: &[Rule] = &[
         code: "RY001",
         name: "invalid-condition",
         default_severity: Severity::Warning,
-        summary: "`if` / `while` condition is not a length-1 logical or a value R coerces to one.",
+        summary: "`if` / `while` condition is not a length-1 logical or a value R coerces to one. Also covers a `switch(EXPR, ...)` whose EXPR is provably not a length-1 vector, the crash a NULL component of a union return produces (\"EXPR must be a length 1 vector\").",
     },
     Rule {
         code: "RY002",

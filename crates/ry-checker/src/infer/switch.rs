@@ -162,7 +162,17 @@ impl Checker {
                 }
                 switch_numeric_index(-value, alternatives.len())
             }
-            Expr::Missing(_) | Expr::Unknown(_) | Expr::Null(_) | Expr::Na(_, _) => {
+            Expr::Null(null_span) => {
+                // A literal NULL selector always trips R's length check
+                // ("EXPR must be a length 1 vector"); same RY001 the
+                // dynamic-selector path emits for NULL unions (#362).
+                self.emit_switch_expr_diagnostic(
+                    &Expr::Null(*null_span),
+                    &RType::new(Mode::Null, Length::Zero),
+                );
+                return unknown(scope);
+            }
+            Expr::Missing(_) | Expr::Unknown(_) | Expr::Na(_, _) => {
                 return unknown(scope);
             }
             // Bare dynamic selectors retain the existing all-alternative inference;

@@ -377,10 +377,14 @@ impl Checker {
     ///
     /// The result type is the join of all alternative types (since we
     /// can't know which branch will execute at runtime). Each
-    /// alternative is also walked for diagnostics.
+    /// alternative is also walked for diagnostics. The EXPR selector is
+    /// a condition position: a provably non-length-1 selector (NULL
+    /// unions included, issue #362) emits RY001 through
+    /// [`Checker::emit_switch_expr_diagnostic`].
     pub(crate) fn infer_switch_call(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         if let Some(first) = args.first() {
-            let _ = self.infer(&first.value, scope);
+            let selector = self.infer(&first.value, scope);
+            self.emit_switch_expr_diagnostic(&first.value, &selector);
         }
         let mut alt_types: Vec<RType> = Vec::new();
         for a in args.iter().skip(1) {

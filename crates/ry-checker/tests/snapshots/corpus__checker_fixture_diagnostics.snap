@@ -1,6 +1,5 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
-assertion_line: 238
 expression: snapshots
 ---
 - diagnostics:
@@ -607,6 +606,24 @@ expression: snapshots
         line: 17
         start: 1088
   fixture: err_negative_literal_comparison.R
+- diagnostics:
+    - code: RY001
+      message: "`switch` EXPR is `union[NULL<len=0>, character<len=1>]`, expected a length-1 character or number; R errors with \"EXPR must be a length 1 vector\""
+      severity: warning
+      span:
+        column: 7
+        end: 547
+        line: 15
+        start: 542
+    - code: RY001
+      message: "`if` condition is `union[logical<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 4
+        end: 583
+        line: 16
+        start: 568
+  fixture: err_null_union_conditions.R
 - diagnostics:
     - code: RY000
       message: "syntax error: unparseable region (recovered tree may be unreliable)"
@@ -1719,6 +1736,8 @@ expression: snapshots
   fixture: ok_null_default_always_supplied.R
 - diagnostics: []
   fixture: ok_null_default_callback_rebind.R
+- diagnostics: []
+  fixture: ok_null_union_guarded_conditions.R
 - diagnostics: []
   fixture: ok_package_qualified_resolution.R
 - diagnostics: []

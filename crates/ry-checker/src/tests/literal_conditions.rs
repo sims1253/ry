@@ -113,3 +113,89 @@ fn forced_promises_block_later_literal_claims() {
         );
     }
 }
+
+// Issue #362: the NULL component of a union return type must reach the
+// condition analysis at the call site. The four probes below mirror the
+// audit artifacts that isolated the boundary: local NULL flow and
+// single-return helpers already fired; a find-or-NULL helper's
+// `character | NULL` union lost the NULL member in both `if` (through a
+// comparison, which joins to `logical<0> | logical<1>`) and `switch`
+// (the EXPR selector) conditions.
+#[test]
+fn null_union_return_components_reach_condition_analysis() {
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    for (note, tail) in [
+        (
+            "switch on the union",
+            "where <- locate_input(NULL)\nswitch(where, path = 1L, 2L)\n",
+        ),
+        (
+            "if on a comparison over the union",
+            "where <- locate_input(NULL)\nif (where == \"path\") 1L else 2L\n",
+        ),
+        (
+            "while on a comparison over the union",
+            "where <- locate_input(NULL)\nwhile (where == \"path\") {\n  break\n}\n",
+        ),
+        (
+            "direct condition on the union",
+            "where <- locate_input(NULL)\nif (where) 1L else 2L\n",
+        ),
+        (
+            "local NULL flow through a comparison",
+            "where <- NULL\nif (where == \"path\") 1L else 2L\n",
+        ),
+        (
+            "single-return NULL helper through a comparison",
+            "get_null <- function() NULL\nwhere <- get_null()\nif (where == \"path\") 1L else 2L\n",
+        ),
+        (
+            "local NULL flow into a switch selector",
+            "where <- NULL\nswitch(where, path = 1L, 2L)\n",
+        ),
+        (
+            "literal NULL switch selector",
+            "switch(NULL, path = 1L, 2L)\n",
+        ),
+    ] {
+        let source = format!("{locate}{tail}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY001"),
+            "{note}: the NULL component must flag the condition: {diagnostics:?}"
+        );
+    }
+}
+
+// The same unions without a NULL member, and non-condition uses of a
+// NULL-carrying union, stay silent: the rule is about condition
+// positions on the possibly-NULL value, nothing else.
+#[test]
+fn null_free_unions_and_non_condition_uses_stay_silent() {
+    let pick = "pick <- function(x) {\n  if (x > 0) {\n    \"path\"\n  } else {\n    1L\n  }\n}\n";
+    for (note, tail) in [
+        (
+            "union without NULL in a switch",
+            "w <- pick(1)\nswitch(w, path = 1L, 2L)\n",
+        ),
+        (
+            "union without NULL in a comparison condition",
+            "w <- pick(1)\nif (w == \"path\") 1L else 2L\n",
+        ),
+    ] {
+        let source = format!("{pick}{tail}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{note}: {diagnostics:?}"
+        );
+    }
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    let diagnostics = check(&format!(
+        "{locate}where <- locate_input(NULL)\nprint(where)\ny <- paste0(where, \"!\")\nz <- where[[1L]]\n"
+    ));
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY001"),
+        "non-condition uses must stay silent: {diagnostics:?}"
+    );
+}

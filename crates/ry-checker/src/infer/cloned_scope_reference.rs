@@ -12,6 +12,19 @@ impl Checker {
     ) {
         let has_else = else_.is_some();
         let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, narrowing);
+        // Pre-`if` views of the guard-narrowed names, captured before the
+        // merge below replaces them: the union-guard refinement compares
+        // against the original parent types, never the merged ones.
+        let narrowed_originals: Vec<(String, Option<RType>, bool)> = narrowed
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    scope.get(name).cloned(),
+                    scope.is_default_parameter(name),
+                )
+            })
+            .collect();
         for s in then {
             self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
         }
@@ -42,6 +55,42 @@ impl Checker {
         };
         if let Some(continuation) = continuation {
             self.copy_continuation_narrowing(scope, continuation, &narrowed);
+        }
+        // Mirror of the journal walk's `union_guard_facts`: the exact
+        // union-minus-NULL continuation refinement a null-guard proves.
+        // Both walks share `union_guard_continuation_refinement`, so the
+        // parity harness cannot drift on this behavior.
+        let then_return_diverges = !then_diverges && self.block_diverges(then);
+        let else_return_diverges =
+            !else_diverges && else_.is_some_and(|statements| self.block_diverges(statements));
+        for (name, original, original_default_parameter) in narrowed_originals {
+            let Some(original) = original else {
+                continue;
+            };
+            let then_view = BranchGuardView::new(
+                then_scope.get(name.as_str()),
+                then_scope.narrowed_bindings.contains(name.as_str()),
+                then_scope.is_default_parameter(name.as_str()),
+            );
+            let else_view = BranchGuardView::new(
+                else_scope.get(name.as_str()),
+                else_scope.narrowed_bindings.contains(name.as_str()),
+                else_scope.is_default_parameter(name.as_str()),
+            );
+            let Some(refined) = union_guard_continuation_refinement(UnionGuardViews {
+                original: &original,
+                then: then_view,
+                else_: else_view,
+                original_default_parameter,
+                then_return_diverges,
+                else_return_diverges,
+                then_reaches: !then_scope.unreachable,
+                else_reaches: has_else && !else_scope.unreachable,
+                has_else,
+            }) else {
+                continue;
+            };
+            scope.insert_narrowed(name, refined);
         }
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.

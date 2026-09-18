@@ -477,6 +477,13 @@ impl LanguageServer for Backend {
             if index_pending {
                 self.spawn_background_index().await;
             }
+            // A landed refresh updates the parse but not the resolution
+            // context: advance the owning package groups through the same
+            // resolution pass the scan uses before publishing, so a
+            // watched addition resolves its configured globals, library
+            // attachments, imports, and load bindings without a rescan
+            // (#527).
+            self.refresh_package_contexts(&landed).await;
             // A landed refresh with no open document would otherwise never
             // be republished (#528): `republish_all_open_documents` below
             // degenerates to dropped-URI reconciliation, which only clears
@@ -553,6 +560,10 @@ impl LanguageServer for Backend {
             if index_pending {
                 self.spawn_background_index().await;
             }
+            // Same staleness as the watched path: the saved bytes are
+            // indexed but their resolution entries are not (#527).
+            self.refresh_package_contexts(std::slice::from_ref(&path))
+                .await;
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.

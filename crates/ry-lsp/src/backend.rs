@@ -1798,6 +1798,191 @@ impl Backend {
         }
     }
 
+    /// Re-resolve the owning package group's resolution context after
+    /// per-file disk refreshes landed (#527). A refreshed file's parse
+    /// reaches `disk_files` but its per-file resolution entries (configured
+    /// globals, `library()` attachments, imports, load bindings) are
+    /// otherwise rebuilt only by a full background scan, so a watched
+    /// addition checks against an empty context until the next scan. Each
+    /// affected group re-runs the same `resolve_workspace_context` pass
+    /// the scan uses, over the current disk index scoped to the owning
+    /// folder, and installs the result when no newer writer landed
+    /// meanwhile. Disk-only inputs mirror the scan exactly (open buffers
+    /// keep shadowing at publish time), so an incremental install can
+    /// never disagree with a fresh scan over the same tree.
+    ///
+    /// Convergence: the install is generation-guarded like every other
+    /// index writer (#526). On a lost race a single retry re-snapshots
+    /// from current state; a second loss falls back to a full background
+    /// scan, which resolves every group. Group-keyed installs commute
+    /// (disjoint per-file keys), and same-path concurrent refreshes stay
+    /// ordered by the per-file generation protocol, so this adds no new
+    /// interleave for a future per-path refresh epoch to untangle (#538).
+    async fn refresh_package_contexts(&self, landed: &[String]) {
+        // At most one group install per owning folder per package root.
+        let mut groups: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+        {
+            let state = self.state.lock().await;
+            for path in landed {
+                let folder_root = match state.folder_context_for_path(path) {
+                    Some(ctx) => ctx.root.clone(),
+                    // Root-owned partitions check against no stored
+                    // context (the publish path passes `None`), so there
+                    // is nothing to advance for them.
+                    None => continue,
+                };
+                let package_root = ry_workspace::enclosing_package_root(std::path::Path::new(path));
+                if !groups.contains(&(folder_root.clone(), package_root.clone())) {
+                    groups.push((folder_root, package_root));
+                }
+            }
+        }
+        for (folder_root, package_root) in groups {
+            self.refresh_one_package_context(&folder_root, &package_root)
+                .await;
+        }
+    }
+
+    /// Snapshot, resolve, and generation-guarded install for one package
+    /// group, with one retry and a full-scan backstop on lost races (see
+    /// [`Backend::refresh_package_contexts`]).
+    async fn refresh_one_package_context(
+        &self,
+        folder_root: &Path,
+        package_root: &Option<PathBuf>,
+    ) {
+        for _ in 0..2 {
+            // Snapshot the group's disk files, config, stubs, and the
+            // generation the install must still hold. Open buffers stay
+            // out: the scan resolves disk state only, and the publish
+            // path layers open documents over it afterwards.
+            struct Snapshot {
+                files: Vec<Arc<SourceFile>>,
+                config: ry_config::Config,
+                stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+                resolution_root: PathBuf,
+                generation: u64,
+            }
+            let snapshot = {
+                let state = self.state.lock().await;
+                let ctx = match state
+                    .folder_contexts
+                    .iter()
+                    .find(|ctx| ctx.root == *folder_root)
+                {
+                    Some(ctx) => ctx,
+                    // The owning folder vanished mid-refresh; the folder
+                    // removal path already cleared and republished.
+                    None => return,
+                };
+                let folder_prefix =
+                    format!("{}{}", folder_root.display(), std::path::MAIN_SEPARATOR);
+                let folder_root_string = folder_root.to_string_lossy().into_owned();
+                let mut candidates: Vec<&String> = state
+                    .disk_files
+                    .keys()
+                    .filter(|path| {
+                        path.as_str() == folder_root_string || path.starts_with(&folder_prefix)
+                    })
+                    .collect();
+                candidates.sort();
+                let mut files: Vec<Arc<SourceFile>> = Vec::new();
+                let mut root_cache: HashMap<Option<&std::path::Path>, Option<PathBuf>> =
+                    HashMap::new();
+                for path in candidates {
+                    let fs_path = std::path::Path::new(path);
+                    let key = fs_path.parent();
+                    let root = root_cache
+                        .entry(key)
+                        .or_insert_with(|| ry_workspace::enclosing_package_root(fs_path))
+                        .clone();
+                    if root == *package_root
+                        && let Some(file) = state.disk_files.get(path)
+                    {
+                        files.push(Arc::clone(file));
+                    }
+                }
+                Snapshot {
+                    files,
+                    config: ctx.config.clone(),
+                    stubs: Arc::clone(&ctx.stubs),
+                    resolution_root: package_root
+                        .clone()
+                        .unwrap_or_else(|| folder_root.to_path_buf()),
+                    generation: state.index_generation,
+                }
+            };
+            let resolved = tokio::task::spawn_blocking(move || {
+                let files: Vec<&SourceFile> = snapshot.files.iter().map(Arc::as_ref).collect();
+                ry_workspace::resolve_workspace_context(
+                    &snapshot.resolution_root,
+                    &snapshot.config,
+                    ry_workspace::ResolutionEnvironment {
+                        files,
+                        user_stubs: &snapshot.stubs,
+                    },
+                )
+            })
+            .await;
+            let context = match resolved {
+                Ok(Ok(context)) => context,
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "incremental workspace resolution degraded");
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "incremental workspace resolution task failed");
+                    return;
+                }
+            };
+            {
+                let mut state = self.state.lock().await;
+                if state.index_generation != snapshot.generation {
+                    // A newer writer landed during the blocking resolve;
+                    // retry once from current state, else let the full
+                    // scan converge. Drop the lock first: the retry
+                    // re-snapshots below, and the scan backstop blocks.
+                    drop(state);
+                    continue;
+                }
+                if let Some(ctx) = state
+                    .folder_contexts
+                    .iter_mut()
+                    .find(|ctx| ctx.root == *folder_root)
+                {
+                    ctx.workspace_contexts.insert(package_root.clone(), context);
+                } else {
+                    return;
+                }
+            }
+            // Installed: degraded-scope warnings keep scan parity (the
+            // scan logs one line per scope per generation).
+            let degraded = {
+                self.state
+                    .lock()
+                    .await
+                    .folder_contexts
+                    .iter()
+                    .find(|ctx| ctx.root == *folder_root)
+                    .and_then(|ctx| ctx.workspace_contexts.get(package_root))
+                    .map(|context| context.degraded_scopes.clone())
+                    .unwrap_or_default()
+            };
+            for (path, reason) in &degraded {
+                self.client
+                    .log_message(
+                        tower_lsp::lsp_types::MessageType::WARNING,
+                        format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
+                    )
+                    .await;
+            }
+            return;
+        }
+        // Two lost races in a row: a full scan converges every group
+        // through its own generation-guarded commit.
+        self.spawn_background_index().await;
+    }
+
     /// Debounce diagnostics: bump the workspace generation counter and
     /// spawn a task that sleeps ~180ms, then publishes only if its
     /// generation is still the latest. A newer edit during the sleep

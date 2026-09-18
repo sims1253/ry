@@ -1416,8 +1416,9 @@ mod tests {
         assert!(fires(
             "is_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\nf <- function(v) {\n  stopifnot(is_numeric_or_na(v))\n  mean(v)\n}\n"
         ));
-        // Use-before-def order hides nothing: the registry builds from
-        // the FnTable before the walk (hms defines `check_args` first).
+        // Use-before-def order hides nothing: the registry indexes the
+        // file's own top-level definitions before the walk (hms defines
+        // `check_args` first).
         assert!(fires(
             "f <- function(v) {\n  if (!is_numeric_or_na(v)) stop(\"bad\")\n  sqrt(v)\n}\nis_numeric_or_na <- function(x) is.numeric(x) || all(is.na(x))\n"
         ));

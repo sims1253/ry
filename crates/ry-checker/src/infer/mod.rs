@@ -582,20 +582,25 @@ impl Checker {
         let diagnostic_start = self.diagnostics.len();
         // RY110's `map`-family provenance (issue #479) is function-local:
         // a `valid <- map_lgl(data, H)` verdict in one function must never
-        // validate another function's `all(valid)`. Each function body
-        // therefore walks with a fresh table -- except the outermost
-        // function, which inherits the top level's (a `map` at the top
-        // level followed by a function that consumes it reads the same
-        // bindings). Save and restore around the walk so sibling
-        // functions never observe each other's verdicts.
+        // validate another function's `all(valid)`. Each body therefore
+        // walks with a fresh table: a nested closure inherits the
+        // enclosing function's table (its `all(valid)` reads the same
+        // binding -- the guard side resolves the closure's captures the
+        // same way), while a top-level sibling starts empty. Save and
+        // restore around the walk so sibling functions never observe each
+        // other's verdicts.
         // (`enclosing_formals` is still the parent depth here: this
         // function pushes its own frame below.)
         let saved_vacuous_map = if self.enclosing_formals.is_empty() {
-            // Outermost function: keep the top-level table in place and
-            // restore it (plus any verdicts the walk adds) afterwards.
-            None
-        } else {
+            // A top-level sibling starts with a fresh table; the
+            // previous top-level function's verdicts must not leak.
+            // (The top-level statements themselves keep the file's own
+            // table: they never pass through this save.)
             Some(std::mem::take(&mut self.vacuous_map_results))
+        } else {
+            // A nested closure inherits the enclosing table; anything it
+            // records is dropped on restore.
+            None
         };
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();

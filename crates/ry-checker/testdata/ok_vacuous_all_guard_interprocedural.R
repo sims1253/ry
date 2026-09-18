@@ -79,16 +79,28 @@ qualified_base <- function(v) {
   if (!base::is_numeric_or_na(v)) stop("bad")
   sqrt(v)
 }
-# Map verdicts never cross function boundaries: `g` reuses `f`'s
-# result and data names, but its `all(valid)` proves nothing about its
-# own `args`, so the demand stays silent (walk-order independent).
-# `f`'s own demand is type-agnostic, so it stays quiet too.
+# Map verdicts never cross function boundaries: `sibling_consumer`
+# reuses the applier's result and data names, but its `all(valid)`
+# proves nothing about its own `args`, so the demand stays silent
+# regardless of definition order. The applier's own demand is
+# type-agnostic, so it stays quiet too.
 cross_fn_applier <- function(args) {
   valid <- lapply(args, is_numeric_or_na)
   if (!all(valid)) stop("bad")
   print(args)
 }
-cross_fn_consumer <- function(valid, args) {
+sibling_consumer <- function(valid, args) {
   if (!all(valid)) stop("bad")
   sqrt(args)
+}
+# Same shape with the consumer defined first: silence must not depend
+# on walk order.
+early_consumer <- function(valid, args) {
+  if (!all(valid)) stop("bad")
+  sqrt(args)
+}
+late_applier <- function(args) {
+  valid <- lapply(args, is_numeric_or_na)
+  if (!all(valid)) stop("bad")
+  print(args)
 }

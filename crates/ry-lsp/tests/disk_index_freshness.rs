@@ -515,3 +515,268 @@ fn discard_then_close_converges_with_fresh_server() {
         join_session(session, server).await;
     });
 }
+
+/// Send a watched event for a nonexistent `DESCRIPTION` path: the
+/// handler classifies it as a resolution-input change by URI suffix
+/// alone and runs a full background scan to completion. This drives a
+/// real scan without touching the fixture. The URI is built by
+/// appending to the canonicalized root URI — no such file exists, so
+/// the testkit's canonicalizing `file_uri` cannot encode it directly.
+async fn trigger_full_scan(session: &mut harness::ClientSession, root: &std::path::Path) {
+    let fake = format!("{}/DESCRIPTION", file_uri(root).as_str());
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": fake, "type": 2}]}),
+        )
+        .await
+        .unwrap();
+}
+
+/// Open `use.R` and await its first publication. The publish path
+/// returns early while `initial_index_pending` holds, and the flag
+/// clears only at the initial scan's commit — so this publication
+/// proves the initial index committed, and every generation the
+/// scenario later captures starts from a settled session.
+async fn open_use_settled(session: &mut harness::ClientSession, use_uri: &str) -> Value {
+    session.open(use_uri, 1, USE).await.unwrap();
+    session
+        .published_diagnostics_after(use_uri, session.publication_mark())
+        .await
+        .unwrap()
+}
+
+/// A no-op edit (same text, bumped version) drives one debounced
+/// publish of whatever the index currently holds, without changing
+/// any file. The observation point every freshness test ends at: the
+/// publication reflects the committed state at its snapshot, which is
+/// strictly after every writer the test already rendezvoused with.
+async fn observe_current_index(
+    session: &mut harness::ClientSession,
+    use_uri: &str,
+    version: i32,
+) -> Value {
+    let mark = session.publication_mark();
+    session
+        .change(use_uri, version, json!([{ "text": USE }]))
+        .await
+        .unwrap();
+    session
+        .published_diagnostics_after(use_uri, mark)
+        .await
+        .unwrap()
+}
+
+/// #526, writer A vs writer B: a per-file refresh whose blocking read
+/// saw older bytes must not install its parse over a newer full scan's
+/// commit. The refresh reads the character `f`, pauses at its commit
+/// gate; the disk moves to the integer `f`; a full scan walks and
+/// commits the integer bytes under a newer generation; only then is
+/// the refresh released. Without the generation check the stale parse
+/// wins and RY040 appears; with it the scan's bytes survive.
+#[test]
+fn stale_refresh_loses_to_newer_scan() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        let first = open_use_settled(&mut session, &use_uri).await;
+        assert!(has_ry040(&first), "character f must win before the scenario");
+
+        // The watched change for the still-character `a.R` starts a
+        // refresh that reads the old bytes, then pauses at its commit.
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+
+        // The arrival signal is sent after the read completed, so this
+        // write is strictly later: the refresh holds the old bytes.
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        trigger_full_scan(&mut session, &fixture.root()).await;
+        sync_barrier(&mut session, &use_uri).await;
+        // The scan ran to completion while the refresh waited: release
+        // the stale commit and observe the surviving bytes.
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        let after = observe_current_index(&mut session, &use_uri, 2).await;
+        assert!(
+            !has_ry040(&after),
+            "the scan's integer f must survive the stale refresh commit: {after}"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "stale refresh vs newer scan",
+        );
+
+        join_session(session, server).await;
+    });
+}
+
+/// #526, refresh vs refresh: two watched events for one path start two
+/// refreshes, and the later event's bytes must win even when the
+/// earlier refresh's commit lands last. The first refresh reads the
+/// character `f` and pauses; the disk moves to the integer `f` and a
+/// second refresh lands it (the one-shot arm is consumed, so the
+/// second passes through); only then is the first released.
+#[test]
+fn overlapping_refreshes_last_event_wins() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        let first = open_use_settled(&mut session, &use_uri).await;
+        assert!(has_ry040(&first), "character f must win before the scenario");
+
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+
+        // Strictly after the first refresh's read: move the disk and
+        // deliver the second event, whose refresh lands the new bytes
+        // and retires the generation the first refresh captured.
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        let second_mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        let second = session
+            .published_diagnostics_after(&use_uri, second_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&second),
+            "the second refresh must land the integer f: {second}"
+        );
+
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        let after = observe_current_index(&mut session, &use_uri, 2).await;
+        assert!(
+            !has_ry040(&after),
+            "the late first refresh must not overwrite the second's integer f: {after}"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "overlapping refreshes",
+        );
+
+        join_session(session, server).await;
+    });
+}
+
+/// #526, the close-time hole: `did_close` re-reads the closed file,
+/// but a background scan in flight at close time — whose walk read
+/// the file before the save — must not replace the whole map with its
+/// older snapshot afterwards. The scan walks the character `f` and
+/// pauses at its commit; only then are the integer bytes saved and
+/// the file closed, so the close-time refresh lands newer bytes and
+/// retires the scan. Without the close-time generation bump the
+/// scan's pre-save snapshot wins and RY040 reappears.
+#[test]
+fn close_time_refresh_retires_in_flight_scan() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        take_watcher_globs(&mut session).await;
+        let first = open_use_settled(&mut session, &use_uri).await;
+        assert!(has_ry040(&first), "character f must win before the scenario");
+
+        // A full scan walks the still-character disk and pauses at its
+        // commit, holding pre-save bytes.
+        ry_lsp::test_seam::arm_scan_commit();
+        trigger_full_scan(&mut session, &fixture.root()).await;
+        ry_lsp::test_seam::wait_scan_commit().await;
+
+        // Strictly after the scan's walk: edit `a.R` to the integer
+        // variant, save it, and close. The close-time refresh lands the
+        // saved bytes; its commit gate rendezvous proves it.
+        session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        session
+            .change(&a_uri, 2, json!([{ "text": F_INT }]))
+            .await
+            .unwrap();
+        std::fs::write(fixture.path("a.R"), F_INT).unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "textDocument/didClose",
+                json!({"textDocument": {"uri": a_uri}}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+
+        // Consume did_close's own follow-up publication (integer-clean
+        // in both revisions: the scan has not committed yet), then
+        // release the scan and observe what survives it.
+        let close_mark = session.publication_mark();
+        sync_barrier(&mut session, &use_uri).await;
+        let _ = session
+            .published_diagnostics_after(&use_uri, close_mark)
+            .await;
+        let scan_mark = session.publication_mark();
+        ry_lsp::test_seam::release_scan_commit();
+        let after = session
+            .published_diagnostics_after(&use_uri, scan_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&after),
+            "save-then-close must keep the saved integer f even with a scan in flight: {after}"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "close-time refresh vs in-flight scan",
+        );
+
+        join_session(session, server).await;
+    });
+}

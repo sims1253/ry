@@ -1465,6 +1465,10 @@ impl Backend {
                     }
                 }
                 let cap_hit = !truncated.is_empty();
+                // Test seam: pause here (holding no lock) so a test can
+                // land a per-file commit before this scan resumes (#526).
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_scan_commit().await;
                 let mut state = self.state.lock().await;
                 if state.index_generation != index_gen {
                     tracing::debug!(
@@ -1550,12 +1554,27 @@ impl Backend {
     /// the map write take the state lock. Open documents are left alone
     /// — the editor's buffer stays authoritative for its path, and the
     /// publish path layers it over the index.
+    ///
+    /// The commit is generation-safe (#526): the snapshot captures the
+    /// current `index_generation`, and the commit lands only when the
+    /// generation has not moved since — mirroring the background scan's
+    /// staleness check. A full scan (or a folder change) that started a
+    /// newer generation while this refresh's blocking read was in flight
+    /// owns the newer bytes (or the newer map), so a delayed commit must
+    /// not install older source over them. The `did_open` guard below is
+    /// a separate authority rule, not a freshness check: an open buffer
+    /// shadows its disk twin regardless of generation. A refresh that
+    /// loses the generation race returns false — its bytes did not land —
+    /// so the caller neither republishes nor retires scans for them.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
-        // Snapshot the owning root and config once: the admission checks
-        // below must agree with each other even if a config reload lands
-        // mid-refresh (a rescan converges anything left over).
-        let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures, eligible, is_open) = {
+        // Snapshot the owning root and config once, plus the index
+        // generation this refresh's commit must still hold when it
+        // lands: the admission checks below must agree with each other
+        // even if a config reload lands mid-refresh (a rescan converges
+        // anything left over), and the commit must not overwrite a
+        // newer scan's bytes (see the generation check at the write).
+        let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures, eligible, is_open, refresh_gen) = {
             let state = self.state.lock().await;
             let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures) =
                 match state.folder_context_for_path(&path_string) {
@@ -1580,6 +1599,7 @@ impl Backend {
                 };
             let eligible = state.eligibility_for_path(&path_string);
             let is_open = state.docs.contains_key(&path_string);
+            let refresh_gen = state.index_generation;
             (
                 walk_root,
                 exclude_anchor,
@@ -1588,6 +1608,7 @@ impl Backend {
                 check_test_fixtures,
                 eligible,
                 is_open,
+                refresh_gen,
             )
         };
         if is_open {
@@ -1620,11 +1641,31 @@ impl Backend {
         .await
         .ok()
         .flatten();
+        // Test seam: pause here (holding no lock) so a test can land a
+        // newer writer before this commit resumes (#526).
+        #[cfg(feature = "test-util")]
+        crate::test_seam::maybe_pause_refresh_commit().await;
         let mut state = self.state.lock().await;
         // A concurrent `did_open` landed while the read was in flight:
         // installing a disk snapshot now would shadow the live buffer's
         // entry on the next publish assembly.
         if state.docs.contains_key(&path_string) {
+            return false;
+        }
+        // A newer index generation started while the blocking read was
+        // in flight (a full scan, a folder change, or a landed refresh
+        // that retired in-flight writers): the newer writer owns the
+        // fresher bytes or the fresher map, and this commit's older
+        // parse must not install over them (#526). Returning false
+        // keeps the caller from republishing or retiring scans for
+        // bytes that never landed; the winning writer owns both.
+        if state.index_generation != refresh_gen {
+            tracing::debug!(
+                path = %path_string,
+                gen = refresh_gen,
+                current = state.index_generation,
+                "discarding stale per-file disk refresh"
+            );
             return false;
         }
         match parsed {

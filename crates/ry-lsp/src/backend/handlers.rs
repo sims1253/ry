@@ -513,8 +513,27 @@ impl LanguageServer for Backend {
         // function of the current disk state. Unreadable files leave the
         // index, matching the walk; a dropped entry that previously
         // carried diagnostics is reconciled by the republish below (#489).
-        self.refresh_disk_entry(std::path::PathBuf::from(&path))
+        let refreshed = self
+            .refresh_disk_entry(std::path::PathBuf::from(&path))
             .await;
+        if refreshed {
+            // The same retirement the watched-file path performs: the
+            // close-time bytes just landed, so a still-current in-flight
+            // background pass — whose walk may have read this file
+            // before the save — must not replace the whole map with its
+            // older snapshot when it commits (#526). Claiming a new
+            // generation retires it; when the retired pass was the
+            // initial index, a fresh pass takes over clearing
+            // `initial_index_pending` so publications never strand.
+            let index_pending = {
+                let mut state = self.state.lock().await;
+                state.index_generation = state.index_generation.wrapping_add(1);
+                state.initial_index_pending
+            };
+            if index_pending {
+                self.spawn_background_index().await;
+            }
+        }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
         self.client

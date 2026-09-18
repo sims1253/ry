@@ -98,8 +98,11 @@ pub fn is_file_eligible_with_limits(
 /// through the helpers shared with the walk, the testthat runner-code
 /// classification, the
 /// shared per-file policy's exclude and depth thirds (reused, not
-/// duplicated), the on-disk size cap measured the way the walk measures
-/// it, and `.Rbuildignore` with `include_build_ignored` rescue — anchored
+/// duplicated), the walk's regular-file entry classification (a
+/// directory named `pkg.R/` passes the extension check but is never
+/// landed, #538), the on-disk size cap measured the way the walk
+/// measures it, and `.Rbuildignore` with `include_build_ignored`
+/// rescue — anchored
 /// exactly like [`discover_r_files`]: excludes at `exclude_anchor`,
 /// includes at `exclude_anchor.unwrap_or(walk_root)`, buildignore at the
 /// nearest `DESCRIPTION` at or above `walk_root`, with nested packages
@@ -248,9 +251,16 @@ pub fn is_single_file_walk_admitted(
     if !is_file_eligible_with_limits(path, walk_root, exclude_anchor, excludes, limits, None) {
         return false;
     }
-    // The walk omits only sizes strictly above the cap.
+    // The walk's file set holds only regular files: its entry
+    // classification descends directories and skips symlinks before the
+    // extension test, so a directory NAMED like a source (`pkg.R/`)
+    // passes the name-based checks above and, directory entries being
+    // small, the size cap too — yet no walk ever lands it (#538).
+    // Unmeasurable entries still pass, exactly like the size rule
+    // (the walk omits only sizes strictly above the cap): the caller's
+    // own read decides a missing or unreadable file.
     if std::fs::metadata(path)
-        .map(|metadata| metadata.len() > limits.max_file_bytes)
+        .map(|metadata| !metadata.is_file() || metadata.len() > limits.max_file_bytes)
         .unwrap_or(false)
     {
         return false;
@@ -1632,6 +1642,61 @@ mod shared_tests {
                 "verdict disagrees with the walk for {relative}"
             );
         }
+    }
+
+    /// A directory named like an R source (`pkg.R/`) passes the
+    /// extension, symlink, and size checks — directory entries are
+    /// small — but the walk's entry classification only ever lands
+    /// regular files in its file set, so the verdict must refuse the
+    /// directory spelling while still admitting the real sources
+    /// inside it (#538).
+    #[test]
+    fn single_file_verdict_refuses_directory_named_like_a_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let directory = root.join("pkg.R");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("inside.R"), "x <- 1\n").unwrap();
+        let config = ry_config::Config::default();
+        let excludes = ry_config::Excludes::from_config(&config);
+        let limits = DiscoveryLimits::from_config(&config);
+        assert!(
+            !is_single_file_walk_admitted(
+                &directory,
+                root,
+                Some(root),
+                &excludes,
+                &config.include_build_ignored,
+                &limits,
+                false,
+            ),
+            "a directory named pkg.R must be refused exactly like the walk refuses it"
+        );
+        // Walk parity: the directory's own spelling never enters the
+        // file set; only the regular file inside it is discovered.
+        let walk = discover_r_files(root, Some(root), &config, false);
+        assert!(
+            !walk.files.contains(&directory),
+            "the walk never lands the directory spelling: {:?}",
+            walk.files
+        );
+        assert!(
+            walk.files.contains(&directory.join("inside.R")),
+            "the regular file inside the directory stays discoverable: {:?}",
+            walk.files
+        );
+        assert!(
+            is_single_file_walk_admitted(
+                &directory.join("inside.R"),
+                root,
+                Some(root),
+                &excludes,
+                &config.include_build_ignored,
+                &limits,
+                false,
+            ),
+            "the verdict keeps admitting the regular file inside"
+        );
     }
 
     /// `renv/` is pruned only inside a package (#524): without a

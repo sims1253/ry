@@ -1875,15 +1875,13 @@ impl Backend {
                     // removal path already cleared and republished.
                     None => return,
                 };
-                let folder_prefix =
-                    format!("{}{}", folder_root.display(), std::path::MAIN_SEPARATOR);
-                let folder_root_string = folder_root.to_string_lossy().into_owned();
+                // Component-based membership: a string prefix breaks
+                // when the folder is the filesystem root (`//` never
+                // prefixes `/project/main.R`).
                 let mut candidates: Vec<&String> = state
                     .disk_files
                     .keys()
-                    .filter(|path| {
-                        path.as_str() == folder_root_string || path.starts_with(&folder_prefix)
-                    })
+                    .filter(|path| std::path::Path::new(path).starts_with(folder_root))
                     .collect();
                 candidates.sort();
                 let mut files: Vec<Arc<SourceFile>> = Vec::new();
@@ -1927,8 +1925,15 @@ impl Backend {
             let context = match resolved {
                 Ok(Ok(context)) => context,
                 Ok(Err(error)) => {
+                    // The scan skips failed groups; here a failed group
+                    // would keep the previous context indefinitely, so
+                    // converge through the full scan instead (its commit
+                    // resolves every group from current state). Removing
+                    // the key would punish the group's siblings on a
+                    // transient failure and disagree with the scan's own
+                    // error behavior.
                     tracing::warn!(%error, "incremental workspace resolution degraded");
-                    return;
+                    break;
                 }
                 Err(error) => {
                     tracing::warn!(%error, "incremental workspace resolution task failed");

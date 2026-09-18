@@ -239,7 +239,13 @@ impl Checker {
             if generic_argument_may_dispatch(&self.typeshed.globals, function_name, actual) {
                 continue;
             }
-            if types_provably_incompatible(actual, &expected) {
+            // A demand-only parameter types a downstream mode demand
+            // (RY110) without asserting the argument's own type: the
+            // declared type is relationally incomplete (e.g.
+            // `vec_cast(x, to)` accepts any `x` castable to `to`), so an
+            // RY092 provable-incompatibility verdict would false-positive
+            // on legal calls. The demand gate below still reads it.
+            if !parameter.demand_only && types_provably_incompatible(actual, &expected) {
                 self.emit(
                     Severity::Error,
                     args[argument_index].span,
@@ -580,6 +586,7 @@ mod argument_matching_tests {
                 type_: None,
                 required: false,
                 default: None,
+                demand_only: false,
             })
             .collect::<Vec<_>>();
         assert_eq!(

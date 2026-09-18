@@ -470,6 +470,16 @@ pub struct ParamSpec {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
+    /// Demand-only parameter: the declared `type` arms downstream mode
+    /// demands (RY110's vacuous-guard gate) but is exempt from RY092's
+    /// provable-incompatibility check. For relational demands a
+    /// per-parameter static type cannot express soundly -- e.g.
+    /// `vctrs::vec_cast(x, to)` accepts any `x` castable to `to`, so a
+    /// numeric `x` type would false-positive on legal cross-type casts
+    /// (`vec_cast("foo", glue())`) -- while the type still names modes
+    /// the callee cannot use, which is exactly what a demand gate reads.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub demand_only: bool,
 }
 
 impl<'de> Deserialize<'de> for ParamSpec {
@@ -487,6 +497,8 @@ impl<'de> Deserialize<'de> for ParamSpec {
             required: bool,
             #[serde(default)]
             default: Option<bool>,
+            #[serde(default)]
+            demand_only: bool,
         }
 
         #[derive(Deserialize)]
@@ -502,12 +514,14 @@ impl<'de> Deserialize<'de> for ParamSpec {
                 type_: None,
                 required: false,
                 default: None,
+                demand_only: false,
             },
             Repr::Object(spec) => Self {
                 name: spec.name,
                 type_: spec.type_,
                 required: spec.required,
                 default: spec.default,
+                demand_only: spec.demand_only,
             },
         })
     }
@@ -1564,6 +1578,14 @@ mod tests {
                 "vec_cast x must admit {member}"
             );
         }
+        // `vec_cast` is relationally polymorphic (`x` need only be
+        // castable to `to`: `vec_cast("foo", glue())` is legal), so the
+        // type arms RY110's demand gate without asserting RY092
+        // incompatibility on legal cross-type casts (issue #479).
+        assert!(
+            x.demand_only,
+            "vec_cast x must be demand-only, not an RY092 assertion"
+        );
     }
 
     #[test]

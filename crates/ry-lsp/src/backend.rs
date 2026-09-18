@@ -1574,14 +1574,15 @@ impl Backend {
         // even if a config reload lands mid-refresh (a rescan converges
         // anything left over), and the commit must not overwrite a
         // newer scan's bytes (see the generation check at the write).
-        let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures, eligible, is_open, refresh_gen) = {
+        let (walk_root, exclude_anchor, excludes, include_build_ignored, limits, check_test_fixtures, eligible, is_open, refresh_gen) = {
             let state = self.state.lock().await;
-            let (walk_root, exclude_anchor, excludes, limits, check_test_fixtures) =
+            let (walk_root, exclude_anchor, excludes, include_build_ignored, limits, check_test_fixtures) =
                 match state.folder_context_for_path(&path_string) {
                     Some(ctx) => (
                         ctx.root.clone(),
                         ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
                         ctx.excludes.clone(),
+                        ctx.config.include_build_ignored.clone(),
                         ry_workspace::DiscoveryLimits::from_config(&ctx.config),
                         ctx.config.check_test_fixtures,
                     ),
@@ -1593,6 +1594,7 @@ impl Backend {
                             .or_else(|| state.root.clone())
                             .unwrap_or_default(),
                         state.root_excludes.clone(),
+                        state.file_config.include_build_ignored.clone(),
                         ry_workspace::DiscoveryLimits::from_config(&state.file_config),
                         state.file_config.check_test_fixtures,
                     ),
@@ -1604,6 +1606,7 @@ impl Backend {
                 walk_root,
                 exclude_anchor,
                 excludes,
+                include_build_ignored,
                 limits,
                 check_test_fixtures,
                 eligible,
@@ -1624,6 +1627,7 @@ impl Backend {
                     &walk_root,
                     Some(&exclude_anchor),
                     &excludes,
+                    &include_build_ignored,
                     &limits,
                     check_test_fixtures,
                 )
@@ -1725,102 +1729,36 @@ impl Backend {
     }
 }
 
-/// Whether one on-disk R file would survive the directory walk's
-/// admission rules: the shared extension set, no symlink, no pruned
-/// ancestor directory (hidden, `target`, `node_modules`, `.Rcheck`, and
-/// `renv`-in-package wherever they appear; `revdep`/`src` only as direct
-/// package children; `tests/testthat/_snaps` only package-relative —
-/// exactly the walk's shapes), the testthat runner-code classification,
-/// and the shared per-file eligibility policy (excludes plus the size
-/// and depth caps, through [`ry_workspace::is_file_eligible_with_limits`]
-/// so the caps cannot drift from the walker's or the open-buffer gate's
-/// reading of them, #488). Runs on the blocking pool next to the read
-/// it guards. Deliberately narrower than a full walk in two documented
-/// ways: `.Rbuildignore` needs package-root-relative pattern state the
-/// walk builds incrementally, and directory-name `exclude` patterns
-/// match the pruned directory entry in the walk but never match a
-/// contained file path through `Excludes::matches` — so a file admitted
-/// here but skipped there converges on the next full rescan instead.
+/// Whether one on-disk R file would survive the directory walk's admission
+/// rules, through the shared [`ry_workspace::is_single_file_walk_admitted`]
+/// verdict: the extension set, symlink handling, pruned ancestor shapes,
+/// testthat runner-code classification, the shared per-file eligibility
+/// policy (excludes plus the size and depth caps, so the caps cannot drift
+/// from the walker's or the open-buffer gate's reading of them, #488),
+/// ancestor `exclude` patterns, and `.Rbuildignore` with
+/// `include_build_ignored` rescue (#524). Runs on the blocking pool next to
+/// the read it guards. Deliberately narrower than a full walk in one
+/// documented way: the `index.max-files` count is not a path property, so
+/// the commit in [`Backend::refresh_disk_entry`] enforces it against live
+/// entry accounting instead (#525).
 fn single_file_admitted(
     path: &Path,
     walk_root: &Path,
     exclude_anchor: Option<&Path>,
     excludes: &ry_config::Excludes,
+    include_build_ignored: &[String],
     limits: &ry_workspace::DiscoveryLimits,
     check_test_fixtures: bool,
 ) -> bool {
-    if !ry_workspace::is_r_source_path(path) {
-        return false;
-    }
-    // The walk never follows symlinks; classify the entry itself.
-    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
-        return false;
-    }
-    let package_root = path.parent().and_then(|parent| {
-        parent
-            .ancestors()
-            .find(|candidate| candidate.join("DESCRIPTION").is_file())
-    });
-    let mut ancestor = path.parent();
-    while let Some(dir) = ancestor {
-        if dir == walk_root || walk_root.as_os_str().is_empty() {
-            break;
-        }
-        let pruned = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.starts_with('.')
-                    || name == "target"
-                    || name == "node_modules"
-                    || name.ends_with(".Rcheck")
-                    || (name == "renv" && package_root.is_some())
-                    || package_root.is_some_and(|root| {
-                        // Direct package children, like the walk's
-                        // `is_excluded_package_directory`.
-                        (name == "revdep" || name == "src") && dir.parent() == Some(root)
-                        // Package-relative `tests/testthat/_snaps`.
-                        || name == "_snaps"
-                            && dir.parent().and_then(|parent| {
-                                parent.strip_prefix(root).ok().map(|relative| {
-                                    relative == std::path::Path::new("tests").join("testthat")
-                                })
-                            }) == Some(true)
-                    })
-            });
-        if pruned {
-            return false;
-        }
-        ancestor = dir.parent();
-    }
-    if !check_test_fixtures && ry_workspace::is_test_fixture_path(path) {
-        return false;
-    }
-    // Disk files pass no content length: discovery measures the file on
-    // disk, and the decoded source length is a transcode away from that
-    // measurement — so the size gate reads `fs::metadata` here while the
-    // open-buffer gate measures buffer text (#488).
-    let content_len = None;
-    if !ry_workspace::is_file_eligible_with_limits(
+    ry_workspace::is_single_file_walk_admitted(
         path,
         walk_root,
         exclude_anchor,
         excludes,
+        include_build_ignored,
         limits,
-        content_len,
-    ) {
-        return false;
-    }
-    // The shared policy's size gate is skipped for disk files (see
-    // above); apply the walk's own measurement instead: discovery omits
-    // only sizes strictly above the cap.
-    if std::fs::metadata(path)
-        .map(|metadata| metadata.len() > limits.max_file_bytes)
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    true
+        check_test_fixtures,
+    )
 }
 
 /// Load the root `ry.toml` and the user stubs it declares. A missing or

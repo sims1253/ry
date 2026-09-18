@@ -8,8 +8,8 @@ mod discovery;
 mod native;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
-    is_file_eligible_with_limits, is_r_source_path, is_test_fixture_path, is_within_depth,
-    is_within_file_bytes, rbuildignore_pattern,
+    is_file_eligible_with_limits, is_r_source_path, is_single_file_walk_admitted,
+    is_test_fixture_path, is_within_depth, is_within_file_bytes, rbuildignore_pattern,
 };
 use discovery::{is_r_source_name, is_testthat_code_name};
 

@@ -1852,12 +1852,16 @@ impl Backend {
         package_root: &Option<PathBuf>,
     ) {
         for _ in 0..2 {
-            // Snapshot the group's disk files, config, stubs, and the
-            // generation the install must still hold. Open buffers stay
-            // out: the scan resolves disk state only, and the publish
-            // path layers open documents over it afterwards.
+            // Snapshot the folder's owned (path, file) pairs plus config,
+            // stubs, and the generation the install must still hold. Open
+            // buffers stay out: the scan resolves disk state only, and
+            // the publish path layers open documents over it afterwards.
+            // Only clones move under the lock — the package-root grouping
+            // below probes the filesystem (ancestor DESCRIPTION stats per
+            // distinct directory) and runs inside the blocking closure,
+            // like the scan's own grouping.
             struct Snapshot {
-                files: Vec<Arc<SourceFile>>,
+                candidates: Vec<(String, Arc<SourceFile>)>,
                 config: ry_config::Config,
                 stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
                 resolution_root: PathBuf,
@@ -1878,30 +1882,15 @@ impl Backend {
                 // Component-based membership: a string prefix breaks
                 // when the folder is the filesystem root (`//` never
                 // prefixes `/project/main.R`).
-                let mut candidates: Vec<&String> = state
+                let mut candidates: Vec<(String, Arc<SourceFile>)> = state
                     .disk_files
-                    .keys()
-                    .filter(|path| std::path::Path::new(path).starts_with(folder_root))
+                    .iter()
+                    .filter(|(path, _)| std::path::Path::new(path).starts_with(folder_root))
+                    .map(|(path, file)| (path.clone(), Arc::clone(file)))
                     .collect();
-                candidates.sort();
-                let mut files: Vec<Arc<SourceFile>> = Vec::new();
-                let mut root_cache: HashMap<Option<&std::path::Path>, Option<PathBuf>> =
-                    HashMap::new();
-                for path in candidates {
-                    let fs_path = std::path::Path::new(path);
-                    let key = fs_path.parent();
-                    let root = root_cache
-                        .entry(key)
-                        .or_insert_with(|| ry_workspace::enclosing_package_root(fs_path))
-                        .clone();
-                    if root == *package_root
-                        && let Some(file) = state.disk_files.get(path)
-                    {
-                        files.push(Arc::clone(file));
-                    }
-                }
+                candidates.sort_by(|a, b| a.0.cmp(&b.0));
                 Snapshot {
-                    files,
+                    candidates,
                     config: ctx.config.clone(),
                     stubs: Arc::clone(&ctx.stubs),
                     resolution_root: package_root
@@ -1910,8 +1899,22 @@ impl Backend {
                     generation: state.index_generation,
                 }
             };
+            let package_root_clone = package_root.clone();
             let resolved = tokio::task::spawn_blocking(move || {
-                let files: Vec<&SourceFile> = snapshot.files.iter().map(Arc::as_ref).collect();
+                let mut files: Vec<&SourceFile> = Vec::new();
+                let mut root_cache: HashMap<Option<&std::path::Path>, Option<PathBuf>> =
+                    HashMap::new();
+                for (path, file) in &snapshot.candidates {
+                    let fs_path = std::path::Path::new(path);
+                    let key = fs_path.parent();
+                    let root = root_cache
+                        .entry(key)
+                        .or_insert_with(|| ry_workspace::enclosing_package_root(fs_path))
+                        .clone();
+                    if root == package_root_clone {
+                        files.push(file.as_ref());
+                    }
+                }
                 ry_workspace::resolve_workspace_context(
                     &snapshot.resolution_root,
                     &snapshot.config,
@@ -1940,6 +1943,11 @@ impl Backend {
                     return;
                 }
             };
+            // Installed: degraded-scope warnings keep scan parity (the
+            // scan logs one line per scope per generation). Cloned before
+            // the insert moves the context; never re-read — a concurrent
+            // replacement's scopes are that writer's duty to log.
+            let degraded = context.degraded_scopes.clone();
             {
                 let mut state = self.state.lock().await;
                 if state.index_generation != snapshot.generation {
@@ -1960,19 +1968,6 @@ impl Backend {
                     return;
                 }
             }
-            // Installed: degraded-scope warnings keep scan parity (the
-            // scan logs one line per scope per generation).
-            let degraded = {
-                self.state
-                    .lock()
-                    .await
-                    .folder_contexts
-                    .iter()
-                    .find(|ctx| ctx.root == *folder_root)
-                    .and_then(|ctx| ctx.workspace_contexts.get(package_root))
-                    .map(|context| context.degraded_scopes.clone())
-                    .unwrap_or_default()
-            };
             for (path, reason) in &degraded {
                 self.client
                     .log_message(

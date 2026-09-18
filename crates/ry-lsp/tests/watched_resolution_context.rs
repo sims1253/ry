@@ -166,7 +166,7 @@ fn watched_edit_moves_load_bindings_to_the_new_line() {
                 .any(|diagnostic| diagnostic["code"] == json!("RY010")
                     && diagnostic["message"]
                         .as_str()
-                        .is_some_and(|message| message.contains('a'))
+                        .is_some_and(|message| message.contains("`a`"))
                     && line_of(diagnostic) == 0),
             "the use of `a` before the load() line must report RY010: {created}"
         );

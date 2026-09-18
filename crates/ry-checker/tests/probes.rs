@@ -295,6 +295,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\n",
         negative: "f <- function(x) {\n  if (is.numeric(x) || (length(x) > 0 && all(is.na(x)))) sqrt(x)\n}\n",
     },
+    Probe {
+        code: "RY111",
+        note: "`TRUE`/`FALSE` call argument for an identically-named formal of an enclosing function (callee has the formal)",
+        positive: "f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n",
+        negative: "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n",
+    },
 ];
 
 #[test]

@@ -1469,6 +1469,16 @@ impl Checker {
         args: &[Arg],
         span: Span,
     ) {
+        // RY111's identical-name shadow check runs in both validation
+        // modes: it reads the same resolved formals (user table or stub)
+        // the arity checks below consult, and its own gates decide.
+        self.check_constant_shadowed_arguments(
+            lookup_name,
+            resolution.user_function.as_ref(),
+            resolution.resolved_sig.as_ref(),
+            resolution.lexical_callable,
+            args,
+        );
         if self.validate_user_call_arguments {
             if let Some(user_function) = resolution.user_function.as_ref() {
                 self.check_user_call_arguments(lookup_name, user_function, args, span);

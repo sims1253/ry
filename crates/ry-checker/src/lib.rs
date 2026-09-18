@@ -914,6 +914,9 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 pub(crate) struct EnclosingFormals {
     pub(crate) names: HashSet<String>,
     pub(crate) has_dots: bool,
+    /// The function's own span, keying [`Checker::formal_reads`] for
+    /// RY111's dead-formal gate.
+    pub(crate) function_span: Span,
 }
 
 pub struct Checker {
@@ -1043,6 +1046,19 @@ pub struct Checker {
     // check consults, so a demand on a closure parameter does not
     // consume an enclosing function's same-named guard.
     formal_shadows: Vec<(String, Span)>,
+    // RY111's dead-formal gate, indexed once per pass-3 run by
+    // `emit_diagnostics`: for every function the file defines, the set
+    // of its own formals that its body reads anywhere (nested closure
+    // bodies included). A call site hardcoding a constant for an
+    // enclosing formal fires only when NO read exists -- a body that
+    // branches on, forwards, or validates the formal demonstrates the
+    // caller's value is handled, making per-site constants chosen
+    // child semantics rather than the shadowing mistake (the corpus
+    // idioms: dbplyr's sql_render methods forward `subquery` at their
+    // own wrapper, stringr's detect guards `if (ignore_case)` before
+    // its fixed `regex(...)`, tibble's set_tidy_names forwards
+    // `quiet = quiet` at the user-facing call).
+    formal_reads: FxMap<Span, HashSet<String>>,
     // Spans of function literals that are dynamic-construction
     // placeholders: `x <- function(...)` followed, before any rebind of
     // `x`, by `formals(x) <- ...` / `body(x) <- ...` in the same lexical
@@ -1203,6 +1219,7 @@ impl Checker {
             vacuous_map_results: FxMap::default(),
             stmt_continuations: HashMap::new(),
             formal_shadows: Vec::new(),
+            formal_reads: FxMap::default(),
             dynamic_closure_literals: FxMap::default(),
         }
     }
@@ -1342,11 +1359,13 @@ impl Checker {
         self.vacuous_map_results.clear();
         self.stmt_continuations.clear();
         self.formal_shadows.clear();
+        self.formal_reads.clear();
         infer::vacuous::index_statement_continuations(
             &file.stmts,
             &mut self.stmt_continuations,
             &mut self.formal_shadows,
         );
+        infer::index_formal_reads(&file.stmts, &mut self.formal_reads);
         self.index_vacuous_helpers(&file.stmts);
         self.dynamic_closure_literals.clear();
         infer::dynamic_closure::index_dynamic_closure_literals(

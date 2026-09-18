@@ -501,6 +501,25 @@ impl State {
             .find(|ctx| path.starts_with(&ctx.root))
     }
 
+    /// Whether an indexed `disk_files` entry consumes `budget_root`'s
+    /// `index.max-files` budget: entries attribute to their INNERMOST
+    /// containing root (longest-prefix, the same ownership
+    /// [`folder_context_for_path`](Self::folder_context_for_path)
+    /// applies), so in a nested multi-root workspace a file under an
+    /// inner root counts toward the inner root's cap — never the
+    /// outer's — matching how the walk caps each root's scan
+    /// independently (#525). `Path::starts_with` is already
+    /// component-wise; the innermost rule is what the plain prefix
+    /// count gets wrong.
+    fn entry_consumes_root_budget(&self, existing: &std::path::Path, budget_root: &Path) -> bool {
+        existing.starts_with(budget_root)
+            && !self.folder_contexts.iter().any(|ctx| {
+                ctx.root.as_path() != budget_root
+                    && ctx.root.starts_with(budget_root)
+                    && existing.starts_with(&ctx.root)
+            })
+    }
+
     /// Whether the server should analyze and publish diagnostics for
     /// `doc_path`: a folder set to `enable: false` is skipped entirely;
     /// otherwise eligibility follows the owning folder's discovery rules —
@@ -1706,7 +1725,10 @@ impl Backend {
                         .disk_files
                         .keys()
                         .filter(|existing| {
-                            std::path::Path::new(existing.as_str()).starts_with(&budget_root)
+                            state.entry_consumes_root_budget(
+                                std::path::Path::new(existing.as_str()),
+                                &budget_root,
+                            )
                         })
                         .count()
                         >= limits.max_files;

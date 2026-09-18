@@ -79,15 +79,24 @@ async fn observe_current_index(
     use2_uri: &str,
     version: i32,
 ) -> Value {
+    observe_current_index_with(session, use2_uri, version, USE2).await
+}
+
+/// Drive one fresh publication of the committed index with a no-op edit
+/// carrying `text`, and return it. Same rendezvous contract as
+/// [`observe_current_index`], for observers whose buffer text differs.
+async fn observe_current_index_with(
+    session: &mut harness::ClientSession,
+    uri: &str,
+    version: i32,
+    text: &str,
+) -> Value {
     let mark = session.publication_mark();
     session
-        .change(use2_uri, version, json!([{ "text": USE2 }]))
+        .change(uri, version, json!([{ "text": text }]))
         .await
         .unwrap();
-    session
-        .published_diagnostics_after(use2_uri, mark)
-        .await
-        .unwrap()
+    session.published_diagnostics_after(uri, mark).await.unwrap()
 }
 
 /// Open `use2.R` and return its first publication: publications are gated
@@ -261,6 +270,106 @@ fn refresh_of_indexed_file_at_cap_still_lands() {
         assert!(
             !has_ry040(&after),
             "refreshing the indexed a.R at the cap must still land: {after}"
+        );
+
+        join_session(session, server).await;
+    });
+}
+
+/// Observer buffer inside the inner root: it is created after the
+/// settle proof, so it never enters the index, and opening it observes
+/// the inner scope (open documents never consume budget).
+const OBSERVER_INNER: &str = "y <- inner_marker\n";
+/// A definition under the inner root, under its own name.
+const INNERDEFS: &str = "inner_marker <- function() 1L\n";
+/// A pre-existing inner file so the inner root is non-empty at the
+/// initial scan; it shares the outer path prefix while attributing to
+/// the inner root.
+const KEEP: &str = "keep <- 1L\n";
+
+/// Nested roots must not consume each other's budget (#525): the outer
+/// root holds two of its four budgeted files and the inner root holds
+/// one of its own, so a new OUTER-owned file still lands — the inner
+/// entries share the path prefix but attribute to the inner root. A
+/// plain prefix count sees the map at the cap and wrongly refuses it.
+#[test]
+fn nested_inner_entries_do_not_consume_outer_budget() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture
+            .write_file("ry.toml", "[index]\nmax-files = 4\n")
+            .unwrap();
+        // Everything the budget counts is created BEFORE the session
+        // starts, so the initial map holds exactly these three files
+        // regardless of scan timing: two outer-owned, one inner-owned.
+        fixture.write_file("a.R", "f <- function() 1L\n").unwrap();
+        fixture.write_file("use2.R", USE2).unwrap();
+        std::fs::create_dir(fixture.path("pkg")).unwrap();
+        fixture.write_file("pkg/keep.R", KEEP).unwrap();
+        let pkg = fixture.path("pkg");
+        // Nested workspace: the outer root and `pkg` below it are both
+        // folder roots, so the inner scan caps independently while its
+        // entries share the outer path prefix in the one `disk_files` map.
+        let (mut session, server) =
+            spawn_session(&[fixture.root(), &pkg], json!({}), None).await;
+        let a_uri = file_uri(&fixture.path("a.R"));
+        sync_barrier(&mut session, &a_uri).await;
+
+        // The initial scan settled (publications gate on it): both names
+        // start unbound.
+        let use2_uri = file_uri(&fixture.path("use2.R"));
+        let first = open_use2_settled(&mut session, &use2_uri).await;
+        assert_eq!(
+            count_ry010(&first),
+            1,
+            "the outer name must be unbound before c.R exists: {first}"
+        );
+
+        // The inner observer is created after the settle proof, so it
+        // never enters the index; opening it observes the inner scope.
+        fixture.write_file("pkg/obs.R", OBSERVER_INNER).unwrap();
+        let obs_uri = file_uri(&fixture.path("pkg/obs.R"));
+        let obs_mark = session.publication_mark();
+        session.open(&obs_uri, 1, OBSERVER_INNER).await.unwrap();
+        let obs_first = session
+            .published_diagnostics_after(&obs_uri, obs_mark)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_ry010(&obs_first),
+            1,
+            "the inner name must be unbound before b.R exists: {obs_first}"
+        );
+
+        // Inner-owned creation lands under the inner root's own budget
+        // (one of four), which the inner observer proves.
+        fixture.write_file("pkg/b.R", INNERDEFS).unwrap();
+        let b_uri = file_uri(&fixture.path("pkg/b.R"));
+        notify_and_rendezvous(&mut session, &b_uri, true).await;
+        let inner_after =
+            observe_current_index_with(&mut session, &obs_uri, 2, OBSERVER_INNER).await;
+        assert_eq!(
+            count_ry010(&inner_after),
+            0,
+            "b.R is within the inner root's own budget and must land: {inner_after}"
+        );
+
+        // Outer-owned creation: the outer root's own subset is two of
+        // four, so this must land even though the prefix count under
+        // the outer root (two outer files plus inner keep.R and b.R)
+        // sits at the cap.
+        fixture.write_file("c.R", NEWDEFS).unwrap();
+        let c_uri = file_uri(&fixture.path("c.R"));
+        notify_and_rendezvous(&mut session, &c_uri, true).await;
+        let after = observe_current_index(&mut session, &use2_uri, 2).await;
+        assert_eq!(
+            count_ry010(&after),
+            0,
+            "c.R is within the outer root's own budget and must land: {after}"
         );
 
         join_session(session, server).await;

@@ -54,7 +54,10 @@ impl Checker {
 /// select individual children and carry scope: each identifier
 /// attributes to the *innermost* frame whose formals contain the name,
 /// so a nested closure redeclaring `na.rm` shadows the outer formal
-/// for its subtree exactly like R's scoping; a plain-identifier
+/// for its subtree exactly like R's scoping, and a `for` loop's
+/// variable does the same for its body subtree (the binding is a write
+/// of the promise like any assignment target, while the iterated
+/// expression evaluates before it and still reads); a plain-identifier
 /// assignment target is a *write* of the promise, not a read of the
 /// caller's value; and formal default expressions (`force = na.rm`)
 /// evaluate in the function's own scope and count as reads of the
@@ -126,10 +129,30 @@ fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, Has
                 scan_stmts(else_, frames, map);
             }
         }
-        Stmt::For { iter, body, .. } => {
-            // The loop variable is a write; the iterated value is a read.
+        Stmt::For {
+            name,
+            iter,
+            body,
+            span,
+            ..
+        } => {
+            // The iterated value is evaluated before the binding, so its
+            // reads attribute normally (`for (p in p)` forces the
+            // promise). The binding itself is a write of the promise,
+            // like a plain assignment target, and the loop variable
+            // shadows an identically-named formal for the body subtree
+            // exactly like a closure redeclaring it: push a shadow frame
+            // so innermost-owner attribution puts body reads of `name`
+            // on the loop variable instead. The frame is popped without
+            // an entry -- it is a binding, not a function.
             scan_expr(iter, frames, map);
+            frames.push(ReadFrame {
+                span: *span,
+                formals: HashSet::from([semantic_argument_name(name).to_owned()]),
+                reads: HashSet::new(),
+            });
             scan_stmts(body, frames, map);
+            frames.pop();
         }
         Stmt::While { cond, body, .. } => {
             scan_expr(cond, frames, map);
@@ -517,13 +540,15 @@ impl Checker {
     ///   `return(...)` value, a sibling formal's default (`force = p`),
     ///   or a capturing closure's read -- [`index_formal_reads`]). Reads
     ///   attribute to the innermost function owning the name, so a nested
-    ///   closure redeclaring it does not discharge the outer formal, and
-    ///   a plain assignment target is a *write* of the promise, not a
-    ///   read of the caller's value. A read demonstrates the author
-    ///   handles the caller's value, so per-site constants are chosen
-    ///   child semantics; without one, the formal exists only in the
-    ///   signature, and the constant silently replaces the caller's
-    ///   entire control over it -- haven's exact shape.
+    ///   closure redeclaring it does not discharge the outer formal (a
+    ///   `for` loop's identically-named variable shadows it for its body
+    ///   subtree the same way), and a plain assignment target is a
+    ///   *write* of the promise, not a read of the caller's value. A read
+    ///   demonstrates the author handles the caller's value, so
+    ///   per-site constants are chosen child semantics; without one, the
+    ///   formal exists only in the signature, and the constant silently
+    ///   replaces the caller's entire control over it -- haven's exact
+    ///   shape.
     /// * *literal value*: `TRUE`/`FALSE` are reserved words, so the
     ///   constant cannot be a rebinding (`T`/`F` are ordinary identifiers
     ///   and stay silent). `NA` is excluded -- a typed hole, not a
@@ -1217,6 +1242,42 @@ mod constant_shadowing_tests {
         ));
         assert!(!fires(
             "f <- function(x, na.rm = FALSE) {\n  g <- function(y, keep = na.rm) NULL\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+    }
+
+    /// The dead-formal index's loop-variable rule (review-driven, PR
+    /// #543): `for (p in iter)` binds `p` for its body subtree exactly
+    /// like a closure redeclaring the formal, so a read of the loop
+    /// variable inside the body is not a read of the caller's value --
+    /// while the iterated expression evaluates *before* the binding and
+    /// still counts.
+    #[test]
+    fn dead_formal_index_respects_loop_variable_shadowing() {
+        // Reading the loop variable inside the body does not consume the
+        // caller's promise: the formal stays dead and the hardcode fires.
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in x) print(na.rm)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // The review probe shape: the body never reads the name at all
+        // (the call's tag is not an identifier read), so the gate fires.
+        assert!(fires(
+            "g <- function(x, name = TRUE) x\nf <- function(x, name = FALSE) {\n  for (name in c(1, 2)) g(x, name = TRUE)\n}\n"
+        ));
+        // A closure inside the loop body captures the loop variable, not
+        // the enclosing formal (innermost-owner attribution).
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in x) {\n    g <- function() print(na.rm)\n    g()\n  }\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // The iterated expression is evaluated before the binding, so
+        // `for (p in p)` forces the promise: a genuine read that
+        // discharges.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in na.rm) print(na.rm)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // A loop over a different variable shadows nothing: body reads
+        // of the formal still discharge the gate.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (v in x) print(v)\n  if (na.rm) x else x\n}\n"
         ));
     }
 

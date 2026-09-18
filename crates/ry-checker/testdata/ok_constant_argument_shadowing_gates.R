@@ -96,3 +96,11 @@ f_captured_read <- function(x, na.rm = FALSE) {
   g(x)
   median(x, na.rm = TRUE)
 }
+# A read inside a return value is still a read, and a formal default
+# naming a sibling formal consumes the caller's value.
+f_return_read <- function(x, na.rm = FALSE) {
+  return(if (na.rm) x else median(x, na.rm = FALSE))
+}
+f_default_reads_sibling <- function(x, na.rm = FALSE, force = na.rm) {
+  median(x, na.rm = TRUE)
+}

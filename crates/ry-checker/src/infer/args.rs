@@ -2,90 +2,214 @@
 
 use super::*;
 
-/// RY111's dead-formal index: for every function the file defines, the
-/// set of that function's own formals its body reads anywhere (nested
-/// closure bodies included, since a captured read still handles the
-/// caller's value). Keyed by the function's span -- the same span
-/// [`crate::EnclosingFormals::function_span`] pushes onto the frame
-/// stack -- and computed once per pass-3 run in the `emit_diagnostics`
-/// prologue, the same shape RY110's continuation/shadow indexes use.
-/// A missing entry means no read was found (the function may not even
-/// be indexed): the dead-formal gate treats that as dead, the firing
-/// direction.
-pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, HashSet<String>>) {
-    for statement in stmts {
-        index_formal_reads_stmt(statement, map);
+/// The callee resolution the argument rules share: a collected user
+/// definition shadows the typeshed stub, and a lexical callable
+/// resolves to neither (its formals are unknown at the call site). In
+/// the non-validating mode a same-named `FnTable` entry shadows the
+/// stub as well, mirroring the precedence `check_call_arguments` has
+/// always applied -- one copy, so RY090/RY091/RY092 and RY111's
+/// identical-name gate cannot drift apart.
+pub(crate) enum ResolvedCallee<'a> {
+    User(&'a UserFn),
+    Stub(&'a FunctionSig),
+    Unknown,
+}
+
+impl Checker {
+    pub(crate) fn resolve_callee<'a>(
+        &self,
+        function_name: &str,
+        user_function: Option<&'a UserFn>,
+        resolved_sig: Option<&'a FunctionSig>,
+        lexical_callable: bool,
+    ) -> ResolvedCallee<'a> {
+        if let Some(user_function) = user_function {
+            ResolvedCallee::User(user_function)
+        } else if !lexical_callable
+            && (self.validate_user_call_arguments || !self.fn_table.fns.contains_key(function_name))
+            && let Some(signature) = resolved_sig
+        {
+            ResolvedCallee::Stub(signature)
+        } else {
+            ResolvedCallee::Unknown
+        }
     }
 }
 
-fn index_formal_reads_stmt(stmt: &Stmt, map: &mut FxMap<Span, HashSet<String>>) {
+/// RY111's dead-formal index: for every function the file defines, the
+/// set of that function's own formals its body reads. Keyed by the
+/// function's span and computed once per pass-3 run in the
+/// `emit_diagnostics` prologue, the same shape RY110's
+/// continuation/shadow indexes use. `EnclosingFormals::function_span`
+/// pushes exactly these spans for named assignments
+/// (`g <- function(...)`, `infer/mod.rs`'s assign arm) and statement
+/// definitions; an expression-position literal's entry exists too, but
+/// nothing inside such a literal emits today (its body is only inferred
+/// in discarding mode), so the entry simply waits for the day it is
+/// walked. A missing entry means no read was found: the dead-formal
+/// gate treats that as dead, the firing direction.
+///
+/// The scan is a hand-rolled recursion rather than the shared
+/// `ry_core` walker (like RY109's force analysis) because its rules
+/// select individual children and carry scope: each identifier
+/// attributes to the *innermost* frame whose formals contain the name,
+/// so a nested closure redeclaring `na.rm` shadows the outer formal
+/// for its subtree exactly like R's scoping; a plain-identifier
+/// assignment target is a *write* of the promise, not a read of the
+/// caller's value; and formal default expressions (`force = na.rm`)
+/// evaluate in the function's own scope and count as reads of the
+/// sibling formals they name.
+pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, HashSet<String>>) {
+    let mut frames: Vec<ReadFrame> = Vec::new();
+    scan_stmts(stmts, &mut frames, map);
+}
+
+/// One function on the scan stack: its span (the entry key), its own
+/// formal names, and the reads attributed to it so far.
+struct ReadFrame {
+    span: Span,
+    formals: HashSet<String>,
+    reads: HashSet<String>,
+}
+
+/// Enter one function: push its frame, scan its defaults and body, and
+/// record the entry. Nested functions encountered on the way push their
+/// own frames, so the whole file is indexed in a single pass.
+fn scan_function(
+    params: &[Param],
+    body: &[Stmt],
+    span: Span,
+    frames: &mut Vec<ReadFrame>,
+    map: &mut FxMap<Span, HashSet<String>>,
+) {
+    frames.push(ReadFrame {
+        span,
+        formals: params
+            .iter()
+            .filter(|parameter| parameter.name != "...")
+            .map(|parameter| semantic_argument_name(&parameter.name).to_owned())
+            .collect(),
+        reads: HashSet::new(),
+    });
+    // Formal defaults evaluate in the function's own scope: a default
+    // naming a sibling formal (`force = na.rm`) consumes the caller's
+    // value and is a read.
+    for parameter in params {
+        if let Some(default) = &parameter.default {
+            scan_expr(default, frames, map);
+        }
+    }
+    scan_stmts(body, frames, map);
+    let frame = frames.pop().expect("scan_function pushed a frame");
+    map.insert(frame.span, frame.reads);
+}
+
+fn scan_stmts(stmts: &[Stmt], frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+    for statement in stmts {
+        scan_stmt(statement, frames, map);
+    }
+}
+
+fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
     match stmt {
         Stmt::Assign { target, value, .. } => {
-            index_formal_reads_expr(target, map);
-            index_formal_reads_expr(value, map);
+            scan_target(target, frames, map);
+            scan_expr(value, frames, map);
         }
-        Stmt::Expr(expression) => index_formal_reads_expr(expression, map),
+        Stmt::Expr(expression) => scan_expr(expression, frames, map),
         Stmt::If {
             cond, then, else_, ..
         } => {
-            index_formal_reads_expr(cond, map);
-            index_formal_reads(then, map);
+            scan_expr(cond, frames, map);
+            scan_stmts(then, frames, map);
             if let Some(else_) = else_ {
-                index_formal_reads(else_, map);
+                scan_stmts(else_, frames, map);
             }
         }
         Stmt::For { iter, body, .. } => {
-            index_formal_reads_expr(iter, map);
-            index_formal_reads(body, map);
+            // The loop variable is a write; the iterated value is a read.
+            scan_expr(iter, frames, map);
+            scan_stmts(body, frames, map);
         }
         Stmt::While { cond, body, .. } => {
-            index_formal_reads_expr(cond, map);
-            index_formal_reads(body, map);
+            scan_expr(cond, frames, map);
+            scan_stmts(body, frames, map);
         }
         Stmt::FunctionDef { params, body, span } => {
-            index_formal_function(params, body, *span, map);
-            index_formal_reads(body, map);
+            scan_function(params, body, *span, frames, map);
         }
-        Stmt::Return { .. } => {}
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                scan_expr(value, frames, map);
+            }
+        }
     }
 }
 
-fn index_formal_reads_expr(expr: &Expr, map: &mut FxMap<Span, HashSet<String>>) {
+/// An assignment target: a plain identifier root is a *write* of the
+/// promise (the caller's value is replaced without being read), so it
+/// is not a read. Complex targets keep their evaluated parts: `x[p] <- v`
+/// reads `p`, and the root identifier of each index level stays a write.
+fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
+    match expr {
+        Expr::Ident { .. } => {}
+        Expr::Index { base, args, .. } => {
+            scan_target(base, frames, map);
+            for argument in args {
+                scan_expr(&argument.value, frames, map);
+            }
+        }
+        other => scan_expr(other, frames, map),
+    }
+}
+
+fn scan_expr(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, HashSet<String>>) {
     match expr {
         Expr::Function {
             params, body, span, ..
-        } => {
-            index_formal_function(params, body, *span, map);
-            // Nested function literals get their own entries below; the
-            // outer function's read set (computed above) already includes
-            // them, which is the conservative direction for the gate.
-            index_formal_reads(body, map);
-        }
-        Expr::Block { body, .. } => index_formal_reads(body, map),
+        } => scan_function(params, body, *span, frames, map),
+        Expr::Block { body, .. } => scan_stmts(body, frames, map),
         Expr::Call { func, args, .. } => {
-            index_formal_reads_expr(func, map);
+            scan_expr(func, frames, map);
+            // Argument tags are names, not identifier reads; the values
+            // are (`missing(p)` arrives as an identifier argument).
             for argument in args {
-                index_formal_reads_expr(&argument.value, map);
+                scan_expr(&argument.value, frames, map);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            index_formal_reads_expr(lhs, map);
-            index_formal_reads_expr(rhs, map);
+            scan_expr(lhs, frames, map);
+            scan_expr(rhs, frames, map);
         }
-        Expr::UnaryOp { expr, .. } => index_formal_reads_expr(expr, map),
+        Expr::UnaryOp { expr, .. } => scan_expr(expr, frames, map),
         Expr::Index { base, args, .. } => {
-            index_formal_reads_expr(base, map);
+            scan_expr(base, frames, map);
             for argument in args {
-                index_formal_reads_expr(&argument.value, map);
+                scan_expr(&argument.value, frames, map);
             }
         }
         Expr::If {
             cond, then, else_, ..
         } => {
-            index_formal_reads_expr(cond, map);
-            index_formal_reads_expr(then, map);
+            scan_expr(cond, frames, map);
+            scan_expr(then, frames, map);
             if let Some(else_) = else_ {
-                index_formal_reads_expr(else_, map);
+                scan_expr(else_, frames, map);
+            }
+        }
+        // Attribute to the innermost frame owning the name: a nested
+        // function's same-named formal shadows the outer one for its
+        // subtree, and a captured read (no inner formal) still handles
+        // the owning function's caller value -- the conservative,
+        // quiet direction.
+        Expr::Ident { name, .. } => {
+            let tag = semantic_argument_name(name);
+            if let Some(frame) = frames
+                .iter_mut()
+                .rev()
+                .find(|frame| frame.formals.contains(tag))
+            {
+                frame.reads.insert(tag.to_owned());
             }
         }
         Expr::Logical(_, _)
@@ -94,47 +218,9 @@ fn index_formal_reads_expr(expr: &Expr, map: &mut FxMap<Span, HashSet<String>>) 
         | Expr::String(_, _)
         | Expr::Null(_)
         | Expr::Na(_, _)
-        | Expr::Ident { .. }
         | Expr::Unknown(_)
         | Expr::Missing(_) => {}
     }
-}
-
-/// One function's read set: its own formals (`...` excluded -- it binds
-/// no name) intersected with every identifier its body mentions. The
-/// walk is the shared `ry_core` walker with every region included, so
-/// `missing(p)` (an identifier argument), an `if (p)` guard, a `f(p)`
-/// validation, and a `k = p` forward all count as reads.
-fn index_formal_function(
-    params: &[Param],
-    body: &[Stmt],
-    span: Span,
-    map: &mut FxMap<Span, HashSet<String>>,
-) {
-    use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-    use std::ops::ControlFlow;
-    let formals: HashSet<&str> = params
-        .iter()
-        .filter(|parameter| parameter.name != "...")
-        .map(|parameter| semantic_argument_name(&parameter.name))
-        .collect();
-    if formals.is_empty() {
-        return;
-    }
-    let mut reads: HashSet<String> = HashSet::new();
-    let _ = walk_stmts(
-        body,
-        Walk::ALL,
-        |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Ident { name, .. }) = node
-                && formals.contains(semantic_argument_name(name))
-            {
-                reads.insert(semantic_argument_name(name).to_owned());
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
-    map.insert(span, reads);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -426,11 +512,16 @@ impl Checker {
     ///   different name and the constant is the documented behavior.
     /// * *dead formal*: the owning function must never read the formal
     ///   anywhere in its body (an `if (p)` guard, a `f(p)` validation, a
-    ///   `k = p` forward at another call, `missing(p)`, nested closure
-    ///   bodies included -- [`index_formal_reads`]). A read demonstrates
-    ///   the author handles the caller's value, so per-site constants are
-    ///   chosen child semantics; without one, the formal exists only in
-    ///   the signature, and the constant silently replaces the caller's
+    ///   `k = p` forward at another call, `missing(p)`, a read inside a
+    ///   `return(...)` value, a sibling formal's default (`force = p`),
+    ///   or a capturing closure's read -- [`index_formal_reads`]). Reads
+    ///   attribute to the innermost function owning the name, so a nested
+    ///   closure redeclaring it does not discharge the outer formal, and
+    ///   a plain assignment target is a *write* of the promise, not a
+    ///   read of the caller's value. A read demonstrates the author
+    ///   handles the caller's value, so per-site constants are chosen
+    ///   child semantics; without one, the formal exists only in the
+    ///   signature, and the constant silently replaces the caller's
     ///   entire control over it -- haven's exact shape.
     /// * *literal value*: `TRUE`/`FALSE` are reserved words, so the
     ///   constant cannot be a rebinding (`T`/`F` are ordinary identifiers
@@ -508,31 +599,28 @@ impl Checker {
         if candidates.is_empty() {
             return;
         }
-        // Gate 2: the callee must actually have that formal, with the same
-        // precedence `check_call_arguments` applies (a user definition
-        // shadows the stub; a lexical callable resolves to neither).
-        let callee_formals: Option<Vec<&str>> = if let Some(user_function) = user_function {
-            Some(
-                user_function
-                    .params
-                    .iter()
-                    .map(|parameter| parameter.name.as_str())
-                    .collect(),
-            )
-        } else if !lexical_callable
-            && (self.validate_user_call_arguments || !self.fn_table.fns.contains_key(function_name))
-            && let Some(signature) = resolved_sig
-        {
-            Some(
-                signature
-                    .params
-                    .iter()
-                    .map(|parameter| parameter.name.as_str())
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        // Gate 2: the callee must actually have that formal, under the
+        // shared `resolve_callee` precedence (a user definition shadows
+        // the stub; a lexical callable resolves to neither).
+        let callee_formals: Option<Vec<&str>> =
+            match self.resolve_callee(function_name, user_function, resolved_sig, lexical_callable)
+            {
+                ResolvedCallee::User(user_function) => Some(
+                    user_function
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.as_str())
+                        .collect(),
+                ),
+                ResolvedCallee::Stub(signature) => Some(
+                    signature
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.as_str())
+                        .collect(),
+                ),
+                ResolvedCallee::Unknown => None,
+            };
         let Some(callee_formals) = callee_formals else {
             return;
         };
@@ -1090,6 +1178,37 @@ mod constant_shadowing_tests {
         // The read may sit after the constant in source order.
         assert!(!fires(
             "f <- function(x, na.rm = FALSE) {\n  a <- median(x, na.rm = TRUE)\n  if (na.rm) x else a\n}\n"
+        ));
+    }
+
+    /// The dead-formal index's scoping rules (review-driven, PR #543):
+    /// a nested closure redeclaring the name shadows the outer formal
+    /// for its subtree (innermost-owner attribution); a plain-identifier
+    /// assignment target is a write, not a read; a read inside a
+    /// `return(...)` value counts; and a formal default naming a
+    /// sibling formal (`force = na.rm`) consumes the caller's value.
+    #[test]
+    fn dead_formal_index_respects_scoping_writes_and_defaults() {
+        // The nested closure reads ITS OWN na.rm; the outer formal stays
+        // dead and the later hardcode fires (innermost attribution).
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, na.rm) median(y, na.rm = na.rm)\n  g(x)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // Replacing the promise is a write, not a read: the caller's
+        // value is never consumed, plain and subassigned alike.
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  na.rm <- FALSE\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  na.rm[1] <- TRUE\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // A read inside a return value is a read.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  return(if (na.rm) x else x)\n}\n"
+        ));
+        // A default naming a sibling formal consumes the caller's value.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE, force = na.rm) {\n  median(x, na.rm = TRUE)\n}\n"
         ));
     }
 

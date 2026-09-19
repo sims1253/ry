@@ -22,7 +22,7 @@
 mod harness;
 
 use harness::{file_uri, join_session, normalize_diagnostics, spawn_session, sync_barrier};
-use ry_testkit::FixtureProject;
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// `f <- function() "str"` — the character variant of `f`.
@@ -49,10 +49,11 @@ fn watching_capabilities() -> Value {
 /// Answer the server's `client/registerCapability` request (if any) and
 /// return the requested watcher globs. Sessions spawned without
 /// registration support produce no request; the helper then yields an
-/// empty list instead of blocking.
+/// empty list once the shared receive budget (#551) expires instead of
+/// blocking forever.
 async fn take_watcher_globs(session: &mut harness::ClientSession) -> Vec<Value> {
     let pending: Option<Value> = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        rpc_receive_timeout(),
         session.respond_to_request("client/registerCapability", json!(null)),
     )
     .await

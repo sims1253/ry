@@ -10,10 +10,39 @@ struct RoutedMessage {
     value: Value,
 }
 
+/// Wall-clock budget for one routed JSON-RPC receive wait — a request
+/// response, an awaited publication, or a server-initiated request.
+///
+/// The budget bounds only failure latency, never success latency: every
+/// wait is event-driven and returns the moment the sought message
+/// arrives (~0.4s unloaded for the disk-index-dependent publications),
+/// so it is sized for the worst case rather than the typical one — a
+/// cold CI runner executing the whole workspace suite in parallel can
+/// starve the background disk-index work between a watched event and
+/// its republish well past the old 5s budget (#551). Set
+/// `RY_TESTKIT_RPC_TIMEOUT_SECS=<positive integer>` to override the
+/// 30s default (an unparsable or non-positive value falls back to the
+/// default); the read is cached for the process lifetime.
+pub fn rpc_receive_timeout() -> std::time::Duration {
+    static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *TIMEOUT.get_or_init(|| {
+        std::env::var("RY_TESTKIT_RPC_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .filter(|secs| *secs > 0)
+            .map_or_else(
+                || std::time::Duration::from_secs(30),
+                std::time::Duration::from_secs,
+            )
+    })
+}
+
 /// Stateful, protocol-only LSP client for production-path integration tests.
 ///
 /// Unlike `AsyncJsonRpcClient::receive_until`, this router retains messages
-/// interleaved before the sought response/publication. Crate-specific tests
+/// interleaved before the sought response/publication. Every routed wait
+/// (response, publication, or server-initiated request) is bounded by
+/// [`rpc_receive_timeout`]. Crate-specific tests
 /// own the server launcher so this testkit never depends on a production LSP.
 pub struct LspSession<R, W> {
     client: AsyncJsonRpcClient<R, W>,
@@ -267,7 +296,7 @@ where
         {
             return Ok(self.pending.remove(index).unwrap().value);
         }
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now() + rpc_receive_timeout();
         loop {
             let value = tokio::time::timeout_at(deadline, self.client.receive())
                 .await

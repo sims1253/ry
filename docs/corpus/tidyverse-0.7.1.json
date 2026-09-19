@@ -928,103 +928,103 @@
       "audit_group": "plan-32-33"
     },
     {
-      "audit_group": "ry111-constant-shadowing",
+      "package": "dbplyr",
       "code": "RY111",
+      "path": "R/query-join.R",
+      "line": 164,
       "column": 49,
       "label": "true_positive",
-      "line": 164,
-      "package": "dbplyr",
-      "path": "R/query-join.R"
+      "audit_group": "ry111-constant-shadowing"
     },
     {
-      "audit_group": "ry111-constant-shadowing",
+      "package": "dbplyr",
       "code": "RY111",
-      "column": 53,
-      "label": "true_positive",
+      "path": "R/query-join.R",
       "line": 167,
-      "package": "dbplyr",
-      "path": "R/query-join.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 114,
-      "package": "dbplyr",
-      "path": "R/query-rf-join.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 115,
-      "package": "dbplyr",
-      "path": "R/query-rf-join.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 126,
-      "package": "dbplyr",
-      "path": "R/query-semi-join.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 127,
-      "package": "dbplyr",
-      "path": "R/query-semi-join.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 54,
-      "package": "dbplyr",
-      "path": "R/query-set-op.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 55,
-      "package": "dbplyr",
-      "path": "R/query-set-op.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
-      "column": 54,
-      "label": "true_positive",
-      "line": 58,
-      "package": "dbplyr",
-      "path": "R/query-union.R"
-    },
-    {
-      "audit_group": "ry111-constant-shadowing",
-      "code": "RY111",
       "column": 53,
       "label": "true_positive",
-      "line": 62,
-      "package": "dbplyr",
-      "path": "R/query-union.R"
+      "audit_group": "ry111-constant-shadowing"
     },
     {
-      "audit_group": "ry111-constant-shadowing",
+      "package": "dbplyr",
       "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 114,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 115,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 126,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 127,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 54,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 55,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 58,
+      "column": 54,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 62,
+      "column": 53,
+      "label": "true_positive",
+      "audit_group": "ry111-constant-shadowing"
+    },
+    {
+      "package": "haven",
+      "code": "RY111",
+      "path": "R/labelled.R",
+      "line": 111,
       "column": 31,
       "label": "true_positive",
-      "line": 111,
-      "package": "haven",
-      "path": "R/labelled.R"
+      "audit_group": "ry111-constant-shadowing"
     }
   ],
   "classification": {

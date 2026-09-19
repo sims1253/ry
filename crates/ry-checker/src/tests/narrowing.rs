@@ -1509,10 +1509,11 @@ fn same_type_rebind_guard_keeps_the_stale_null_member() {
 // The replacement guard over a pure-NULL binding: the null arm's rebind
 // covers the true path and the false path holds the non-null remainder,
 // so the merge's stale `NULL | rebind` union (whose NULL member RY001
-// would report through the guard, #362's scales shape) must not survive.
-// A defaulted parameter's false path is an unmodeled caller value (the
-// honest continuation is unknown); a local provably-NULL binding has no
-// other value, so the rebind alone continues.
+// would report through the guard; the scales-package shape from #362)
+// must not survive. A defaulted parameter's false path is an unmodeled
+// caller value (the honest continuation is unknown); a local
+// provably-NULL binding has no other value, so the rebind alone
+// continues.
 #[test]
 fn replacement_guard_on_pure_null_binding_removes_the_stale_null() {
     for (note, source) in [

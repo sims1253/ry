@@ -1469,12 +1469,31 @@ impl Checker {
         args: &[Arg],
         span: Span,
     ) {
-        if self.validate_user_call_arguments {
-            if let Some(user_function) = resolution.user_function.as_ref() {
+        // RY111's identical-name shadow check runs in both validation
+        // modes: it reads the same resolved formals (user table or stub)
+        // the arity checks below consult, and its own gates decide.
+        self.check_constant_shadowed_arguments(
+            lookup_name,
+            resolution.user_function.as_ref(),
+            resolution.resolved_sig.as_ref(),
+            resolution.lexical_callable,
+            args,
+        );
+        // The shared resolution precedence: a user definition shadows the
+        // stub, and a lexical callable resolves to neither. In the
+        // non-validating mode a same-named FnTable entry also shadows the
+        // stub (inside `resolve_callee`); a resolved user function is
+        // only arity-checked when user-call validation is on.
+        match self.resolve_callee(
+            lookup_name,
+            resolution.user_function.as_ref(),
+            resolution.resolved_sig.as_ref(),
+            resolution.lexical_callable,
+        ) {
+            ResolvedCallee::User(user_function) if self.validate_user_call_arguments => {
                 self.check_user_call_arguments(lookup_name, user_function, args, span);
-            } else if !resolution.lexical_callable
-                && let Some(signature) = resolution.resolved_sig.as_ref()
-            {
+            }
+            ResolvedCallee::Stub(signature) => {
                 self.check_typeshed_call_arguments(
                     lookup_name,
                     signature,
@@ -1483,17 +1502,7 @@ impl Checker {
                     span,
                 );
             }
-        } else if !resolution.lexical_callable
-            && !self.fn_table.fns.contains_key(lookup_name)
-            && let Some(signature) = resolution.resolved_sig.as_ref()
-        {
-            self.check_typeshed_call_arguments(
-                lookup_name,
-                signature,
-                args,
-                &resolution.arg_types,
-                span,
-            );
+            _ => {}
         }
     }
 

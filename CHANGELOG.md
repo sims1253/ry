@@ -6,6 +6,75 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Add RY111 (`constant-argument-shadowing`): a call argument that passes
+  the reserved-word literal `TRUE`/`FALSE` for a formal an enclosing
+  function exposes under the identical name -- silently hardcoding
+  instead of forwarding the caller's value. The founding fixture is
+  haven @ f067fb2, `R/labelled.R:111`:
+  `median.haven_labelled <- function(x, na.rm = TRUE, ...) { ...
+  median(vec_data(x), na.rm = TRUE, ...) }` (runtime-verified in #361:
+  `median(labelled(c(1:4, NA), c(a = 1)), na.rm = FALSE)` returns 2.5
+  where base `median(c(1:4, NA), na.rm = FALSE)` returns NA -- the
+  caller's explicit argument is silently ignored, whatever the
+  default). Four gates keep the rule high-precision (#361):
+  the tag must exactly name a formal of an enclosing function
+  (innermost frame outward, so a capturing closure still orphans the
+  outer caller's value while a closure with its own identically-named
+  formal is judged by its own frame) AND a formal of the resolved
+  callee (a collected user signature or a typeshed stub, the same
+  resolution precedence RY090/RY091/RY092 use), the owning function
+  must never read the formal anywhere in its body (the dead-formal
+  gate), the value must be the literal itself, and unresolvable
+  callees stay silent. The dead-formal gate is what the tidyverse
+  corpus forced: a body that reads the formal anywhere -- an
+  `if (p)` guard, a `f(p)` validation, a by-name forward at another
+  call (`quiet = quiet`), a `missing(p)` test, a nested closure's
+  captured read -- demonstrably handles the caller's value, so
+  per-site constants there are chosen child semantics (dbplyr's
+  `sql_render.*` methods forwarding `subquery` at their own wrapper
+  while pinning child renders, stringr's `if (ignore_case)` early
+  return before a fixed `regex(...)`, tibble's `quiet = quiet` at
+  the user-facing call, dplyr's `if (recursive)` branch, rvest's
+  `env_has(env, nm, inherit = inherit)` -- all silent). haven's
+  founding fixture reads `na.rm` nowhere: the formal exists only in
+  the signature, which is exactly the dead binding the constant then
+  silently replaces. What else stays
+  quiet: renaming-and-defaulting idioms (`remove_na` enclosing formal
+  with an inner `na.rm = TRUE`), partial tags (`na.r = TRUE`, which R
+  binds through partial matching but whose silence is the pinned
+  precision trade), forwarding (`na.rm = na.rm`) and every computed
+  expression, `T`/`F` (ordinary rebindable identifiers), `NA`,
+  numeric and string constants (divergent defaults like an internally
+  reformatted `sep` are an ordinary idiom in a way logical flags are
+  not), `...`-absorbing and unknown callees (the literal's destination
+  is unknowable, RY090's dots humility), and top-level code. Base
+  `median`'s `na.rm`/`...` formals arrive as a ry-side
+  `overlay/base.json` entry (`formals(median)` is `function (x,
+  na.rm = FALSE, ...)`, R 4.6.1; the vendored stub declares only `x`),
+  pinned by a drift test so an upstream widening forces a conscious
+  merge; the entries stay untyped and non-required so no arity rule
+  changes behavior. Corpus deltas (both manifests regenerated and
+  strict-gated): tidyverse +11, all true positives -- the founding
+  haven defect plus the ten dbplyr `sql_render.*_query` child-render
+  sites the posit delta counts at the same pin, matching the
+  rule-evidence row's 11 tidyverse + 17 posit true-positive split (the
+  regenerated jsonlite report also gains one unaudited, deliberate
+  identity: the package's own `stop` wrapper forcing `call. = FALSE`,
+  explained in the ledger note); posit
+  +20 -- 17 true positives (the dbplyr `sql_render.*_query` family,
+  whose own `subquery` formal is never read even though the generic
+  forwards the caller's flag into the method, and whose child renders
+  pass `subquery = TRUE` to queries that may themselves be unions;
+  reticulate's `r_to_py.POSIXt` (the method POSIXct/POSIXlt dispatch to) and `r_convert_dataframe_column`
+  dropping their `convert` contract parameter; shiny's `observeEvent`
+  pinning `autoDestroy = TRUE` while forwarding every sibling formal;
+  torch's `nnf_rrelu_` forcing `training = TRUE` against its own
+  `training = FALSE` default) and 3 false positives (gt's testthat
+  helpers exposing testthat-compat `all = TRUE` signatures, sparklyr's
+  `stream_read_socket` generic-family `columns` compat). Every other
+  corpus site the ungated rule would have flagged is a deliberate
+  idiom silenced by the dead-formal gate.
+
 - Extend RY110 (`vacuous-all-guard`) across the same-file helper boundary:
   a single-formal function the checked file defines whose body is (or
   returns) the recognized guard chain -- hms's

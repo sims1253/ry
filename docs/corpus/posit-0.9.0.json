@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "bf78b2a1604fd9ce6775bfeaf99c8bf227a2233e0e999ba848722188823d5b64",
-  "ry_commit": "1dc5998988aa8ae41d422df19da31f7353d73137",
+  "source_sha256": "66c5674ced4d933cdf40a61b310ab24abe04e9688f54d070cb8961465ccc8be9",
+  "ry_commit": "1f7cf6f6153261bfcf8ea234849bdc9d9bd6636d",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 52
+      "diagnostics": 53
     },
     {
       "name": "dplyr",
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 11
+      "diagnostics": 13
     },
     {
       "name": "blogdown",
@@ -47,7 +47,7 @@
       "repo": "rstudio/reticulate",
       "stars": 1759,
       "commit": "afe2221ded74a7f18ab3d5e89bb0a49b1f9d3114",
-      "diagnostics": 6
+      "diagnostics": 11
     },
     {
       "name": "broom",
@@ -110,7 +110,7 @@
       "repo": "sparklyr/sparklyr",
       "stars": 972,
       "commit": "7f006a6d5c01a4e7a36d203d1ace56c53261900e",
-      "diagnostics": 9
+      "diagnostics": 10
     },
     {
       "name": "testthat",
@@ -236,7 +236,7 @@
       "repo": "mlverse/torch",
       "stars": 567,
       "commit": "c67c2fb2909fc77e8fc127ec2867e1a551ee1bf3",
-      "diagnostics": 19
+      "diagnostics": 20
     },
     {
       "name": "bigrquery",
@@ -250,7 +250,7 @@
       "repo": "tidyverse/dbplyr",
       "stars": 514,
       "commit": "f478e2070c9a60f4aebcc94132048312209dd097",
-      "diagnostics": 10
+      "diagnostics": 20
     },
     {
       "name": "bookdown",
@@ -4159,19 +4159,199 @@
       "column": 44,
       "label": "false_positive",
       "audit_group": "manual-audit"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 49,
+      "label": "true_positive",
+      "line": 164,
+      "package": "dbplyr",
+      "path": "R/query-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 53,
+      "label": "true_positive",
+      "line": 167,
+      "package": "dbplyr",
+      "path": "R/query-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 114,
+      "package": "dbplyr",
+      "path": "R/query-rf-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 115,
+      "package": "dbplyr",
+      "path": "R/query-rf-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 126,
+      "package": "dbplyr",
+      "path": "R/query-semi-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 127,
+      "package": "dbplyr",
+      "path": "R/query-semi-join.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 54,
+      "package": "dbplyr",
+      "path": "R/query-set-op.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 55,
+      "package": "dbplyr",
+      "path": "R/query-set-op.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 54,
+      "label": "true_positive",
+      "line": 58,
+      "package": "dbplyr",
+      "path": "R/query-union.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 53,
+      "label": "true_positive",
+      "line": 62,
+      "package": "dbplyr",
+      "path": "R/query-union.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 67,
+      "label": "true_positive",
+      "line": 78,
+      "package": "reticulate",
+      "path": "R/conversion.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 42,
+      "label": "true_positive",
+      "line": 84,
+      "package": "reticulate",
+      "path": "R/conversion.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 44,
+      "label": "true_positive",
+      "line": 88,
+      "package": "reticulate",
+      "path": "R/conversion.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 17,
+      "label": "true_positive",
+      "line": 95,
+      "package": "reticulate",
+      "path": "R/conversion.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 36,
+      "label": "true_positive",
+      "line": 618,
+      "package": "reticulate",
+      "path": "R/conversion.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 21,
+      "label": "true_positive",
+      "line": 2669,
+      "package": "shiny-r",
+      "path": "R/reactives.R"
+    },
+    {
+      "audit_group": "ry111-constant-shadowing",
+      "code": "RY111",
+      "column": 45,
+      "label": "true_positive",
+      "line": 384,
+      "package": "torch",
+      "path": "R/nnf-activation.R"
+    },
+    {
+      "audit_group": "test-fixture",
+      "code": "RY111",
+      "column": 11,
+      "label": "false_positive",
+      "line": 48,
+      "package": "gt",
+      "path": "tests/testthat/helper.R"
+    },
+    {
+      "audit_group": "test-fixture",
+      "code": "RY111",
+      "column": 11,
+      "label": "false_positive",
+      "line": 129,
+      "package": "gt",
+      "path": "tests/testthat/helper.R"
+    },
+    {
+      "audit_group": "manual-audit",
+      "code": "RY111",
+      "column": 15,
+      "label": "false_positive",
+      "line": 360,
+      "package": "sparklyr",
+      "path": "R/stream_data.R"
     }
   ],
   "classification": {
-    "false_positive": 345,
-    "true_positive": 68
+    "false_positive": 348,
+    "true_positive": 85
   },
   "audit_group_counts": {
     "reassign-scope": 4,
     "type-narrowing": 46,
-    "manual-audit": 142,
+    "manual-audit": 143,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 19,
-    "test-fixture": 72,
+    "test-fixture": 74,
     "s3-method-dispatch": 3,
     "delayed-assign": 15,
     "function-shadowing": 3,
@@ -4180,6 +4360,7 @@
     "numeric-if-idiom": 3,
     "namespace-on-load": 46,
     "ry109-self-defaults": 25,
+    "ry111-constant-shadowing": 17,
     "ry001-null-union": 3
   },
   "notes": [
@@ -4212,6 +4393,7 @@
     "RY106 (ifelse-mode-collapse, #461) adds three owned gt true positives at R/format_data.R:4057:3, R/utils_render_latex.R:69:3, and R/z_utils_render_footnotes.R:418:18: typed-NA selects whose result collapses to logical when the maybe-empty test is empty (the tidyverse/hms#231 family, runtime-verified as ifelse(logical(0), NA_character_, 'a') == logical(0)). The rule fires only for literal empty or all-NA tests and for typed-NA selects, so the testthat parallel-taskq len=0 join artifacts stay silent; all prior identities are unchanged.",
     "RY109 (self-referential-default, issue #364) adds 25 reviewed findings. 23 true positives, each runtime-verified as a default naming its own formal (or calling a same-named function, which the formal shadowing makes equivalent) that can only resolve to its own promise and can never evaluate; forcing the promise errors with R's 'promise already under evaluation'. Most identities were verified to error on a triggering call; dplyr R/distinct.R:81 and dbplyr R/verb-distinct.R:61 (`caller_env = caller_env(2)`: the formal is never consumed, so the call runs when it is missing) and ggplot2 R/stat-bindot.R:133 (`method = method`: unused in the body; `densitybin(1:3)` runs) were verified as dead-on-arrival defaults that would error the moment anyone consumed them. The flagged shapes are the dtplyr shipped bug (fixed upstream in dbe32a6), callee-named defaults whose formal shadows a real function (purrr caller_env(), httr config(), pkgdown error_call(), dplyr/dbplyr caller_env(2)), closure-capture misconceptions where the author meant an outer variable but the formal shadows it (gt data_tbl/col_classes/data, pkgdown pkg, sparklyr master/config), and eagerly-forwarded bare self-references (ellmer type, infer/parsnip call, shiny width/height, ggplot2 method/method.args, lubridate tz(x)/.select_formats). All are latent at the pinned commits: current callers supply the formals. The two false positives are rlang's own defusing tests (test-nse-defuse.R:329,334): bare enexpr/enquo defined by rlang itself cannot be credited as defusers without provenance (crediting a project-defined name would also credit a test-local `quote <- function(x) x`, which forces), so ry warns on the deliberate idiom; warning severity keeps that cost low. Deliberate defusing elsewhere stays silent through typeshed captures_promise/quoted_expression provenance or {{ }} injection recognition (corrr, dbplyr sql_runif); two suppression-side false negatives (defuse-then-force, divergent branches) are pinned as oracle known-gap fixtures.",
     "Superassignment modeling (#374) removes 11 false positives, all traced to bindings mutated only through `<<-` in nested closures. pak R/json.R loses all ten RY001s on `token` (4 reassign-scope: lines 81, 83, 98, 135 are the `if (token == ...)`/`while (token != ...)` conditions of parse_value/parse_object/parse_array around `token <- NULL` + `token <<- tokens[ptr]`/`'EOF'` in read_token; 6 type-narrowing: lines 100, 108, 118, 120, 141, 143 are the sibling token conditions in the same walkers) -- the vendored r-json-parser shape whose loops run correctly at the pin (cdbd4ce, verified in R). flexdashboard R/flex_dashboard.R:381 is `!file.exists(source_file)` where `source_file <- NULL` is overwritten by `source_file <<- input` in pre_knit: the stale NULL made file.exists logical(0); the five reassign-scope removals (four pak, one flexdashboard) take that audit group from 9 to 4. Every removal is the conservative unknown-typed update applied at the <<-writing definition; no new identity appeared. The sibling write-side shapes stay: dplyr summarise.R:342 / blogdown serve.R / reticulate wrapper.R bind through plain `<-` in call-argument closures or textConnection dynamic bindings (#350 family), not `<<-`.",
-    "NULL union members now propagate into RY001 condition analysis (#362), adding exactly three reviewed true-positive identities under the new ry001-null-union group (true_positive 65 -> 68): bslib R/navs-legacy.R:241:27, lubridate R/accessors-day.r:98:7, and torch tools/torchgen/R/cpp.R:747:9. get_color_contrast's tryCatch error handler returns NULL, so a Sass failure makes `bg_contrast == \"#FFFFFF\"` the zero-length comparison crash; as_week_start's unmatched day name skips every pmatch/match guard and its fall-through NULL reaches `if (start != 7)`; and cpp_type falls through to NULL for an unmatched dynamic_type, crashing `if (ret_type == \"void\")`. All three are runtime-verified crashes (R: \"argument is of length zero\"). No other identity changes. Retention counts cited in earlier notes (\"all 37/43 true positives\") describe the total at the time of each change; the classification block in this file is the current total."
+    "NULL union members now propagate into RY001 condition analysis (#362), adding exactly three reviewed true-positive identities under the new ry001-null-union group (true_positive 65 -> 68): bslib R/navs-legacy.R:241:27, lubridate R/accessors-day.r:98:7, and torch tools/torchgen/R/cpp.R:747:9. get_color_contrast's tryCatch error handler returns NULL, so a Sass failure makes `bg_contrast == \"#FFFFFF\"` the zero-length comparison crash; as_week_start's unmatched day name skips every pmatch/match guard and its fall-through NULL reaches `if (start != 7)`; and cpp_type falls through to NULL for an unmatched dynamic_type, crashing `if (ret_type == \"void\")`. All three are runtime-verified crashes (R: \"argument is of length zero\"). No other identity changes. Retention counts cited in earlier notes (\"all 37/43 true positives\") describe the total at the time of each change; the classification block in this file is the current total.",
+    "RY111 (constant-argument-shadowing, issue #361) adds 20 reviewed findings: 17 true positives and 3 false positives. The true positives are the dbplyr sql_render.*_query family (own `subquery` formal never read while the generic forwards the caller's flag into the method), reticulate's r_to_py.POSIXt (the method POSIXct/POSIXlt dispatch to) and r_convert_dataframe_column (their `convert` contract parameter is never read; every internal import/r_to_py_impl call is pinned `convert = FALSE`), shiny's observeEvent (`autoDestroy = TRUE` pinned while label/suspended/priority/domain are all forwarded), and torch's nnf_rrelu_ (`training = TRUE` forced against the method's own `training = FALSE` default). The false positives are deliberate compat surfaces: gt's testthat helpers expose `all = TRUE` signatures that mirror expect_match while always matching all fragments, and sparklyr's stream_read_socket exposes the stream_read_* family's `columns` argument that the socket source cannot use. The dead-formal gate silences the deliberate idioms the ungated name-match would flag (forwarded `subquery`/`quiet`, guarded `ignore_case`/`recursive`, read `inherit`)."
   ]
 }

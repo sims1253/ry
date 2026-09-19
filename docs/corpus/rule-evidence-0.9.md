@@ -39,7 +39,7 @@ value is a literal call argument (`f(literal)`) versus a parameter default
 | lift-reachable | RY001, RY003, RY020, RY021, RY031, RY033, RY040 |
 | param-unreachable | RY002, RY030, RY032, RY061 |
 | consistent | RY034, RY093, RY099, RY100, RY103, RY105, RY106, RY107, RY110 |
-| n/a (syntactic) | RY000, RY010, RY041, RY042, RY050, RY060, RY070, RY080, RY090, RY091, RY092, RY094, RY096, RY097, RY098, RY101, RY102, RY108, RY109 |
+| n/a (syntactic) | RY000, RY010, RY041, RY042, RY050, RY060, RY070, RY080, RY090, RY091, RY092, RY094, RY096, RY097, RY098, RY101, RY102, RY108, RY109, RY111 |
 
 ## Targeted mutation pilot
 
@@ -108,6 +108,7 @@ determines the verdict.
 | `RY108` seq-defaulted-forward | 1/0 | yes | `seq_defaulted_forward_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 1 TP / 0 FP (hms `R/hms.R:307`, the audited defect itself, tidyverse/hms#231: the defaulted `to` is cast and forwarded without a `missing(to)` check, so `seq(hms(1), length.out = 3)` repeats the default endpoint). `seq.Date`-style guards, cached `m <- missing(to)` tests, and a `to` without a default stay silent. |
 | `RY109` self-referential-default | 33/2 | yes | `self_referential_default_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 33 TP / 2 FP across the corpora (10 TP tidyverse + 23 TP posit, the dtplyr #364 family and latent same-shape defects; 2 FP on rlang's own defusing tests, where a bare in-project `enexpr`/`enquo` cannot be credited without provenance). Defusing idioms (corrr, dbplyr `sql_runif`) stay silent via typeshed `captures_promise` provenance or `{{ }}` recognition. Two suppression-side false negatives are pinned as oracle known-gap fixtures (defuse-then-force, divergent branches). |
 | `RY110` vacuous-all-guard | 0/0 | yes | `vacuous_all_guard_claim.R` | consistent | - | yes | keep | Valid claim; 0 corpus findings. The founding hms shape (tidyverse/hms#231) is interprocedural -- the guard sits in the `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast` -- outside the rule's same-function scope; every corpus `all(is.na())` site is an intentionally permissive shape (no mode-predicate operand: rlang `R/bytes.R:199`, scales `R/colour-mapping.R:54`; bare skip-logic guards; or the hms helper itself), so the downstream-demand gate keeps the corpus silent. |
+| `RY111` constant-argument-shadowing | 28/3 | yes | `constant_argument_shadowing_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 28 TP / 3 FP across the corpora (11 TP tidyverse + 17 TP posit, the ledger-row sum RY109's entry uses; the ten dbplyr identities are the same sites in both manifests at the same pin). Tidyverse: haven `R/labelled.R:111`, the founding defect itself (issue #361: median.haven_labelled hardcodes `na.rm = TRUE`, so `median(labelled(c(1:4, NA)), na.rm = FALSE)` returns 2.5 where base `median` returns NA) plus the dbplyr `sql_render.*_query` family whose own `subquery` formal is never read while the generic forwards the caller's flag into the method. Posit true positives: the same dbplyr family; reticulate's `r_to_py.POSIXt` (the method POSIXct/POSIXlt dispatch to) and `r_convert_dataframe_column` dropping their `convert` contract parameter; shiny's `observeEvent` pinning `autoDestroy = TRUE` while forwarding every sibling formal; torch's `nnf_rrelu_` forcing `training = TRUE` against its own `training = FALSE` default. Posit false positives: gt's testthat helpers exposing testthat-compat `all = TRUE` signatures and sparklyr's `stream_read_socket` generic-family `columns` compat. The dead-formal gate keeps every deliberate idiom silent: dbplyr's forwarded `subquery` wrapper, stringr's guarded `ignore_case`, tibble's forwarded `quiet`, dplyr's guarded `recursive`, rvest's `env_has(inherit = inherit)` -- a body (or signature default) that reads the formal anywhere handles the caller's value, so per-site constants are chosen child semantics. |
 ## Verdict execution
 
 Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
@@ -126,11 +127,11 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
 ## Completeness checks
 
-- Rows: 36, exactly one for every non-retired entry in `RULES`.
-- Probes: 35 present; RY097 has the committed CLI-level exclusion.
-- Claim fixtures: 36 present and enforced by `every_rule_has_a_claim_fixture`.
+- Rows: 37, exactly one for every non-retired entry in `RULES`.
+- Probes: 36 present; RY097 has the committed CLI-level exclusion.
+- Claim fixtures: 37 present and enforced by `every_rule_has_a_claim_fixture`.
 - R7 coverage: every rule is classified (lift-reachable, param-unreachable,
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values count finding records in the archived hermetic ledger.
-- Verdicts: 34 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).
+- Verdicts: 35 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).

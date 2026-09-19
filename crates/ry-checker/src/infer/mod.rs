@@ -914,7 +914,7 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
-        self.push_enclosing_formals(params);
+        self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         for s in body {
             self.walk_stmt(s, &mut fn_scope, None);
@@ -2939,7 +2939,7 @@ impl Checker {
         }
     }
 
-    fn push_enclosing_formals(&mut self, params: &[Param]) {
+    fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
         self.enclosing_formals.push(EnclosingFormals {
             names: params
                 .iter()
@@ -2947,6 +2947,7 @@ impl Checker {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
             has_dots: params.iter().any(|parameter| parameter.name == "..."),
+            function_span,
         });
     }
 }

@@ -1747,8 +1747,7 @@ impl Backend {
             let path_string = path.to_string_lossy().into_owned();
             let mut parser = RParser::new().ok()?;
             let mut file = parser.parse(&path_string, &decoded.text).ok()?;
-            file.invalid_utf8 = decoded.invalid_utf8;
-            file.leading_bom = decoded.leading_bom;
+            decoded.apply_boundary_findings(&mut file);
             Some((path_string, Arc::new(file)))
         })
         .await

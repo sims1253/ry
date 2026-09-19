@@ -170,6 +170,21 @@ pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
     Ok(decode_r_source(&std::fs::read(path)?))
 }
 
+impl DecodedRSource {
+    /// Record this boundary's findings on a parsed source file: the
+    /// invalid-UTF-8 spans and the leading-BOM flag the checker turns
+    /// into its encoding `RY000`s. Every consumer of
+    /// [`read_r_source_decoded`] that runs the checker -- the CLI check
+    /// pipeline, the LSP's on-disk index and refreshes, and the test
+    /// harnesses that must exercise the production path -- attaches
+    /// through this one method, so the boundary contract cannot drift
+    /// between production and tests.
+    pub fn apply_boundary_findings(&self, file: &mut SourceFile) {
+        file.invalid_utf8 = self.invalid_utf8.clone();
+        file.leading_bom = self.leading_bom;
+    }
+}
+
 /// Decode R source bytes as UTF-8, falling back to Latin-1 for invalid
 /// UTF-8 while recording each invalid sequence's span over the decoded
 /// text. The fallback maps every byte to its Latin-1 char, matching the

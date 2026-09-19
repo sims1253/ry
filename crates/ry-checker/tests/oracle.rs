@@ -141,10 +141,11 @@ fn materialize_byte_fixtures(
     out_dir: &std::path::Path,
 ) -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return paths,
-    };
+    // The caller just listed this directory successfully, so a failure
+    // here would mean byte-fixture coverage silently vanishing from an
+    // otherwise valid run; fail loudly instead, like the copy below.
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("read oracle dir {}: {e}", dir.display()));
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("bytes") {
@@ -288,9 +289,10 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
 
 /// Run the checker over a fixture exactly the way the CLI pipeline does:
 /// parse the decoded text, then attach the on-disk read boundary's
-/// findings (`invalid_utf8` spans, leading BOM) so a fixture whose bytes
-/// are not valid UTF-8 gets its encoding RY000 and the whole-file
-/// suppression that follows from it.
+/// findings (`invalid_utf8` spans, leading BOM) through the same shared
+/// method the CLI and LSP use, so a fixture whose bytes are not valid
+/// UTF-8 gets its encoding RY000 and the whole-file suppression that
+/// follows from it.
 fn checker_diagnostics(
     name: &str,
     decoded: &ry_workspace::DecodedRSource,
@@ -299,8 +301,7 @@ fn checker_diagnostics(
     let mut file = parser
         .parse(name, &decoded.text)
         .unwrap_or_else(|e| panic!("parse {name}: {e}"));
-    file.invalid_utf8 = decoded.invalid_utf8.clone();
-    file.leading_bom = decoded.leading_bom;
+    decoded.apply_boundary_findings(&mut file);
     let mut c = Checker::new(name);
     c.check(&file);
     let diags = c.take_diagnostics();
@@ -308,6 +309,18 @@ fn checker_diagnostics(
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
         .collect()
+}
+
+/// The `must-flag-only` satisfaction predicate: R rejected the file, and
+/// ry must emit at least one Error diagnostic of the named code and no
+/// diagnostic of any other code (any severity). Shared by the harness
+/// arm and its falsification test so the test always exercises the real
+/// predicate.
+fn satisfies_must_flag_only(code: &str, diagnostics: &[(String, Severity)]) -> bool {
+    diagnostics
+        .iter()
+        .any(|(actual, severity)| actual == code && *severity == Severity::Error)
+        && diagnostics.iter().all(|(actual, _)| actual == code)
 }
 
 #[test]
@@ -439,12 +452,7 @@ fn oracle_check_each_fixture() {
             // any code or severity. Whole-file suppression (#467) means a
             // file R cannot parse surfaces only its RY000s; a leaked
             // semantic diagnostic (Error or warning) fails here (#470).
-            (Tag::MustFlagOnly(code), true) => {
-                diagnostics
-                    .iter()
-                    .any(|(actual, severity)| actual == code && *severity == Severity::Error)
-                    && diagnostics.iter().all(|(actual, _)| actual == code)
-            }
+            (Tag::MustFlagOnly(code), true) => satisfies_must_flag_only(code, &diagnostics),
             (Tag::MustFlag, false) => {
                 failures.push(format!(
                     "{name}: tagged must-flag but R did not error; cannot assert"
@@ -580,23 +588,18 @@ fn tag_of_parses_must_flag_only_with_code() {
     assert!(tag_of("# oracle: must-flag-only\n").is_none());
 }
 
-/// prove the oracle's `must-flag-only` arm rejects a semantic leak.
+/// Proves that the oracle's `must-flag-only` arm rejects a semantic
+/// leak.
 ///
 /// `must-flag-only` strengthens `must-flag` from "at least one Error
-/// diagnostic" to "the named code and nothing else". Simulate the arm on
-/// a multiset holding the named Error alone, the named Error plus a
-/// leaked semantic Error, and the named Error plus a leaked warning:
-/// only the first may classify as satisfied. `must-flag` alone accepts
-/// the second multiset -- precisely the harness gap #470 asked to close.
+/// diagnostic" to "the named code and nothing else". Run the real
+/// satisfaction predicate on a multiset holding the named Error alone,
+/// the named Error plus a leaked semantic Error, and the named Error
+/// plus a leaked warning: only the first may classify as satisfied.
+/// `must-flag` alone accepts the second multiset -- precisely the
+/// harness gap #470 asked to close.
 #[test]
 fn oracle_must_flag_only_rejects_leaked_semantic_diagnostics() {
-    let code = "RY000";
-    let ok = |diagnostics: &[(String, Severity)]| {
-        diagnostics
-            .iter()
-            .any(|(actual, severity)| actual == code && *severity == Severity::Error)
-            && diagnostics.iter().all(|(actual, _)| actual == code)
-    };
     let only = vec![("RY000".to_string(), Severity::Error)];
     let leaked_error = vec![
         ("RY000".to_string(), Severity::Error),
@@ -606,13 +609,16 @@ fn oracle_must_flag_only_rejects_leaked_semantic_diagnostics() {
         ("RY000".to_string(), Severity::Error),
         ("RY041".to_string(), Severity::Warning),
     ];
-    assert!(ok(&only), "RY000 alone must satisfy must-flag-only");
     assert!(
-        !ok(&leaked_error),
+        satisfies_must_flag_only("RY000", &only),
+        "RY000 alone must satisfy must-flag-only"
+    );
+    assert!(
+        !satisfies_must_flag_only("RY000", &leaked_error),
         "a leaked semantic Error must fail must-flag-only"
     );
     assert!(
-        !ok(&leaked_warning),
+        !satisfies_must_flag_only("RY000", &leaked_warning),
         "a leaked warning must fail must-flag-only"
     );
 }
@@ -662,12 +668,10 @@ fn must_flag_only_fixtures_emit_exactly_ry000() {
         }
         let diagnostics = checker_diagnostics(name, &decoded);
         let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
-        let ok = !diagnostics.is_empty()
-            && diagnostics
-                .iter()
-                .all(|(code, severity)| code == "RY000" && *severity == Severity::Error);
-        if !ok {
-            failures.push(format!("{name}: expected only RY000 Errors, got {codes:?}"));
+        // The same predicate the harness arm uses, so the pin cannot
+        // drift from the real `must-flag-only` semantics.
+        if !satisfies_must_flag_only("RY000", &diagnostics) {
+            failures.push(format!("{name}: expected only RY000, got {codes:?}"));
         }
     }
     assert!(

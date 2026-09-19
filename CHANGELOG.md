@@ -570,6 +570,45 @@ All notable changes to ry are documented in this file.
   omit-only-oversizes rule, so a missing file's removal behavior is
   unchanged. A parity test pins that the directory spelling is
   refused while the real sources inside it stay discoverable.
+- Stop the watched-* LSP integration tests from flaking (#551). The
+  flake was read as JSON-RPC receive starvation — the routed receive
+  wait in the shared testkit session (`receive_matching`, which backs
+  every `LspSession` request/response, awaited publication, and
+  server-initiated request) carried a hardcoded 5s wall-clock deadline,
+  and the CI failure (PR #544 attempt 1,
+  `watched_fix_with_no_open_documents_republishes_the_closed_file`,
+  ci.yml run 35412813892, `JSON-RPC receive timed out` at ~5.2s, rerun
+  green) fits a starved budget. Raising the budget exposed the real
+  mechanism: under sustained parallel load the same tests still fail,
+  burning ANY budget bimodally (~0.4s green or a full-timeout red,
+  nothing between) — a lost update, not a slow one. Root cause: a
+  per-file disk refresh commits only when the index generation it
+  snapshotted still holds, and the generation moves for ANY landed
+  writer — including an unrelated concurrent refresh (a close-time
+  re-read, another path's watched event) whose landing says nothing
+  about this path's bytes. Watched-file handlers dispatch concurrently,
+  so the close-time refresh of a just-closed file can commit inside the
+  watched refresh's blocking-read window; the watched refresh is then
+  discarded outright, and with no open document nothing else
+  republishes the path — the fix or creation never reaches the client
+  and the test's convergence await burns its budget. `refresh_disk_entry`
+  now retries once from current state on a lost generation race (the
+  re-read postdates every writer that beat the previous attempt, so
+  installing it is always safe; the per-path epoch is claimed once per
+  call so a newer same-path refresh still supersedes retries, #538),
+  and a second loss falls back to a full background scan — the same
+  ladder `refresh_one_package_context` already uses for the resolution
+  maps. A deterministic regression test pins the interleaving through
+  the existing commit gates (park the watched refresh, land an
+  unrelated refresh, release). The receive budget is also raised to a
+  30s default via `ry_testkit::rpc_receive_timeout`, overridable with
+  `RY_TESTKIT_RPC_TIMEOUT_SECS` (unparsable or non-positive values fall
+  back to the default), with the watcher-registration helper waits in
+  `watched_closed_publish.rs`, `watched_resolution_context.rs`, and
+  `disk_index_freshness.rs` sharing it instead of their own 5s
+  constants — the budget bounds only failure latency (every wait is
+  event-driven and returns the moment the message arrives), so the
+  tests keep their assertions, their ordering pins, and their speed.
 
 ## [0.11.0] - 2026-09-16
 

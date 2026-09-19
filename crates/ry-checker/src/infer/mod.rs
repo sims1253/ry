@@ -269,7 +269,12 @@ fn is_complement_view(complement: &RType, view: &BranchGuardView<'_>) -> bool {
 }
 
 /// The type a branch REBOUND the binding to: a non-narrowing write of a
-/// type different from the pre-`if` original.
+/// type different from the pre-`if` original. A same-type rebind
+/// (`x <- another_locate_call()`) is deliberately NOT a rebind here:
+/// installing the parent union unchanged would add no fact, and claiming
+/// the guard's union-minus-NULL remainder for the false path would be
+/// wrong (the re-assigned value may itself carry the NULL member).
+/// Pinned by `same_type_rebind_guard_keeps_the_stale_null_member`.
 fn rebind_view_type(original: &RType, view: &BranchGuardView<'_>) -> Option<RType> {
     view.ty
         .filter(|ty| !view.narrowed && *ty != original)

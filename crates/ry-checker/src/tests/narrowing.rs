@@ -1483,6 +1483,29 @@ fn return_guard_keeps_stale_type_for_non_union_defaults() {
     );
 }
 
+// The same-type rebind boundary of the replacement guard: re-assigning
+// a value whose type EQUALS the pre-`if` original is deliberately "not
+// a rebind" (`rebind_view_type` requires `*ty != original`). Installing
+// the parent union unchanged would add no fact, and claiming the guard's
+// union-minus-NULL remainder for the false path would be wrong — the
+// re-assigned value may itself carry the NULL member. No exact
+// refinement exists, so the stale NULL member survives into a following
+// condition: conservative (a possible false positive, never a wrong
+// narrowing), pinned here so a future edit cannot silently flip it.
+// The different-type rebind (`where <- "none"`) is the exact
+// replacement shape covered by `null_guards_narrow_union_continuations_exactly`.
+#[test]
+fn same_type_rebind_guard_keeps_the_stale_null_member() {
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    let diagnostics = check(&format!(
+        "{locate}f <- function(input, fallback) {{\n  where <- locate_input(input)\n  if (is.null(where)) where <- locate_input(fallback)\n  if (where == \"path\") 1L else 2L\n}}\nf(\"path\", NULL)\n"
+    ));
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "a same-type rebind adds no fact, so the stale NULL member survives the guard: {diagnostics:?}"
+    );
+}
+
 // The replacement guard over a pure-NULL binding: the null arm's rebind
 // covers the true path and the false path holds the non-null remainder,
 // so the merge's stale `NULL | rebind` union (whose NULL member RY001

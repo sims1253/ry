@@ -1,0 +1,15 @@
+# oracle: must-flag-only RY000
+# Byte-for-byte copy of lintr's
+# tests/testthat/dummy_packages/cp1252/R/cp1252.R at 990e578 (the
+# posit corpus pin), prepended with these ASCII marker lines only; the
+# body below is deliberately NOT valid UTF-8 (Cp-1252). R's parser
+# rejects it with "invalid multibyte character in parser", the on-disk
+# read boundary flags RY000, and whole-file suppression (#467) must
+# keep every semantic rule silent (#470). Stored as a `.R.bytes`
+# sidecar because other harnesses walk this tree as UTF-8 text; the
+# oracle harness materializes it under its real `.R` name at run time
+# (see materialize_byte_fixtures).
+# This file is encoded in Cp-1252
+
+# Comment containing non-ASCII ä
+ü <- 42

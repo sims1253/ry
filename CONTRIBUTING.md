@@ -41,10 +41,14 @@ extension activation, package sizes, and the historical dashboard.
 - Other corpus fixtures declare the expected rule; see
   `crates/ry-checker/tests/corpus.rs` for the expectation syntax.
 - `testdata/oracle/*.R` -- first line is `# oracle: must-pass`,
-  `# oracle: must-flag`, `# oracle: must-warn RYxxx`, or
+  `# oracle: must-flag`, `# oracle: must-warn RYxxx`,
+  `# oracle: must-flag-only RYxxx`, or
   `# oracle: known-gap <one-line reason>`. A `must-warn` fixture uses
   R-side assertions to establish the behavior and requires that ry emit
-  the named warning. R executes these files; keep them side-effect-free.
+  the named warning. A `must-flag-only RYxxx` fixture requires that ry
+  emit that code and no other diagnostic, pinning the whole-file
+  suppression of semantic rules on files R cannot parse. R executes
+  these files; keep them side-effect-free.
 - Every active entry in `ry_checker::rules::RULES` must have at least one
   fixture containing `# oracle-claim: RYxxx`. The R code must demonstrate the
   premise stated by that diagnostic with an error, warning, `quote()` shape,

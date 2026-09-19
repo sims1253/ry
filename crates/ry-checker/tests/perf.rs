@@ -482,7 +482,7 @@ fn dense_latin1_file_decodes_and_checks_quickly() {
     let mut file = parser
         .parse("dense_latin1.R", &decoded.text)
         .expect("parse");
-    file.invalid_utf8 = decoded.invalid_utf8;
+    decoded.attach_boundary_findings(&mut file);
     let mut c = Checker::new("dense_latin1.R");
     c.check(&file);
     let diagnostics = c.take_diagnostics();

@@ -102,8 +102,7 @@ fn parse_paths_with(
         // Record where the on-disk bytes were not valid UTF-8, and
         // whether they started with a BOM, so checks over the on-disk
         // index flag files R's parser rejects (#376, #474).
-        file.invalid_utf8 = decoded.invalid_utf8;
-        file.leading_bom = decoded.leading_bom;
+        decoded.attach_boundary_findings(&mut file);
         Some((path_str, Arc::new(file)))
     };
     match pool {

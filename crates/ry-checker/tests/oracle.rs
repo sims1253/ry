@@ -12,9 +12,23 @@
 //!   - `# oracle: must-pass` + R succeeded => no Error diag.
 //!   - `# oracle: must-warn RYxxx`         => R-side assertions pass and
 //!     ry emits that warning.
+//!   - `# oracle: must-flag-only RYxxx` + R errored => at least one Error
+//!     diag of that code and NO other diagnostic of any code or severity.
+//!     This pins whole-file suppression (#467/#470): a file R cannot parse
+//!     must surface only its RY000s, so a leaked semantic diagnostic fails.
 //!   - `# oracle: known-gap <reason>`      => runs; the delta is printed
 //!     but does NOT fail. It DOES fail if the gap unexpectedly closes
 //!     (ry and R now agree) -- a stale tag.
+//!
+//! Fixtures are read through `ry_workspace`'s on-disk read boundary, the
+//! same UTF-8/Latin-1 policy the CLI and LSP use, so a fixture whose bytes
+//! are not valid UTF-8 (the `parse_error_lintr_cp1252.R.bytes` sidecar)
+//! still gets the encoding RY000 that boundary reports. Such fixtures
+//! cannot live as `.R` files in `testdata/oracle/` -- other harnesses
+//! (`scope_journal`, `invariants`, `metamorphic`, `rule_evidence`) walk
+//! that tree as UTF-8 text -- so the harness materializes each sidecar
+//! under its real `.R` name before running it (the same approach as the
+//! ry-cli encoding e2e fixtures).
 //!
 //! Skips cleanly (returns) when `Rscript` is not installed.
 
@@ -33,6 +47,11 @@ enum Tag {
     MustFlag,
     MustPass,
     MustWarn(String),
+    /// R rejected the file AND ry must emit the named code and nothing
+    /// else: at least one Error diagnostic of that code, and no diagnostic
+    /// of any other code (any severity). Pins whole-file suppression
+    /// (#467): on a file R cannot parse, only its RY000s may survive.
+    MustFlagOnly(String),
     /// A genuine current gap. The one-line reason documents why ry and R
     /// disagree today; the harness prints the delta but does not fail on
     /// it. A stale tag (the gap has closed) DOES fail.
@@ -54,6 +73,13 @@ fn tag_of(src: &str) -> Option<Tag> {
         if trimmed.to_ascii_lowercase().starts_with(warn_prefix) {
             let code = trimmed[warn_prefix.len()..].trim().to_ascii_uppercase();
             return (!code.is_empty()).then_some(Tag::MustWarn(code));
+        }
+        let flag_only_prefix = "oracle: must-flag-only";
+        if trimmed.to_ascii_lowercase().starts_with(flag_only_prefix) {
+            let code = trimmed[flag_only_prefix.len()..]
+                .trim()
+                .to_ascii_uppercase();
+            return (!code.is_empty()).then_some(Tag::MustFlagOnly(code));
         }
         // `# oracle: known-gap <reason>` -- the rest of the line after
         // the tag prefix is the free-text reason. Match the prefix
@@ -100,6 +126,53 @@ fn claim_codes(src: &str) -> Result<Vec<String>, String> {
 
 fn rscript_on_path() -> bool {
     which("Rscript").is_some()
+}
+
+/// Materialize `<name>.R.bytes` sidecars -- fixtures whose bytes are not
+/// valid UTF-8, stored verbatim because the shared `testdata/` walkers
+/// read `.R` files as UTF-8 text -- into `out_dir` under their real
+/// `.R` names, and return the materialized paths. The R run and the
+/// checker then see the exact original bytes, following the ry-cli
+/// encoding e2e precedent for non-UTF-8 fixtures. Claim coverage is not
+/// read from sidecars: a `.bytes` fixture carries an outcome marker, not
+/// an `oracle-claim`.
+fn materialize_byte_fixtures(
+    dir: &std::path::Path,
+    out_dir: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    // The caller just listed this directory successfully, so a failure
+    // here would mean byte-fixture coverage silently vanishing from an
+    // otherwise valid run; fail loudly instead, like the copy below.
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("read oracle dir {}: {e}", dir.display()));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("bytes") {
+            continue;
+        }
+        // Lossy: a sidecar whose filename is not valid UTF-8 still
+        // materializes under its closest representable `.R` name rather
+        // than being dropped from coverage silently.
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let Some(fixture_name) = name.strip_suffix(".bytes") else {
+            continue;
+        };
+        // A sidecar shadowing a real fixture of the same name would run
+        // both under one `name` and garble the failure reports; fail
+        // loudly instead.
+        assert!(
+            !dir.join(fixture_name).exists(),
+            "sidecar {name} collides with a real fixture {fixture_name}"
+        );
+        let target = out_dir.join(fixture_name);
+        fs::copy(&path, &target).unwrap_or_else(|e| panic!("materialize {name}: {e}"));
+        paths.push(target);
+    }
+    paths
 }
 
 fn which(prog: &str) -> Option<std::path::PathBuf> {
@@ -224,11 +297,21 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
     available
 }
 
-fn checker_diagnostics(name: &str, src: &str) -> Vec<(String, Severity)> {
+/// Run the checker over a fixture exactly the way the CLI pipeline does:
+/// parse the decoded text, then attach the on-disk read boundary's
+/// findings (`invalid_utf8` spans, leading BOM) through the same shared
+/// method the CLI and LSP use, so a fixture whose bytes are not valid
+/// UTF-8 gets its encoding RY000 and the whole-file suppression that
+/// follows from it.
+fn checker_diagnostics(
+    name: &str,
+    decoded: ry_workspace::DecodedRSource,
+) -> Vec<(String, Severity)> {
     let mut parser = RParser::new().expect("parser init");
-    let file = parser
-        .parse(name, src)
+    let mut file = parser
+        .parse(name, &decoded.text)
         .unwrap_or_else(|e| panic!("parse {name}: {e}"));
+    decoded.attach_boundary_findings(&mut file);
     let mut c = Checker::new(name);
     c.check(&file);
     let diags = c.take_diagnostics();
@@ -236,6 +319,18 @@ fn checker_diagnostics(name: &str, src: &str) -> Vec<(String, Severity)> {
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
         .collect()
+}
+
+/// The `must-flag-only` satisfaction predicate: R rejected the file, and
+/// ry must emit at least one Error diagnostic of the named code and no
+/// diagnostic of any other code (any severity). Shared by the harness
+/// arm and its falsification test so the test always exercises the real
+/// predicate.
+fn satisfies_must_flag_only(code: &str, diagnostics: &[(String, Severity)]) -> bool {
+    diagnostics
+        .iter()
+        .any(|(actual, severity)| actual == code && *severity == Severity::Error)
+        && diagnostics.iter().all(|(actual, _)| actual == code)
 }
 
 #[test]
@@ -247,14 +342,19 @@ fn oracle_check_each_fixture() {
     }
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/oracle");
-    let mut entries: Vec<_> = match fs::read_dir(&dir) {
-        Ok(e) => e.flatten().collect(),
+    let mut entries: Vec<std::path::PathBuf> = match fs::read_dir(&dir) {
+        Ok(e) => e.flatten().map(|entry| entry.path()).collect(),
         Err(_) => {
             eprintln!("no oracle dir at {}; skipping.", dir.display());
             return;
         }
     };
-    entries.sort_by_key(|e| e.path());
+    // Non-UTF-8 fixtures ride as `.R.bytes` sidecars; give them their
+    // real `.R` names in a scratch dir so the R run and the checker see
+    // the original bytes. The temp dir must outlive the fixture loop.
+    let byte_fixtures = tempfile::tempdir().expect("temp dir for byte fixtures");
+    entries.extend(materialize_byte_fixtures(&dir, byte_fixtures.path()));
+    entries.sort();
 
     let mut failures: Vec<String> = Vec::new();
     let mut total: usize = 0;
@@ -263,8 +363,7 @@ fn oracle_check_each_fixture() {
     let mut skipped: usize = 0;
     let mut pkg_cache: HashMap<String, bool> = HashMap::new();
 
-    for entry in entries {
-        let path = entry.path();
+    for path in entries {
         if path.extension().and_then(|e| e.to_str()) != Some("R") {
             continue;
         }
@@ -273,10 +372,11 @@ fn oracle_check_each_fixture() {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let src = fs::read_to_string(&path).expect("read fixture");
-        let Some(tag) = tag_of(&src) else {
+        let decoded = ry_workspace::read_r_source_decoded(&path).expect("read fixture");
+        let src = &decoded.text;
+        let Some(tag) = tag_of(src) else {
             failures.push(format!(
-                "{name}: missing `# oracle: must-flag` / `must-pass` / `must-warn` / `known-gap` marker"
+                "{name}: missing `# oracle: must-flag` / `must-pass` / `must-warn` / `must-flag-only` / `known-gap` marker"
             ));
             continue;
         };
@@ -285,7 +385,7 @@ fn oracle_check_each_fixture() {
         // machine does not have: R erroring for an environmental reason
         // is not a semantic ry-vs-R disagreement. CI installs everything
         // the fixtures use, so skips cannot hide a regression there.
-        let missing: Vec<String> = fixture_packages(&name, &src)
+        let missing: Vec<String> = fixture_packages(&name, src)
             .into_iter()
             .filter(|p| !r_package_available(p, &mut pkg_cache))
             .collect();
@@ -300,7 +400,7 @@ fn oracle_check_each_fixture() {
         total += 1;
 
         let (r_errored, r_message) = r_errors(&path);
-        let diagnostics = checker_diagnostics(&name, &src);
+        let diagnostics = checker_diagnostics(&name, decoded);
         let errs: Vec<&str> = diagnostics
             .iter()
             .filter(|(_, severity)| *severity == Severity::Error)
@@ -309,6 +409,14 @@ fn oracle_check_each_fixture() {
         let mut err_counts: BTreeMap<&str, usize> = BTreeMap::new();
         for c in &errs {
             *err_counts.entry(c).or_insert(0) += 1;
+        }
+        // Every emitted code, warnings included: a `must-flag-only`
+        // failure is precisely "something besides the named code leaked",
+        // and that leak is often a warning, which `err_counts` alone
+        // would hide.
+        let mut all_counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for (code, _) in &diagnostics {
+            *all_counts.entry(code.as_str()).or_insert(0) += 1;
         }
 
         if let Tag::KnownGap(reason) = &tag {
@@ -349,9 +457,21 @@ fn oracle_check_each_fixture() {
             (Tag::MustWarn(code), false) => diagnostics
                 .iter()
                 .any(|(actual, severity)| actual == code && *severity == Severity::Warning),
+            // R rejected the file and ry must say exactly that: at least
+            // one Error diagnostic of the named code, and nothing else of
+            // any code or severity. Whole-file suppression (#467) means a
+            // file R cannot parse surfaces only its RY000s; a leaked
+            // semantic diagnostic (Error or warning) fails here (#470).
+            (Tag::MustFlagOnly(code), true) => satisfies_must_flag_only(code, &diagnostics),
             (Tag::MustFlag, false) => {
                 failures.push(format!(
                     "{name}: tagged must-flag but R did not error; cannot assert"
+                ));
+                continue;
+            }
+            (Tag::MustFlagOnly(_), false) => {
+                failures.push(format!(
+                    "{name}: tagged must-flag-only but R did not error; cannot assert"
                 ));
                 continue;
             }
@@ -378,9 +498,8 @@ fn oracle_check_each_fixture() {
             passed += 1;
         } else {
             failures.push(format!(
-                "{name}: tag={} r_errored={r_errored} err_codes={:?}",
-                tag_label(&tag),
-                err_counts
+                "{name}: tag={} r_errored={r_errored} err_codes={err_counts:?} all_codes={all_counts:?}",
+                tag_label(&tag)
             ));
         }
     }
@@ -404,6 +523,7 @@ fn tag_label(tag: &Tag) -> &'static str {
         Tag::MustFlag => "must-flag",
         Tag::MustPass => "must-pass",
         Tag::MustWarn(_) => "must-warn",
+        Tag::MustFlagOnly(_) => "must-flag-only",
         Tag::KnownGap(_) => "known-gap",
     }
 }
@@ -461,6 +581,117 @@ fn tag_of_known_gap_tolerates_leading_whitespace() {
 }
 
 #[test]
+fn tag_of_parses_must_flag_only_with_code() {
+    // The code is uppercased like `must-warn`'s.
+    match tag_of("# oracle: must-flag-only ry000\n") {
+        Some(Tag::MustFlagOnly(code)) => assert_eq!(code, "RY000"),
+        other => panic!("expected MustFlagOnly, got {other:?}"),
+    }
+    // The prefix matches case-insensitively; leading whitespace is
+    // tolerated like the other markers.
+    match tag_of("  # Oracle: MUST-FLAG-ONLY RY000\n") {
+        Some(Tag::MustFlagOnly(code)) => assert_eq!(code, "RY000"),
+        other => panic!("expected MustFlagOnly, got {other:?}"),
+    }
+    // A bare `must-flag-only` names no code, so it is not a marker (the
+    // harness reports a missing marker, same as for an empty `must-warn`).
+    assert!(tag_of("# oracle: must-flag-only\n").is_none());
+}
+
+/// Proves that the oracle's `must-flag-only` arm rejects a semantic
+/// leak.
+///
+/// `must-flag-only` strengthens `must-flag` from "at least one Error
+/// diagnostic" to "the named code and nothing else". Run the real
+/// satisfaction predicate on a multiset holding the named Error alone,
+/// the named Error plus a leaked semantic Error, and the named Error
+/// plus a leaked warning: only the first may classify as satisfied.
+/// `must-flag` alone accepts the second multiset -- precisely the
+/// harness gap #470 asked to close.
+#[test]
+fn oracle_must_flag_only_rejects_leaked_semantic_diagnostics() {
+    let only = vec![("RY000".to_string(), Severity::Error)];
+    let leaked_error = vec![
+        ("RY000".to_string(), Severity::Error),
+        ("RY010".to_string(), Severity::Error),
+    ];
+    let leaked_warning = vec![
+        ("RY000".to_string(), Severity::Error),
+        ("RY041".to_string(), Severity::Warning),
+    ];
+    assert!(
+        satisfies_must_flag_only("RY000", &only),
+        "RY000 alone must satisfy must-flag-only"
+    );
+    assert!(
+        !satisfies_must_flag_only("RY000", &leaked_error),
+        "a leaked semantic Error must fail must-flag-only"
+    );
+    assert!(
+        !satisfies_must_flag_only("RY000", &leaked_warning),
+        "a leaked warning must fail must-flag-only"
+    );
+}
+
+/// The checker-side half of the `must-flag-only RY000` pin needs no R:
+/// wherever the harness runs, whole-file suppression (#467) must hold on
+/// the pinned corpus instances, so a regression that leaks semantic
+/// diagnostics back onto a parse-error file fails even on machines
+/// without Rscript. The R-side premise (R rejects each file) is checked
+/// separately by `oracle_check_each_fixture` where R is installed.
+#[test]
+fn must_flag_only_fixtures_emit_exactly_ry000() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/oracle");
+    // The corpus instances that motivated #380 and pinned #470's
+    // wontfix: every RY000-bearing file of the posit corpus (lintr
+    // 990e578, testthat 9b6f12b, shiny-r ca180047), plus the synthetic
+    // recovered-tree fixture from #467.
+    let pinned = [
+        "parse_error_lintr_bad.R",
+        "parse_error_lintr_test_config.R",
+        "parse_error_lintr_cp1252.R",
+        "parse_error_testthat_syntax_error.R",
+        "parse_error_shiny_app_template.R",
+        "recovered_tree_semantics_suppressed.R",
+    ];
+    let mut failures = Vec::new();
+    for name in pinned {
+        // The Cp-1252 fixture is stored as a `.R.bytes` sidecar (its
+        // bytes are not valid UTF-8, which the shared testdata walkers
+        // cannot read); the read boundary takes it verbatim either way.
+        let direct = dir.join(name);
+        let path = if direct.exists() {
+            direct
+        } else {
+            dir.join(format!("{name}.bytes"))
+        };
+        let decoded = ry_workspace::read_r_source_decoded(&path)
+            .unwrap_or_else(|e| panic!("read {name}: {e}"));
+        match tag_of(&decoded.text) {
+            Some(Tag::MustFlagOnly(code)) if code == "RY000" => {}
+            other => {
+                failures.push(format!(
+                    "{name}: expected `must-flag-only RY000`, got {other:?}"
+                ));
+                continue;
+            }
+        }
+        let diagnostics = checker_diagnostics(name, decoded);
+        let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
+        // The same predicate the harness arm uses, so the pin cannot
+        // drift from the real `must-flag-only` semantics.
+        if !satisfies_must_flag_only("RY000", &diagnostics) {
+            failures.push(format!("{name}: expected only RY000, got {codes:?}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "must-flag-only pin broken:\n  - {}\n",
+        failures.join("\n  - ")
+    );
+}
+
+#[test]
 fn claim_codes_parse_registration() {
     assert_eq!(
         claim_codes("# oracle: must-pass\n# oracle-claim: ry003\nif (1) 1\n").unwrap(),
@@ -490,7 +721,7 @@ fn every_rule_has_a_claim_fixture() {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let src = fs::read_to_string(&path).expect("read oracle fixture");
+        let src = ry_workspace::read_r_source(&path).expect("read fixture");
         let fixture_claims = match claim_codes(&src) {
             Ok(codes) => codes,
             Err(error) => {
@@ -563,7 +794,7 @@ fn claim_fixtures_demonstrate_their_r_premise() {
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
-        let src = fs::read_to_string(&path).expect("read oracle fixture");
+        let src = ry_workspace::read_r_source(&path).expect("read fixture");
         let claims = match claim_codes(&src) {
             Ok(claims) if claims.is_empty() => continue,
             Ok(claims) => claims,
@@ -600,7 +831,7 @@ fn claim_fixtures_demonstrate_their_r_premise() {
 
         let (r_errored, r_message) = r_errors(&path);
         let demonstrated = match tag {
-            Tag::MustFlag => r_errored,
+            Tag::MustFlag | Tag::MustFlagOnly(_) => r_errored,
             Tag::MustPass | Tag::MustWarn(_) => !r_errored,
             Tag::KnownGap(_) => unreachable!("handled above"),
         };

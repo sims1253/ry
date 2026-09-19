@@ -6,6 +6,21 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Add a `# oracle: must-flag-only RYxxx` marker to the oracle test
+  harness: the fixture's R run must error and the checker must emit the
+  named code and no other diagnostic of any severity. This pins the
+  whole-file semantic suppression shipped for parse-error files (#467):
+  `must-flag` alone could not catch a leak of semantic diagnostics back
+  onto a file R cannot parse (#470). The directive now guards the
+  recovered-tree fixture from #467 and byte-for-byte copies of the five
+  RY000-bearing posit corpus files that motivated #380 (lintr 990e578
+  `inst/example/bad.R`,
+  `RConfigInvalid/lintr_test_config.R`, `cp1252/R/cp1252.R`; testthat
+  9b6f12b `test-error-1.R`; shiny ca180047 `inst/app_template/app.R`),
+  so any regression that re-emits semantic findings on those files fails
+  the oracle gate. The harness also reads fixtures through the
+  workspace read boundary, which is what lets the Cp-1252 fixture carry
+  its original non-UTF-8 bytes.
 - Add RY111 (`constant-argument-shadowing`): a call argument that passes
   the reserved-word literal `TRUE`/`FALSE` for a formal an enclosing
   function exposes under the identical name -- silently hardcoding

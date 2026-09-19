@@ -598,14 +598,14 @@ impl State {
 }
 
 /// How a background index pass ended. `Installed` is the only outcome
-/// that put new bytes in `disk_files`; `Failed` settled the pass's index
-/// duty (clearing `initial_index_pending`) while leaving the map
-/// untouched — an empty-roots pass or a walk that errored while its
-/// generation still held; `Superseded` lost the generation race and the
-/// supplanter owns the state.
+/// that put new bytes in `disk_files`; `SettledWithoutInstall` settled
+/// the pass's index duty (clearing `initial_index_pending`) while
+/// leaving the map untouched — an empty-roots pass or a walk that
+/// errored while its generation still held; `Superseded` lost the
+/// generation race and the supplanter owns the state.
 enum BackgroundIndexOutcome {
     Installed,
-    Failed,
+    SettledWithoutInstall,
     Superseded,
 }
 
@@ -1382,8 +1382,9 @@ impl Backend {
     /// makes cross-file calls into unopened files resolve on the next
     /// check. The bool answers the callers' original question — "did this
     /// pass settle the index duty it owed?" — so it is true for a
-    /// wholesale install AND for a walk that failed while this pass's
-    /// generation still held (the map is untouched but `initial_index_pending`
+    /// wholesale install AND for a pass that settled without installing
+    /// (an errored walk, or empty roots) while this pass's generation
+    /// still held (the map is untouched but `initial_index_pending`
     /// must not strand); it is false when a newer scan or folder change
     /// supersedes the pass, leaving the republish to the supplanter.
     /// Callers that need to know whether fresh BYTES actually landed (the
@@ -1393,7 +1394,7 @@ impl Backend {
     async fn spawn_background_index(&self) -> bool {
         matches!(
             self.background_index_outcome().await,
-            BackgroundIndexOutcome::Installed | BackgroundIndexOutcome::Failed
+            BackgroundIndexOutcome::Installed | BackgroundIndexOutcome::SettledWithoutInstall
         )
     }
 
@@ -1434,7 +1435,7 @@ impl Backend {
             let mut state = self.state.lock().await;
             if state.index_generation == index_gen {
                 state.initial_index_pending = false;
-                return BackgroundIndexOutcome::Failed;
+                return BackgroundIndexOutcome::SettledWithoutInstall;
             }
             return BackgroundIndexOutcome::Superseded;
         }
@@ -1577,7 +1578,7 @@ impl Backend {
                 let mut state = self.state.lock().await;
                 if state.index_generation == index_gen {
                     state.initial_index_pending = false;
-                    BackgroundIndexOutcome::Failed
+                    BackgroundIndexOutcome::SettledWithoutInstall
                 } else {
                     BackgroundIndexOutcome::Superseded
                 }
@@ -1997,12 +1998,14 @@ impl Backend {
         // generation-guarded, so superseded walks discard without
         // writing. Only [`BackgroundIndexOutcome::Installed`] counts as
         // this path's landing: the scan's bool-compatible contract is
-        // broader (a walk that FAILED while its generation held also
-        // returns true there, because it settles `initial_index_pending`
+        // broader (a pass that settled without installing — an errored
+        // walk, or empty roots, generation still held — also returns
+        // true there, because it settles `initial_index_pending`
         // while leaving the map untouched), and treating that as a
         // landing would republish stale bytes under a success verdict.
-        // A failed or superseded backstop leaves the path to converge on
-        // its own next event, like the superseded arm above.
+        // A settled-without-install or superseded backstop leaves the
+        // path to converge on its own next event, like the superseded
+        // arm above.
         matches!(
             self.background_index_outcome().await,
             BackgroundIndexOutcome::Installed

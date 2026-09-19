@@ -21,19 +21,36 @@ struct RoutedMessage {
 /// starve the background disk-index work between a watched event and
 /// its republish well past the old 5s budget (#551). Set
 /// `RY_TESTKIT_RPC_TIMEOUT_SECS=<positive integer>` to override the
-/// 30s default (an unparseable or non-positive value falls back to the
-/// default); the read is cached for the process lifetime.
+/// 30s default; an unset variable is silent, while a set-but-invalid
+/// one (unparseable or non-positive) prints a warning before falling
+/// back to the default, so a mistyped override is observable. The read
+/// is cached for the process lifetime.
 pub fn rpc_receive_timeout() -> std::time::Duration {
     static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
     *TIMEOUT.get_or_init(|| {
-        std::env::var("RY_TESTKIT_RPC_TIMEOUT_SECS")
-            .ok()
-            .and_then(|raw| raw.parse::<u64>().ok())
-            .filter(|secs| *secs > 0)
-            .map_or_else(
-                || std::time::Duration::from_secs(30),
-                std::time::Duration::from_secs,
-            )
+        let raw = match std::env::var("RY_TESTKIT_RPC_TIMEOUT_SECS") {
+            Ok(raw) => raw,
+            Err(std::env::VarError::NotPresent) => {
+                return std::time::Duration::from_secs(30);
+            }
+            Err(std::env::VarError::NotUnicode(raw)) => {
+                eprintln!(
+                    "ry-testkit: ignoring non-UTF-8 RY_TESTKIT_RPC_TIMEOUT_SECS={raw:?}; \
+                     using the 30s default"
+                );
+                return std::time::Duration::from_secs(30);
+            }
+        };
+        match raw.parse::<u64>() {
+            Ok(secs) if secs > 0 => std::time::Duration::from_secs(secs),
+            _ => {
+                eprintln!(
+                    "ry-testkit: ignoring invalid RY_TESTKIT_RPC_TIMEOUT_SECS={raw:?}; \
+                     using the 30s default"
+                );
+                std::time::Duration::from_secs(30)
+            }
+        }
     })
 }
 
@@ -42,7 +59,9 @@ pub fn rpc_receive_timeout() -> std::time::Duration {
 /// Unlike `AsyncJsonRpcClient::receive_until`, this router retains messages
 /// interleaved before the sought response/publication. Every routed wait
 /// (response, publication, or server-initiated request) is bounded by
-/// [`rpc_receive_timeout`]. Crate-specific tests
+/// [`rpc_receive_timeout`]; the quiesce drain additionally enforces its
+/// own fixed idle/hard deadline, a deliberate settle bound rather than
+/// a starvation budget. Crate-specific tests
 /// own the server launcher so this testkit never depends on a production LSP.
 pub struct LspSession<R, W> {
     client: AsyncJsonRpcClient<R, W>,

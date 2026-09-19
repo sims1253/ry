@@ -598,7 +598,8 @@ All notable changes to ry are documented in this file.
   call so a newer same-path refresh still supersedes retries, #538),
   and a second loss falls back to a full background scan — the same
   ladder `refresh_one_package_context` already uses for the resolution
-  maps. A deterministic regression test pins the interleaving through
+  maps, coalesced so a burst of losing refreshes shares one in-flight
+  scan instead of spawning competing walks. A deterministic regression test pins the interleaving through
   the existing commit gates (park the watched refresh, land an
   unrelated refresh, release). The receive budget is also raised to a
   30s default via `ry_testkit::rpc_receive_timeout`, overridable with

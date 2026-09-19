@@ -106,6 +106,12 @@ pub(super) struct State {
     refresh_epoch_counter: u64,
     /// Files opened during initialization wait for the first workspace context.
     initial_index_pending: bool,
+    /// Background index passes currently between their entry generation
+    /// bump and their commit decision, including passes parked at the
+    /// test-seam gates. Lets the per-file refresh escalation coalesce
+    /// its full-scan backstop instead of spawning a competing walk per
+    /// losing refresh under an event burst (#551 review round).
+    background_scans_in_flight: usize,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
     /// every rebuilt Project and single-file scope check sees the same data.
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -1369,8 +1375,20 @@ impl Backend {
     /// and then republish (e.g. `did_change_watched_files`), which is what
     /// makes cross-file calls into unopened files resolve on the next
     /// check. Returns false when a newer scan or folder change supersedes it;
-    /// the superseding caller then owns the republish.
+    /// the superseding caller then owns the republish. The pass is counted
+    /// in `background_scans_in_flight` for its whole duration (entry bump
+    /// through commit decision), so per-file refresh escalations can
+    /// coalesce against it instead of spawning competing walks.
     async fn spawn_background_index(&self) -> bool {
+        self.state.lock().await.background_scans_in_flight += 1;
+        let landed = self.background_index_pass().await;
+        self.state.lock().await.background_scans_in_flight -= 1;
+        landed
+    }
+
+    /// The walk-and-commit pass [`Backend::spawn_background_index`]
+    /// counts and drives; see there for the caller contract.
+    async fn background_index_pass(&self) -> bool {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
             state.index_generation = state.index_generation.wrapping_add(1);
@@ -1926,12 +1944,21 @@ impl Backend {
         // index through the generation-guarded full scan, the same
         // backstop `refresh_one_package_context` uses for the
         // resolution maps: the scan re-reads the path from current disk
-        // and installs only when it is the newest writer. Returns
-        // false — the refresh itself did not land, the scan's landing
-        // owns the state, and the caller treats false as "not this
-        // writer's duty to republish" (the scan converges the index;
-        // the path's next event publishes through it).
-        self.spawn_background_index().await;
+        // and installs only when it is the newest writer. Coalesced:
+        // when a scan is already in flight, spawning another full walk
+        // per losing refresh would amplify the very churn that caused
+        // the losses (each pass's entry bump invalidates the others'
+        // in-flight refreshes). The in-flight scan may have walked this
+        // path before the latest write — skipping then matches the
+        // single-loss behavior this fix replaced, and the path's next
+        // event converges through whatever landed. Returns false — the
+        // refresh itself did not land, the scan's landing owns the
+        // state, and the caller treats false as "not this writer's
+        // duty to republish".
+        let scan_in_flight = { self.state.lock().await.background_scans_in_flight > 0 };
+        if !scan_in_flight {
+            self.spawn_background_index().await;
+        }
         false
     }
 

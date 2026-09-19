@@ -193,9 +193,19 @@ fn watched_fix_losing_the_generation_race_still_republishes() {
             )
             .await
             .unwrap();
-        ry_lsp::test_seam::wait_refresh_commit().await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the close-time re-read must reach the armed commit gate");
         ry_lsp::test_seam::release_refresh_commit();
-        ry_lsp::test_seam::wait_refresh_landed().await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_landed(),
+        )
+        .await
+        .expect("the parked close-time refresh must make its commit decision");
         sync_barrier(&mut session, &main_uri).await;
 
         // Fix `util.R` on disk; its watched refresh parks at its commit.
@@ -209,7 +219,12 @@ fn watched_fix_losing_the_generation_race_still_republishes() {
             )
             .await
             .unwrap();
-        ry_lsp::test_seam::wait_refresh_commit().await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the watched refresh must reach the armed commit gate");
 
         // While `util.R`'s refresh is parked, an unrelated refresh for
         // `other.R` lands — the one-shot arm was consumed by the parked
@@ -224,11 +239,21 @@ fn watched_fix_losing_the_generation_race_still_republishes() {
             )
             .await
             .unwrap();
-        ry_lsp::test_seam::wait_post_refresh_commit().await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_post_refresh_commit(),
+        )
+        .await
+        .expect("the unrelated refresh must land and reach the post-commit gate");
 
         // Release the parked commit: its snapshot generation is stale.
         ry_lsp::test_seam::release_refresh_commit();
-        ry_lsp::test_seam::wait_refresh_landed().await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_landed(),
+        )
+        .await
+        .expect("the released refresh must make its (retrying) commit decision");
         ry_lsp::test_seam::release_post_refresh_commit();
 
         // The retry must land the fixed bytes and republish them.

@@ -597,6 +597,18 @@ impl State {
     }
 }
 
+/// How a background index pass ended. `Installed` is the only outcome
+/// that put new bytes in `disk_files`; `Failed` settled the pass's index
+/// duty (clearing `initial_index_pending`) while leaving the map
+/// untouched — an empty-roots pass or a walk that errored while its
+/// generation still held; `Superseded` lost the generation race and the
+/// supplanter owns the state.
+enum BackgroundIndexOutcome {
+    Installed,
+    Failed,
+    Superseded,
+}
+
 impl Backend {
     /// Reload off the runtime; retain the last valid config on parse errors.
     async fn reload_folder_contexts(&self) {
@@ -1368,9 +1380,27 @@ impl Backend {
     /// This function never publishes diagnostics itself: callers await it
     /// and then republish (e.g. `did_change_watched_files`), which is what
     /// makes cross-file calls into unopened files resolve on the next
-    /// check. Returns false when a newer scan or folder change supersedes it;
-    /// the superseding caller then owns the republish.
+    /// check. The bool answers the callers' original question — "did this
+    /// pass settle the index duty it owed?" — so it is true for a
+    /// wholesale install AND for a walk that failed while this pass's
+    /// generation still held (the map is untouched but `initial_index_pending`
+    /// must not strand); it is false when a newer scan or folder change
+    /// supersedes the pass, leaving the republish to the supplanter.
+    /// Callers that need to know whether fresh BYTES actually landed (the
+    /// per-file refresh escalation) must use
+    /// [`Backend::background_index_outcome`] and treat only
+    /// [`BackgroundIndexOutcome::Installed`] as a landing.
     async fn spawn_background_index(&self) -> bool {
+        matches!(
+            self.background_index_outcome().await,
+            BackgroundIndexOutcome::Installed | BackgroundIndexOutcome::Failed
+        )
+    }
+
+    /// The wholesale walk-and-commit pass behind
+    /// [`Backend::spawn_background_index`], reporting which of the three
+    /// ways it can end: see [`BackgroundIndexOutcome`].
+    async fn background_index_outcome(&self) -> BackgroundIndexOutcome {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
             state.index_generation = state.index_generation.wrapping_add(1);
@@ -1404,9 +1434,9 @@ impl Backend {
             let mut state = self.state.lock().await;
             if state.index_generation == index_gen {
                 state.initial_index_pending = false;
-                return true;
+                return BackgroundIndexOutcome::Failed;
             }
-            return false;
+            return BackgroundIndexOutcome::Superseded;
         }
 
         #[cfg(feature = "test-util")]
@@ -1511,7 +1541,7 @@ impl Backend {
                         current = state.index_generation,
                         "discarding stale background index results"
                     );
-                    return false;
+                    return BackgroundIndexOutcome::Superseded;
                 }
                 state.disk_files = disk_files;
                 for ctx in &mut state.folder_contexts {
@@ -1540,16 +1570,16 @@ impl Backend {
                         )
                         .await;
                 }
-                true
+                BackgroundIndexOutcome::Installed
             }
             Err(error) => {
                 tracing::warn!(%error, "background workspace index failed");
                 let mut state = self.state.lock().await;
                 if state.index_generation == index_gen {
                     state.initial_index_pending = false;
-                    true
+                    BackgroundIndexOutcome::Failed
                 } else {
-                    false
+                    BackgroundIndexOutcome::Superseded
                 }
             }
         }
@@ -1806,7 +1836,7 @@ impl Backend {
                     );
                     continue;
                 }
-                tracing::debug!(
+                tracing::warn!(
                     path = %path_string,
                     gen = refresh_gen,
                     "per-file disk refresh lost two generation races; converging through a full scan"
@@ -1941,11 +1971,21 @@ impl Backend {
         // behavior of stranding EVERY single loss; only the landed arm
         // carries the published-immediately guarantee. The churn bound
         // is the double-loss precondition itself — two commits inside
-        // two consecutive sub-millisecond snapshot-to-commit windows
-        // per escalated refresh — plus each spawned pass stays
+        // two consecutive sub-millisecond snapshot-to-commit windows per
+        // escalated refresh — plus each spawned pass stays
         // generation-guarded, so superseded walks discard without
-        // writing.
-        self.spawn_background_index().await
+        // writing. Only [`BackgroundIndexOutcome::Installed`] counts as
+        // this path's landing: the scan's bool-compatible contract is
+        // broader (a walk that FAILED while its generation held also
+        // returns true there, because it settles `initial_index_pending`
+        // while leaving the map untouched), and treating that as a
+        // landing would republish stale bytes under a success verdict.
+        // A failed or superseded backstop leaves the path to converge on
+        // its own next event, like the superseded arm above.
+        matches!(
+            self.background_index_outcome().await,
+            BackgroundIndexOutcome::Installed
+        )
     }
 
     /// Re-resolve the owning package group's resolution context after

@@ -346,6 +346,11 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
         )
         .await
         .expect("the first unrelated refresh must land and reach the post-commit gate");
+        // Paired release: the writer already landed (the post-commit park
+        // sits after its insert-and-bump), so waking it here cannot change
+        // any index state — and pairing one release with each bounded wait
+        // keeps the teardown free of count-coupled drains.
+        ry_lsp::test_seam::release_post_refresh_commit();
 
         // Re-arm while attempt 0 is still parked so the retry parks too,
         // then release: attempt 0's commit fails the moved generation and
@@ -381,6 +386,8 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
         )
         .await
         .expect("the second unrelated refresh must land and reach the post-commit gate");
+        // Paired release, as above.
+        ry_lsp::test_seam::release_post_refresh_commit();
 
         // Arm the scan's commit gate, then release the retry: its commit
         // fails the generation check, the escalation spawns the backstop
@@ -406,13 +413,9 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
             "a watched fix exhausting the retry ladder must publish through the backstop scan: {fixed}"
         );
 
-        // Release the two unrelated refreshes parked at the post-commit
-        // gate — one notify per parked waiter — so teardown leaves no
-        // paused writers behind and the gate state matches the
-        // single-race test's.
-        ry_lsp::test_seam::release_post_refresh_commit();
-        ry_lsp::test_seam::release_post_refresh_commit();
-
+        // Both post-commit parks were released the moment their bounded
+        // wait proved the landing (see the paired releases above), so
+        // teardown leaves no paused writers behind.
         join_session(session, server).await;
     });
 }

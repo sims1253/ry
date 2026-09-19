@@ -602,9 +602,9 @@ All notable changes to ry are documented in this file.
   refresh as landed so the watched handler publishes the path (the
   #528 convention) — for landed scans the double-loss case differs
   from the single-loss one only in how the bytes land, never in
-  whether they are published — while a superseded scan leaves the path
-  to converge on its own next event, a residual strictly rarer than
-  the double-loss itself and self-healing.
+  whether they are published — while a superseded or walk-failed scan
+  leaves the path to converge on its own next event, a residual
+  strictly rarer than the double-loss itself and self-healing.
   A deterministic regression test pins the interleaving through
   the existing commit gates (park the watched refresh, land an
   unrelated refresh, release), and a second one pins the double-loss

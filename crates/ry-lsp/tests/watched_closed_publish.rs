@@ -269,3 +269,168 @@ fn watched_fix_losing_the_generation_race_still_republishes() {
         join_session(session, server).await;
     });
 }
+
+/// #551's second rung: a watched refresh that loses the generation race
+/// TWICE converges through the full-scan backstop, and the backstop must
+/// publish too — the double-race case may differ from the single-race one
+/// only in HOW the bytes land (scan versus retry), never in whether they
+/// reach the client. The escalation threads the scan's verdict: a landed
+/// scan reports `true`, the watched handler adds the path to its landed
+/// list, and `schedule_closed_file_publish` drives the republish (the
+/// #528 convention the other no-open-document scan call sites follow).
+///
+/// Deterministic through the gates, one loss per attempt: attempt 0 parks
+/// at the armed commit gate, an unrelated refresh lands (generation
+/// moves), the gate is re-armed while attempt 0 is still parked so the
+/// retry parks too, a second unrelated refresh lands, and the release
+/// exhausts the ladder — the scan then rendezvoused through its own
+/// commit gate before landing.
+#[test]
+fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("main.R", "w <- 1L\n").unwrap();
+        fixture
+            .write_file("util.R", "x <- never_bound_here\n")
+            .unwrap();
+        fixture.write_file("other.R", "o <- 1L\n").unwrap();
+        let main_uri = file_uri(&fixture.path("main.R"));
+        let util_uri = file_uri(&fixture.path("util.R"));
+        let other_uri = file_uri(&fixture.path("other.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        answer_watcher_registration(&mut session).await;
+        sync_barrier(&mut session, &main_uri).await;
+
+        // Settle, then close everything, draining the close-time re-read
+        // through the commit gate so no refresh is in flight below.
+        let mark = session.publication_mark();
+        session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
+        session
+            .published_diagnostics_after(&main_uri, mark)
+            .await
+            .unwrap();
+        session
+            .published_diagnostics_after(&util_uri, mark)
+            .await
+            .unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "textDocument/didClose",
+                json!({"textDocument": {"uri": main_uri}}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the close-time re-read must reach the armed commit gate");
+        ry_lsp::test_seam::release_refresh_commit();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_landed(),
+        )
+        .await
+        .expect("the parked close-time refresh must make its commit decision");
+        sync_barrier(&mut session, &main_uri).await;
+
+        // Fix `util.R`; its watched refresh parks at its commit (attempt 0).
+        std::fs::write(fixture.path("util.R"), "x <- 1L\n").unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        let fix_mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": util_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("attempt 0 must reach the armed commit gate");
+
+        // First loss: an unrelated refresh for `other.R` lands while
+        // attempt 0 is parked, moving the generation.
+        std::fs::write(fixture.path("other.R"), "o <- 2L\n").unwrap();
+        ry_lsp::test_seam::arm_post_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": other_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_post_refresh_commit(),
+        )
+        .await
+        .expect("the first unrelated refresh must land and reach the post-commit gate");
+
+        // Re-arm while attempt 0 is still parked so the retry parks too,
+        // then release: attempt 0's commit fails the moved generation and
+        // the retry re-reads and parks at the re-armed gate.
+        ry_lsp::test_seam::arm_refresh_commit();
+        ry_lsp::test_seam::release_refresh_commit();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the retry must reach the re-armed commit gate");
+
+        // Second loss: another unrelated landing moves the generation
+        // again, so the retry's commit will fail and the ladder exhausts.
+        std::fs::write(fixture.path("other.R"), "o <- 3L\n").unwrap();
+        ry_lsp::test_seam::arm_post_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": other_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_post_refresh_commit(),
+        )
+        .await
+        .expect("the second unrelated refresh must land and reach the post-commit gate");
+
+        // Arm the scan's commit gate, then release the retry: its commit
+        // fails the generation check, the escalation spawns the backstop
+        // scan, and the scan parks at its own gate — the rendezvous that
+        // proves the backstop fired.
+        ry_lsp::test_seam::arm_scan_commit();
+        ry_lsp::test_seam::release_refresh_commit();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_scan_commit(),
+        )
+        .await
+        .expect("the escalation must spawn the backstop scan");
+        ry_lsp::test_seam::release_scan_commit();
+
+        // The landed scan reports true, so the watched handler publishes.
+        let fixed = session
+            .published_diagnostics_after(&util_uri, fix_mark)
+            .await
+            .unwrap();
+        assert!(
+            normalize_diagnostics(&fixed).is_empty(),
+            "a watched fix exhausting the retry ladder must publish through the backstop scan: {fixed}"
+        );
+
+        join_session(session, server).await;
+    });
+}

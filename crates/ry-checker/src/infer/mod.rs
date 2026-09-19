@@ -80,7 +80,10 @@ impl ConditionContext {
 ///   else-branch narrowing of pre-existing guards into continuations
 ///   (`if (is.null(x)) return(NULL)` keeps the stale default type and
 ///   lets RY001 fire on a following condition, the pinned
-///   `null_return_guard_alone_does_not_prove_non_empty` behavior); and
+///   `null_return_guard_alone_does_not_prove_non_empty` behavior). The
+///   one exception is the exact union-minus-NULL refinement
+///   (`walk_journal_if`'s `return_guard_facts`, issue #362), which is
+///   representable without losing an emptiness fact; and
 /// * callee bodies reached through the collected-helper recursion:
 ///   `return` exits the *callee*, and its caller continues past the
 ///   call site.
@@ -100,6 +103,200 @@ impl DivergenceView {
     fn recognizes_return(self) -> bool {
         matches!(self, DivergenceView::Full)
     }
+}
+
+/// One arm's recorded view of a guard-narrowed binding: the type the arm
+/// left on the binding (narrowed or rebound), whether that write was a
+/// narrowing refinement, and whether the binding is a defaulted
+/// parameter whose recorded type only describes the omitted-argument
+/// call shape.
+pub(crate) struct BranchGuardView<'a> {
+    pub ty: Option<&'a RType>,
+    pub narrowed: bool,
+    pub default_parameter: bool,
+}
+
+impl<'a> BranchGuardView<'a> {
+    pub(crate) fn new(ty: Option<&'a RType>, narrowed: bool, default_parameter: bool) -> Self {
+        BranchGuardView {
+            ty,
+            narrowed,
+            default_parameter,
+        }
+    }
+}
+
+/// The exact continuation refinement a null-guard proves for one
+/// narrowed binding whose type carries a NULL member (issue #362);
+/// `None` when no exact refinement is representable.
+///
+/// The guard partitions the value: the false path holds the non-null
+/// remainder (`narrow_away_from_null`), the true path the NULL member.
+/// The branch merges deliberately skip guard-narrowed views — for
+/// open-world bindings the refinement degrades (`NULL` to opaque) and
+/// joining it would destroy the maybe-empty fact behind the pinned
+/// `null_return_guard_alone_does_not_prove_non_empty` behavior — so
+/// this runs after them and installs only what is exact:
+///
+/// * one arm exits through `return(...)` (invisible to the return-blind
+///   continuation view): the surviving arm's view is the continuation;
+/// * both arms continue and one REBOUND the binding: the rebind and the
+///   other arm's remainder join without the stale parent
+///   (`if (is.null(where)) where <- "input"`).
+///
+/// A union original (the find-or-NULL call-site shape) has an exact
+/// remainder, so all three shapes apply; default parameters are
+/// excluded there (omitted-shape semantics). A pure-`NULL` original
+/// admits only the replacement shape, and there the remainder degrades
+/// to opaque: the null arm's rebind and the degraded remainder join to
+/// `unknown` for a defaulted parameter (`if (is.null(detail))
+/// detail <- c(1, 5, 10)[i]` over scales' `detail = NULL` — the caller
+/// may have supplied any non-null value, so the honest continuation is
+/// unknown, not the merge's stale `NULL | rebind` union whose NULL
+/// member RY001 would report through the guard), while a local
+/// provably-`NULL` binding has no other value to degrade to and the
+/// rebind alone is the continuation. Every narrowed view must equal the
+/// computed remainder — never an unrelated predicate's refinement.
+/// Shared by the journal walk and the test-only cloned-scope reference
+/// so their outcomes cannot drift.
+pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) -> Option<RType> {
+    let defaulted = views.original_default_parameter
+        || views.then.default_parameter
+        || views.else_.default_parameter;
+    let complement = narrow_away_from_null(views.original)?;
+    match views.original.mode {
+        Mode::Union => {
+            if defaulted {
+                return None;
+            }
+            union_guard_refinement_shapes(&views, complement)
+        }
+        // A pure-NULL binding: only the replacement shape refines (see
+        // the doc comment above), in either guard orientation. The
+        // return-guard shapes keep the pinned stale-type behavior.
+        Mode::Null => {
+            if views.then_return_diverges
+                || views.else_return_diverges
+                || !views.then_reaches
+                || !(views.else_reaches || !views.has_else)
+            {
+                return None;
+            }
+            // `if (is.null(d)) d <- v` rebinds in the then arm over the
+            // guard's complement; `if (!is.null(d)) ... else d <- v`
+            // mirrors it.
+            let rebound = if let Some(rebound) = rebind_view_type(views.original, &views.then)
+                && is_complement_view(&complement, &views.else_)
+            {
+                rebound
+            } else if let Some(rebound) = rebind_view_type(views.original, &views.else_)
+                && is_complement_view(&complement, &views.then)
+            {
+                rebound
+            } else {
+                return None;
+            };
+            if defaulted {
+                // The caller-supplied path holds an unmodeled value.
+                return Some(RType::unknown());
+            }
+            Some(rebound)
+        }
+        _ => None,
+    }
+}
+
+/// The union-original refinement shapes shared with the pure-NULL
+/// replacement form's bookkeeping: see
+/// [`union_guard_continuation_refinement`].
+fn union_guard_refinement_shapes(views: &UnionGuardViews<'_>, complement: RType) -> Option<RType> {
+    let UnionGuardViews {
+        original,
+        then,
+        else_,
+        original_default_parameter: _,
+        then_return_diverges,
+        else_return_diverges,
+        then_reaches,
+        else_reaches,
+        has_else,
+    } = views;
+    let is_complement = |view: &BranchGuardView<'_>| is_complement_view(&complement, view);
+    let rebind_type = |view: &BranchGuardView<'_>| rebind_view_type(original, view);
+    if *then_return_diverges && !*else_return_diverges {
+        // Only the false path continues.
+        if is_complement(else_) {
+            Some(complement)
+        } else {
+            rebind_type(else_)
+        }
+    } else if *else_return_diverges && !*then_return_diverges {
+        // Only the true path continues.
+        if is_complement(then) {
+            Some(complement)
+        } else {
+            rebind_type(then)
+        }
+    } else if !*then_return_diverges
+        && !*else_return_diverges
+        && *then_reaches
+        && (*else_reaches || !*has_else)
+    {
+        // Both paths continue: exact only when one arm rebound the
+        // binding and the other holds the guard's remainder. Two pure
+        // narrowings re-join to the original union, and two rebinds
+        // follow the ordinary merge.
+        if let Some(rebound) = rebind_type(then)
+            && is_complement(else_)
+        {
+            Some(rebound.join(complement))
+        } else if let Some(rebound) = rebind_type(else_)
+            && is_complement(then)
+        {
+            Some(complement.join(rebound))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Whether a branch view is exactly the guard's non-null remainder (a
+/// narrowing whose recorded type equals `complement`).
+fn is_complement_view(complement: &RType, view: &BranchGuardView<'_>) -> bool {
+    view.narrowed && view.ty == Some(complement)
+}
+
+/// The type a branch REBOUND the binding to: a non-narrowing write of a
+/// type different from the pre-`if` original. A same-type rebind
+/// (`x <- another_locate_call()`) is deliberately NOT a rebind here:
+/// installing the parent union unchanged would add no fact, and claiming
+/// the guard's union-minus-NULL remainder for the false path would be
+/// wrong (the re-assigned value may itself carry the NULL member).
+/// Pinned by `same_type_rebind_guard_keeps_the_stale_null_member`.
+fn rebind_view_type(original: &RType, view: &BranchGuardView<'_>) -> Option<RType> {
+    view.ty
+        .filter(|ty| !view.narrowed && *ty != original)
+        .cloned()
+}
+
+/// Inputs of [`union_guard_continuation_refinement`]: the pre-`if` type,
+/// each arm's recorded view, and the arm reachability facts.
+pub(crate) struct UnionGuardViews<'a> {
+    pub original: &'a RType,
+    pub then: BranchGuardView<'a>,
+    pub else_: BranchGuardView<'a>,
+    /// Whether the PRE-`if` parent binding is a defaulted parameter
+    /// (captured before any branch merge replaces it).
+    pub original_default_parameter: bool,
+    /// The then arm exits only through `return(...)` (diverges under the
+    /// full view, not the return-blind continuation view).
+    pub then_return_diverges: bool,
+    pub else_return_diverges: bool,
+    pub then_reaches: bool,
+    pub else_reaches: bool,
+    pub has_else: bool,
 }
 
 /// R's `if`/`while` coercion accepts more than logical scalars: numeric
@@ -169,6 +366,28 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
             // truthiness (character literal gate, complex component-OR,
             // raw byte truthiness).
             let mut coercible_member = false;
+            // A possibly-valid branch (logical or opaque member) silences
+            // its siblings EXCEPT a proven zero-length one (below). The
+            // collected flag replaces the old mid-loop `return None`,
+            // which let member order decide: a logical member visited
+            // after an invalid sibling discarded the invalidity.
+            let mut quiet_member = false;
+            // A member R rejects with "argument is of length zero" no
+            // matter what its mode is (a zero-length member is always
+            // condition-invalid, see the length guard above). This is the
+            // NULL-propagation path of issue #362: a find-or-NULL helper's
+            // `character | NULL` union reaches an `if`/`while` condition
+            // either directly (`NULL` member) or through a comparison
+            // (`logical<0> | logical<1>` from `where == "path"`). The
+            // error on that branch is deterministic, the diagnostic
+            // message displays the union (so the possibly-valid member is
+            // visible, not claimed away), and the documented remedy — an
+            // `is.null` guard — is exactly what the checker's narrowing
+            // already models. Longer-than-one and wrong-mode members keep
+            // the possibly-valid silence. Nested union members recurse
+            // (see `carries_zero_length_leaf`), mirroring
+            // `switch_expr_length_rejected`.
+            let zero_length_member = members.iter().any(carries_zero_length_leaf);
             for member in members.iter() {
                 match condition_diagnostic(member) {
                     Some(ConditionDiagnostic::Invalid) => {
@@ -179,7 +398,9 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
                     // preserve the existing silence for logical|numeric
                     // unions. An opaque branch is unknown for the same
                     // reason.
-                    None if matches!(member.mode, Mode::Logical | Mode::Opaque) => return None,
+                    None if matches!(member.mode, Mode::Logical | Mode::Opaque) => {
+                        quiet_member = true;
+                    }
                     // A coercible scalar branch is not itself invalid, but
                     // it does not silence the union either: a sibling
                     // member that R provably rejects (a list, zero length,
@@ -193,9 +414,9 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
                     None => {}
                 }
             }
-            if invalid {
+            if invalid && (!quiet_member || zero_length_member) {
                 Some(ConditionDiagnostic::Invalid)
-            } else if numeric && coercible_member {
+            } else if quiet_member || (numeric && coercible_member) {
                 None
             } else {
                 numeric.then_some(ConditionDiagnostic::Numeric)
@@ -203,6 +424,45 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
         }
         _ if is_coercible_scalar_condition_mode(t) => None,
         _ => Some(ConditionDiagnostic::Invalid),
+    }
+}
+
+/// Whether R provably rejects this value as a `switch(EXPR, ...)`
+/// selector. `switch` evaluates EXPR first and requires a length-1
+/// vector, erroring with "EXPR must be a length 1 vector" for NULL,
+/// any zero-length value, and any known length above one. Unlike an
+/// `if` condition, the selector's MODE is almost unconstrained — a
+/// length-1 character or number is the idiomatic shape and R also
+/// accepts scalars of every other vector mode (a length-1 list is
+/// even legal, if useless) — so only the length dimension can prove
+/// the error, and every unproven length (`Unknown`, `Nonempty`) stays
+/// silent. Unions distribute: any member with a proven-bad length
+/// flags the call, which is how a find-or-NULL helper's
+/// `character | NULL` return reaches the selector (issue #362).
+pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
+    match t.mode {
+        Mode::Union => t
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
+        Mode::Opaque => false,
+        _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
+    }
+}
+
+/// Whether this type carries a proven zero-length leaf — directly, or
+/// inside nested union members. Union construction flattens
+/// (`union_of`), but `RType::union` keeps exactly the members it is
+/// given, so a nested union with a zero-length leaf matters as much as
+/// a direct one. Recursion discipline mirrors the sibling
+/// [`switch_expr_length_rejected`].
+fn carries_zero_length_leaf(t: &RType) -> bool {
+    match t.mode {
+        Mode::Union => t
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(carries_zero_length_leaf)),
+        _ => matches!(t.length, Length::Zero),
     }
 }
 
@@ -870,6 +1130,34 @@ impl Checker {
         }
     }
 
+    /// Emit RY001 for a `switch` EXPR selector R provably rejects.
+    ///
+    /// `switch` requires EXPR to be a length-1 vector and errors with
+    /// "EXPR must be a length 1 vector" otherwise — the crash a
+    /// find-or-NULL helper's NULL component produces at an unguarded
+    /// call site (issue #362). Only proven-bad lengths fire (see
+    /// [`switch_expr_length_rejected`]); every unproven length stays
+    /// silent, and a preceding `is.null` guard narrows the NULL member
+    /// away before this check runs. The message states the length
+    /// requirement only: the selector's MODE never proves the error (R
+    /// accepts a length-1 vector of every mode, a length-1 list
+    /// included), so naming accepted modes would understate the rule.
+    /// Takes the already-extracted selector span: callers either have it
+    /// (`Expr::Null`'s) or pass `span_of` of the selector expression.
+    fn emit_switch_expr_diagnostic(&mut self, span: Span, selector_type: &RType) {
+        if switch_expr_length_rejected(selector_type) {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY001",
+                format!(
+                    "`switch` EXPR is `{}`, which is not a length-1 vector; R errors with \"EXPR must be a length 1 vector\"",
+                    selector_type
+                ),
+            );
+        }
+    }
+
     /// Diagnose a value-producing one-arm `if` whose result is thrown away by
     /// a following statement. The narrow producer allowlist avoids treating
     /// intentional side-effect calls as bugs while covering common missing
@@ -970,6 +1258,87 @@ impl Checker {
                 })
             })
             .collect();
+        // A guard on a binding whose pre-`if` type is a union with a NULL
+        // member partitions that union exactly: the guard's false path
+        // holds the union-minus-NULL remainder, its true path the NULL
+        // member. The merges above deliberately skip guard-narrowed
+        // branch views — for open-world bindings the refinement is a
+        // degrade (`NULL` -> opaque, the pinned
+        // `null_return_guard_alone_does_not_prove_non_empty` behavior)
+        // and joining it would destroy the maybe-empty fact RY001 needs.
+        // For the representable remainder there is no such loss, so the
+        // continuation installs it (issue #362): without this,
+        // `where <- locate_input(input)` followed by any of the three
+        // guard idioms below would keep the stale NULL member and RY001
+        // would report through the guard.
+        //
+        // Three shapes, each gated on the EXACT refinement (the recorded
+        // view equals `narrow_away_from_null` of the original, or is a
+        // branch rebinding):
+        //   * the guard arm exits through `return(...)` — only the false
+        //     path continues (`if (is.null(where)) return(NULL)`), and
+        //     the return-blind continuation view above intentionally
+        //     leaves the stale union in place;
+        //   * the mirror with the `else` arm returning;
+        //   * both arms continue and one REBINDS the binding
+        //     (`if (is.null(where)) where <- "input"`): the rebind
+        //     describes the true path, the remainder the false path, so
+        //     the continuation is their join without the stale parent.
+        // Default parameters keep their omitted-shape semantics and are
+        // excluded; unions without a NULL member have no remainder to
+        // install.
+        // Short-circuit: the extra full-view divergence walks only run
+        // when the guard narrowed at least one binding whose pre-`if`
+        // type can yield an exact union-guard refinement at all — a
+        // union with a NULL member or a pure-`NULL` binding, exactly
+        // the originals `union_guard_continuation_refinement` admits
+        // (the `narrow_away_from_null` member scan is that set's cheap
+        // encoding). Guard-free `if`s and guards over NULL-free types
+        // keep their previous cost, and the refinement loop below is
+        // unchanged: for every other original it returns `None`
+        // regardless of the divergence flags.
+        let guard_narrowed_null_member = narrowed
+            .iter()
+            .filter_map(|name| scope.get(name))
+            .any(|original| narrow_away_from_null(original).is_some());
+        let then_return_diverges =
+            guard_narrowed_null_member && !then_diverges && self.block_diverges(then);
+        let else_return_diverges = guard_narrowed_null_member
+            && !else_diverges
+            && else_.is_some_and(|statements| self.block_diverges(statements));
+        let union_guard_facts: Vec<(String, RType)> = if narrowed.is_empty() {
+            Vec::new()
+        } else {
+            narrowed
+                .iter()
+                .filter_map(|name| {
+                    let original = scope.get(name)?;
+                    let original_default_parameter = scope.is_default_parameter(name);
+                    let then_binding = then_delta.binding(scope, name, Some(original));
+                    let else_binding = else_delta.binding(scope, name, Some(original));
+                    union_guard_continuation_refinement(UnionGuardViews {
+                        original,
+                        then: BranchGuardView::new(
+                            then_binding.ty,
+                            then_binding.narrowed,
+                            then_binding.default_parameter,
+                        ),
+                        else_: BranchGuardView::new(
+                            else_binding.ty,
+                            else_binding.narrowed,
+                            else_binding.default_parameter,
+                        ),
+                        original_default_parameter,
+                        then_return_diverges,
+                        else_return_diverges,
+                        then_reaches,
+                        else_reaches,
+                        has_else,
+                    })
+                    .map(|refined| (name.clone(), refined))
+                })
+                .collect()
+        };
         scope.clear_ops_facts();
         scope.clear_known_strings();
         scope.ops_environment_unknown |=
@@ -1102,6 +1471,9 @@ impl Checker {
                     scope.insert(name, ty);
                 }
             }
+        }
+        for (name, refined) in union_guard_facts {
+            scope.insert_narrowed(name, refined);
         }
         if has_else && then_delta.unreachable && else_delta.unreachable {
             scope.unreachable = true;

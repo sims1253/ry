@@ -6,146 +6,224 @@
   "packages": [
     {
       "name": "tidyverse",
-      "commit": "0231aafbc56914ee5371dd6c7b60677f168d7154"
+      "commit": "0231aafbc56914ee5371dd6c7b60677f168d7154",
+      "diagnostics": 0
     },
     {
       "name": "ggplot2",
-      "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd"
+      "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
+      "diagnostics": 15
     },
     {
       "name": "dplyr",
-      "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f"
+      "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f",
+      "diagnostics": 21
     },
     {
       "name": "tidyr",
-      "commit": "26f83e89a690b6cf31a260489b828df0ff43ebb2"
+      "commit": "26f83e89a690b6cf31a260489b828df0ff43ebb2",
+      "diagnostics": 8
     },
     {
       "name": "readr",
-      "commit": "238ea873fdc1a34b3638f01493bd8df9f770ac62"
+      "commit": "238ea873fdc1a34b3638f01493bd8df9f770ac62",
+      "diagnostics": 0
     },
     {
       "name": "purrr",
-      "commit": "481e829f297fd4315b386518215157f361475ad0"
+      "commit": "481e829f297fd4315b386518215157f361475ad0",
+      "diagnostics": 4
     },
     {
       "name": "tibble",
-      "commit": "b5e7406e83d8c3291573dbd1ae06bbb9f87b6aac"
+      "commit": "b5e7406e83d8c3291573dbd1ae06bbb9f87b6aac",
+      "diagnostics": 0
     },
     {
       "name": "stringr",
-      "commit": "ae054b1d28f630fee22ddb3cb7525396e62af4fe"
+      "commit": "ae054b1d28f630fee22ddb3cb7525396e62af4fe",
+      "diagnostics": 0
     },
     {
       "name": "forcats",
-      "commit": "f83e0e682d9f874d066630ff78eb12586b5b2a32"
+      "commit": "f83e0e682d9f874d066630ff78eb12586b5b2a32",
+      "diagnostics": 0
     },
     {
       "name": "lubridate",
-      "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370"
+      "commit": "8e9f2b289ee8384d9499e2527fb1e449c97e5370",
+      "diagnostics": 9
     },
     {
       "name": "haven",
-      "commit": "f067fb27e436bc1207e8424f50df90ed9d5acc3a"
+      "commit": "f067fb27e436bc1207e8424f50df90ed9d5acc3a",
+      "diagnostics": 1
     },
     {
       "name": "readxl",
-      "commit": "47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af"
+      "commit": "47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af",
+      "diagnostics": 0
     },
     {
       "name": "googlesheets4",
-      "commit": "55cd9fdbf9c74c20de1eeb9ec2629a7d16c76aa4"
+      "commit": "55cd9fdbf9c74c20de1eeb9ec2629a7d16c76aa4",
+      "diagnostics": 0
     },
     {
       "name": "googledrive",
-      "commit": "8de11bfd4349ae6e7d98b51f7a6ebc148fe988fa"
+      "commit": "8de11bfd4349ae6e7d98b51f7a6ebc148fe988fa",
+      "diagnostics": 0
     },
     {
       "name": "rvest",
-      "commit": "6c955c0ecfbb0f0bdb1891f0ef952af388b51851"
+      "commit": "6c955c0ecfbb0f0bdb1891f0ef952af388b51851",
+      "diagnostics": 0
     },
     {
       "name": "hms",
-      "commit": "ebd2f840c33ee126083d3f1248759fe9f8b3d238"
+      "commit": "ebd2f840c33ee126083d3f1248759fe9f8b3d238",
+      "diagnostics": 2
     },
     {
       "name": "blob",
-      "commit": "a8ce151abbcc43c198f344e6fb47f02d3733d509"
+      "commit": "a8ce151abbcc43c198f344e6fb47f02d3733d509",
+      "diagnostics": 1
     },
     {
       "name": "dbplyr",
-      "commit": "f478e2070c9a60f4aebcc94132048312209dd097"
+      "commit": "f478e2070c9a60f4aebcc94132048312209dd097",
+      "diagnostics": 20
     },
     {
       "name": "dtplyr",
-      "commit": "bffe46e664d62021e47251c158c9f02c4cd30400"
+      "commit": "bffe46e664d62021e47251c158c9f02c4cd30400",
+      "diagnostics": 3
     },
     {
       "name": "duckplyr",
-      "commit": "a7eb17687a876e07eb191bab5f6a7806de997039"
+      "commit": "a7eb17687a876e07eb191bab5f6a7806de997039",
+      "diagnostics": 14
     },
     {
       "name": "magrittr",
-      "commit": "73d66ee89c1079d66d235bfde551b6110c934259"
+      "commit": "73d66ee89c1079d66d235bfde551b6110c934259",
+      "diagnostics": 0
     },
     {
       "name": "glue",
-      "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a"
+      "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a",
+      "diagnostics": 2
     },
     {
       "name": "modelr",
-      "commit": "28e13cab9099e72cd5605d86c5418d587bd2a365"
+      "commit": "28e13cab9099e72cd5605d86c5418d587bd2a365",
+      "diagnostics": 0
     },
     {
       "name": "reprex",
-      "commit": "0dcf301940c050e1cf32f230cab45503d85ac5a4"
+      "commit": "0dcf301940c050e1cf32f230cab45503d85ac5a4",
+      "diagnostics": 0
     }
   ],
   "findings": [
     {
-      "package": "ggplot2",
-      "code": "RY100",
-      "path": "tests/testthat/test-axis-secondary.R",
-      "line": 36,
-      "column": 23,
+      "package": "blob",
+      "code": "RY106",
+      "path": "R/format.R",
+      "line": 43,
+      "column": 10,
       "label": "true_positive",
-      "audit_group": "upstream-ggplot2"
+      "audit_group": "ifelse-mode"
     },
     {
-      "package": "ggplot2",
-      "code": "RY100",
-      "path": "tests/testthat/test-axis-secondary.R",
-      "line": 37,
-      "column": 23,
+      "package": "dbplyr",
+      "code": "RY109",
+      "path": "R/verb-distinct.R",
+      "line": 61,
+      "column": 16,
       "label": "true_positive",
-      "audit_group": "upstream-ggplot2"
+      "audit_group": "ry109-self-defaults"
     },
     {
-      "package": "ggplot2",
-      "code": "RY100",
-      "path": "tests/testthat/test-axis-secondary.R",
-      "line": 56,
-      "column": 23,
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
       "label": "true_positive",
-      "audit_group": "upstream-ggplot2"
+      "audit_group": "pr195-nse-stubs"
     },
     {
-      "package": "ggplot2",
-      "code": "RY100",
-      "path": "tests/testthat/test-axis-secondary.R",
-      "line": 57,
-      "column": 23,
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 110,
+      "column": 36,
       "label": "true_positive",
-      "audit_group": "upstream-ggplot2"
+      "audit_group": "pr195-nse-stubs"
     },
     {
-      "package": "ggplot2",
-      "code": "RY040",
-      "path": "tests/testthat/test-geom-curve.R",
-      "line": 17,
-      "column": 8,
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-backend-.R",
+      "line": 111,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-query-set-op.R",
+      "line": 7,
+      "column": 37,
       "label": "false_positive",
-      "audit_group": "P7a"
+      "audit_group": "P7b"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 13,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY091",
+      "path": "tests/testthat/test-translate-sql-string.R",
+      "line": 14,
+      "column": 36,
+      "label": "true_positive",
+      "audit_group": "pr195-nse-stubs"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-verb-set-ops.R",
+      "line": 106,
+      "column": 30,
+      "label": "false_positive",
+      "audit_group": "P7b"
+    },
+    {
+      "package": "dbplyr",
+      "code": "RY090",
+      "path": "tests/testthat/test-verb-set-ops.R",
+      "line": 114,
+      "column": 30,
+      "label": "false_positive",
+      "audit_group": "P7b"
     },
     {
       "package": "dplyr",
@@ -182,6 +260,15 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "P4a"
+    },
+    {
+      "package": "dplyr",
+      "code": "RY109",
+      "path": "R/distinct.R",
+      "line": 81,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
     },
     {
       "package": "dplyr",
@@ -328,49 +415,31 @@
       "audit_group": "P2"
     },
     {
-      "package": "purrr",
-      "code": "RY080",
-      "path": "tests/testthat/test-map.R",
-      "line": 82,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P8"
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/step-join.R",
+      "line": 162,
+      "column": 43,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
     },
     {
-      "package": "purrr",
-      "code": "RY080",
-      "path": "tests/testthat/test-parallel.R",
-      "line": 120,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P8"
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 6,
+      "column": 51,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
     },
     {
-      "package": "dbplyr",
-      "code": "RY090",
-      "path": "tests/testthat/test-query-set-op.R",
-      "line": 7,
-      "column": 37,
-      "label": "false_positive",
-      "audit_group": "P7b"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY090",
-      "path": "tests/testthat/test-verb-set-ops.R",
-      "line": 106,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "P7b"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY090",
-      "path": "tests/testthat/test-verb-set-ops.R",
-      "line": 114,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "P7b"
+      "package": "dtplyr",
+      "code": "RY109",
+      "path": "R/tidyeval-across.R",
+      "line": 20,
+      "column": 47,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
     },
     {
       "package": "duckplyr",
@@ -499,38 +568,11 @@
       "audit_group": "P2"
     },
     {
-      "package": "glue",
-      "code": "RY040",
-      "path": "tests/testthat/test-glue.R",
-      "line": 595,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P7a"
-    },
-    {
-      "package": "glue",
-      "code": "RY107",
-      "path": "R/utils.R",
-      "line": 32,
-      "column": 7,
-      "label": "true_positive",
-      "audit_group": "upstream-glue"
-    },
-    {
       "package": "ggplot2",
       "code": "RY010",
       "path": "R/facet-.R",
       "line": 1074,
       "column": 28,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY010",
-      "path": "R/plot-render.R",
-      "line": 297,
-      "column": 19,
       "label": "unowned",
       "audit_group": "plan-32-33"
     },
@@ -573,6 +615,33 @@
     {
       "package": "ggplot2",
       "code": "RY010",
+      "path": "R/plot-render.R",
+      "line": 297,
+      "column": 19,
+      "label": "unowned",
+      "audit_group": "plan-32-33"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-bindot.R",
+      "line": 133,
+      "column": 68,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY109",
+      "path": "R/stat-quantilemethods.R",
+      "line": 81,
+      "column": 38,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY010",
       "path": "R/utilities.R",
       "line": 556,
       "column": 53,
@@ -589,6 +658,105 @@
       "audit_group": "plan-32-33"
     },
     {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 36,
+      "column": 23,
+      "label": "true_positive",
+      "audit_group": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 37,
+      "column": 23,
+      "label": "true_positive",
+      "audit_group": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 56,
+      "column": 23,
+      "label": "true_positive",
+      "audit_group": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY100",
+      "path": "tests/testthat/test-axis-secondary.R",
+      "line": 57,
+      "column": 23,
+      "label": "true_positive",
+      "audit_group": "upstream-ggplot2"
+    },
+    {
+      "package": "ggplot2",
+      "code": "RY040",
+      "path": "tests/testthat/test-geom-curve.R",
+      "line": 17,
+      "column": 8,
+      "label": "false_positive",
+      "audit_group": "P7a"
+    },
+    {
+      "package": "glue",
+      "code": "RY107",
+      "path": "R/utils.R",
+      "line": 32,
+      "column": 7,
+      "label": "true_positive",
+      "audit_group": "upstream-glue"
+    },
+    {
+      "package": "glue",
+      "code": "RY040",
+      "path": "tests/testthat/test-glue.R",
+      "line": 595,
+      "column": 20,
+      "label": "false_positive",
+      "audit_group": "P7a"
+    },
+    {
+      "package": "hms",
+      "code": "RY106",
+      "path": "R/hms.R",
+      "line": 218,
+      "column": 3,
+      "label": "true_positive",
+      "audit_group": "ifelse-mode"
+    },
+    {
+      "package": "hms",
+      "code": "RY108",
+      "path": "R/hms.R",
+      "line": 307,
+      "column": 15,
+      "label": "true_positive",
+      "audit_group": "seq-defaulted"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY001",
+      "path": "R/accessors-day.r",
+      "line": 98,
+      "column": 7,
+      "label": "true_positive",
+      "audit_group": "ry001-null-union"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/guess.r",
+      "line": 265,
+      "column": 64,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
       "package": "lubridate",
       "code": "RY010",
       "path": "R/ops-compare.r",
@@ -603,6 +771,24 @@
       "path": "R/ops-compare.r",
       "line": 55,
       "column": 14,
+      "label": "unowned",
+      "audit_group": "plan-32-33"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY109",
+      "path": "R/parse.r",
+      "line": 975,
+      "column": 32,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "lubridate",
+      "code": "RY010",
+      "path": "R/vctrs.R",
+      "line": 64,
+      "column": 3,
       "label": "unowned",
       "audit_group": "plan-32-33"
     },
@@ -634,15 +820,6 @@
       "audit_group": "plan-32-33"
     },
     {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/vctrs.R",
-      "line": 64,
-      "column": 3,
-      "label": "unowned",
-      "audit_group": "plan-32-33"
-    },
-    {
       "package": "purrr",
       "code": "RY032",
       "path": "R/deprec-prepend.R",
@@ -650,6 +827,33 @@
       "column": 7,
       "label": "unowned",
       "audit_group": "plan-32-33"
+    },
+    {
+      "package": "purrr",
+      "code": "RY109",
+      "path": "R/progress-bars.R",
+      "line": 56,
+      "column": 16,
+      "label": "true_positive",
+      "audit_group": "ry109-self-defaults"
+    },
+    {
+      "package": "purrr",
+      "code": "RY080",
+      "path": "tests/testthat/test-map.R",
+      "line": 82,
+      "column": 20,
+      "label": "false_positive",
+      "audit_group": "P8"
+    },
+    {
+      "package": "purrr",
+      "code": "RY080",
+      "path": "tests/testthat/test-parallel.R",
+      "line": 120,
+      "column": 20,
+      "label": "false_positive",
+      "audit_group": "P8"
     },
     {
       "package": "tidyr",
@@ -722,177 +926,6 @@
       "column": 17,
       "label": "unowned",
       "audit_group": "plan-32-33"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-backend-.R",
-      "line": 110,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-backend-.R",
-      "line": 110,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-backend-.R",
-      "line": 111,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-translate-sql-string.R",
-      "line": 13,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-translate-sql-string.R",
-      "line": 13,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY091",
-      "path": "tests/testthat/test-translate-sql-string.R",
-      "line": 14,
-      "column": 36,
-      "label": "true_positive",
-      "audit_group": "pr195-nse-stubs"
-    },
-    {
-      "package": "blob",
-      "code": "RY106",
-      "path": "R/format.R",
-      "line": 43,
-      "column": 10,
-      "label": "true_positive",
-      "audit_group": "ifelse-mode"
-    },
-    {
-      "package": "hms",
-      "code": "RY106",
-      "path": "R/hms.R",
-      "line": 218,
-      "column": 3,
-      "label": "true_positive",
-      "audit_group": "ifelse-mode"
-    },
-    {
-      "package": "dbplyr",
-      "code": "RY109",
-      "path": "R/verb-distinct.R",
-      "line": 61,
-      "column": 16,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY109",
-      "path": "R/distinct.R",
-      "line": 81,
-      "column": 16,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "dtplyr",
-      "code": "RY109",
-      "path": "R/step-join.R",
-      "line": 162,
-      "column": 43,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "dtplyr",
-      "code": "RY109",
-      "path": "R/tidyeval-across.R",
-      "line": 20,
-      "column": 47,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "dtplyr",
-      "code": "RY109",
-      "path": "R/tidyeval-across.R",
-      "line": 6,
-      "column": 51,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY109",
-      "path": "R/stat-bindot.R",
-      "line": 133,
-      "column": 68,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "ggplot2",
-      "code": "RY109",
-      "path": "R/stat-quantilemethods.R",
-      "line": 81,
-      "column": 38,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY109",
-      "path": "R/guess.r",
-      "line": 265,
-      "column": 64,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "lubridate",
-      "code": "RY109",
-      "path": "R/parse.r",
-      "line": 975,
-      "column": 32,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "purrr",
-      "code": "RY109",
-      "path": "R/progress-bars.R",
-      "line": 56,
-      "column": 16,
-      "label": "true_positive",
-      "audit_group": "ry109-self-defaults"
-    },
-    {
-      "package": "hms",
-      "code": "RY108",
-      "path": "R/hms.R",
-      "line": 307,
-      "column": 15,
-      "label": "true_positive",
-      "audit_group": "seq-defaulted"
     },
     {
       "package": "dbplyr",
@@ -995,7 +1028,7 @@
     }
   ],
   "classification": {
-    "true_positive": 35,
+    "true_positive": 36,
     "false_positive": 41,
     "unowned": 23
   },
@@ -1015,7 +1048,8 @@
     "ifelse-mode": 2,
     "ry109-self-defaults": 10,
     "seq-defaulted": 1,
-    "ry111-constant-shadowing": 11
+    "ry111-constant-shadowing": 11,
+    "ry001-null-union": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -1033,8 +1067,9 @@
     "RY109 (self-referential-default, issue #364) adds 10 true positives across 6 packages, each runtime-verified as a default that can only resolve to its own promise and therefore can never evaluate. The dtplyr trio (step-join.R:162 `copy = copy`, tidyeval-across.R:6,20 `j = j`) is the shipped bug upstream fixed in dbe32a6: triggering the default errors. purrr progress-bars.R:56 `caller_env = caller_env()` errors when the stop_input_type branch is reached. The dplyr R/distinct.R:81 and dbplyr R/verb-distinct.R:61 defaults `caller_env = caller_env(2)` shadow rlang's caller_env() with the formal, but neither body consumes the formal, so the calls run when it is missing: the defaults are dead on arrival and would error the moment anyone consumed them (dplyr's sibling `error_call = caller_env()` at distinct.R:82 is a legal cross-formal reference and correctly stays quiet). ggplot2 stat-bindot.R:133 `method = method` (unused in the body; `densitybin(1:3)` runs) and stat-quantilemethods.R:81 `method.args = method.args` (forced through inject), and lubridate's `tz = tz(x)` (parse.r:975, forced on the character branch) and `.select_formats = .select_formats` (guess.r:265, intent was the namespace function, shadowed by the formal) complete the set. Defusing suppression: dbplyr's sql_runif `n = n()` (body verifies the captured default via enquo) stays silent through typeshed captures_promise provenance; in the posit corpus the same mechanism keeps corrr's enquo/{{ }} idioms quiet, while rlang's own defusing tests (test-nse-defuse.R:329,334) warn because their bare enexpr/enquo are defined in-project -- 2 labeled false positives there, and this manifest's ungated rlang root report (rlang has no packages-block entry) gains exactly those two identities. Bare defuser names defined by the project itself are never credited without provenance.",
     "RY108 (seq-defaulted-forward, #463) adds one owned true positive: hms R/hms.R:307:15, the tidyverse/hms#231 defect itself -- the defaulted `to = hms(1)` is validated (`is_hms(to)`), cast, and forwarded without a `missing(to)` check, so `seq(hms(1), length.out = 3)` repeats the default endpoint (three identical values) and a forwarded `by` errors with \"too many arguments\". The upstream fix (6fec3ad) guards every `to` use with `missing(to)`, exactly the shape the rule's supplied-vs-defaulted flow analysis recognizes; seq.Date (no default on `to`, cached mTo tests) and the other seq.* methods in the corpus stay silent.",
     "Metadata hygiene (#475): the dbplyr RY091 identities tests/testthat/test-backend-.R:110:36 (`ifelse(x, 1L)`, missing `no`) and test-translate-sql-string.R:13:36 (`substr(\"test\", 0)`, missing `stop`) are each recorded twice because the committed hermetic report emits each diagnostic twice at the same span (both calls sit inside the NSE-capturing expect_translation_snapshot helper). ecosystem/reconcile.R compares report and ledger multisets, so both copies are pinned; the 88-finding total and the pr195-nse-stubs count of 6 include the repeats.",
+    "NULL union members now propagate into RY001 condition analysis (#362), adding exactly one reviewed true-positive identity under the new ry001-null-union group (true_positive 24 -> 25): lubridate R/accessors-day.r:98:7, as_week_start's implicit fall-through NULL (an unmatched day name skips every pmatch/match guard) reaching `if (start != 7)` \u2014 R errors with \"argument is of length zero\", runtime-verified. No other identity changes.",
     "RY111 (constant-argument-shadowing, issue #361) adds 11 reviewed findings, all true positives. The founding defect is included: haven R/labelled.R:111 -- median.haven_labelled hardcodes `na.rm = TRUE` behind its own `na.rm = TRUE, ...` formals, so a caller's explicit na.rm = FALSE is silently ignored (runtime-verified in the issue: median(labelled(c(1:4, NA), c(a = 1)), na.rm = FALSE) returns 2.5 where base median returns NA). The other ten are the dbplyr sql_render.*_query methods (union, set_op, semi_join, rf_join, multi_join), whose own `subquery` formal is never read in the method body while the generic (sql_render.lazy_query) forwards the caller's flag into them -- the documented ORDER BY-in-subquery handling is silently dropped for these query types. The rule's dead-formal gate keeps every deliberate corpus idiom silent (dbplyr's select_query forwards `subquery = subquery` at its own wrapper, stringr guards `if (ignore_case)` before its fixed regex(), tibble forwards `quiet = quiet` at the user-facing call, dplyr branches on `recursive`, rvest reads `inherit` inside env_has). One unaudited identity also appears in the regenerated jsonlite report (R/stop.R:2, `call. = FALSE`): jsonlite's own stop wrapper exists precisely to suppress the call in error output, so the dead `call.` formal is deliberate; jsonlite carries no packages entry in this ledger, so the identity is explained here rather than as a finding row."
   ],
   "ry_commit": "1f7cf6f6153261bfcf8ea234849bdc9d9bd6636d",
-  "source_sha256": "6cb7d6f25f8a030a691ccea1ec080be502d0af277979d02a27dfaf3bade43339"
+  "source_sha256": "a998aae12d5f966b9fc9a59f2d93ed28684c2caa264400f226a3db03a4d89f47"
 }

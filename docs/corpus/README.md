@@ -7,19 +7,22 @@ and an `audit_group` label. Pinning identities — not aggregate counts — mean
 removing one finding can never be silently mistaken for removing another.
 
 The `audit_group` field groups reviewed findings by how the audit explained
-each label. `posit-0.9.0.json` has 14 groups; most name a cause
-(`type-narrowing`, `test-fixture`, `ifelse-mode`), one an owner
-(`upstream-package`), and the largest, `manual-audit`, is the manually
-classified batch. `tidyverse-0.7.1.json` has 20 groups: 16 are batch ids
-(`P2`, `P3a`, `plan-32-33`, `pr195-nse-stubs`), kept verbatim because the
-planning records that defined them were local-only and no longer exist;
-`upstream-ggplot2` and `upstream-glue` name upstream packages and
-`ifelse-mode` and `seq-defaulted` causes.
+each label. `posit-0.9.0.json` has 16 groups; most name a cause
+(`type-narrowing`, `test-fixture`, `ifelse-mode`, `ry001-null-union`,
+`ry111-constant-shadowing`), one an owner (`upstream-package`), and the
+largest, `manual-audit`, is the manually classified batch.
+`tidyverse-0.7.1.json` has 17 groups: 10 are batch ids
+(`P2`, `P3e`, `P4a`, `P4b`, `P4c`, `P7a`, `P7b`, `P8`, `plan-32-33`,
+`pr195-nse-stubs`), kept verbatim because the planning records that defined
+them were local-only and no longer exist; `upstream-ggplot2` and
+`upstream-glue` name upstream packages and `ifelse-mode`, `seq-defaulted`,
+`ry109-self-defaults`, `ry001-null-union`, and `ry111-constant-shadowing`
+causes.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 88 | 24 / 41 / 0 (+23 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 410 | 65 / 345 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 100 | 36 / 41 / 0 (+23 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 433 | 85 / 348 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.
@@ -104,9 +107,11 @@ non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
 entries — while the index’s “24 Packages” counts ledger packages-block
 entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
 testthat, withr) have no block entry. Three of their reports (cli, rlang,
-testthat) contain 44 unowned findings in total; the remaining five (curl, fs,
-jsonlite, scales, withr) are empty — scales since #459, curl and jsonlite
-since the #374 superassignment modeling.
+testthat) contain 44 unowned findings in total; four of the remaining five
+(curl, fs, scales, withr) are empty — scales since #459, curl since the
+#374 superassignment modeling — and jsonlite carries the single unowned
+RY111 at R/stop.R:2, the deliberate `call. = FALSE` wrapper explained in
+the ledger’s #361 note.
 
 The Posit ledger’s `source_sha256` hashes the concatenated bytes of all
 `ecosystem/reports/posit.*.root.txt` files, sorted by filename. Recompute it

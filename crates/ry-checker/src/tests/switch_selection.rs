@@ -200,3 +200,78 @@ fn pure_selected_list_retains_required_error_but_masks_do_not() {
     assert_eq!(scope.get("out").unwrap().mode, Mode::Opaque);
     assert!(!diagnostics.iter().any(|d| d.code == "RY040"));
 }
+
+// R requires a `switch` EXPR to be a length-1 vector ("EXPR must be a
+// length 1 vector"). Only PROVEN bad lengths fire: a NULL member of a
+// union return (#362), a zero-length binding, a known length above one,
+// and a literal NULL selector. Everything whose length is unproven —
+// parameters, unknown calls, possibly-multiple values — stays silent,
+// and the selector's mode never matters on its own (a length-1 list is
+// even legal R).
+#[test]
+fn switch_expr_provably_bad_length_fires_ry001() {
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    for (note, tail) in [
+        (
+            "NULL component of a union return",
+            "where <- locate_input(NULL)\nswitch(where, path = 1L, 2L)\n",
+        ),
+        (
+            "zero-length member of known length above one",
+            "get2 <- function(x) {\n  if (x > 0) {\n    c(\"a\", \"b\")\n  } else {\n    NULL\n  }\n}\nw <- get2(1)\nswitch(w, a = 1L, 2L)\n",
+        ),
+        (
+            "local NULL binding",
+            "where <- NULL\nswitch(where, path = 1L, 2L)\n",
+        ),
+        (
+            "local zero-length atomic binding",
+            "where <- character(0)\nswitch(where, path = 1L, 2L)\n",
+        ),
+    ] {
+        let source = format!("{locate}{tail}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY001"),
+            "{note}: {diagnostics:?}"
+        );
+    }
+    let diagnostics = check("switch(NULL, path = 1L, 2L)\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "literal NULL selector: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn switch_expr_unproven_lengths_stay_silent() {
+    for (note, source) in [
+        (
+            "unknown parameter selector",
+            "f <- function(where) {\n  switch(where, path = 1L, 2L)\n}\nf(\"path\")\n",
+        ),
+        (
+            "untracked call selector",
+            "where <- read_input()\nswitch(where, path = 1L, 2L)\n",
+        ),
+        (
+            "possibly-long scalar-defaulted parameter",
+            "f <- function(where = \"path\") {\n  switch(where, path = 1L, 2L)\n}\nf()\n",
+        ),
+        (
+            "scalar character binding",
+            "where <- \"path\"\nswitch(where, path = 1L, 2L)\n",
+        ),
+        ("numeric selector", "n <- 1L\nswitch(n, \"a\", \"b\")\n"),
+        (
+            "guarded union selector",
+            "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\nf <- function(input) {\n  where <- locate_input(input)\n  if (is.null(where)) {\n    return(NULL)\n  }\n  switch(where, path = 1L, 2L)\n}\nf(\"path\")\n",
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{note}: {diagnostics:?}"
+        );
+    }
+}

@@ -1407,3 +1407,146 @@ fn compound_guards_refine_assertions_and_positive_conjunctions() {
         );
     }
 }
+
+// Issue #362 guard composition: a find-or-NULL union is the dominant
+// real-world shape, and correct code guards the NULL component before
+// using the value. Each guard idiom must remove the NULL member in the
+// continuation, so RY001 reports the unguarded defect without
+// double-reporting or reporting through a guard.
+#[test]
+fn null_guards_narrow_union_continuations_exactly() {
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    let consume = "switch(where, path = 1L, 2L)\nif (where == \"path\") 1L else 2L\n";
+    for (note, guard) in [
+        (
+            "early-return guard",
+            "if (is.null(where)) {\n  return(NULL)\n}\n",
+        ),
+        (
+            "replacement guard",
+            "if (is.null(where)) {\n  where <- \"none\"\n}\n",
+        ),
+        (
+            "else-return mirror",
+            "if (!is.null(where)) {\n  1L\n} else {\n  return(NULL)\n}\n",
+        ),
+        (
+            "stop guard",
+            "if (is.null(where)) {\n  stop(\"where required\")\n}\n",
+        ),
+        ("short-circuit guard inside the condition", ""),
+    ] {
+        let source = if guard.is_empty() {
+            format!(
+                "{locate}f <- function(input) {{\n  where <- locate_input(input)\n  if (!is.null(where) && where == \"path\") {{\n    1L\n  }} else {{\n    2L\n  }}\n}}\nf(\"path\")\n"
+            )
+        } else {
+            format!(
+                "{locate}f <- function(input) {{\n  where <- locate_input(input)\n{guard}{consume}}}\nf(\"path\")\n"
+            )
+        };
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{note}: a guard must remove the NULL component in the continuation: {diagnostics:?}"
+        );
+    }
+    // The if/else branch-local form: the else arm sees the non-null
+    // remainder, the then arm the NULL member.
+    let diagnostics = check(&format!(
+        "{locate}f <- function(input) {{\n  where <- locate_input(input)\n  if (is.null(where)) {{\n    NULL\n  }} else if (where == \"path\") {{\n    1L\n  }} else {{\n    2L\n  }}\n}}\nf(\"path\")\n"
+    ));
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY001"),
+        "if/else form: {diagnostics:?}"
+    );
+}
+
+// The exactness boundary of the same machinery: an open-world NULL
+// default narrows to opaque, not to a remainder, so the pinned stale
+// behavior must survive next to the union refinement.
+#[test]
+fn return_guard_keeps_stale_type_for_non_union_defaults() {
+    let diagnostics = check(
+        "f <- function(x = NULL) {\n  if (is.null(x)) {\n    return(NULL)\n  }\n  if (x > 0) {\n    NULL\n  }\n}\nf()\n",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "a non-NULL value may still be a zero-length vector (pinned): {diagnostics:?}"
+    );
+    let diagnostics = check(
+        "f <- function(x = NULL) {\n  if (is.null(x)) {\n    return(NULL)\n  }\n  if (is.character(x)) {\n    NULL\n  }\n}\nf()\n",
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY001"),
+        "a non-null-guard predicate must not install a union refinement: {diagnostics:?}"
+    );
+}
+
+// The same-type rebind boundary of the replacement guard: re-assigning
+// a value whose type EQUALS the pre-`if` original is deliberately "not
+// a rebind" (`rebind_view_type` requires `*ty != original`). Installing
+// the parent union unchanged would add no fact, and claiming the guard's
+// union-minus-NULL remainder for the false path would be wrong — the
+// re-assigned value may itself carry the NULL member. No exact
+// refinement exists, so the stale NULL member survives into a following
+// condition: conservative (a possible false positive, never a wrong
+// narrowing), pinned here so a future edit cannot silently flip it.
+// The different-type rebind (`where <- "none"`) is the exact
+// replacement shape covered by `null_guards_narrow_union_continuations_exactly`.
+#[test]
+fn same_type_rebind_guard_keeps_the_stale_null_member() {
+    let locate = "locate_input <- function(input) {\n  if (is.null(input)) {\n    return(NULL)\n  }\n  \"path\"\n}\n";
+    let diagnostics = check(&format!(
+        "{locate}f <- function(input, fallback) {{\n  where <- locate_input(input)\n  if (is.null(where)) where <- locate_input(fallback)\n  if (where == \"path\") 1L else 2L\n}}\nf(\"path\", NULL)\n"
+    ));
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "a same-type rebind adds no fact, so the stale NULL member survives the guard: {diagnostics:?}"
+    );
+}
+
+// The replacement guard over a pure-NULL binding: the null arm's rebind
+// covers the true path and the false path holds the non-null remainder,
+// so the merge's stale `NULL | rebind` union (whose NULL member RY001
+// would report through the guard; the scales-package shape from #362)
+// must not survive. A defaulted parameter's false path is an unmodeled
+// caller value (the honest continuation is unknown); a local
+// provably-NULL binding has no other value, so the rebind alone
+// continues.
+#[test]
+fn replacement_guard_on_pure_null_binding_removes_the_stale_null() {
+    for (note, source) in [
+        (
+            "defaulted parameter (scales minor_breaks_log shape)",
+            "f <- function(detail = NULL) {\n  if (is.null(detail)) {\n    detail <- c(1, 5, 10)[2L]\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
+        (
+            "local provably-NULL binding",
+            "f <- function() {\n  detail <- NULL\n  if (is.null(detail)) {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
+        (
+            "mirrored guard, defaulted parameter",
+            "f <- function(detail = NULL) {\n  if (!is.null(detail)) {\n    1\n  } else {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
+        (
+            "mirrored guard, local provably-NULL binding",
+            "f <- function() {\n  detail <- NULL\n  if (!is.null(detail)) {\n    2\n  } else {\n    detail <- 1\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY001"),
+            "{note}: {diagnostics:?}"
+        );
+    }
+    // Without the replacement the stale NULL stays (pinned maybe-empty
+    // behavior for a defaulted parameter).
+    let diagnostics = check(
+        "f <- function(detail = NULL) {\n  if (is.null(detail)) {\n    return(NULL)\n  }\n  if (detail == 1) 1 else 2\n}\nf()\n",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY001"),
+        "a non-NULL default may still be zero-length (pinned): {diagnostics:?}"
+    );
+}

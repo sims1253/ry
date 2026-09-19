@@ -619,13 +619,75 @@ fn list_subset_drops_stale_column_schema() {
 }
 
 #[test]
-fn condition_union_with_a_valid_logical_member_is_silent() {
+fn condition_union_zero_length_member_dominates_a_logical_sibling() {
+    // Refined contract (#362): a PROVEN zero-length member still errors
+    // deterministically on its branch ("argument is of length zero"),
+    // so it is no longer silenced by a possibly-valid logical sibling.
+    // This is the comparison shape a find-or-NULL helper produces
+    // (`where == "path"` over `character | NULL` joins to
+    // `logical<0> | logical<1>`), and the diagnostic message displays
+    // the union, so the possibly-valid member stays visible rather than
+    // being claimed away. The runtime oracle pins both branch outcomes.
     let diagnostics = check("x <- if (runif(1) > 0.5) logical(0) else TRUE\nif (x) print(1)\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY001"),
+        "a zero-length member makes the condition error on that branch: {diagnostics:?}"
+    );
+    // Possibly-valid members that are NOT proven zero-length keep the
+    // whole-union silence (see also
+    // `logical_union_members_preserve_possibly_valid_conditions`).
+    let diagnostics = check("x <- if (runif(1) > 0.5) list(TRUE) else TRUE\nif (x) print(1)\n");
     assert!(
         diagnostics
             .iter()
             .all(|diagnostic| diagnostic.code != "RY001"),
         "a possibly-valid condition must not be reported as definitely invalid: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn condition_union_zero_length_leaf_in_a_nested_union_dominates() {
+    // The zero-length dominance recurses into nested union members,
+    // mirroring `switch_expr_length_rejected`: a nested union carrying
+    // a proven zero-length leaf (`logical<0> | logical<1>`, the
+    // comparison join a find-or-NULL helper produces) errors on that
+    // branch exactly like a direct zero-length member instead of being
+    // silenced by a possibly-valid logical sibling of the OUTER union.
+    // Union construction flattens (`union_of`), so no end-to-end source
+    // route produces this shape today; this pins the type-level
+    // contract directly, next to the flat end-to-end shapes in
+    // `condition_union_zero_length_member_dominates_a_logical_sibling`.
+    use crate::infer::{ConditionDiagnostic, condition_diagnostic};
+    use std::sync::Arc;
+    let comparison_join = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::Zero),
+        RType::new(Mode::Logical, Length::One),
+    ]));
+    let nested = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::One),
+        comparison_join,
+    ]));
+    assert!(
+        matches!(
+            condition_diagnostic(&nested),
+            Some(ConditionDiagnostic::Invalid)
+        ),
+        "a zero-length leaf inside a nested union member dominates the outer union's logical sibling"
+    );
+    // Without the zero-length leaf the same nesting stays silent:
+    // every branch remains possibly valid.
+    let quiet = RType::union(Arc::from(vec![
+        RType::new(Mode::Logical, Length::One),
+        RType::union(Arc::from(vec![
+            RType::new(Mode::Logical, Length::One),
+            RType::new(Mode::Logical, Length::Unknown),
+        ])),
+    ]));
+    assert!(
+        condition_diagnostic(&quiet).is_none(),
+        "a nested union without a zero-length leaf keeps the union silence"
     );
 }
 

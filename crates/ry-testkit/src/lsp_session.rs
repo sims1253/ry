@@ -21,7 +21,7 @@ struct RoutedMessage {
 /// starve the background disk-index work between a watched event and
 /// its republish well past the old 5s budget (#551). Set
 /// `RY_TESTKIT_RPC_TIMEOUT_SECS=<positive integer>` to override the
-/// 30s default (an unparsable or non-positive value falls back to the
+/// 30s default (an unparseable or non-positive value falls back to the
 /// default); the read is cached for the process lifetime.
 pub fn rpc_receive_timeout() -> std::time::Duration {
     static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();

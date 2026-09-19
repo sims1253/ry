@@ -606,7 +606,7 @@ All notable changes to ry are documented in this file.
   the existing commit gates (park the watched refresh, land an
   unrelated refresh, release). The receive budget is also raised to a
   30s default via `ry_testkit::rpc_receive_timeout`, overridable with
-  `RY_TESTKIT_RPC_TIMEOUT_SECS` (unparsable or non-positive values fall
+  `RY_TESTKIT_RPC_TIMEOUT_SECS` (unparseable or non-positive values fall
   back to the default), with the watcher-registration helper waits in
   `watched_closed_publish.rs`, `watched_resolution_context.rs`, and
   `disk_index_freshness.rs` sharing it instead of their own 5s

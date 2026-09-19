@@ -128,6 +128,71 @@ fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
     });
 }
 
+/// Shared prologue of the two #551 interleaving tests: the three-file
+/// fixture (`main.R` clean, `util.R` unbound, `other.R` a bystander), a
+/// watching session, the settle pass that proves the initial index
+/// committed (opening `main.R` publishes both `main.R` and the stale
+/// RY010 for the never-opened `util.R`), and a gated `didClose` whose
+/// close-time re-read is drained through the commit gate so no refresh
+/// is in flight when the scenario arms — the re-read parks whenever it
+/// arrives (close handlers dispatch concurrently with later client
+/// traffic, the very window the bug needs).
+async fn settled_closed_fixture() -> (
+    FixtureProject,
+    harness::ClientSession,
+    tokio::task::JoinHandle<()>,
+    String,
+    String,
+) {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("main.R", "w <- 1L\n").unwrap();
+    fixture
+        .write_file("util.R", "x <- never_bound_here\n")
+        .unwrap();
+    fixture.write_file("other.R", "o <- 1L\n").unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let util_uri = file_uri(&fixture.path("util.R"));
+    let other_uri = file_uri(&fixture.path("other.R"));
+    let (mut session, server) =
+        spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+    answer_watcher_registration(&mut session).await;
+    sync_barrier(&mut session, &main_uri).await;
+
+    let mark = session.publication_mark();
+    session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
+    session
+        .published_diagnostics_after(&main_uri, mark)
+        .await
+        .unwrap();
+    session
+        .published_diagnostics_after(&util_uri, mark)
+        .await
+        .unwrap();
+    ry_lsp::test_seam::arm_refresh_commit();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": main_uri}}),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_refresh_commit(),
+    )
+    .await
+    .expect("the close-time re-read must reach the armed commit gate");
+    ry_lsp::test_seam::release_refresh_commit();
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_refresh_landed(),
+    )
+    .await
+    .expect("the parked close-time refresh must make its commit decision");
+    sync_barrier(&mut session, &main_uri).await;
+    (fixture, session, server, util_uri, other_uri)
+}
+
 /// #551: a watched refresh that loses the index-generation race to an
 /// unrelated concurrent refresh must not lose the publication. The
 /// per-file refresh carries only its own path, but its commit was
@@ -156,57 +221,8 @@ fn watched_fix_losing_the_generation_race_still_republishes() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("main.R", "w <- 1L\n").unwrap();
-        fixture
-            .write_file("util.R", "x <- never_bound_here\n")
-            .unwrap();
-        fixture.write_file("other.R", "o <- 1L\n").unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let util_uri = file_uri(&fixture.path("util.R"));
-        let other_uri = file_uri(&fixture.path("other.R"));
-        let (mut session, server) =
-            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
-        answer_watcher_registration(&mut session).await;
-        sync_barrier(&mut session, &main_uri).await;
-
-        // Settle, then close everything. The close-time re-read of
-        // `main.R` is drained through the commit gate deterministically:
-        // it parks whenever it arrives (close handlers dispatch
-        // concurrently with later client traffic — the very window the
-        // bug needs), so no refresh is in flight when the scenario arms.
-        let mark = session.publication_mark();
-        session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
-        session
-            .published_diagnostics_after(&main_uri, mark)
-            .await
-            .unwrap();
-        session
-            .published_diagnostics_after(&util_uri, mark)
-            .await
-            .unwrap();
-        ry_lsp::test_seam::arm_refresh_commit();
-        session
-            .notify(
-                "textDocument/didClose",
-                json!({"textDocument": {"uri": main_uri}}),
-            )
-            .await
-            .unwrap();
-        tokio::time::timeout(
-            rpc_receive_timeout(),
-            ry_lsp::test_seam::wait_refresh_commit(),
-        )
-        .await
-        .expect("the close-time re-read must reach the armed commit gate");
-        ry_lsp::test_seam::release_refresh_commit();
-        tokio::time::timeout(
-            rpc_receive_timeout(),
-            ry_lsp::test_seam::wait_refresh_landed(),
-        )
-        .await
-        .expect("the parked close-time refresh must make its commit decision");
-        sync_barrier(&mut session, &main_uri).await;
+        let (fixture, mut session, server, util_uri, other_uri) =
+            settled_closed_fixture().await;
 
         // Fix `util.R` on disk; its watched refresh parks at its commit.
         std::fs::write(fixture.path("util.R"), "x <- 1L\n").unwrap();
@@ -292,54 +308,8 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("main.R", "w <- 1L\n").unwrap();
-        fixture
-            .write_file("util.R", "x <- never_bound_here\n")
-            .unwrap();
-        fixture.write_file("other.R", "o <- 1L\n").unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let util_uri = file_uri(&fixture.path("util.R"));
-        let other_uri = file_uri(&fixture.path("other.R"));
-        let (mut session, server) =
-            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
-        answer_watcher_registration(&mut session).await;
-        sync_barrier(&mut session, &main_uri).await;
-
-        // Settle, then close everything, draining the close-time re-read
-        // through the commit gate so no refresh is in flight below.
-        let mark = session.publication_mark();
-        session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
-        session
-            .published_diagnostics_after(&main_uri, mark)
-            .await
-            .unwrap();
-        session
-            .published_diagnostics_after(&util_uri, mark)
-            .await
-            .unwrap();
-        ry_lsp::test_seam::arm_refresh_commit();
-        session
-            .notify(
-                "textDocument/didClose",
-                json!({"textDocument": {"uri": main_uri}}),
-            )
-            .await
-            .unwrap();
-        tokio::time::timeout(
-            rpc_receive_timeout(),
-            ry_lsp::test_seam::wait_refresh_commit(),
-        )
-        .await
-        .expect("the close-time re-read must reach the armed commit gate");
-        ry_lsp::test_seam::release_refresh_commit();
-        tokio::time::timeout(
-            rpc_receive_timeout(),
-            ry_lsp::test_seam::wait_refresh_landed(),
-        )
-        .await
-        .expect("the parked close-time refresh must make its commit decision");
-        sync_barrier(&mut session, &main_uri).await;
+        let (fixture, mut session, server, util_uri, other_uri) =
+            settled_closed_fixture().await;
 
         // Fix `util.R`; its watched refresh parks at its commit (attempt 0).
         std::fs::write(fixture.path("util.R"), "x <- 1L\n").unwrap();
@@ -379,7 +349,12 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
 
         // Re-arm while attempt 0 is still parked so the retry parks too,
         // then release: attempt 0's commit fails the moved generation and
-        // the retry re-reads and parks at the re-armed gate.
+        // the retry re-reads and parks at the re-armed gate. The pair is
+        // order-safe by construction — the release wakes the PARKED
+        // attempt 0 (its waiter exists), while the re-arm only sets the
+        // one-shot flag the NEXT arrival (the retry) consumes — so do not
+        // "fix" this by waiting between them: the next wait below is the
+        // retry's arrival, not attempt 0's exit.
         ry_lsp::test_seam::arm_refresh_commit();
         ry_lsp::test_seam::release_refresh_commit();
         tokio::time::timeout(
@@ -430,6 +405,13 @@ fn watched_fix_exhausting_the_retry_ladder_publishes_through_the_scan() {
             normalize_diagnostics(&fixed).is_empty(),
             "a watched fix exhausting the retry ladder must publish through the backstop scan: {fixed}"
         );
+
+        // Release the two unrelated refreshes parked at the post-commit
+        // gate — one notify per parked waiter — so teardown leaves no
+        // paused writers behind and the gate state matches the
+        // single-race test's.
+        ry_lsp::test_seam::release_post_refresh_commit();
+        ry_lsp::test_seam::release_post_refresh_commit();
 
         join_session(session, server).await;
     });

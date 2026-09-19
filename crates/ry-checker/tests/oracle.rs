@@ -151,13 +151,23 @@ fn materialize_byte_fixtures(
         if path.extension().and_then(|e| e.to_str()) != Some("bytes") {
             continue;
         }
+        // Lossy: a sidecar whose filename is not valid UTF-8 still
+        // materializes under its closest representable `.R` name rather
+        // than being dropped from coverage silently.
         let name = path
             .file_name()
-            .and_then(|n| n.to_str())
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let Some(fixture_name) = name.strip_suffix(".bytes") else {
             continue;
         };
+        // A sidecar shadowing a real fixture of the same name would run
+        // both under one `name` and garble the failure reports; fail
+        // loudly instead.
+        assert!(
+            !dir.join(fixture_name).exists(),
+            "sidecar {name} collides with a real fixture {fixture_name}"
+        );
         let target = out_dir.join(fixture_name);
         fs::copy(&path, &target).unwrap_or_else(|e| panic!("materialize {name}: {e}"));
         paths.push(target);
@@ -295,13 +305,13 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
 /// follows from it.
 fn checker_diagnostics(
     name: &str,
-    decoded: &ry_workspace::DecodedRSource,
+    decoded: ry_workspace::DecodedRSource,
 ) -> Vec<(String, Severity)> {
     let mut parser = RParser::new().expect("parser init");
     let mut file = parser
         .parse(name, &decoded.text)
         .unwrap_or_else(|e| panic!("parse {name}: {e}"));
-    decoded.apply_boundary_findings(&mut file);
+    decoded.attach_boundary_findings(&mut file);
     let mut c = Checker::new(name);
     c.check(&file);
     let diags = c.take_diagnostics();
@@ -363,8 +373,8 @@ fn oracle_check_each_fixture() {
             .unwrap_or_default()
             .to_string();
         let decoded = ry_workspace::read_r_source_decoded(&path).expect("read fixture");
-        let src = decoded.text.clone();
-        let Some(tag) = tag_of(&src) else {
+        let src = &decoded.text;
+        let Some(tag) = tag_of(src) else {
             failures.push(format!(
                 "{name}: missing `# oracle: must-flag` / `must-pass` / `must-warn` / `must-flag-only` / `known-gap` marker"
             ));
@@ -375,7 +385,7 @@ fn oracle_check_each_fixture() {
         // machine does not have: R erroring for an environmental reason
         // is not a semantic ry-vs-R disagreement. CI installs everything
         // the fixtures use, so skips cannot hide a regression there.
-        let missing: Vec<String> = fixture_packages(&name, &src)
+        let missing: Vec<String> = fixture_packages(&name, src)
             .into_iter()
             .filter(|p| !r_package_available(p, &mut pkg_cache))
             .collect();
@@ -390,7 +400,7 @@ fn oracle_check_each_fixture() {
         total += 1;
 
         let (r_errored, r_message) = r_errors(&path);
-        let diagnostics = checker_diagnostics(&name, &decoded);
+        let diagnostics = checker_diagnostics(&name, decoded);
         let errs: Vec<&str> = diagnostics
             .iter()
             .filter(|(_, severity)| *severity == Severity::Error)
@@ -666,7 +676,7 @@ fn must_flag_only_fixtures_emit_exactly_ry000() {
                 continue;
             }
         }
-        let diagnostics = checker_diagnostics(name, &decoded);
+        let diagnostics = checker_diagnostics(name, decoded);
         let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
         // The same predicate the harness arm uses, so the pin cannot
         // drift from the real `must-flag-only` semantics.

@@ -165,7 +165,7 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
         // Record where the on-disk bytes were not valid UTF-8, and
         // whether they started with a BOM, so the checker can flag files
         // R's parser rejects (#376, #474).
-        decoded.apply_boundary_findings(&mut file);
+        decoded.attach_boundary_findings(&mut file);
         Arc::new(file)
     })
     .map_err(|message| ParseFailure {

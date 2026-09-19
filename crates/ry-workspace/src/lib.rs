@@ -179,8 +179,12 @@ impl DecodedRSource {
     /// harnesses that must exercise the production path -- attaches
     /// through this one method, so the boundary contract cannot drift
     /// between production and tests.
-    pub fn apply_boundary_findings(&self, file: &mut SourceFile) {
-        file.invalid_utf8 = self.invalid_utf8.clone();
+    ///
+    /// Consumes the decoded source: each boundary's findings belong to
+    /// exactly one parsed file (the text was handed to the parser
+    /// already), so the span vector moves instead of cloning.
+    pub fn attach_boundary_findings(self, file: &mut SourceFile) {
+        file.invalid_utf8 = self.invalid_utf8;
         file.leading_bom = self.leading_bom;
     }
 }

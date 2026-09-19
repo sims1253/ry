@@ -26,6 +26,7 @@ R/reactives.R:169:7 RY010
 R/reactives.R:2016:3 RY010
 R/reactives.R:2372:16 RY010
 R/reactives.R:24:11 RY010
+R/reactives.R:2669:21 RY111
 R/reactives.R:438:47 RY010
 R/reactives.R:439:51 RY010
 R/reactives.R:440:48 RY010

@@ -311,7 +311,10 @@ const BASE_JSON: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/base.json.def
 /// stub so an upstream change cannot hide behind a stale copy. The
 /// eventual home for this data is r-typeshed itself; upstreaming is the
 /// maintainer's call.
-const LOCAL_OVERLAYS: &[(&str, &str)] = &[("vctrs", include_str!("../overlay/vctrs.json"))];
+const LOCAL_OVERLAYS: &[(&str, &str)] = &[
+    ("vctrs", include_str!("../overlay/vctrs.json")),
+    ("base", include_str!("../overlay/base.json")),
+];
 
 /// Merge [`LOCAL_OVERLAYS`] entries for `package` over a parsed
 /// vendored typeshed. The files are committed and compile-time-embedded,
@@ -699,7 +702,9 @@ fn inflate_embedded(data: &[u8], name: &str) -> String {
 
 pub fn load_base() -> Result<Typeshed, TypeshedError> {
     let json = inflate_embedded(BASE_JSON, "<embedded base>");
-    parse_typeshed(&json, Path::new("<embedded base>"))
+    let mut typeshed = parse_typeshed(&json, Path::new("<embedded base>"))?;
+    apply_local_overlay("base", &mut typeshed);
+    Ok(typeshed)
 }
 
 /// Reject duplicate JSON keys before they can overwrite a signature.
@@ -1552,6 +1557,87 @@ mod tests {
     /// a silent wholesale replace. The declared Math-group numeric union
     /// encodes R behavior: casting `character()` to `double()` errors
     /// ("Can't convert <character> to <double>").
+    /// `base::median`'s `na.rm`/`...` formals are a ry-side overlay
+    /// annotation (issue #361): the vendored stub declares only `x`, and
+    /// the weekly `Typeshed bump` wholesale-replaces `vendor/` from the
+    /// r-typeshed checkout, so the widened signature lives in
+    /// `overlay/base.json` and is merged over the vendored base at load
+    /// time. The formals are R's own (`formals(median)` is
+    /// `function (x, na.rm = FALSE, ...)`, R 4.6.1); the entries stay
+    /// untyped and non-required so no arity rule (RY090/RY091) changes
+    /// behavior -- only RY111's identical-name callee gate reads them.
+    /// The vendored stub itself must stay upstream-pristine (params exactly
+    /// `["x"]`), so an upstream widening cannot silently interact with the
+    /// overlay; if upstream ever ships the full formals, this pin forces a
+    /// conscious merge decision (drop the overlay) instead of a stale copy.
+    #[test]
+    fn local_overlay_base_median_reaches_load_base() {
+        let vendored =
+            load_stub_file(&Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/base/base.json"))
+                .expect("vendored base stub parses");
+        let upstream_median = vendored
+            .functions
+            .get("median")
+            .expect("vendored base declares median");
+        let upstream_params: Vec<&str> = upstream_median
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        assert_eq!(
+            upstream_params,
+            vec!["x"],
+            "vendored base.json median must stay upstream-pristine (params [x]); the widened \
+             signature lives in overlay/base.json (issue #361) -- drop the overlay entry when \
+             upstream ships the full formals"
+        );
+        let overlay_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("overlay");
+        let report = validate_stub_dirs(&[overlay_dir]);
+        assert_eq!(report.error_count(), 0, "{report:?}");
+        let base = load_base().expect("base loads");
+        let signature = base
+            .functions
+            .get("median")
+            .expect("overlay must keep median");
+        let params: Vec<&str> = signature
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        assert_eq!(params, vec!["x", "na.rm", "..."]);
+        // The overlay must not widen arity-rule behavior: no required, no
+        // default, no type on any median parameter (the vendored entry was
+        // loose, and RY090's median gate keys on that looseness).
+        assert!(
+            signature.params.iter().all(|param| {
+                !param.required && param.default.is_none() && param.type_.is_none()
+            })
+        );
+        // The overlay declares no scan-gated fields (injects /
+        // captures_promise): base is always fully parsed so the prefilter
+        // concern does not apply, but keeping the overlay functions-only
+        // preserves that property by construction.
+        let overlay = parse_typeshed(
+            LOCAL_OVERLAYS
+                .iter()
+                .find(|(package, _)| *package == "base")
+                .expect("base overlay is registered")
+                .1,
+            Path::new("crates/ry-typeshed/overlay/base.json"),
+        )
+        .expect("overlay parses");
+        for (name, signature) in &overlay.functions {
+            assert!(
+                signature.injects.is_empty()
+                    && !signature
+                        .eval
+                        .values()
+                        .any(|mode| *mode == EvalMode::CapturesPromise),
+                "overlay entry `{name}` declares scan-gated fields"
+            );
+        }
+    }
+
     #[test]
     fn local_overlay_vec_cast_reaches_load_package() {
         let vendored =

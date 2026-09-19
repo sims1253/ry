@@ -360,6 +360,96 @@
       "severity": "warning",
       "message": "parameter `caller_env` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
+    "dbplyr::RY111::R/query-join.R:164:49": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-join.R",
+      "line": 164,
+      "column": 49,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-join.R:167:53": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-join.R",
+      "line": 167,
+      "column": 53,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-rf-join.R:114:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 114,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-rf-join.R:115:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-rf-join.R",
+      "line": 115,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-semi-join.R:126:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 126,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-semi-join.R:127:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-semi-join.R",
+      "line": 127,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = TRUE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-set-op.R:54:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 54,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-set-op.R:55:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-set-op.R",
+      "line": 55,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-union.R:58:54": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 58,
+      "column": 54,
+      "severity": "warning",
+      "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
+    "dbplyr::RY111::R/query-union.R:62:53": {
+      "package": "dbplyr",
+      "code": "RY111",
+      "path": "R/query-union.R",
+      "line": 62,
+      "column": 53,
+      "severity": "warning",
+      "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
+    },
     "dplyr::RY010::R/conditions.R:310:14": {
       "package": "dplyr",
       "code": "RY010",
@@ -1439,6 +1529,24 @@
       "column": 37,
       "severity": "warning",
       "message": "parameter `data` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+    },
+    "gt::RY111::tests/testthat/helper.R:129:11": {
+      "package": "gt",
+      "code": "RY111",
+      "path": "tests/testthat/helper.R",
+      "line": 129,
+      "column": 11,
+      "severity": "warning",
+      "message": "argument `all = TRUE` to `expect_match_html` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `all` value is silently ignored; forward it as `all = all` instead"
+    },
+    "gt::RY111::tests/testthat/helper.R:48:11": {
+      "package": "gt",
+      "code": "RY111",
+      "path": "tests/testthat/helper.R",
+      "line": 48,
+      "column": 11,
+      "severity": "warning",
+      "message": "argument `all = TRUE` to `expect_match_html` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `all` value is silently ignored; forward it as `all = all` instead"
     },
     "httr::RY032::R/content-parse.r:57:7": {
       "package": "httr",
@@ -2592,6 +2700,51 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
+    "reticulate::RY111::R/conversion.R:618:36": {
+      "package": "reticulate",
+      "code": "RY111",
+      "path": "R/conversion.R",
+      "line": 618,
+      "column": 36,
+      "severity": "warning",
+      "message": "argument `convert = FALSE` to `import` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
+    },
+    "reticulate::RY111::R/conversion.R:78:67": {
+      "package": "reticulate",
+      "code": "RY111",
+      "path": "R/conversion.R",
+      "line": 78,
+      "column": 67,
+      "severity": "warning",
+      "message": "argument `convert = FALSE` to `r_to_py_impl` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
+    },
+    "reticulate::RY111::R/conversion.R:84:42": {
+      "package": "reticulate",
+      "code": "RY111",
+      "path": "R/conversion.R",
+      "line": 84,
+      "column": 42,
+      "severity": "warning",
+      "message": "argument `convert = FALSE` to `import` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
+    },
+    "reticulate::RY111::R/conversion.R:88:44": {
+      "package": "reticulate",
+      "code": "RY111",
+      "path": "R/conversion.R",
+      "line": 88,
+      "column": 44,
+      "severity": "warning",
+      "message": "argument `convert = FALSE` to `import` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
+    },
+    "reticulate::RY111::R/conversion.R:95:17": {
+      "package": "reticulate",
+      "code": "RY111",
+      "path": "R/conversion.R",
+      "line": 95,
+      "column": 17,
+      "severity": "warning",
+      "message": "argument `convert = FALSE` to `r_to_py_impl` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `convert` value is silently ignored; forward it as `convert = convert` instead"
+    },
     "rlang::RY001::R/cnd-abort.R:548:7": {
       "package": "rlang",
       "code": "RY001",
@@ -3213,6 +3366,15 @@
       "severity": "warning",
       "message": "parameter `height` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
+    "shiny-r::RY111::R/reactives.R:2669:21": {
+      "package": "shiny-r",
+      "code": "RY111",
+      "path": "R/reactives.R",
+      "line": 2669,
+      "column": 21,
+      "severity": "warning",
+      "message": "argument `autoDestroy = TRUE` to `observe` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `autoDestroy` value is silently ignored; forward it as `autoDestroy = autoDestroy` instead"
+    },
     "sparklyr::RY001::R/config.R:375:9": {
       "package": "sparklyr",
       "code": "RY001",
@@ -3293,6 +3455,15 @@
       "column": 12,
       "severity": "warning",
       "message": "parameter `config` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+    },
+    "sparklyr::RY111::R/stream_data.R:360:15": {
+      "package": "sparklyr",
+      "code": "RY111",
+      "path": "R/stream_data.R",
+      "line": 360,
+      "column": 15,
+      "severity": "warning",
+      "message": "argument `columns = FALSE` to `stream_read_generic` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `columns` value is silently ignored; forward it as `columns = columns` instead"
     },
     "styler::RY010::tests/testthat/public-api/renvpkg/tests/testthat/test-package-xyz.R:2:18": {
       "package": "styler",
@@ -3635,6 +3806,15 @@
       "column": 30,
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `double`"
+    },
+    "torch::RY111::R/nnf-activation.R:384:45": {
+      "package": "torch",
+      "code": "RY111",
+      "path": "R/nnf-activation.R",
+      "line": 384,
+      "column": 45,
+      "severity": "warning",
+      "message": "argument `training = TRUE` to `nnf_rrelu` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `training` value is silently ignored; forward it as `training = training` instead"
     },
     "usethis::RY010::R/course.R:532:5": {
       "package": "usethis",

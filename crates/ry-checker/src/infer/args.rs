@@ -2,6 +2,252 @@
 
 use super::*;
 
+/// The callee resolution the argument rules share: a collected user
+/// definition shadows the typeshed stub, and a lexical callable
+/// resolves to neither (its formals are unknown at the call site). In
+/// the non-validating mode a same-named `FnTable` entry shadows the
+/// stub as well, mirroring the precedence `check_call_arguments` has
+/// always applied -- one copy, so RY090/RY091/RY092 and RY111's
+/// identical-name gate cannot drift apart.
+pub(crate) enum ResolvedCallee<'a> {
+    User(&'a UserFn),
+    Stub(&'a FunctionSig),
+    Unknown,
+}
+
+impl Checker {
+    pub(crate) fn resolve_callee<'a>(
+        &self,
+        function_name: &str,
+        user_function: Option<&'a UserFn>,
+        resolved_sig: Option<&'a FunctionSig>,
+        lexical_callable: bool,
+    ) -> ResolvedCallee<'a> {
+        if let Some(user_function) = user_function {
+            ResolvedCallee::User(user_function)
+        } else if !lexical_callable
+            && (self.validate_user_call_arguments || !self.fn_table.fns.contains_key(function_name))
+            && let Some(signature) = resolved_sig
+        {
+            ResolvedCallee::Stub(signature)
+        } else {
+            ResolvedCallee::Unknown
+        }
+    }
+}
+
+/// RY111's dead-formal index: for every function the file defines, the
+/// set of that function's own formals its body reads. Keyed by the
+/// function's span and computed once per pass-3 run in the
+/// `emit_diagnostics` prologue, the same shape RY110's
+/// continuation/shadow indexes use. `EnclosingFormals::function_span`
+/// pushes exactly these spans for named assignments
+/// (`g <- function(...)`, `infer/mod.rs`'s assign arm) and statement
+/// definitions; an expression-position literal's entry exists too, but
+/// nothing inside such a literal emits today (its body is only inferred
+/// in discarding mode), so the entry simply waits for the day it is
+/// walked. A missing entry means no read was found: the dead-formal
+/// gate treats that as dead, the firing direction.
+///
+/// The scan is a hand-rolled recursion rather than the shared
+/// `ry_core` walker (like RY109's force analysis) because its rules
+/// select individual children and carry scope: each identifier
+/// attributes to the *innermost* frame whose formals contain the name,
+/// so a nested closure redeclaring `na.rm` shadows the outer formal
+/// for its subtree exactly like R's scoping, and a `for` loop's
+/// variable does the same for its body subtree (the binding is a write
+/// of the promise like any assignment target, while the iterated
+/// expression evaluates before it and still reads); a plain-identifier
+/// assignment target is a *write* of the promise, not a read of the
+/// caller's value; and formal default expressions (`force = na.rm`)
+/// evaluate in the function's own scope and count as reads of the
+/// sibling formals they name.
+pub(crate) fn index_formal_reads(stmts: &[Stmt], map: &mut FxMap<Span, FxSet<String>>) {
+    let mut frames: Vec<ReadFrame> = Vec::new();
+    scan_stmts(stmts, &mut frames, map);
+}
+
+/// One function on the scan stack: its span (the entry key), its own
+/// formal names, and the reads attributed to it so far.
+struct ReadFrame {
+    span: Span,
+    formals: FxSet<String>,
+    reads: FxSet<String>,
+}
+
+/// Enter one function: push its frame, scan its defaults and body, and
+/// record the entry. Nested functions encountered on the way push their
+/// own frames, so the whole file is indexed in a single pass.
+fn scan_function(
+    params: &[Param],
+    body: &[Stmt],
+    span: Span,
+    frames: &mut Vec<ReadFrame>,
+    map: &mut FxMap<Span, FxSet<String>>,
+) {
+    frames.push(ReadFrame {
+        span,
+        formals: params
+            .iter()
+            .filter(|parameter| parameter.name != "...")
+            .map(|parameter| semantic_argument_name(&parameter.name).to_owned())
+            .collect(),
+        reads: FxSet::default(),
+    });
+    // Formal defaults evaluate in the function's own scope: a default
+    // naming a sibling formal (`force = na.rm`) consumes the caller's
+    // value and is a read.
+    for parameter in params {
+        if let Some(default) = &parameter.default {
+            scan_expr(default, frames, map);
+        }
+    }
+    scan_stmts(body, frames, map);
+    let frame = frames.pop().expect("scan_function pushed a frame");
+    map.insert(frame.span, frame.reads);
+}
+
+fn scan_stmts(stmts: &[Stmt], frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    for statement in stmts {
+        scan_stmt(statement, frames, map);
+    }
+}
+
+fn scan_stmt(stmt: &Stmt, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    match stmt {
+        Stmt::Assign { target, value, .. } => {
+            scan_target(target, frames, map);
+            scan_expr(value, frames, map);
+        }
+        Stmt::Expr(expression) => scan_expr(expression, frames, map),
+        Stmt::If {
+            cond, then, else_, ..
+        } => {
+            scan_expr(cond, frames, map);
+            scan_stmts(then, frames, map);
+            if let Some(else_) = else_ {
+                scan_stmts(else_, frames, map);
+            }
+        }
+        Stmt::For {
+            name,
+            iter,
+            body,
+            span,
+            ..
+        } => {
+            // The iterated value is evaluated before the binding, so its
+            // reads attribute normally (`for (p in p)` forces the
+            // promise). The binding itself is a write of the promise,
+            // like a plain assignment target, and the loop variable
+            // shadows an identically-named formal for the body subtree
+            // exactly like a closure redeclaring it: push a shadow frame
+            // so innermost-owner attribution puts body reads of `name`
+            // on the loop variable instead. The frame is popped without
+            // an entry -- it is a binding, not a function.
+            scan_expr(iter, frames, map);
+            frames.push(ReadFrame {
+                span: *span,
+                formals: [semantic_argument_name(name).to_owned()]
+                    .into_iter()
+                    .collect(),
+                reads: FxSet::default(),
+            });
+            scan_stmts(body, frames, map);
+            frames.pop();
+        }
+        Stmt::While { cond, body, .. } => {
+            scan_expr(cond, frames, map);
+            scan_stmts(body, frames, map);
+        }
+        Stmt::FunctionDef { params, body, span } => {
+            scan_function(params, body, *span, frames, map);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                scan_expr(value, frames, map);
+            }
+        }
+    }
+}
+
+/// An assignment target: a plain identifier root is a *write* of the
+/// promise (the caller's value is replaced without being read), so it
+/// is not a read. Complex targets keep their evaluated parts: `x[p] <- v`
+/// reads `p`, and the root identifier of each index level stays a write.
+fn scan_target(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    match expr {
+        Expr::Ident { .. } => {}
+        Expr::Index { base, args, .. } => {
+            scan_target(base, frames, map);
+            for argument in args {
+                scan_expr(&argument.value, frames, map);
+            }
+        }
+        other => scan_expr(other, frames, map),
+    }
+}
+
+fn scan_expr(expr: &Expr, frames: &mut Vec<ReadFrame>, map: &mut FxMap<Span, FxSet<String>>) {
+    match expr {
+        Expr::Function {
+            params, body, span, ..
+        } => scan_function(params, body, *span, frames, map),
+        Expr::Block { body, .. } => scan_stmts(body, frames, map),
+        Expr::Call { func, args, .. } => {
+            scan_expr(func, frames, map);
+            // Argument tags are names, not identifier reads; the values
+            // are (`missing(p)` arrives as an identifier argument).
+            for argument in args {
+                scan_expr(&argument.value, frames, map);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            scan_expr(lhs, frames, map);
+            scan_expr(rhs, frames, map);
+        }
+        Expr::UnaryOp { expr, .. } => scan_expr(expr, frames, map),
+        Expr::Index { base, args, .. } => {
+            scan_expr(base, frames, map);
+            for argument in args {
+                scan_expr(&argument.value, frames, map);
+            }
+        }
+        Expr::If {
+            cond, then, else_, ..
+        } => {
+            scan_expr(cond, frames, map);
+            scan_expr(then, frames, map);
+            if let Some(else_) = else_ {
+                scan_expr(else_, frames, map);
+            }
+        }
+        // Attribute to the innermost frame owning the name: a nested
+        // function's same-named formal shadows the outer one for its
+        // subtree, and a captured read (no inner formal) still handles
+        // the owning function's caller value -- the conservative,
+        // quiet direction.
+        Expr::Ident { name, .. } => {
+            let tag = semantic_argument_name(name);
+            if let Some(frame) = frames
+                .iter_mut()
+                .rev()
+                .find(|frame| frame.formals.contains(tag))
+            {
+                frame.reads.insert(tag.to_owned());
+            }
+        }
+        Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Null(_)
+        | Expr::Na(_, _)
+        | Expr::Unknown(_)
+        | Expr::Missing(_) => {}
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ArgumentMatch {
     /// Formal parameter index for each actual argument. `None` means the
@@ -263,6 +509,171 @@ impl Checker {
             // RY110: a stub-declared parameter type is also the
             // downstream mode demand a vacuous-all guard needs.
             self.check_vacuous_guard_demand(function_name, &expected, &args[argument_index]);
+        }
+    }
+
+    /// RY111: a call argument passes the reserved-word literal `TRUE` or
+    /// `FALSE` for a formal an enclosing function also exposes under the
+    /// identical name -- silently hardcoding instead of forwarding the
+    /// caller's value. The founding fixture is haven @ f067fb2,
+    /// `R/labelled.R:111`: `median.haven_labelled <- function(x,
+    /// na.rm = TRUE, ...) { ... median(vec_data(x), na.rm = TRUE, ...) }`
+    /// -- a caller's explicit `na.rm = FALSE` is silently ignored
+    /// (runtime-verified in #361: returns 2.5 where base
+    /// `median(c(1:4, NA), na.rm = FALSE)` returns NA).
+    ///
+    /// Three precision gates keep the rule narrow, all three required by
+    /// issue #361, plus the dead-formal gate the tidyverse corpus
+    /// forced:
+    ///
+    /// * *identical name, twice*: the written tag must exactly name a
+    ///   formal of an enclosing function (innermost frame outward -- any
+    ///   caller-facing binding of that name is dead at this site) AND a
+    ///   formal of the callee under the resolution `check_call_arguments`
+    ///   itself applies (a collected user signature, else the typeshed
+    ///   stub; a lexical callable's formals are unknown and stay silent).
+    ///   Partial tags (`na.r = TRUE`) never fire: only the exact spelling
+    ///   distinguishes the mechanical mistake from a deliberate
+    ///   renaming-and-defaulting idiom, where the enclosing formal has a
+    ///   different name and the constant is the documented behavior.
+    /// * *dead formal*: the owning function must never read the formal
+    ///   anywhere in its body (an `if (p)` guard, a `f(p)` validation, a
+    ///   `k = p` forward at another call, `missing(p)`, a read inside a
+    ///   `return(...)` value, a sibling formal's default (`force = p`),
+    ///   or a capturing closure's read -- [`index_formal_reads`]). Reads
+    ///   attribute to the innermost function owning the name, so a nested
+    ///   closure redeclaring it does not discharge the outer formal (a
+    ///   `for` loop's identically-named variable shadows it for its body
+    ///   subtree the same way), and a plain assignment target is a
+    ///   *write* of the promise, not a read of the caller's value. A read
+    ///   demonstrates the author handles the caller's value, so
+    ///   per-site constants are chosen child semantics; without one, the
+    ///   formal exists only in the signature, and the constant silently
+    ///   replaces the caller's entire control over it -- haven's exact
+    ///   shape.
+    /// * *literal value*: `TRUE`/`FALSE` are reserved words, so the
+    ///   constant cannot be a rebinding (`T`/`F` are ordinary identifiers
+    ///   and stay silent). `NA` is excluded -- a typed hole, not a
+    ///   hardcoded policy. Numeric and string constants stay silent too:
+    ///   divergent defaults for them (`sep = ","` reformatted to
+    ///   `sep = "\t"` internally) are an ordinary idiom in a way logical
+    ///   flags are not. Forwarding the formal (`na.rm = na.rm`) and every
+    ///   other non-literal expression stay silent by the same gate.
+    /// * *known callee formal*: without a resolvable signature the literal
+    ///   may land in `...` and travel anywhere, so the destination -- and
+    ///   with it the claim -- is unknown; RY090's dots humility applies.
+    ///
+    /// The check is O(args) over a cheap syntactic filter (named `TRUE`/
+    /// `FALSE` actuals inside a function body) and only then consults the
+    /// callee's formal list, so the `scaling_project_size` perf budget is
+    /// untouched.
+    pub(crate) fn check_constant_shadowed_arguments(
+        &mut self,
+        function_name: &str,
+        user_function: Option<&UserFn>,
+        resolved_sig: Option<&FunctionSig>,
+        lexical_callable: bool,
+        args: &[Arg],
+    ) {
+        if self.discarding || self.enclosing_formals.is_empty() {
+            return;
+        }
+        // Gate 1 (cheap, syntactic): a named TRUE/FALSE actual whose tag
+        // names an enclosing formal, and -- the dead-formal half -- whose
+        // owning function never reads that formal anywhere in its body.
+        // `...` binds no name a call site could resolve to, and backticked
+        // spellings normalize like RY090's. A body that reads the formal
+        // (an `if (p)` guard, a `f(p)` validation, a `k = p` forward,
+        // `missing(p)`) demonstrably handles the caller's value, so a
+        // per-site constant there is chosen child semantics, not the
+        // shadowing mistake: the corpus's deliberate idioms (dbplyr's
+        // sql_render methods forwarding `subquery` at their own wrapper,
+        // stringr's `if (ignore_case)` early return before a fixed
+        // `regex(...)`, tibble's `quiet = quiet` at the user-facing
+        // call) all read the formal and stay quiet. haven's founding
+        // fixture reads `na.rm` nowhere: the formal exists only in the
+        // signature, which is exactly the dead binding the constant
+        // then silently replaces.
+        let owning_frame = |tag: &str| {
+            self.enclosing_formals
+                .iter()
+                .rev()
+                .find(|frame| {
+                    frame
+                        .names
+                        .iter()
+                        .any(|formal| semantic_argument_name(formal) == tag)
+                })
+                .filter(|frame| {
+                    !self
+                        .formal_reads
+                        .get(&frame.function_span)
+                        .is_some_and(|reads| reads.contains(tag))
+                })
+        };
+        let candidates: Vec<(&str, bool, Span)> = args
+            .iter()
+            .filter_map(|argument| {
+                let tag = semantic_argument_name(argument.name.as_deref()?);
+                if tag.is_empty() || tag == "..." || owning_frame(tag).is_none() {
+                    return None;
+                }
+                match &argument.value {
+                    Expr::Logical(value, span) => Some((tag, *value, *span)),
+                    _ => None,
+                }
+            })
+            .collect();
+        if candidates.is_empty() {
+            return;
+        }
+        // Gate 2: the callee must actually have that formal, under the
+        // shared `resolve_callee` precedence (a user definition shadows
+        // the stub; a lexical callable resolves to neither).
+        let callee_formals: Option<Vec<&str>> =
+            match self.resolve_callee(function_name, user_function, resolved_sig, lexical_callable)
+            {
+                ResolvedCallee::User(user_function) => Some(
+                    user_function
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.as_str())
+                        .collect(),
+                ),
+                ResolvedCallee::Stub(signature) => Some(
+                    signature
+                        .params
+                        .iter()
+                        .map(|parameter| parameter.name.as_str())
+                        .collect(),
+                ),
+                ResolvedCallee::Unknown => None,
+            };
+        let Some(callee_formals) = callee_formals else {
+            return;
+        };
+        for (tag, value, span) in candidates {
+            // Exact-name binding only: the tag must equal a callee formal's
+            // own name, so a partial match (`na.r` for `na.rm`) -- whose
+            // runtime effect is R's matching rules, not the shadowing
+            // mistake -- stays silent.
+            if !callee_formals
+                .iter()
+                .any(|formal| semantic_argument_name(formal) == tag)
+            {
+                continue;
+            }
+            let constant = if value { "TRUE" } else { "FALSE" };
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY111",
+                format!(
+                    "argument `{tag} = {constant}` to `{function_name}` is a constant shadowing \
+                     the identically-named formal of an enclosing function, so the caller's \
+                     `{tag}` value is silently ignored; forward it as `{tag} = {tag}` instead"
+                ),
+            );
         }
     }
 
@@ -633,5 +1044,281 @@ mod argument_matching_tests {
             Some("length")
         );
         assert_eq!(closest_parameter("unrelated", &["length", "x"]), None);
+    }
+}
+
+#[cfg(test)]
+mod constant_shadowing_tests {
+    use super::*;
+
+    fn check(src: &str) -> Vec<Diagnostic> {
+        let file = crate::tests::parse_file("shadowing.R", src);
+        let mut checker = Checker::new("shadowing.R");
+        checker.check(&file);
+        checker.take_diagnostics()
+    }
+
+    fn fires(src: &str) -> bool {
+        check(src).iter().any(|d| d.code == "RY111")
+    }
+
+    /// One site per shape: the haven founding fixture (dots coexist with
+    /// the hardcoded constant), a required enclosing formal, a collected
+    /// user callee, a base stub callee, FALSE against a TRUE-leaning
+    /// default, and both pipe spellings plus qualification.
+    #[test]
+    fn fires_on_the_haven_and_adjacent_shapes() {
+        assert!(fires(
+            "vec_data <- function(x) x\nmedian.labelled <- function(x, na.rm = FALSE, ...) {\n  median(vec_data(x), na.rm = TRUE, ...)\n}\n"
+        ));
+        assert!(fires("f <- function(x, na.rm) median(x, na.rm = FALSE)\n"));
+        assert!(fires(
+            "my_sum <- function(x, na.rm = FALSE) sum(x)\nf <- function(x, na.rm = FALSE) my_sum(x, na.rm = TRUE)\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) sum(x, na.rm = TRUE)\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = TRUE) median(x, na.rm = FALSE)\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) x |> median(na.rm = TRUE)\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) stats::median(x, na.rm = TRUE)\n"
+        ));
+    }
+
+    /// The enclosing frame may be an outer one: a closure without its own
+    /// `na.rm` formal captures the enclosing binding, so the constant
+    /// still orphans that function's callers. A closure with its own
+    /// identically-named formal is judged by its own frame instead.
+    #[test]
+    fn resolves_enclosing_frames_innermost_first() {
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  sapply(x, function(y) median(y, na.rm = TRUE))\n}\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, na.rm = TRUE) median(y, na.rm = TRUE)\n  g(x)\n}\n"
+        ));
+        // The inner formal is forwarded, not shadowed: silent.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, na.rm = TRUE) median(y, na.rm = na.rm)\n  g(x)\n}\n"
+        ));
+    }
+
+    /// Gate 1 (identical name) and gate 2 (enclosing formal exists):
+    /// renaming idioms, partial tags, and formal-less scopes stay quiet.
+    #[test]
+    fn stays_silent_without_the_identical_enclosing_formal() {
+        // The renaming-and-defaulting idiom: the enclosing formal has a
+        // different name, so the constant is the documented behavior.
+        assert!(!fires(
+            "f <- function(x, remove_na = FALSE) median(x, na.rm = TRUE)\n"
+        ));
+        // A partial tag is not the exact spelling.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) median(x, na.r = TRUE)\n"
+        ));
+        // No enclosing function at all, or none with the formal.
+        assert!(!fires("median(1:3, na.rm = TRUE)\n"));
+        assert!(!fires("f <- function(x) median(x, na.rm = TRUE)\n"));
+        // A dots-only enclosing frame binds no such name.
+        assert!(!fires(
+            "f <- function(...) median(list(...)[[1]], na.rm = TRUE)\n"
+        ));
+    }
+
+    /// Gate 3 (reserved-word literal): forwarding, computed values, the
+    /// rebindable T/F spellings, NA, and non-logical constants stay
+    /// quiet.
+    #[test]
+    fn stays_silent_for_non_literal_values() {
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) median(x, na.rm = as.logical(na.rm))\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) median(x, na.rm = T)\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) median(x, na.rm = NA)\n"
+        ));
+        // Numeric and string constants: the divergent-default idiom.
+        assert!(!fires("f <- function(x, times = 3) rep(x, times = 3)\n"));
+        assert!(!fires(
+            "f <- function(x, sep = \",\") paste0(x, sep = \"\")\n"
+        ));
+    }
+
+    /// Gate 4 (callee formal known): a `...`-only callee forwards the
+    /// literal into dots, and an unknown callee has no formals to match.
+    #[test]
+    fn stays_silent_without_a_resolvable_callee_formal() {
+        assert!(!fires(
+            "variadic <- function(x, ...) list(x, ...)\nf <- function(x, na.rm = FALSE) variadic(x, na.rm = TRUE)\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) not_collected_anywhere(x, na.rm = TRUE)\n"
+        ));
+        // A lexical callable shadows the tables; its formals are unknown.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  inner <- function(y, na.rm) NULL\n  inner(x, na.rm = TRUE)\n}\n"
+        ));
+    }
+
+    /// The dead-formal gate: a body that reads the formal anywhere (an
+    /// `if (p)` guard, a validation call, a by-name forward at another
+    /// site, a `missing(p)` test, or a nested closure's captured read)
+    /// demonstrably handles the caller's value, so the per-site constant
+    /// is chosen child semantics. These are the corpus's deliberate
+    /// idioms: stringr's guarded `ignore_case`, dbplyr's forwarded
+    /// `subquery`, tibble's forwarded `quiet`, dplyr's guarded
+    /// `recursive`, rvest's `env_has(env, nm, inherit = inherit)`.
+    #[test]
+    fn stays_silent_when_the_body_reads_the_formal() {
+        // stringr detect: the early-return guard consumes the flag
+        // before the fixed child call.
+        assert!(!fires(
+            "f <- function(x, ignore_case = FALSE) {\n  if (ignore_case) return(x)\n  median(x, ignore_case = FALSE)\n}\n"
+        ));
+        // tibble set_tidy_names: forwarded by name at the user-facing
+        // call, pinned at the internal one.
+        assert!(!fires(
+            "final <- function(x, quiet = FALSE) x\nf <- function(x, quiet = FALSE) {\n  a <- median(x, quiet = TRUE)\n  final(a, quiet = quiet)\n}\n"
+        ));
+        // A validation read counts: check_bool(na.rm) handles the value.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  check_bool(na.rm)\n  median(x, na.rm = TRUE)\n}\ncheck_bool <- function(x) TRUE\n"
+        ));
+        // dplyr's group_split: the documented-ignored warning reads the
+        // formal through missing().
+        assert!(!fires(
+            "f <- function(x, keep = FALSE) {\n  if (!missing(keep)) warn(\"ignored\")\n  median(x, keep = TRUE)\n}\nwarn <- function(...) NULL\n"
+        ));
+        // A nested closure's captured read is a read in the owning
+        // body's nested AST.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y) if (na.rm) y else y\n  g(x)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // The read may sit after the constant in source order.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  a <- median(x, na.rm = TRUE)\n  if (na.rm) x else a\n}\n"
+        ));
+    }
+
+    /// The dead-formal index's scoping rules (review-driven, PR #543):
+    /// a nested closure redeclaring the name shadows the outer formal
+    /// for its subtree (innermost-owner attribution); a plain-identifier
+    /// assignment target is a write, not a read; a read inside a
+    /// `return(...)` value counts; and a formal default naming a
+    /// sibling formal (`force = na.rm`) consumes the caller's value.
+    #[test]
+    fn dead_formal_index_respects_scoping_writes_and_defaults() {
+        // The nested closure reads ITS OWN na.rm; the outer formal stays
+        // dead and the later hardcode fires (innermost attribution).
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, na.rm) median(y, na.rm = na.rm)\n  g(x)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // Replacing the promise is a write, not a read: the caller's
+        // value is never consumed, plain and subassigned alike.
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  na.rm <- FALSE\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  na.rm[1] <- TRUE\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // A read inside a return value is a read.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  return(if (na.rm) x else x)\n}\n"
+        ));
+        // A default naming a sibling formal consumes the caller's value,
+        // in the function's own signature and in a nested closure's.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE, force = na.rm) {\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE, k = 2 * na.rm) {\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  g <- function(y, keep = na.rm) NULL\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+    }
+
+    /// The dead-formal index's loop-variable rule (review-driven, PR
+    /// #543): `for (p in iter)` binds `p` for its body subtree exactly
+    /// like a closure redeclaring the formal, so a read of the loop
+    /// variable inside the body is not a read of the caller's value --
+    /// while the iterated expression evaluates *before* the binding and
+    /// still counts.
+    #[test]
+    fn dead_formal_index_respects_loop_variable_shadowing() {
+        // Reading the loop variable inside the body does not consume the
+        // caller's promise: the formal stays dead and the hardcode fires.
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in x) print(na.rm)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // The review probe shape: the body never reads the name at all
+        // (the call's tag is not an identifier read), so the gate fires.
+        assert!(fires(
+            "g <- function(x, name = TRUE) x\nf <- function(x, name = FALSE) {\n  for (name in c(1, 2)) g(x, name = TRUE)\n}\n"
+        ));
+        // A closure inside the loop body captures the loop variable, not
+        // the enclosing formal (innermost-owner attribution).
+        assert!(fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in x) {\n    g <- function() print(na.rm)\n    g()\n  }\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // The iterated expression is evaluated before the binding, so
+        // `for (p in p)` forces the promise: a genuine read that
+        // discharges.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (na.rm in na.rm) print(na.rm)\n  median(x, na.rm = TRUE)\n}\n"
+        ));
+        // A loop over a different variable shadows nothing: body reads
+        // of the formal still discharge the gate.
+        assert!(!fires(
+            "f <- function(x, na.rm = FALSE) {\n  for (v in x) print(v)\n  if (na.rm) x else x\n}\n"
+        ));
+    }
+
+    /// The diagnostic names the callee, the constant, and the fix, and
+    /// points at the constant's own span.
+    #[test]
+    fn message_names_the_constant_and_the_fix() {
+        let diagnostics = check("f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n");
+        let hits: Vec<_> = diagnostics.iter().filter(|d| d.code == "RY111").collect();
+        assert_eq!(hits.len(), 1, "diagnostics: {diagnostics:?}");
+        assert_eq!(hits[0].severity, Severity::Warning);
+        assert!(
+            hits[0].message.contains("`median`"),
+            "message must name the callee: {}",
+            hits[0].message
+        );
+        assert!(
+            hits[0].message.contains("`na.rm = TRUE`"),
+            "message must name the constant: {}",
+            hits[0].message
+        );
+        assert!(
+            hits[0].message.contains("`na.rm = na.rm`"),
+            "message must name the fix: {}",
+            hits[0].message
+        );
+    }
+
+    /// One finding per constant argument, not per enclosing frame or per
+    /// pass.
+    #[test]
+    fn fires_once_per_site() {
+        let diagnostics = check(
+            "f <- function(x, na.rm = FALSE, drop = TRUE) {\n  a <- median(x, na.rm = TRUE)\n  b <- median(x, na.rm = TRUE)\n}\n",
+        );
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == "RY111").count(),
+            2,
+            "diagnostics: {diagnostics:?}"
+        );
     }
 }

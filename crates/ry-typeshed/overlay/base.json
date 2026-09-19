@@ -1,0 +1,15 @@
+{
+  "schema_version": "2",
+  "package": "base",
+  "version": "local-overlay",
+  "functions": {
+    "median": {
+      "params": ["x", "na.rm", "..."],
+      "return": {
+        "mode": "double_or_int",
+        "length": "1",
+        "na": true
+      }
+    }
+  }
+}

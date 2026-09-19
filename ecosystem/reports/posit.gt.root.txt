@@ -9,3 +9,5 @@ R/utils_render_latex.R:2149:47 RY061
 R/utils_render_latex.R:2149:57 RY061
 R/utils_render_latex.R:69:3 RY106
 R/z_utils_render_footnotes.R:418:18 RY106
+tests/testthat/helper.R:129:11 RY111
+tests/testthat/helper.R:48:11 RY111

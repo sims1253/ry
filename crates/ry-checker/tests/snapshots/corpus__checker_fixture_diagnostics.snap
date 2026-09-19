@@ -1,6 +1,5 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
-assertion_line: 238
 expression: snapshots
 ---
 - diagnostics:
@@ -107,6 +106,80 @@ expression: snapshots
         line: 2
         start: 83
   fixture: err_compare_mode_mismatch.R
+- diagnostics:
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 30
+        end: 898
+        line: 17
+        start: 894
+    - code: RY111
+      message: "argument `na.rm = FALSE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 20
+        end: 1038
+        line: 22
+        start: 1033
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `my_sum` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 20
+        end: 1226
+        line: 28
+        start: 1222
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `sum` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 17
+        end: 1367
+        line: 33
+        start: 1363
+    - code: RY111
+      message: "argument `na.rm = FALSE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 20
+        end: 1501
+        line: 38
+        start: 1496
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 42
+        end: 1736
+        line: 44
+        start: 1732
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 22
+        end: 1980
+        line: 51
+        start: 1976
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 22
+        end: 2119
+        line: 58
+        start: 2115
+    - code: RY111
+      message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
+      severity: warning
+      span:
+        column: 27
+        end: 2259
+        line: 63
+        start: 2255
+  fixture: err_constant_argument_shadowing.R
 - diagnostics:
     - code: RY061
       message: "$ operator is invalid for atomic vectors of mode `character`"
@@ -1541,6 +1614,8 @@ expression: snapshots
   fixture: ok_compare_same_mode.R
 - diagnostics: []
   fixture: ok_compare_union_no_mode_mismatch.R
+- diagnostics: []
+  fixture: ok_constant_argument_shadowing_gates.R
 - diagnostics: []
   fixture: ok_custom_operator_lookup.R
 - diagnostics: []

@@ -263,6 +263,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then cannot use as numeric (the Math group errors; `mean()` warns and returns `NA`). Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
     },
+    Rule {
+        code: "RY111",
+        name: "constant-argument-shadowing",
+        default_severity: Severity::Warning,
+        summary: "A call argument passes `TRUE`/`FALSE` for a formal an enclosing function exposes under the identical name (`na.rm = TRUE` inside `function(x, na.rm = FALSE)`), silently hardcoding instead of forwarding the caller's value — haven's `median.labelled` shipped this shape. Fires only when the tag is an exact (not partial) match on both the enclosing formal and a callee formal (typeshed or collected user signature) and the owning function never reads the formal anywhere in its body (a guard, validation, by-name forward, or `missing()` test all stay silent); forwarding the formal, non-literal expressions, renaming idioms, and numeric/string constants stay quiet.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

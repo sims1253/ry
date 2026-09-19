@@ -1935,15 +1935,16 @@ impl Backend {
         // no-open-document scan call site already follows (the callers'
         // `refresh_package_contexts` is redundant-but-harmless after
         // the scan's wholesale context rebuild). A superseded scan
-        // returns false and the supplanter owns the republish, same as
-        // the `initialized` site. Either way the double-race case
-        // differs from the single-race one only in HOW the bytes land
-        // (scan versus retry), never in whether they are published.
-        // The churn bound is the double-loss precondition itself —
-        // two commits inside two consecutive sub-millisecond
-        // snapshot-to-commit windows per escalated refresh — plus each
-        // spawned pass stays generation-guarded, so superseded walks
-        // discard without writing.
+        // returns false and the path converges on its own next event —
+        // a residual strictly rarer than the double-loss that reached
+        // the backstop, self-healing, and better than the pre-fix
+        // behavior of stranding EVERY single loss; only the landed arm
+        // carries the published-immediately guarantee. The churn bound
+        // is the double-loss precondition itself — two commits inside
+        // two consecutive sub-millisecond snapshot-to-commit windows
+        // per escalated refresh — plus each spawned pass stays
+        // generation-guarded, so superseded walks discard without
+        // writing.
         self.spawn_background_index().await
     }
 

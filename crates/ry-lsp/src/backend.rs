@@ -1717,6 +1717,7 @@ impl Backend {
                 check_test_fixtures,
                 eligible,
                 is_open,
+                superseded,
                 refresh_gen,
             ) = {
                 let state = self.state.lock().await;
@@ -1751,6 +1752,7 @@ impl Backend {
                 };
                 let eligible = state.eligibility_for_path(&path_string);
                 let is_open = state.docs.contains_key(&path_string);
+                let superseded = state.refresh_epochs.get(&path_string) != Some(&refresh_epoch);
                 let refresh_gen = state.index_generation;
                 (
                     walk_root,
@@ -1761,6 +1763,7 @@ impl Backend {
                     check_test_fixtures,
                     eligible,
                     is_open,
+                    superseded,
                     refresh_gen,
                 )
             };
@@ -1768,6 +1771,24 @@ impl Backend {
                 // The editor's buffer is authoritative; the watched event (or
                 // a save whose bytes the buffer already shadows) changes
                 // nothing the publish path reads.
+                return false;
+            }
+            // A newer same-path refresh already claimed the epoch before
+            // this attempt snapshotted — either it claimed inside the
+            // claim-to-snapshot window of attempt 0, or a retry
+            // re-snapshots after a lost generation race and a newer
+            // refresh started meanwhile. The commit-time epoch check
+            // below would refuse this attempt anyway; skipping its
+            // blocking read now avoids a parse the verdict discards.
+            // The authoritative check stays at the commit (the epoch can
+            // still move during the read), and this early exit keeps the
+            // claim, per the reclamation policy above.
+            if superseded {
+                tracing::debug!(
+                    path = %path_string,
+                    epoch = refresh_epoch,
+                    "discarding superseded per-file disk refresh before its read"
+                );
                 return false;
             }
             // Clone the owning root for the commit-time budget check below:

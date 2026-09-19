@@ -127,3 +127,120 @@ fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
         join_session(session, server).await;
     });
 }
+
+/// #551: a watched refresh that loses the index-generation race to an
+/// unrelated concurrent refresh must not lose the publication. The
+/// per-file refresh carries only its own path, but its commit was
+/// discarded outright whenever the generation moved during its blocking
+/// read — and the generation moves for ANY landed writer, including a
+/// close-time re-read or another path's watched event whose landing
+/// says nothing about this path's bytes. With no open document nothing
+/// else republishes the path, so the watched fix stranded: the test
+/// client's convergence await burned its whole budget and failed
+/// (bimodally — 0.4s green or a full-budget timeout, nothing between).
+///
+/// The test pins the discriminating interleaving deterministically
+/// through the existing commit gates: park the watched refresh for
+/// `util.R` at its commit (post-read), land an unrelated refresh for
+/// `other.R` while it is parked (proving the landing through the
+/// post-commit gate), then release. Without the retry the parked commit
+/// sees the moved generation and discards — the fix never lands and the
+/// await below times out (or, if another publish pass re-reaches the
+/// path first, republishes the STALE squiggle). With the retry the
+/// refresh re-reads current disk, lands the fixed bytes, and the empty
+/// publication arrives.
+#[test]
+fn watched_fix_losing_the_generation_race_still_republishes() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("main.R", "w <- 1L\n").unwrap();
+        fixture
+            .write_file("util.R", "x <- never_bound_here\n")
+            .unwrap();
+        fixture.write_file("other.R", "o <- 1L\n").unwrap();
+        let main_uri = file_uri(&fixture.path("main.R"));
+        let util_uri = file_uri(&fixture.path("util.R"));
+        let other_uri = file_uri(&fixture.path("other.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        answer_watcher_registration(&mut session).await;
+        sync_barrier(&mut session, &main_uri).await;
+
+        // Settle, then close everything. The close-time re-read of
+        // `main.R` is drained through the commit gate deterministically:
+        // it parks whenever it arrives (close handlers dispatch
+        // concurrently with later client traffic — the very window the
+        // bug needs), so no refresh is in flight when the scenario arms.
+        let mark = session.publication_mark();
+        session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
+        session
+            .published_diagnostics_after(&main_uri, mark)
+            .await
+            .unwrap();
+        session
+            .published_diagnostics_after(&util_uri, mark)
+            .await
+            .unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        session
+            .notify(
+                "textDocument/didClose",
+                json!({"textDocument": {"uri": main_uri}}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        sync_barrier(&mut session, &main_uri).await;
+
+        // Fix `util.R` on disk; its watched refresh parks at its commit.
+        std::fs::write(fixture.path("util.R"), "x <- 1L\n").unwrap();
+        ry_lsp::test_seam::arm_refresh_commit();
+        let fix_mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": util_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_refresh_commit().await;
+
+        // While `util.R`'s refresh is parked, an unrelated refresh for
+        // `other.R` lands — the one-shot arm was consumed by the parked
+        // arrival — bumping the generation. The post-commit gate proves
+        // the landing happened before the release below.
+        std::fs::write(fixture.path("other.R"), "o <- 2L\n").unwrap();
+        ry_lsp::test_seam::arm_post_refresh_commit();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": other_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        ry_lsp::test_seam::wait_post_refresh_commit().await;
+
+        // Release the parked commit: its snapshot generation is stale.
+        ry_lsp::test_seam::release_refresh_commit();
+        ry_lsp::test_seam::wait_refresh_landed().await;
+        ry_lsp::test_seam::release_post_refresh_commit();
+
+        // The retry must land the fixed bytes and republish them.
+        let fixed = session
+            .published_diagnostics_after(&util_uri, fix_mark)
+            .await
+            .unwrap();
+        assert!(
+            normalize_diagnostics(&fixed).is_empty(),
+            "a watched fix whose refresh loses the generation race must still land and republish: {fixed}"
+        );
+
+        join_session(session, server).await;
+    });
+}

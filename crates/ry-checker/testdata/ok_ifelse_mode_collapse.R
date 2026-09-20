@@ -26,5 +26,5 @@ open_world_plain <- function(x) ifelse(x > 0, 1, 0)
 default_test <- function(test = TRUE) ifelse(test, "a", "b")
 # The typed alternatives name their modes in their signatures and never
 # collapse; they are not test-template calls.
-typed_vctrs <- vctrs::if_else(v > 0, "pos", NA_character_)
+typed_vctrs <- vctrs::vec_if_else(v > 0, "pos", NA_character_)
 typed_dplyr <- dplyr::if_else(is.na(v), NA_real_, 1)

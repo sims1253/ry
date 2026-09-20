@@ -682,7 +682,14 @@ impl WatchState {
 /// enough that a nearer config appearing mid-watch wins on the next
 /// re-discovery, exactly as a fresh run would resolve it.
 fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
-    let abs = absolutize(search_start);
+    // Anchor EXACTLY like `Config::discover` — `..` components kept —
+    // because discovery's upward walk (`Path::parent`) steps over dots
+    // rather than folding them: from `<cwd>/../project` it probes
+    // `<cwd>/..` and then `<cwd>` itself before climbing past both,
+    // directories the folded start `<parent-of-cwd>/project` never
+    // visits. Watching a folded chain could omit the very `ry.toml`
+    // discovery selects, leaving the active config unwatched.
+    let abs = discover_start(search_start);
     let mut dir: &std::path::Path = if abs.is_file() {
         abs.parent().unwrap_or(std::path::Path::new("."))
     } else {
@@ -699,26 +706,36 @@ fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
     candidates
 }
 
-/// Resolve `path` against the process working directory and normalize
-/// it lexically (drop `.` components, fold `..` against the stack)
-/// without touching the filesystem — watched metadata candidates may
-/// not exist yet, so `canonicalize` is not an option. Mirrors the
-/// config-discovery anchor rule (`ry_config`'s `Config::discover`):
-/// relative inputs are read relative to the working directory, and
-/// symlinked components stay as given. All ancestor walking below
-/// happens in this absolute space so a relative CLI input
-/// (`ry check pkg/R/use.R` from a parent directory) walks the same
-/// chain an absolute one would — the raw walk would otherwise fall out
-/// of the path at the empty component `Path::new("pkg").parent()`
-/// yields and terminate at the working directory.
-fn absolutize(path: &std::path::Path) -> PathBuf {
-    let joined = if path.is_absolute() {
+/// Resolve `path` against the process working directory, keeping every
+/// lexical component as given (`..` stays `..`). This is `ry_config`'s
+/// `Config::discover` anchor verbatim; the config-candidate walk must
+/// start from it — not from the folded [`absolutize`] form — so
+/// discovery and `poll_static_inputs` step over the same directories
+/// in the same order.
+fn discover_start(path: &std::path::Path) -> PathBuf {
+    if path.is_absolute() {
         path.to_path_buf()
     } else {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
-    };
+    }
+}
+
+/// Resolve `path` against the process working directory and normalize
+/// it lexically (drop `.` components, fold `..` against the stack)
+/// without touching the filesystem — watched metadata candidates may
+/// not exist yet, so `canonicalize` is not an option. Used for the
+/// package-metadata chains, NOT for the config candidates (see
+/// [`discover_start`]): there the walk must mirror discovery's
+/// dot-preserving steps exactly. Folding keeps a relative CLI input
+/// (`ry check pkg/R/use.R` from a parent directory) walking the same
+/// ancestor chain an absolute one would — the raw walk would otherwise
+/// fall out of the path at the empty component
+/// `Path::new("pkg").parent()` yields and terminate at the working
+/// directory.
+fn absolutize(path: &std::path::Path) -> PathBuf {
+    let joined = discover_start(path);
     let mut normalized = PathBuf::new();
     for component in joined.components() {
         match component {
@@ -1760,6 +1777,57 @@ mod tests {
             !meta.contains(&PathBuf::from("DESCRIPTION")),
             "the empty path component must not contribute a bare candidate: {meta:?}"
         );
+    }
+
+    /// Discovery anchors its upward walk by joining the working
+    /// directory WITHOUT folding `..` (`ry_config`'s `Config::discover`
+    /// keeps the components and lets `Path::parent` step over them), so
+    /// from `<base>/sub/../project` it probes `<base>/project` (through
+    /// the dots), then `<base>` (as `sub/..`), then `<base>/sub` itself
+    /// — directories a lexically folded start would skip. If discovery
+    /// can select a config the candidate walk omits, watch mode never
+    /// notices edits to the ACTIVE `ry.toml`. Pin both walks to the
+    /// same sequence: for dotted directory and dotted file inputs, the
+    /// first existing candidate must be exactly the file discovery
+    /// returns.
+    #[test]
+    fn config_candidates_mirror_discovery_for_dotdot_inputs() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path();
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        std::fs::create_dir_all(base.join("project/R")).unwrap();
+        let use_r = base.join("project/R/use.R");
+        std::fs::write(&use_r, "x <- 1L\n").unwrap();
+        // The only config on the chain, placed in `sub`: the dotted walk
+        // reaches it after `project` and `base`, while the folded start
+        // `<base>/project` never visits `sub` at all. Discovery stops
+        // there, so nothing above the tempdir can influence the pick.
+        std::fs::write(base.join("sub/ry.toml"), "exit-zero = true\n").unwrap();
+
+        let dotted_dir = base.join("sub/../project");
+        let dotted_file = base.join("sub/../project/R/use.R");
+        for start in [&dotted_dir, &dotted_file] {
+            let found = config::Config::discover(start)
+                .unwrap()
+                .expect("discovery must find the config placed in sub")
+                .0;
+            let expected = base.join("sub").join(config::CONFIG_FILENAME);
+            assert_eq!(
+                found, expected,
+                "the fixture's only config is in sub; discovery must pick it for {start:?}"
+            );
+            let candidates = config_candidates(start);
+            assert!(
+                candidates.contains(&found),
+                "the candidate walk must watch the config discovery selects for {start:?}: {candidates:?}"
+            );
+            let first_hit = candidates.iter().find(|path| path.is_file());
+            assert_eq!(
+                first_hit,
+                Some(&found),
+                "the candidate walk must agree with discovery's selection for {start:?}: {candidates:?}"
+            );
+        }
     }
 
     #[test]

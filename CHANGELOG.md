@@ -190,6 +190,23 @@ All notable changes to ry are documented in this file.
   diagnostic fired falsely on the legal NULL-target and
   character-target forms. Base numeric demands (`sqrt`, `mean`, the
   Math group) keep arming RY110.
+- Correct RY106's suggested typed alternative: `dplyr::if_else()`, not
+  `vctrs::if_else()`. vctrs has never exported `if_else`; its
+  vectorized if-else is `vec_if_else()` (added in vctrs 0.7.0), while
+  `if_else()` is dplyr's long-standing exported spelling (verified on
+  R 4.6.1: dplyr 1.2.1 exports `if_else`; `exists("if_else",
+  where = asNamespace("vctrs"))` is FALSE on vctrs 0.7.3). The
+  diagnostic text, rule registry summary, and docs table now recommend
+  `dplyr::if_else()`; the quiet corpus fixture that exercised the old
+  spelling (quiet only because the unknown callee is ignored) now uses
+  the real `vctrs::vec_if_else()`, and a new oracle claim fixture
+  executes the recommended function on the collapse shapes: an empty or
+  all-NA condition keeps the branch mode (`character(0)`,
+  `NA_character_` entries), an NA condition entry yields NA or the
+  explicit `missing` value, next to the original `ifelse()` collapse
+  assertions. Message-only change; identity, severity, and firing
+  conditions are untouched, and the `ifelse()` collapse examples in the
+  existing claim fixture are preserved.
 - Propagate the NULL component of a union return type into RY001's
   condition analysis (#362). A find-or-NULL helper (`locate_input <-
   function(input) if (is.null(input)) return(NULL) else "path"`, the

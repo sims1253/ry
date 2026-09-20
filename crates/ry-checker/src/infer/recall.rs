@@ -515,16 +515,18 @@ impl Checker {
         } else {
             "TRUE exactly when the call is FALSE (`NA` when it is `NA`)"
         };
+        let premise =
+            "returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches";
         let message = match (
             self.source_text(span_of(argument)),
             self.source_text(span_of(literal_expr)),
         ) {
             (Some(argument_text), Some(literal_text)) => format!(
-                "`{bare}()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
+                "`{bare}()` {premise}, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
                 op_symbol(suggested_op),
             ),
             _ => format!(
-                "`{bare}()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is {outcome_text}; compare the elements inside the call instead"
+                "`{bare}()` {premise}, so this comparison is {outcome_text}; compare the elements inside the call instead"
             ),
         };
         self.emit(Severity::Warning, span, "RY107", message);

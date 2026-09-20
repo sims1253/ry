@@ -144,9 +144,12 @@ All notable changes to ry are documented in this file.
   constant outcomes are now worded as holding "when the base result is
   not `NA` (an `NA` result compares as `NA`)", the negating wording
   names its own `NA` case, and the length-1 premise is qualified with
-  "unless an S4 method dispatches" — `any()`/`all()` are S4 generics
-  whose direct or `Summary`-group methods can return any value (even a
-  longer vector), and `base::any()` selects the generic too. The
+  "unless an `any`/`all` or `Summary`-group method dispatches" —
+  `any()`/`all()` are S4 generics, and S3 classes intercept them too
+  through the `Summary` group (runtime-verified: a user
+  `Summary.s3grp` returning 42), so any dispatched method can return
+  any value (even a longer vector), and `base::any()` selects the
+  generic too. The
   element-level rewrite stays framed as the probable intent. The rule
   keeps firing on open-world arguments (the founding glue
   `any(lengths) == 0` shape is retained and tested) rather than going

@@ -3,12 +3,18 @@
 //! These tests drive the real `ry` binary as a long-lived child process
 //! against temporary project trees: they pin that watch mode stays alive
 //! across input states a one-shot run would exit on, and that file-system
-//! changes take effect without a restart. Waits are deadline-based rather
-//! than fixed sleeps where the process signals readiness on a pipe, so a
-//! loaded CI machine makes the tests slower rather than flaky. Only the
-//! pre-fix early-exit grace period is a fixed sleep: the buggy code path
-//! exits in milliseconds, so any process alive after it proves the loop
-//! was entered.
+//! changes take effect without a restart. Positive assertions are
+//! deadline-based content waits, never fixed sleeps, so a loaded CI
+//! machine makes the tests slower rather than flaky. Fixed sleeps appear
+//! in exactly two roles: the pre-fix early-exit grace period (the buggy
+//! code path exits in milliseconds, so any process alive after it proves
+//! the loop was entered) and the negative controls' quiet window (see
+//! [`NEGATIVE_WINDOW`]), which each such test bounds with a following
+//! positive control — a watched-metadata edit that must re-check. A
+//! watcher that was merely slow during the window still fires the
+//! control, proving the quiet was genuine; one that stopped reacting
+//! fails the control instead of letting the negative assertion pass
+//! vacuously.
 
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Command, Stdio};
@@ -486,11 +492,13 @@ fn watch_reacts_to_namespace_removal() {
 // discovered file against its nearest DESCRIPTION ancestor, so the
 // watch result must converge with a fresh check after a metadata-only
 // edit, with no R-file touch and no process restart. Distinct
-// timestamps come from the harness's phase discipline, not from sleeps
-// as assertions: every modification waits for the previous pass's
-// observable output first, so successive writes to the same metadata
-// file are separated by at least one 500 ms poll and their mtimes
-// (nanosecond resolution) always differ.
+// timestamps come from the harness's phase discipline: every
+// modification waits for the previous pass's observable output first
+// (positive assertions never sleep), so successive writes to the same
+// metadata file are separated by at least one 500 ms poll and their
+// mtimes (nanosecond resolution) always differ. The two negative
+// controls below are the exception — they sleep one bounded
+// [`NEGATIVE_WINDOW`] each, always followed by a positive control.
 //
 // Shared fixture: a valid DESCRIPTION plus a NAMESPACE importing one
 // name (`tags` from shiny, resolvable from the bundled stubs without an
@@ -514,6 +522,19 @@ fn write_package_with_import(pkg: &std::path::Path, name: &str) {
 fn occurrences(buffer: &Mutex<String>, needle: &str) -> usize {
     buffer.lock().unwrap().matches(needle).count()
 }
+
+/// Quiet window for the negative controls: five polls at the watch
+/// loop's 500 ms interval (the phase-discipline assumption above), long
+/// enough for a would-be re-check to land and be counted, short enough
+/// to keep the two negative tests cheap on a loaded runner. The window
+/// is meaningful only because each test bounds it with a POSITIVE
+/// control afterwards — a watched-metadata edit that must re-check: a
+/// watcher that was merely slow still fires the control, so the quiet
+/// that came before was genuine; a watcher that stopped reacting fails
+/// the control instead of letting the negative assertion pass
+/// vacuously. Changing the watch loop's poll interval means changing
+/// this multiple to match.
+const NEGATIVE_WINDOW: Duration = Duration::from_millis(2500);
 
 /// Emptying a nested NAMESPACE mid-watch re-resolves the package: the
 /// name the `importFrom` used to bind becomes an unbound-variable
@@ -760,23 +781,28 @@ fn watch_sibling_package_metadata_edits_stay_scoped() {
     let sibling_before = occurrences(&session.stdout, "`missing_in_b` is not bound");
     let passes_before = occurrences(&session.stderr, "checked 2 file(s)");
     std::fs::write(pkga.join("NAMESPACE"), "").unwrap();
-    wait_for_more(
-        &session.stderr,
-        "checked 2 file(s)",
-        passes_before,
-        "post-edit pass",
-    );
-    // stdout and stderr are drained by independent pump threads, so the
-    // stderr summary can land before this pass's stdout screenful is
-    // fully buffered: synchronize on the stdout content being counted
-    // before comparing exact occurrence counts.
+    // Exact counts need the counted stdout lines COMPLETE before the
+    // read. A pass writes its stdout screenful first and its stderr
+    // summary last, so the protocol is: wait for this pass's stdout
+    // lines, THEN for the next stderr summary past them — the summary's
+    // arrival proves the child finished the pass's output writes, and
+    // the already-buffered stdout lines cannot miss in-flight bytes of
+    // the counted pass. (stdout and stderr are drained by independent
+    // pump threads, so waiting on one pipe bounds nothing on the other;
+    // the order matters in both directions.)
     wait_for_more(
         &session.stdout,
         "`missing_in_b` is not bound",
         sibling_before,
         "post-edit diagnostic",
     );
-    wait_for(&session.stdout, "`tags`", "post-edit diagnostic");
+    wait_for(&session.stdout, "`tags`", "post-edit pkga diagnostic");
+    wait_for_more(
+        &session.stderr,
+        "checked 2 file(s)",
+        passes_before,
+        "post-edit completion summary",
+    );
     assert_eq!(
         occurrences(&session.stdout, "`missing_in_b` is not bound"),
         sibling_before + 1,
@@ -813,21 +839,20 @@ fn watch_empty_workspace_gains_package_and_metadata() {
         "Package: growaround\nVersion: 0.0.0.9000\n",
     )
     .unwrap();
-    wait_for_more(
-        &session.stderr,
-        "checked 1 file(s)",
-        passes_before,
-        "post-DESCRIPTION pass",
-    );
-    // stdout and stderr are separate pipes drained by independent pump
-    // threads, so the stderr summary can land before this pass's stdout
-    // screenful is fully drained: synchronize on the stdout content
-    // itself before comparing exact occurrence counts.
+    // Counted stdout lines first, then the pass-completion summary —
+    // the protocol documented in
+    // watch_sibling_package_metadata_edits_stay_scoped.
     wait_for_more(
         &session.stdout,
         "`tags` is not bound",
         tags_after_source,
         "post-DESCRIPTION diagnostic",
+    );
+    wait_for_more(
+        &session.stderr,
+        "checked 1 file(s)",
+        passes_before,
+        "post-DESCRIPTION completion summary",
     );
     assert_eq!(
         occurrences(&session.stdout, "`tags` is not bound"),
@@ -959,9 +984,12 @@ fn watch_config_admission_tracks_new_metadata_dependencies() {
 
 /// Control: metadata of a tree discovery has no R files under — a
 /// sibling directory that is neither a watched root nor an ancestor of
-/// any discovered file — must NOT trigger a pass. Five polls elapse
-/// (the fixed sleep is the harness's established negative-assertion
-/// pattern; positive assertions above stay deadline-based).
+/// any discovered file — must NOT trigger a pass. The quiet window is
+/// [`NEGATIVE_WINDOW`] (five polls), bounded by the positive control at
+/// the end: editing the watched package's own NAMESPACE must re-check,
+/// proving the watcher was live and reactive across the window rather
+/// than stalled (a stalled watcher would otherwise pass the negative
+/// assertion vacuously).
 #[test]
 fn watch_ignores_unrelated_package_metadata() {
     let tmp = tempfile::tempdir().unwrap();
@@ -971,6 +999,11 @@ fn watch_ignores_unrelated_package_metadata() {
     let mut session = WatchSession::spawn(tmp.path());
 
     wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    // Drain the initial pass's summary before baselining the count: a
+    // loaded runner can deliver it after the "watching" line, and a
+    // baseline that misses it would false-fail the negative assertion
+    // below.
+    wait_for(&session.stderr, "checked 1 file(s)", "initial pass summary");
     assert!(
         !session.stdout.lock().unwrap().contains("RY010"),
         "the initial pass must resolve the imported name: {}",
@@ -991,7 +1024,7 @@ fn watch_ignores_unrelated_package_metadata() {
     .unwrap();
     std::fs::write(unrelated.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
 
-    std::thread::sleep(Duration::from_millis(2500));
+    std::thread::sleep(NEGATIVE_WINDOW);
     assert_eq!(
         occurrences(&session.stderr, "checked 1 file(s)"),
         passes_before,
@@ -1003,7 +1036,18 @@ fn watch_ignores_unrelated_package_metadata() {
         "unrelated metadata must not change the findings: {}",
         session.stdout.lock().unwrap()
     );
-    session.assert_alive("after unrelated metadata creation");
+
+    // Positive control bounding the window above: the watched
+    // package's own metadata MUST re-check. If it arrives, the earlier
+    // quiet was genuine; if not, the test fails for the right reason.
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "control diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the control re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after control metadata edit");
 }
 
 /// Metadata ABOVE an absorbing package boundary must not trigger a
@@ -1013,7 +1057,9 @@ fn watch_ignores_unrelated_package_metadata() {
 /// DESCRIPTION/NAMESPACE pair created in a directory ABOVE the boundary
 /// cannot change how any watched file resolves. The watch set stops at
 /// the same boundary, so their creation stays silent. The final leg is
-/// the control: the boundary's own NAMESPACE edit still re-checks.
+/// the positive control that bounds the [`NEGATIVE_WINDOW`] quiet above:
+/// the boundary's own NAMESPACE edit still re-checks, proving the
+/// watcher was live across the quiet window rather than stalled.
 #[test]
 fn watch_ignores_metadata_above_absorbing_boundary() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1024,6 +1070,9 @@ fn watch_ignores_metadata_above_absorbing_boundary() {
 
     // The root's own metadata resolves the import from the start.
     wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    // Drain the initial pass's summary before baselining the count (see
+    // watch_ignores_unrelated_package_metadata).
+    wait_for(&session.stderr, "checked 1 file(s)", "initial pass summary");
     assert!(
         !session.stdout.lock().unwrap().contains("RY010"),
         "the initial pass must resolve the imported name: {}",
@@ -1043,7 +1092,7 @@ fn watch_ignores_metadata_above_absorbing_boundary() {
     .unwrap();
     std::fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
 
-    std::thread::sleep(Duration::from_millis(2500));
+    std::thread::sleep(NEGATIVE_WINDOW);
     assert_eq!(
         occurrences(&session.stderr, "checked 1 file(s)"),
         passes_before,

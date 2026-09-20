@@ -766,6 +766,16 @@ fn watch_sibling_package_metadata_edits_stay_scoped() {
         passes_before,
         "post-edit pass",
     );
+    // stdout and stderr are drained by independent pump threads, so the
+    // stderr summary can land before this pass's stdout screenful is
+    // fully buffered: synchronize on the stdout content being counted
+    // before comparing exact occurrence counts.
+    wait_for_more(
+        &session.stdout,
+        "`missing_in_b` is not bound",
+        sibling_before,
+        "post-edit diagnostic",
+    );
     wait_for(&session.stdout, "`tags`", "post-edit diagnostic");
     assert_eq!(
         occurrences(&session.stdout, "`missing_in_b` is not bound"),
@@ -968,6 +978,10 @@ fn watch_ignores_unrelated_package_metadata() {
     );
 
     // Metadata of an R-less sibling tree: outside the dependency set.
+    // The pass baseline is captured BEFORE the creation so a watch bug
+    // that DOES re-check on it cannot slip the extra pass into the
+    // baseline and pass unnoticed.
+    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
     let unrelated = tmp.path().join("unrelated");
     std::fs::create_dir_all(&unrelated).unwrap();
     std::fs::write(
@@ -977,7 +991,6 @@ fn watch_ignores_unrelated_package_metadata() {
     .unwrap();
     std::fs::write(unrelated.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
 
-    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
     std::thread::sleep(Duration::from_millis(2500));
     assert_eq!(
         occurrences(&session.stderr, "checked 1 file(s)"),
@@ -1018,7 +1031,11 @@ fn watch_ignores_metadata_above_absorbing_boundary() {
     );
 
     // Unrelated package metadata one level ABOVE the boundary: outside
-    // the dependency set, like the sibling-tree control above.
+    // the dependency set, like the sibling-tree control above. The
+    // pass baseline is captured BEFORE the writes so a watch bug that
+    // DOES re-check on them cannot slip the extra pass into the
+    // baseline and pass unnoticed.
+    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
     std::fs::write(
         tmp.path().join("DESCRIPTION"),
         "Package: above\nVersion: 0.0.0.9000\n",
@@ -1026,7 +1043,6 @@ fn watch_ignores_metadata_above_absorbing_boundary() {
     .unwrap();
     std::fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
 
-    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
     std::thread::sleep(Duration::from_millis(2500));
     assert_eq!(
         occurrences(&session.stderr, "checked 1 file(s)"),

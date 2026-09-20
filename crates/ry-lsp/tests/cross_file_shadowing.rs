@@ -61,9 +61,11 @@ where
 /// in-process server task sharing the single-threaded runtime.
 async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
     let root = fixture.root().to_path_buf();
-    let binary = harness::ry_binary();
     let output = tokio::task::spawn_blocking(move || {
-        std::process::Command::new(binary)
+        // The binary resolves inside the closure too: the first
+        // `ry_binary()` call runs a cargo build, which is just as
+        // blocking as the child wait.
+        std::process::Command::new(harness::ry_binary())
             .current_dir(&root)
             .args(["check", "--output-format", "json"])
             .arg(&root)
@@ -77,11 +79,36 @@ async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
         "CLI failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "CLI stdout was not JSON diagnostics ({error}); stdout head: {:?}, stderr head: {:?}",
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(256)]),
+            String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(256)]),
+        )
+    });
     values
         .into_iter()
         .map(|value| published_from_cli_value(&value, fixture.root()))
         .collect()
+}
+
+/// Consume every queued or in-flight `publishDiagnostics` for `uri`
+/// until an idle window passes with none. After this returns, a fresh
+/// publication mark can only be satisfied by a publication caused by
+/// later actions. The idle window detects end-of-stream the same way
+/// `quiesce_diagnostics` does; it does not wait for computation, and a
+/// suppressed (deduplicated) no-op refresh simply ends the first
+/// window.
+async fn drain_publications(session: &mut harness::ClientSession, uri: &str) {
+    loop {
+        let mark = session.publication_mark();
+        match tokio::time::timeout(DRAIN, session.published_diagnostics_after(uri, mark)).await {
+            Ok(result) => {
+                result.expect("publication receive error during drain");
+            }
+            Err(_) => return,
+        }
+    }
 }
 
 /// Capabilities advertising dynamic watched-file registration, so tests
@@ -266,11 +293,21 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
         // Opening a.R with the character variant in the buffer: the
         // buffer owns a.R's path, but z.R (closed, on disk) still sorts
         // last and wins.
-        let mark = session.publication_mark();
+        // One publication per state transition: a mark after opening
+        // use.R, awaited, then a separate mark before opening a.R, so
+        // the assertion observes the post-open-a.R publication instead
+        // of whichever debounced intermediate lands first.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
         let opened = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, open_a_mark)
             .await
             .unwrap();
         assert!(
@@ -282,14 +319,15 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
     })
 }
 
-/// Open/closed subset parity: for every subset of {a.R, z.R, use.R}
-/// (same bytes as disk), the eventual `use.R` diagnostics equal the
-/// fresh-project result — the CLI's clean verdict with `z.R`'s integer
-/// `f` last in sorted order. Publication completion is required per
-/// state (an awaited publication, never an absent one), except the
-/// empty subset, where nothing schedules a publish pass; its final
-/// analysis is forced with a watched-file event, which republishes
-/// closed files (#528) and is therefore proof the pass ran.
+/// Open/closed subset parity: for every non-empty subset of
+/// {a.R, z.R, use.R} (same bytes as disk), the eventual `use.R`
+/// diagnostics equal the fresh-project result — the CLI's clean verdict
+/// with `z.R`'s integer `f` last in sorted order. Publication
+/// completion is required per state (an awaited publication, never an
+/// absent one). The empty subset is covered separately below: nothing
+/// schedules a publish pass there, so its final analysis is forced with
+/// a watched-file event, which republishes closed files (#528) and is
+/// therefore proof the pass ran.
 #[test]
 fn open_closed_subsets_agree_with_the_fresh_project() {
     run(async {
@@ -564,8 +602,11 @@ fn save_close_matches_the_final_disk_tree() {
             .unwrap();
 
         // Drain the no-op watched refresh so close_mark cannot be
-        // satisfied by a pre-close publication.
+        // satisfied by a queued pre-close publication: the barrier's
+        // inlayHint response does not flush publishes already queued,
+        // and the deduplicated refresh may publish nothing at all.
         sync_barrier(&mut session, &use_uri).await;
+        drain_publications(&mut session, &use_uri).await;
         // Close: the re-read finds the saved integer bytes; use.R stays
         // clean, matching the final disk tree.
         let close_mark = session.publication_mark();

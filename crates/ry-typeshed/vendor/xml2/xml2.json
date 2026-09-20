@@ -1,0 +1,796 @@
+{
+  "schema_version": "2",
+  "package": "xml2",
+  "version": "0.0.1",
+  "functions": {
+    "as_list": {
+      "params": [
+        "x",
+        "ns",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as_xml_document": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "download_html": {
+      "params": [
+        "url",
+        "file",
+        "quiet",
+        "mode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "download_xml": {
+      "params": [
+        "url",
+        "file",
+        "quiet",
+        "mode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "html_structure": {
+      "params": [
+        "x",
+        "indent",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_html": {
+      "params": [
+        "x",
+        "encoding",
+        "...",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read_xml": {
+      "params": [
+        "x",
+        "encoding",
+        "...",
+        "as_html",
+        "options"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_absolute": {
+      "params": [
+        "x",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_escape": {
+      "params": [
+        "x",
+        "reserved"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_parse": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_relative": {
+      "params": [
+        "x",
+        "base"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "url_unescape": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_html": {
+      "params": [
+        "x",
+        "file",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write_xml": {
+      "params": [
+        "x",
+        "file",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_add_child": {
+      "params": [
+        ".x",
+        ".value",
+        "...",
+        ".where",
+        ".copy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_add_parent": {
+      "params": [
+        ".x",
+        ".value",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_add_sibling": {
+      "params": [
+        ".x",
+        ".value",
+        "...",
+        ".where",
+        ".copy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_attr": {
+      "params": [
+        "x",
+        "attr",
+        "ns",
+        "default"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_attr<-": {
+      "params": [
+        "x",
+        "attr",
+        "ns",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_attrs": {
+      "params": [
+        "x",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_attrs<-": {
+      "params": [
+        "x",
+        "ns",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_cdata": {
+      "params": [
+        "content"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_child": {
+      "params": [
+        "x",
+        "search",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_children": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_comment": {
+      "params": [
+        "content"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_contents": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_double": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_dtd": {
+      "params": [
+        "name",
+        "external_id",
+        "system_id"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_all": {
+      "params": [
+        "x",
+        "xpath",
+        "ns",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_chr": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_first": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_int": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_lgl": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_num": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_find_one": {
+      "params": [
+        "x",
+        "xpath",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_has_attr": {
+      "params": [
+        "x",
+        "attr",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_integer": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_length": {
+      "params": [
+        "x",
+        "only_elements"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_missing": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_name": {
+      "params": [
+        "x",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_name<-": {
+      "params": [
+        "x",
+        "ns",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_new_document": {
+      "params": [
+        "version",
+        "encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_new_root": {
+      "params": [
+        ".value",
+        "...",
+        ".copy",
+        ".version",
+        ".encoding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_ns": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_ns_rename": {
+      "params": [
+        "old",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_ns_strip": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_parent": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_parents": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_path": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_remove": {
+      "params": [
+        ".x",
+        "free"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_replace": {
+      "params": [
+        ".x",
+        ".value",
+        "...",
+        ".copy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_root": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_serialize": {
+      "params": [
+        "object",
+        "connection",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_set_attr": {
+      "params": [
+        "x",
+        "attr",
+        "value",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_set_attrs": {
+      "params": [
+        "x",
+        "value",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_set_name": {
+      "params": [
+        "x",
+        "value",
+        "ns"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_set_namespace": {
+      "params": [
+        ".x",
+        "prefix",
+        "uri"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_set_text": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_siblings": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_structure": {
+      "params": [
+        "x",
+        "indent",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_text": {
+      "params": [
+        "x",
+        "trim"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_text<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_type": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_unserialize": {
+      "params": [
+        "connection",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_url": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml_validate": {
+      "params": [
+        "x",
+        "schema"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xml2_example": {
+      "params": [
+        "path"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__C__xml_document": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__xml_missing": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__xml_node": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__xml_nodeset": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

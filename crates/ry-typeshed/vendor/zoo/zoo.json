@@ -1,0 +1,1525 @@
+{
+  "schema_version": "2",
+  "package": "zoo",
+  "version": "0.0.1",
+  "functions": {
+    "as.Date": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Date.numeric": {
+      "params": [
+        "x",
+        "origin",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Date.ts": {
+      "params": [
+        "x",
+        "offset",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Date.yearmon": {
+      "params": [
+        "x",
+        "frac",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.Date.yearqtr": {
+      "params": [
+        "x",
+        "frac",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.yearmon": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.yearmon.default": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.yearqtr": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.yearqtr.default": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.zoo.default": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.zooreg": {
+      "params": [
+        "x",
+        "frequency",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.zooreg.default": {
+      "params": [
+        "x",
+        "frequency",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "autoplot.zoo": {
+      "params": [
+        "object",
+        "geom",
+        "facets",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cbind.zoo": {
+      "params": [
+        "...",
+        "all",
+        "fill",
+        "suffixes",
+        "drop",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coredata": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coredata.default": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coredata<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "facet_free": {
+      "params": [
+        "facets",
+        "margins",
+        "scales",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format.yearqtr": {
+      "params": [
+        "x",
+        "format",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fortify.zoo": {
+      "params": [
+        "model",
+        "data",
+        "names",
+        "melt",
+        "sep",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frequency<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ifelse.zoo": {
+      "params": [
+        "test",
+        "yes",
+        "no"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "index": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "index<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "index2char": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.regular": {
+      "params": [
+        "x",
+        "strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.zoo": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "make.par.list": {
+      "params": [
+        "nams",
+        "x",
+        "n",
+        "m",
+        "def",
+        "recycle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MATCH": {
+      "params": [
+        "x",
+        "table",
+        "nomatch",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MATCH.default": {
+      "params": [
+        "x",
+        "table",
+        "nomatch",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MATCH.times": {
+      "params": [
+        "x",
+        "table",
+        "nomatch",
+        "units",
+        "eps",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "median.zoo": {
+      "params": [
+        "x",
+        "na.rm",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "merge.zoo": {
+      "params": [
+        "...",
+        "all",
+        "fill",
+        "suffixes",
+        "check.names",
+        "retclass",
+        "drop",
+        "sep"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.aggregate": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.aggregate.default": {
+      "params": [
+        "object",
+        "by",
+        "...",
+        "FUN",
+        "na.rm",
+        "maxgap"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.approx": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.approx.default": {
+      "params": [
+        "object",
+        "x",
+        "xout",
+        "...",
+        "na.rm",
+        "maxgap",
+        "along"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.fill": {
+      "params": [
+        "object",
+        "fill",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.fill.default": {
+      "params": [
+        "object",
+        "fill",
+        "ix",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.fill0": {
+      "params": [
+        "object",
+        "fill",
+        "ix"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.locf": {
+      "params": [
+        "object",
+        "na.rm",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.locf.default": {
+      "params": [
+        "object",
+        "na.rm",
+        "fromLast",
+        "rev",
+        "maxgap",
+        "rule",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.locf0": {
+      "params": [
+        "object",
+        "fromLast",
+        "maxgap",
+        "coredata"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.spline": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.spline.default": {
+      "params": [
+        "object",
+        "x",
+        "xout",
+        "...",
+        "na.rm",
+        "maxgap",
+        "along"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.StructTS": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.trim": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.trim.default": {
+      "params": [
+        "object",
+        "sides",
+        "is.na",
+        "maxgap",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "na.trim.ts": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ORDER": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ORDER.default": {
+      "params": [
+        "x",
+        "...",
+        "na.last",
+        "decreasing"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.lines.its": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.lines.tis": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.lines.ts": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.lines.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.plot.custom": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.plot.default": {
+      "params": [
+        "x",
+        "y",
+        "subscripts",
+        "groups",
+        "panel",
+        "col",
+        "type",
+        "pch",
+        "lty",
+        "lwd",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.points.its": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.points.tis": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.points.ts": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.points.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.polygon.its": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.polygon.tis": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.polygon.ts": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.polygon.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.rect.its": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.rect.tis": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.rect.ts": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.rect.zoo": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.segments.its": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.segments.tis": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.segments.ts": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.segments.zoo": {
+      "params": [
+        "x0",
+        "x1",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.text.its": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.text.tis": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.text.ts": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "panel.text.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "plot.zoo": {
+      "params": [
+        "x",
+        "y",
+        "screens",
+        "plot.type",
+        "panel",
+        "xlab",
+        "ylab",
+        "main",
+        "xlim",
+        "ylim",
+        "xy.labels",
+        "xy.lines",
+        "yax.flip",
+        "oma",
+        "mar",
+        "col",
+        "lty",
+        "lwd",
+        "pch",
+        "type",
+        "log",
+        "nc",
+        "widths",
+        "heights",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "quantile.zoo": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rbind.zoo": {
+      "params": [
+        "...",
+        "deparse.level"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.csv.zoo": {
+      "params": [
+        "...",
+        "read"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.csv2.zoo": {
+      "params": [
+        "...",
+        "read"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.delim.zoo": {
+      "params": [
+        "...",
+        "read"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.delim2.zoo": {
+      "params": [
+        "...",
+        "read"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.table.zoo": {
+      "params": [
+        "file",
+        "format",
+        "tz",
+        "FUN",
+        "regular",
+        "index.column",
+        "drop",
+        "FUN2",
+        "split",
+        "aggregate",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "read.zoo": {
+      "params": [
+        "file",
+        "format",
+        "tz",
+        "FUN",
+        "regular",
+        "index.column",
+        "drop",
+        "FUN2",
+        "split",
+        "aggregate",
+        "...",
+        "text",
+        "read"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rev.zoo": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollapply": {
+      "params": [
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollapplyr": {
+      "params": [
+        "...",
+        "align"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmax": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmax.default": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmaxr": {
+      "params": [
+        "...",
+        "align"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmean": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmean.default": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmeanr": {
+      "params": [
+        "...",
+        "align"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmedian": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmedian.default": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollmedianr": {
+      "params": [
+        "...",
+        "align"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollsum": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollsum.default": {
+      "params": [
+        "x",
+        "k",
+        "fill",
+        "na.pad",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rollsumr": {
+      "params": [
+        "...",
+        "align"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_type.yearmon": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_type.yearqtr": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_yearmon": {
+      "params": [
+        "...",
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_x_yearqtr": {
+      "params": [
+        "...",
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_yearmon": {
+      "params": [
+        "...",
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "scale_y_yearqtr": {
+      "params": [
+        "...",
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Sys.yearmon": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Sys.yearqtr": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "time<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tinyplot.zoo": {
+      "params": [
+        "object",
+        "facet",
+        "type",
+        "facet.args",
+        "ylab",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write.zoo": {
+      "params": [
+        "x",
+        "file",
+        "index.name",
+        "row.names",
+        "col.names",
+        "FUN",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xblocks": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xblocks.default": {
+      "params": [
+        "x",
+        "y",
+        "...",
+        "col",
+        "border",
+        "ybottom",
+        "ytop",
+        "height",
+        "last.step"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "xtfrm.zoo": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearmon": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearmon_trans": {
+      "params": [
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearqtr": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "yearqtr_trans": {
+      "params": [
+        "format",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zoo": {
+      "params": [
+        "x",
+        "order.by",
+        "frequency",
+        "calendar"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zooreg": {
+      "params": [
+        "data",
+        "start",
+        "end",
+        "frequency",
+        "deltat",
+        "ts.eps",
+        "order.by",
+        "calendar"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+} 

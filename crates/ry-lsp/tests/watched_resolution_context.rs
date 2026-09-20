@@ -16,7 +16,7 @@
 mod harness;
 
 use harness::{file_uri, join_session, normalize_diagnostics, spawn_session, sync_barrier};
-use ry_testkit::FixtureProject;
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// Capabilities advertising dynamic watched-file registration, so the
@@ -27,10 +27,12 @@ fn watching_capabilities() -> Value {
 }
 
 /// Answer the server's `client/registerCapability` request (if any) so the
-/// session proceeds; the globs themselves are pinned elsewhere.
+/// session proceeds; the globs themselves are pinned elsewhere. The wait
+/// uses the shared receive budget (#551): the request is server work that
+/// parallel test load can starve past a fixed 5s.
 async fn answer_watcher_registration(session: &mut harness::ClientSession) {
     let _: Option<Result<Value, _>> = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        rpc_receive_timeout(),
         session.respond_to_request("client/registerCapability", json!(null)),
     )
     .await

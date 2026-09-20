@@ -11,7 +11,7 @@ mod process;
 
 pub use fixture::FixtureProject;
 pub use json_rpc::{AsyncJsonRpcClient, JsonRpcProcess};
-pub use lsp_session::{LspSession, file_uri};
+pub use lsp_session::{LspSession, file_uri, rpc_receive_timeout};
 pub use observed::{
     Driver, DriverError, ObservedDiagnostic, ObservedPosition, ObservedRange, PositionEncoding,
     normalize_path, normalize_position,

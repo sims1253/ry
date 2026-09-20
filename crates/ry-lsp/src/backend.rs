@@ -597,6 +597,18 @@ impl State {
     }
 }
 
+/// How a background index pass ended. `Installed` is the only outcome
+/// that put new bytes in `disk_files`; `SettledWithoutInstall` settled
+/// the pass's index duty (clearing `initial_index_pending`) while
+/// leaving the map untouched — an empty-roots pass or a walk that
+/// errored while its generation still held; `Superseded` lost the
+/// generation race and the supplanter owns the state.
+enum BackgroundIndexOutcome {
+    Installed,
+    SettledWithoutInstall,
+    Superseded,
+}
+
 impl Backend {
     /// Reload off the runtime; retain the last valid config on parse errors.
     async fn reload_folder_contexts(&self) {
@@ -1368,9 +1380,28 @@ impl Backend {
     /// This function never publishes diagnostics itself: callers await it
     /// and then republish (e.g. `did_change_watched_files`), which is what
     /// makes cross-file calls into unopened files resolve on the next
-    /// check. Returns false when a newer scan or folder change supersedes it;
-    /// the superseding caller then owns the republish.
+    /// check. The bool answers the callers' original question — "did this
+    /// pass settle the index duty it owed?" — so it is true for a
+    /// wholesale install AND for a pass that settled without installing
+    /// (an errored walk, or empty roots) while this pass's generation
+    /// still held (the map is untouched but `initial_index_pending`
+    /// must not strand); it is false when a newer scan or folder change
+    /// supersedes the pass, leaving the republish to the supplanter.
+    /// Callers that need to know whether fresh BYTES actually landed (the
+    /// per-file refresh escalation) must use
+    /// [`Backend::background_index_outcome`] and treat only
+    /// [`BackgroundIndexOutcome::Installed`] as a landing.
     async fn spawn_background_index(&self) -> bool {
+        matches!(
+            self.background_index_outcome().await,
+            BackgroundIndexOutcome::Installed | BackgroundIndexOutcome::SettledWithoutInstall
+        )
+    }
+
+    /// The wholesale walk-and-commit pass behind
+    /// [`Backend::spawn_background_index`], reporting which of the three
+    /// ways it can end: see [`BackgroundIndexOutcome`].
+    async fn background_index_outcome(&self) -> BackgroundIndexOutcome {
         let (roots_with_config, index_gen) = {
             let mut state = self.state.lock().await;
             state.index_generation = state.index_generation.wrapping_add(1);
@@ -1404,9 +1435,9 @@ impl Backend {
             let mut state = self.state.lock().await;
             if state.index_generation == index_gen {
                 state.initial_index_pending = false;
-                return true;
+                return BackgroundIndexOutcome::SettledWithoutInstall;
             }
-            return false;
+            return BackgroundIndexOutcome::Superseded;
         }
 
         #[cfg(feature = "test-util")]
@@ -1511,7 +1542,7 @@ impl Backend {
                         current = state.index_generation,
                         "discarding stale background index results"
                     );
-                    return false;
+                    return BackgroundIndexOutcome::Superseded;
                 }
                 state.disk_files = disk_files;
                 for ctx in &mut state.folder_contexts {
@@ -1540,16 +1571,16 @@ impl Backend {
                         )
                         .await;
                 }
-                true
+                BackgroundIndexOutcome::Installed
             }
             Err(error) => {
                 tracing::warn!(%error, "background workspace index failed");
                 let mut state = self.state.lock().await;
                 if state.index_generation == index_gen {
                     state.initial_index_pending = false;
-                    true
+                    BackgroundIndexOutcome::SettledWithoutInstall
                 } else {
-                    false
+                    BackgroundIndexOutcome::Superseded
                 }
             }
         }
@@ -1626,86 +1657,65 @@ impl Backend {
     /// commit reaches the lock first. The `did_open` guard below is a
     /// separate authority rule, not a freshness check: an open buffer
     /// shadows its disk twin regardless of generation. A refresh that
-    /// loses the generation or epoch race returns false — its bytes
-    /// did not land — so the caller neither republishes nor respawns
-    /// scans for them.
+    /// loses the EPOCH race returns false — a newer same-path refresh
+    /// owns the entry — so the caller neither republishes nor respawns
+    /// scans for it. A refresh that loses the GENERATION race is
+    /// different: a per-file refresh carries only its own path, and
+    /// watched-file handlers dispatch concurrently, so the generation
+    /// can move on an unrelated refresh (a close-time re-read, another
+    /// path's event) whose landing says nothing about THIS path's
+    /// bytes. Dropping the update outright would strand the watched
+    /// event — with no open document nothing else republishes the
+    /// path, so its fix or creation never reaches the client (#551) —
+    /// so the refresh retries once from current state, and a second
+    /// loss falls back to a full background scan, the same ladder
+    /// [`Backend::refresh_one_package_context`] uses for the
+    /// resolution maps. The retry re-reads from current disk, so its
+    /// bytes postdate every writer that beat the previous attempt and
+    /// installing them is always safe. The returned bool is terminal
+    /// for this event, never a retry signal: `false` means someone
+    /// else owns the publication (a newer same-path refresh, an open
+    /// buffer shadowing the disk bytes, a cap refusal, a backstop that
+    /// did not land) — the retry ladder and the backstop live INSIDE
+    /// this function, so a caller-side retry on `false` could only
+    /// loop against a persistent owner.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
-        // Snapshot the owning root and config once, plus the index
-        // generation this refresh's commit must still hold when it
-        // lands and the per-path epoch it claims for itself: the
-        // admission checks below must agree with each other
-        // even if a config reload lands mid-refresh (a rescan converges
-        // anything left over), and the commit must not overwrite a
-        // newer scan's bytes or survive a newer same-path refresh (see
-        // the two commit checks at the write).
-        let (
-            walk_root,
-            exclude_anchor,
-            excludes,
-            include_build_ignored,
-            limits,
-            check_test_fixtures,
-            eligible,
-            is_open,
-            refresh_gen,
-            refresh_epoch,
-        ) = {
+        // Claim the path's refresh epoch once, before the first
+        // snapshot and read: the claim orders same-path refreshes by
+        // START, and the commit below refuses any refresh a newer one
+        // superseded, whichever commit lines up on the state lock
+        // first (#538). Retries keep the original claim — re-claiming
+        // would leapfrog a newer same-path refresh that started during
+        // this call, inverting the start-order rule. The entry is
+        // reclaimed only on commit arms that already passed the epoch
+        // check (landed removal, cap refusal) — there the reclaimer
+        // provably holds the path's LATEST claim, so nothing newer is
+        // in flight to clobber. The early returns below the read
+        // (open-document guard, generation-race exhaustion) run
+        // before/outside the epoch check and deliberately keep the
+        // claim: removing it there could delete a newer in-flight
+        // refresh's entry and wrongly discard the freshest bytes, so
+        // those slots persist until the path's next claim or a landed
+        // removal — one per distinct refreshed path, never per event.
+        let refresh_epoch = {
             let mut state = self.state.lock().await;
-            let (
-                walk_root,
-                exclude_anchor,
-                excludes,
-                include_build_ignored,
-                limits,
-                check_test_fixtures,
-            ) = match state.folder_context_for_path(&path_string) {
-                Some(ctx) => (
-                    ctx.root.clone(),
-                    ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
-                    ctx.excludes.clone(),
-                    ctx.config.include_build_ignored.clone(),
-                    ry_workspace::DiscoveryLimits::from_config(&ctx.config),
-                    ctx.config.check_test_fixtures,
-                ),
-                None => (
-                    state.root.clone().unwrap_or_default(),
-                    state
-                        .root_config_dir
-                        .clone()
-                        .or_else(|| state.root.clone())
-                        .unwrap_or_default(),
-                    state.root_excludes.clone(),
-                    state.file_config.include_build_ignored.clone(),
-                    ry_workspace::DiscoveryLimits::from_config(&state.file_config),
-                    state.file_config.check_test_fixtures,
-                ),
-            };
-            let eligible = state.eligibility_for_path(&path_string);
-            let is_open = state.docs.contains_key(&path_string);
-            let refresh_gen = state.index_generation;
-            // Claim the path's refresh epoch before releasing the lock
-            // and starting the blocking read: the claim orders same-path
-            // refreshes by START, and the commit below refuses any
-            // refresh a newer one superseded, whichever commit lines up
-            // on the state lock first (#538). The entry is reclaimed
-            // only on commit arms that already passed the epoch check
-            // (landed removal, cap refusal) — there the reclaimer
-            // provably holds the path's LATEST claim, so nothing newer
-            // is in flight to clobber. The early returns below the
-            // read (open-document guard, generation mismatch) run
-            // before/outside the epoch check and deliberately keep the
-            // claim: removing it there could delete a newer in-flight
-            // refresh's entry and wrongly discard the freshest bytes,
-            // so those slots persist until the path's next claim or a
-            // landed removal — one per distinct refreshed path, never
-            // per event.
             state.refresh_epoch_counter = state.refresh_epoch_counter.wrapping_add(1);
             let refresh_epoch = state.refresh_epoch_counter;
             state
                 .refresh_epochs
                 .insert(path_string.clone(), refresh_epoch);
-            (
+            refresh_epoch
+        };
+        // Snapshot the owning root and config, plus the index
+        // generation this attempt's commit must still hold when it
+        // lands: the admission checks below must agree with each other
+        // even if a config reload lands mid-refresh (a rescan converges
+        // anything left over), and the commit must not overwrite a
+        // newer scan's bytes or survive a newer same-path refresh (see
+        // the two commit checks at the write).
+        for attempt in 0..2 {
+            let (
                 walk_root,
                 exclude_anchor,
                 excludes,
@@ -1714,178 +1724,298 @@ impl Backend {
                 check_test_fixtures,
                 eligible,
                 is_open,
+                superseded,
                 refresh_gen,
-                refresh_epoch,
-            )
-        };
-        if is_open {
-            // The editor's buffer is authoritative; the watched event (or
-            // a save whose bytes the buffer already shadows) changes
-            // nothing the publish path reads.
-            return false;
-        }
-        // Clone the owning root for the commit-time budget check below:
-        // `walk_root` moves into the blocking closure, and only the budget
-        // check needs it afterwards — one small allocation per watched
-        // event, not worth an `Arc` rippling through every root comparison.
-        let budget_root = walk_root.clone();
-        let parsed = tokio::task::spawn_blocking(move || {
-            if !eligible
-                || !single_file_admitted(
-                    &path,
-                    &walk_root,
-                    Some(&exclude_anchor),
-                    &excludes,
-                    &include_build_ignored,
-                    &limits,
+            ) = {
+                let state = self.state.lock().await;
+                let (
+                    walk_root,
+                    exclude_anchor,
+                    excludes,
+                    include_build_ignored,
+                    limits,
                     check_test_fixtures,
+                ) = match state.folder_context_for_path(&path_string) {
+                    Some(ctx) => (
+                        ctx.root.clone(),
+                        ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
+                        ctx.excludes.clone(),
+                        ctx.config.include_build_ignored.clone(),
+                        ry_workspace::DiscoveryLimits::from_config(&ctx.config),
+                        ctx.config.check_test_fixtures,
+                    ),
+                    None => (
+                        state.root.clone().unwrap_or_default(),
+                        state
+                            .root_config_dir
+                            .clone()
+                            .or_else(|| state.root.clone())
+                            .unwrap_or_default(),
+                        state.root_excludes.clone(),
+                        state.file_config.include_build_ignored.clone(),
+                        ry_workspace::DiscoveryLimits::from_config(&state.file_config),
+                        state.file_config.check_test_fixtures,
+                    ),
+                };
+                let eligible = state.eligibility_for_path(&path_string);
+                let is_open = state.docs.contains_key(&path_string);
+                let superseded = state.refresh_epochs.get(&path_string) != Some(&refresh_epoch);
+                let refresh_gen = state.index_generation;
+                (
+                    walk_root,
+                    exclude_anchor,
+                    excludes,
+                    include_build_ignored,
+                    limits,
+                    check_test_fixtures,
+                    eligible,
+                    is_open,
+                    superseded,
+                    refresh_gen,
                 )
-            {
-                return None;
+            };
+            if is_open {
+                // The editor's buffer is authoritative; the watched event (or
+                // a save whose bytes the buffer already shadows) changes
+                // nothing the publish path reads.
+                return false;
             }
-            let decoded = ry_workspace::read_r_source_decoded(&path).ok()?;
-            let path_string = path.to_string_lossy().into_owned();
-            let mut parser = RParser::new().ok()?;
-            let mut file = parser.parse(&path_string, &decoded.text).ok()?;
-            decoded.attach_boundary_findings(&mut file);
-            Some((path_string, Arc::new(file)))
-        })
-        .await
-        .ok()
-        .flatten();
-        // Test seam: pause here (holding no lock) so a test can land a
-        // newer writer before this commit resumes (#526).
-        #[cfg(feature = "test-util")]
-        crate::test_seam::maybe_pause_refresh_commit().await;
-        let mut state = self.state.lock().await;
-        // A concurrent `did_open` landed while the read was in flight:
-        // installing a disk snapshot now would shadow the live buffer's
-        // entry on the next publish assembly.
-        if state.docs.contains_key(&path_string) {
-            return false;
-        }
-        // A newer index generation started while the blocking read was
-        // in flight (a full scan, a folder change, or a landed refresh
-        // that retired in-flight writers): the newer writer owns the
-        // fresher bytes or the fresher map, and this commit's older
-        // parse must not install over them (#526). Returning false
-        // keeps the caller from republishing or retiring scans for
-        // bytes that never landed; the winning writer owns both.
-        if state.index_generation != refresh_gen {
-            tracing::debug!(
-                path = %path_string,
-                gen = refresh_gen,
-                current = state.index_generation,
-                "discarding stale per-file disk refresh"
-            );
-            return false;
-        }
-        // A newer refresh for this same path started while this one was
-        // in flight: the generation check above cannot order two
-        // same-path refreshes that snapshot one generation — the older
-        // read, committing first, would land its bytes and bump the
-        // generation, making the NEWER read's commit look stale and
-        // leaving the older contents indexed (#538). The start-time
-        // epoch claim breaks the tie: only the most recently started
-        // refresh for a path can commit, so last-write-wins is decided
-        // by read order, not commit order. A superseded refresh bumps
-        // nothing — the newer one still owns the entry and the
-        // generation.
-        if state.refresh_epochs.get(&path_string) != Some(&refresh_epoch) {
-            tracing::debug!(
-                path = %path_string,
-                epoch = refresh_epoch,
-                "discarding superseded per-file disk refresh"
-            );
-            return false;
-        }
-        match parsed {
-            Some((parsed_path, file)) => {
-                // The `index.max-files` count is not a path property, so the
-                // admission verdict above cannot enforce it: refuse a new
-                // entry once the owning root is at its budget (#525).
-                // First-come-first-served like the walk (though the orders
-                // differ — readdir vs. event arrival — so above the cap the
-                // retained subset may diverge from a fresh scan's):
-                // refreshing an already-indexed path still lands (no
-                // growth), and nothing already indexed is evicted — so the
-                // incremental map never holds more per root than a fresh
-                // scan of the same tree.
-                // Decided here under the lock, not in the blocking snapshot:
-                // two concurrent refreshes racing at the cap line up on this
-                // lock, and only the first one through grows the map.
-                let over_budget = !budget_root.as_os_str().is_empty()
-                    && !state.disk_files.contains_key(&parsed_path)
-                    && state
-                        .disk_files
-                        .keys()
-                        .filter(|existing| {
-                            state.entry_consumes_root_budget(
-                                std::path::Path::new(existing.as_str()),
-                                &budget_root,
-                            )
-                        })
-                        .count()
-                        >= limits.max_files;
-                if over_budget {
-                    tracing::warn!(
-                        path = %parsed_path,
-                        root = %budget_root.display(),
-                        cap = limits.max_files,
-                        "discarding per-file disk refresh over index.max-files"
-                    );
-                    // The refusal passed the epoch check, so this refresh
-                    // is the path's latest and nothing newer is in
-                    // flight: reclaim the epoch entry here too — a path
-                    // the cap keeps refusing never enters the index, so
-                    // its claim would otherwise be the one entry nothing
-                    // else retires (#538).
-                    state.refresh_epochs.remove(&parsed_path);
-                    return false;
+            // A newer same-path refresh already claimed the epoch before
+            // this attempt snapshotted — either it claimed inside the
+            // claim-to-snapshot window of attempt 0, or a retry
+            // re-snapshots after a lost generation race and a newer
+            // refresh started meanwhile. The commit-time epoch check
+            // below would refuse this attempt anyway; skipping its
+            // blocking read now avoids a parse the verdict discards.
+            // The authoritative check stays at the commit (the epoch can
+            // still move during the read), and this early exit keeps the
+            // claim, per the reclamation policy above.
+            if superseded {
+                tracing::debug!(
+                    path = %path_string,
+                    epoch = refresh_epoch,
+                    "discarding superseded per-file disk refresh before its read"
+                );
+                return false;
+            }
+            // Clone the owning root for the commit-time budget check below:
+            // `walk_root` moves into the blocking closure, and only the budget
+            // check needs it afterwards — one small allocation per watched
+            // event, not worth an `Arc` rippling through every root comparison.
+            // `path` moves too; a retry re-reads through its own clone.
+            let budget_root = walk_root.clone();
+            let read_path = path.clone();
+            let parsed = tokio::task::spawn_blocking(move || {
+                if !eligible
+                    || !single_file_admitted(
+                        &read_path,
+                        &walk_root,
+                        Some(&exclude_anchor),
+                        &excludes,
+                        &include_build_ignored,
+                        &limits,
+                        check_test_fixtures,
+                    )
+                {
+                    return None;
                 }
-                // Claim the next generation in the same critical section
-                // as the insert: the check above, the write, and the bump
-                // share one lock hold, so no scan can commit between the
-                // insert and the retirement — the staleness check no later
-                // writer can slip through. The caller must not bump again;
-                // the landed `true` already carries the retirement (#526).
-                state.disk_files.insert(parsed_path, file);
-                state.index_generation = state.index_generation.wrapping_add(1);
-                drop(state);
-                #[cfg(feature = "test-util")]
-                crate::test_seam::maybe_pause_post_refresh_commit().await;
-                true
+                let decoded = ry_workspace::read_r_source_decoded(&read_path).ok()?;
+                let path_string = read_path.to_string_lossy().into_owned();
+                let mut parser = RParser::new().ok()?;
+                let mut file = parser.parse(&path_string, &decoded.text).ok()?;
+                decoded.attach_boundary_findings(&mut file);
+                Some((path_string, Arc::new(file)))
+            })
+            .await
+            .ok()
+            .flatten();
+            // Test seam: pause here (holding no lock) so a test can land a
+            // newer writer before this commit resumes (#526).
+            #[cfg(feature = "test-util")]
+            crate::test_seam::maybe_pause_refresh_commit().await;
+            let mut state = self.state.lock().await;
+            // A concurrent `did_open` landed while the read was in flight:
+            // installing a disk snapshot now would shadow the live buffer's
+            // entry on the next publish assembly.
+            if state.docs.contains_key(&path_string) {
+                return false;
             }
-            None => {
-                // Unreadable, unparseable, or walk-inadmissible: match the
-                // walk, which never lands such a file in the map. A
-                // dropped entry that previously carried diagnostics is
-                // reconciled by the caller's republish pass (#489).
-                // The removal lands like an insert — same atomic
-                // retirement, same caller contract.
-                state.disk_files.remove(&path_string);
-                // The remover held the path's latest epoch (the check
-                // above), so no same-path refresh is in flight behind
-                // it: the epoch entry leaves with the index entry it
-                // ordered, and the map holds at most one entry per
-                // path the session has refreshed — never one per event
-                // (#538). The full scan's wholesale install deliberately
-                // does NOT prune the epoch map against its new key set:
-                // a refresh that started after the scan's generation
-                // bump may still hold genuinely newer bytes for a path
-                // the scan's walk missed, and deleting its claim would
-                // wrongly discard them. A later refresh re-seeds from
-                // the global counter, so a reclaimed slot cannot alias
-                // a live claim short of the u64 wrap the index
-                // generation already accepts.
-                state.refresh_epochs.remove(&path_string);
-                state.index_generation = state.index_generation.wrapping_add(1);
+            // A newer index generation started while the blocking read was
+            // in flight (a full scan, a folder change, or a landed refresh
+            // that retired in-flight writers): the newer writer owns the
+            // fresher bytes or the fresher map, and this commit's older
+            // parse must not install over them (#526). But a per-file
+            // refresh carries only its own path, and the generation may
+            // have moved on an UNRELATED refresh whose landing says
+            // nothing about this path — dropping the update outright
+            // would strand the watched event, because with no open
+            // document nothing else republishes the path (#551). Retry
+            // once from current state instead: the re-read postdates
+            // every writer that beat this attempt, so installing the
+            // retry's bytes is always safe. Drop the lock first — the
+            // retry re-snapshots below.
+            if state.index_generation != refresh_gen {
                 drop(state);
-                #[cfg(feature = "test-util")]
-                crate::test_seam::maybe_pause_post_refresh_commit().await;
-                true
+                if attempt == 0 {
+                    tracing::debug!(
+                        path = %path_string,
+                        gen = refresh_gen,
+                        "retrying per-file disk refresh after a lost generation race"
+                    );
+                    continue;
+                }
+                tracing::warn!(
+                    path = %path_string,
+                    gen = refresh_gen,
+                    "per-file disk refresh lost two generation races; converging through a full scan"
+                );
+                break;
             }
-        }
+            // A newer refresh for this same path started while this one was
+            // in flight: the generation check above cannot order two
+            // same-path refreshes that snapshot one generation — the older
+            // read, committing first, would land its bytes and bump the
+            // generation, making the NEWER read's commit look stale and
+            // leaving the older contents indexed (#538). The start-time
+            // epoch claim breaks the tie: only the most recently started
+            // refresh for a path can commit, so last-write-wins is decided
+            // by read order, not commit order. A superseded refresh bumps
+            // nothing — the newer one still owns the entry and the
+            // generation.
+            if state.refresh_epochs.get(&path_string) != Some(&refresh_epoch) {
+                tracing::debug!(
+                    path = %path_string,
+                    epoch = refresh_epoch,
+                    "discarding superseded per-file disk refresh"
+                );
+                return false;
+            }
+            match parsed {
+                Some((parsed_path, file)) => {
+                    // The `index.max-files` count is not a path property, so the
+                    // admission verdict above cannot enforce it: refuse a new
+                    // entry once the owning root is at its budget (#525).
+                    // First-come-first-served like the walk (though the orders
+                    // differ — readdir vs. event arrival — so above the cap the
+                    // retained subset may diverge from a fresh scan's):
+                    // refreshing an already-indexed path still lands (no
+                    // growth), and nothing already indexed is evicted — so the
+                    // incremental map never holds more per root than a fresh
+                    // scan of the same tree.
+                    // Decided here under the lock, not in the blocking snapshot:
+                    // two concurrent refreshes racing at the cap line up on this
+                    // lock, and only the first one through grows the map.
+                    let over_budget = !budget_root.as_os_str().is_empty()
+                        && !state.disk_files.contains_key(&parsed_path)
+                        && state
+                            .disk_files
+                            .keys()
+                            .filter(|existing| {
+                                state.entry_consumes_root_budget(
+                                    std::path::Path::new(existing.as_str()),
+                                    &budget_root,
+                                )
+                            })
+                            .count()
+                            >= limits.max_files;
+                    if over_budget {
+                        tracing::warn!(
+                            path = %parsed_path,
+                            root = %budget_root.display(),
+                            cap = limits.max_files,
+                            "discarding per-file disk refresh over index.max-files"
+                        );
+                        // The refusal passed the epoch check, so this refresh
+                        // is the path's latest and nothing newer is in
+                        // flight: reclaim the epoch entry here too — a path
+                        // the cap keeps refusing never enters the index, so
+                        // its claim would otherwise be the one entry nothing
+                        // else retires (#538).
+                        state.refresh_epochs.remove(&parsed_path);
+                        return false;
+                    }
+                    // Claim the next generation in the same critical section
+                    // as the insert: the check above, the write, and the bump
+                    // share one lock hold, so no scan can commit between the
+                    // insert and the retirement — the staleness check no later
+                    // writer can slip through. The caller must not bump again;
+                    // the landed `true` already carries the retirement (#526).
+                    state.disk_files.insert(parsed_path, file);
+                    state.index_generation = state.index_generation.wrapping_add(1);
+                    drop(state);
+                    #[cfg(feature = "test-util")]
+                    crate::test_seam::maybe_pause_post_refresh_commit().await;
+                    return true;
+                }
+                None => {
+                    // Unreadable, unparseable, or walk-inadmissible: match the
+                    // walk, which never lands such a file in the map. A
+                    // dropped entry that previously carried diagnostics is
+                    // reconciled by the caller's republish pass (#489).
+                    // The removal lands like an insert — same atomic
+                    // retirement, same caller contract.
+                    state.disk_files.remove(&path_string);
+                    // The remover held the path's latest epoch (the check
+                    // above), so no same-path refresh is in flight behind
+                    // it: the epoch entry leaves with the index entry it
+                    // ordered, and the map holds at most one entry per
+                    // path the session has refreshed — never one per event
+                    // (#538). The full scan's wholesale install deliberately
+                    // does NOT prune the epoch map against its new key set:
+                    // a refresh that started after the scan's generation
+                    // bump may still hold genuinely newer bytes for a path
+                    // the scan's walk missed, and deleting its claim would
+                    // wrongly discard them. A later refresh re-seeds from
+                    // the global counter, so a reclaimed slot cannot alias
+                    // a live claim short of the u64 wrap the index
+                    // generation already accepts.
+                    state.refresh_epochs.remove(&path_string);
+                    state.index_generation = state.index_generation.wrapping_add(1);
+                    drop(state);
+                    #[cfg(feature = "test-util")]
+                    crate::test_seam::maybe_pause_post_refresh_commit().await;
+                    return true;
+                }
+            }
+        } // retry loop
+        // Two lost generation races in a row — a commit landed inside
+        // each of two consecutive snapshot-to-commit windows — so the
+        // session is under sustained index churn. Converge the whole
+        // index through the generation-guarded full scan, the same
+        // backstop `refresh_one_package_context` uses for the
+        // resolution maps: the scan re-reads every path from current
+        // disk and installs only when it is the newest writer. The
+        // scan's verdict is threaded through: a LANDED scan installed
+        // this path's current disk bytes, so returning true hands the
+        // caller the publication duty — the watched handler pushes the
+        // path onto its landed list and `schedule_closed_file_publish`
+        // drives the republish, the #528 convention every other
+        // no-open-document scan call site already follows (the callers'
+        // `refresh_package_contexts` is redundant-but-harmless after
+        // the scan's wholesale context rebuild). A superseded scan
+        // returns false and the path converges on its own next event —
+        // a residual strictly rarer than the double-loss that reached
+        // the backstop, self-healing, and better than the pre-fix
+        // behavior of stranding EVERY single loss; only the landed arm
+        // carries the published-immediately guarantee. The churn bound
+        // is the double-loss precondition itself — two commits inside
+        // two consecutive sub-millisecond snapshot-to-commit windows per
+        // escalated refresh — plus each spawned pass stays
+        // generation-guarded, so superseded walks discard without
+        // writing. Only [`BackgroundIndexOutcome::Installed`] counts as
+        // this path's landing: the scan's bool-compatible contract is
+        // broader (a pass that settled without installing — an errored
+        // walk, or empty roots, generation still held — also returns
+        // true there, because it settles `initial_index_pending`
+        // while leaving the map untouched), and treating that as a
+        // landing would republish stale bytes under a success verdict.
+        // A settled-without-install or superseded backstop leaves the
+        // path to converge on its own next event, like the superseded
+        // arm above.
+        matches!(
+            self.background_index_outcome().await,
+            BackgroundIndexOutcome::Installed
+        )
     }
 
     /// Re-resolve the owning package group's resolution context after

@@ -238,7 +238,9 @@ impl Project {
     /// scopes recomputation to the flip and its dependents instead of
     /// clearing every project cache. An order that moves nothing is a
     /// pure no-op, so a steady caller passing the same canonical order
-    /// on every check pays only the position comparison.
+    /// on every check pays only the position comparison. A path listed
+    /// more than once ranks by its last occurrence; callers pass the
+    /// deduplicated canonical order, so the contract never bites.
     pub fn reorder_files(&mut self, order: &[String]) {
         let rank: HashMap<&str, usize> = order
             .iter()

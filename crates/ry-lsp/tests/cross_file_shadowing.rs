@@ -276,6 +276,7 @@ fn same_path_buffer_replaces_its_own_disk_bytes() {
             .published_diagnostics_after(&use_uri, open_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
         let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
@@ -325,6 +326,7 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
             .published_diagnostics_after(&use_uri, open_use_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
 
         let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
@@ -535,12 +537,14 @@ fn discard_close_returns_to_the_disk_bytes() {
             .published_diagnostics_after(&use_uri, open_use_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
         let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
         let _ = session
             .published_diagnostics_after(&use_uri, open_a_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
         let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
@@ -609,12 +613,14 @@ fn save_close_matches_the_final_disk_tree() {
             .published_diagnostics_after(&use_uri, open_use_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
         let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
         let _ = session
             .published_diagnostics_after(&use_uri, open_a_mark)
             .await
             .unwrap();
+        drain_publications(&mut session, &use_uri).await;
         let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))

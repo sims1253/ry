@@ -1091,3 +1091,208 @@ fn attached_ggplot2_aes_data_pronoun_stays_opaque() {
         "attached ggplot2 must keep `.data` opaque: {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Candidate typeshed integration (upstream cd81a0f; see
+// crates/ry-typeshed/vendor/SOURCE): the seven newly registered packages
+// (MASS, Matrix, RColorBrewer, curl, gridExtra, xml2, zoo) load through
+// the same compile-time embedded loader the CLI uses — no per-test stub
+// injection. Representative names were verified against the R 4.6.1
+// namespaces during integration review. The previously-unresolved
+// controls (baseline ry binary at the pre-integration commit showing
+// these names silent/unresolved) are recorded in the integration
+// evidence, not re-derived here.
+// ---------------------------------------------------------------------------
+
+/// (package, representative exported function) per newly registered
+/// candidate package.
+const CANDIDATE_PACKAGES: &[(&str, &str)] = &[
+    ("MASS", "lda"),
+    ("Matrix", "Diagonal"),
+    ("RColorBrewer", "brewer.pal"),
+    ("curl", "curl_fetch_memory"),
+    ("gridExtra", "grid.arrange"),
+    ("xml2", "read_html"),
+    ("zoo", "coredata"),
+];
+
+#[test]
+fn candidate_package_functions_load_qualified_and_attached() {
+    // Package-qualified resolution (call and value position) and
+    // namespace-import resolution (`library(pkg)` puts the exports on
+    // this file's bare search path) must both resolve every newly
+    // registered package's representative function.
+    for (package, function) in CANDIDATE_PACKAGES {
+        for source in [
+            format!("{package}::{function}(1L)\n"),
+            format!("handler <- {package}::{function}\n"),
+            format!("library({package})\n{function}(1L)\n"),
+            format!("library({package})\nhandler <- {function}\n"),
+        ] {
+            let diagnostics = check(&source);
+            assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+fn candidate_exported_values_are_values_not_callables() {
+    // Exported non-function inventory (datasets, package constants, S4
+    // class objects) must resolve as values under package-qualified
+    // lookup, and a qualified CALL to one must fail with RY070 — the
+    // exported-value vs callable-function distinction, guaranteed by
+    // the exact provenance of a qualified callee.
+    for expression in [
+        "RColorBrewer::brewer.pal.info",
+        "curl::CURL_HTTP_VERSION_2",
+        "Matrix::.__C__dgCMatrix",
+        "xml2::.__C__xml_document",
+        "MASS::Boston",
+    ] {
+        let diagnostics = check(&format!("value <- {expression}\n"));
+        assert!(diagnostics.is_empty(), "{expression}: {diagnostics:?}");
+        let diagnostics = check(&format!("{expression}()\n"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "qualified call to exported value {expression}: {diagnostics:?}"
+        );
+    }
+    // A data-frame member path stays legal on the value itself
+    // (brewer.pal.info is a data.frame in R).
+    let diagnostics = check("RColorBrewer::brewer.pal.info$maxcolors\n");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn attached_candidate_value_calls_report_not_a_function() {
+    // Attached inventory values bind as opaque values, so calling one
+    // reports RY070 — the same treatment base typed datasets get
+    // (`WWWusage()`), asserted here on the single-file Checker path.
+    // Two documented boundaries, both pre-existing and controlled on
+    // the pre-integration baseline binary in the integration evidence:
+    // (1) the CLI/Project path keeps attached inventory call positions
+    // conservative (`library(ggplot2); diamonds()` was already silent
+    // there); (2) the qualified form (`ggplot2::diamonds()`) reports
+    // RY070 on both paths. The candidate packages inherit exactly the
+    // established semantics — no new silence, no new category of error.
+    for source in [
+        "library(RColorBrewer)\nbrewer.pal.info()\n",
+        "library(MASS)\nBoston()\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY070"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn candidate_registration_keeps_unknown_names_diagnosed() {
+    // Registration audit: attaching a candidate package resolves
+    // exactly its own exports. Converting an unresolved name into an
+    // inventory-only resolved name is not automatically
+    // behavior-neutral, so the negative direction is pinned per
+    // package: unknown neighbors stay RY010.
+    for (package, _) in CANDIDATE_PACKAGES {
+        let diagnostics = check(&format!("library({package})\nnot_a_candidate_export\n"));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY010" && d.message.contains("not_a_candidate_export")),
+            "{package}: {diagnostics:?}"
+        );
+    }
+    // Without attachment the export is still unresolved — registration
+    // only widens the qualified ladder and the attached bare ladder.
+    let diagnostics = check("coredata\n");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY010"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn candidate_qualified_lookups_keep_pre_existing_conservatism() {
+    // A qualified name inside a REGISTERED package that its stub does
+    // not declare stays silent: the checker cannot know a package's
+    // full export surface. This predates the candidate (dplyr control)
+    // and the new packages inherit the same conservatism — no new
+    // category of silence is introduced.
+    for source in [
+        "dplyr::not_exported_by_dplyr(1L)\n",
+        "zoo::not_exported_by_zoo(1L)\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn candidate_packages_do_not_shadow_established_qualified_exports() {
+    // Name collisions between the new registrations and established
+    // ones disambiguate through the package qualifier (all eight
+    // members verified present in their vendored stubs).
+    for source in [
+        "MASS::select(1L)\n",
+        "dplyr::select(1L)\n",
+        "Matrix::expand(1L)\n",
+        "tidyr::expand(1L)\n",
+        "xml2::as_list(1L)\n",
+        "rlang::as_list(1L)\n",
+        "curl::parse_date(\"2020-01-01\")\n",
+        "readr::parse_date(\"2020-01-01\")\n",
+    ] {
+        let diagnostics = check(source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn candidate_stubs_read_their_arguments_eagerly() {
+    // NSE audit: the seven candidate stubs ship plain signatures — no
+    // eval/capture/inject metadata, no s3_methods — so every argument
+    // is ordinary eager R code (per SCHEMA.md, an absent eval block
+    // declares eager evaluation). Mirror the rlang eager-helper probe:
+    // an undefined name inside a candidate call is a real bug and must
+    // stay RY010, in both attached and qualified form.
+    for (package, function) in CANDIDATE_PACKAGES {
+        for source in [
+            format!("library({package})\nf <- function() {function}(undefined_name)\n"),
+            format!("f <- function() {package}::{function}(undefined_name)\n"),
+        ] {
+            let diagnostics = check(&source);
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.code == "RY010" && d.message.contains("undefined_name")),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+    // Loader-level facts the behavioral probe rests on: no candidate
+    // signature carries non-eager eval metadata, ships S3 dispatch
+    // metadata, or overlaps the hardcoded NSE fallback list (whose
+    // members would silently quote the argument instead of reading it).
+    for (package, _) in CANDIDATE_PACKAGES {
+        let typeshed = ry_typeshed::load_package(package)
+            .unwrap_or_else(|| panic!("{package} must be embedded"));
+        assert!(
+            typeshed.s3_methods.is_empty(),
+            "{package}: candidate ships S3 dispatch metadata"
+        );
+        for (name, signature) in &typeshed.functions {
+            assert!(
+                signature
+                    .eval
+                    .values()
+                    .all(|mode| *mode == ry_typeshed::EvalMode::Normal),
+                "{package}::{name} ships non-eager eval metadata"
+            );
+            assert!(
+                !crate::infer::NSE_SYMBOL_FNS.contains(&name.as_str()),
+                "{package}::{name} overlaps the NSE fallback list"
+            );
+        }
+    }
+}

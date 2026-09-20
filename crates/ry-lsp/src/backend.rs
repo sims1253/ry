@@ -1672,7 +1672,13 @@ impl Backend {
     /// [`Backend::refresh_one_package_context`] uses for the
     /// resolution maps. The retry re-reads from current disk, so its
     /// bytes postdate every writer that beat the previous attempt and
-    /// installing them is always safe.
+    /// installing them is always safe. The returned bool is terminal
+    /// for this event, never a retry signal: `false` means someone
+    /// else owns the publication (a newer same-path refresh, an open
+    /// buffer shadowing the disk bytes, a cap refusal, a backstop that
+    /// did not land) — the retry ladder and the backstop live INSIDE
+    /// this function, so a caller-side retry on `false` could only
+    /// loop against a persistent owner.
     async fn refresh_disk_entry(&self, path: PathBuf) -> bool {
         let path_string = path.to_string_lossy().into_owned();
         // Claim the path's refresh epoch once, before the first

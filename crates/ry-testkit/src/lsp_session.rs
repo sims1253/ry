@@ -26,19 +26,24 @@ struct RoutedMessage {
 /// back to the default, so a mistyped override is observable. The read
 /// is cached for the process lifetime.
 pub fn rpc_receive_timeout() -> std::time::Duration {
+    /// The fallback when `RY_TESTKIT_RPC_TIMEOUT_SECS` is unset or
+    /// invalid; named so the three fallback paths (and the warnings
+    /// beside them) cannot drift apart if the default ever changes.
+    const DEFAULT_RPC_RECEIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
     *TIMEOUT.get_or_init(|| {
         let raw = match std::env::var("RY_TESTKIT_RPC_TIMEOUT_SECS") {
             Ok(raw) => raw,
             Err(std::env::VarError::NotPresent) => {
-                return std::time::Duration::from_secs(30);
+                return DEFAULT_RPC_RECEIVE_TIMEOUT;
             }
             Err(std::env::VarError::NotUnicode(raw)) => {
                 eprintln!(
                     "ry-testkit: ignoring non-UTF-8 RY_TESTKIT_RPC_TIMEOUT_SECS={raw:?}; \
-                     using the 30s default"
+                     using the {:?} default",
+                    DEFAULT_RPC_RECEIVE_TIMEOUT
                 );
-                return std::time::Duration::from_secs(30);
+                return DEFAULT_RPC_RECEIVE_TIMEOUT;
             }
         };
         match raw.parse::<u64>() {
@@ -46,9 +51,10 @@ pub fn rpc_receive_timeout() -> std::time::Duration {
             _ => {
                 eprintln!(
                     "ry-testkit: ignoring invalid RY_TESTKIT_RPC_TIMEOUT_SECS={raw:?}; \
-                     using the 30s default"
+                     using the {:?} default",
+                    DEFAULT_RPC_RECEIVE_TIMEOUT
                 );
-                std::time::Duration::from_secs(30)
+                DEFAULT_RPC_RECEIVE_TIMEOUT
             }
         }
     })

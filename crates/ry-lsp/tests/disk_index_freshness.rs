@@ -46,19 +46,21 @@ fn watching_capabilities() -> Value {
     json!({"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}})
 }
 
-/// Answer the server's `client/registerCapability` request (if any) and
-/// return the requested watcher globs. Sessions spawned without
-/// registration support produce no request; the helper then yields an
-/// empty list once the shared receive budget (#551) expires instead of
-/// blocking forever.
+/// Answer the server's `client/registerCapability` request and return
+/// the requested watcher globs. Every caller spawns with watcher
+/// registration advertised, so the request must arrive: a session that
+/// starves past the shared receive budget (#551) fails loudly here
+/// instead of proceeding vacuously on an empty glob list. A protocol
+/// error on the answered request still yields an empty list, which the
+/// callers' glob assertions then flag.
 async fn take_watcher_globs(session: &mut harness::ClientSession) -> Vec<Value> {
     let pending: Option<Value> = tokio::time::timeout(
         rpc_receive_timeout(),
         session.respond_to_request("client/registerCapability", json!(null)),
     )
     .await
-    .ok()
-    .and_then(|result| result.ok());
+    .expect("a watching session must request watcher registration within the receive budget")
+    .ok();
     pending
         .as_ref()
         .and_then(|request| {

@@ -1020,7 +1020,7 @@ mod tests {
     use super::*;
     use crate::tests::parse_file;
 
-    fn assert_matches_cold(project: &mut Project) {
+    fn assert_matches_cold(project: &mut Project) -> Vec<(String, Vec<Diagnostic>)> {
         let actual = project.check_incremental();
         let mut cold = Project::new();
         for (path, file) in &project.files {
@@ -1030,6 +1030,7 @@ mod tests {
         assert_eq!(project.prev_fn_returns, cold.prev_fn_returns);
         assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        actual
     }
 
     #[test]
@@ -1105,8 +1106,10 @@ mod tests {
         // win, exactly like a fresh project in that order, with no
         // content edit to carry the invalidation.
         project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
-        assert_matches_cold(&mut project);
-        let second = project.check_incremental();
+        // The cold comparison's own warm run carries the assertion: a
+        // second `check_incremental` here would read the cached
+        // diagnostics the first call just produced.
+        let second = assert_matches_cold(&mut project);
         let (_, use_diagnostics) = second
             .iter()
             .find(|(path, _)| path == "use.R")

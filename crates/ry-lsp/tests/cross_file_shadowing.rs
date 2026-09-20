@@ -22,7 +22,7 @@ use harness::{
     Published, file_uri, join_session, normalize_diagnostics, published_from_cli_value,
     spawn_session, sync_barrier,
 };
-use ry_testkit::{CliProcess, FixtureProject, rpc_receive_timeout};
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// Idle window for `quiesce_diagnostics`; comfortably exceeds the
@@ -56,11 +56,22 @@ where
 
 /// `ry check --output-format json` on the fixture tree, normalized for
 /// comparison with LSP publications. The CLI is the fresh-project oracle
-/// every subset/state below must converge to.
-fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
-    let output = CliProcess::new(harness::ry_binary())
-        .check(fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
+/// every subset/state below must converge to. The subprocess runs on the
+/// blocking pool: a child wait on the executor thread would stall the
+/// in-process server task sharing the single-threaded runtime.
+async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
+    let root = fixture.root().to_path_buf();
+    let binary = harness::ry_binary();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(binary)
+            .current_dir(&root)
+            .args(["check", "--output-format", "json"])
+            .arg(&root)
+            .output()
+    })
+    .await
+    .expect("CLI subprocess task")
+    .unwrap();
     assert!(
         matches!(output.status.code(), Some(0 | 1)),
         "CLI failed: {}",
@@ -80,16 +91,24 @@ fn watching_capabilities() -> Value {
     json!({"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}})
 }
 
-/// Answer the server's `client/registerCapability` request (if any) so
-/// the session proceeds; the globs themselves are pinned elsewhere.
+/// Answer the server's `client/registerCapability` request. The
+/// sessions that call this advertise dynamic watched-file registration,
+/// so the request must arrive and its response must succeed; a missing
+/// handshake would only surface later as a missing watched-event
+/// publication.
 async fn answer_watcher_registration(session: &mut harness::ClientSession) {
-    let _: Option<Result<Value, _>> = tokio::time::timeout(
+    let result = tokio::time::timeout(
         rpc_receive_timeout(),
         session.respond_to_request("client/registerCapability", json!(null)),
     )
-    .await
-    .ok()
-    .map(|result| result.map_err(|_| ()));
+    .await;
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => panic!("registerCapability response failed: {e}"),
+        Err(_) => panic!(
+            "server never sent client/registerCapability despite advertising watched-files registration"
+        ),
+    }
 }
 
 /// Close and reopen of an unchanged `a.R` must not flip which `f` wins.
@@ -175,18 +194,18 @@ fn same_path_buffer_replaces_its_own_disk_bytes() {
         let scratch = FixtureProject::empty().unwrap();
         scratch.write_file("a.R", F_INT).unwrap();
         scratch.write_file("use.R", USE).unwrap();
-        let char_tree = cli_diagnostics(&fixture);
+        let char_tree = cli_diagnostics(&fixture).await;
         assert!(
             char_tree
                 .iter()
                 .any(|p| p.path.ends_with("use.R") && p.code == "RY040"),
             "fresh CLI on the char-f tree must flag use.R: {char_tree:?}"
         );
+        let scratch_cli = cli_diagnostics(&scratch).await;
         assert!(
-            cli_diagnostics(&scratch).is_empty(),
+            scratch_cli.is_empty(),
             "scratch CLI with the buffer bytes (int f) must be clean"
         );
-        let _ = scratch;
 
         let a_uri = file_uri(&fixture.path("a.R"));
         let use_uri = file_uri(&fixture.path("use.R"));
@@ -274,6 +293,20 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
 #[test]
 fn open_closed_subsets_agree_with_the_fresh_project() {
     run(async {
+        // The fresh-project oracle the subsets must converge to, run
+        // explicitly instead of hardcoded: the integer `f` sorts last,
+        // so the whole tree checks clean.
+        {
+            let oracle_fixture = FixtureProject::empty().unwrap();
+            oracle_fixture.write_file("a.R", A_CHAR).unwrap();
+            oracle_fixture.write_file("z.R", F_INT).unwrap();
+            oracle_fixture.write_file("use.R", USE).unwrap();
+            let oracle = cli_diagnostics(&oracle_fixture).await;
+            assert!(
+                oracle.is_empty(),
+                "fresh CLI must be clean with the integer f last: {oracle:?}"
+            );
+        }
         let subsets: Vec<Vec<bool>> = vec![
             vec![true, false, false],
             vec![false, true, false],
@@ -466,7 +499,7 @@ fn discard_close_returns_to_the_disk_bytes() {
             has_ry040(&closed),
             "discard-close must restore the on-disk semantics: {closed}"
         );
-        let cli = cli_diagnostics(&fixture);
+        let cli = cli_diagnostics(&fixture).await;
         assert!(
             cli.iter()
                 .any(|p| p.path.ends_with("use.R") && p.code == "RY040"),
@@ -530,6 +563,9 @@ fn save_close_matches_the_final_disk_tree() {
             .await
             .unwrap();
 
+        // Drain the no-op watched refresh so close_mark cannot be
+        // satisfied by a pre-close publication.
+        sync_barrier(&mut session, &use_uri).await;
         // Close: the re-read finds the saved integer bytes; use.R stays
         // clean, matching the final disk tree.
         let close_mark = session.publication_mark();
@@ -548,10 +584,8 @@ fn save_close_matches_the_final_disk_tree() {
             !has_ry040(&closed),
             "save-close must keep the saved semantics: {closed}"
         );
-        assert!(
-            cli_diagnostics(&fixture).is_empty(),
-            "CLI on the final tree is clean"
-        );
+        let final_cli = cli_diagnostics(&fixture).await;
+        assert!(final_cli.is_empty(), "CLI on the final tree is clean");
 
         join_session(session, server).await;
     })

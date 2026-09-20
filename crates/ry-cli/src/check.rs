@@ -1657,33 +1657,47 @@ mod tests {
     /// through it. The expected paths exist on disk only partially, so
     /// the test also pins that absence does not drop a candidate:
     /// creating any of them mid-watch must register.
+    ///
+    /// The watched site sits under a CONSTRUCTED fixed-height ladder
+    /// whose top carries an existing DESCRIPTION: the root chain still
+    /// climbs past the watched root (the behavior under test) but stops
+    /// at a boundary the test itself built, so the expected set stays
+    /// exact no matter how deep the checkout or sandbox hosting the
+    /// tempdir is — walking the REAL ancestors to the filesystem top
+    /// would grow (and occasionally break) the expectations with the
+    /// host's layout instead of the fixture's.
     #[test]
     fn package_meta_paths_cover_discovered_ancestors_and_stay_bounded() {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
+        let tower = temp.path().join("tower");
+        let root = tower.join("a/b/site");
         for dir in ["pkg/R", "other/deep/src", "empty_pkg"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
+        std::fs::write(
+            tower.join("DESCRIPTION"),
+            "Package: ladder\nVersion: 0.0.0.9000\n",
+        )
+        .unwrap();
         let use_r = root.join("pkg/R/use.R");
         let deep_r = root.join("other/deep/src/deep.R");
         std::fs::write(&use_r, "page <- tags\n").unwrap();
         std::fs::write(&deep_r, "deep <- 1L\n").unwrap();
 
-        let meta = package_meta_paths(&[root.to_path_buf()], &[use_r, deep_r], None);
+        let meta = package_meta_paths(std::slice::from_ref(&root), &[use_r, deep_r], None);
 
         // Every ancestor of a discovered file up to the watched root is
         // a resolution input (a nearer DESCRIPTION created in any of
         // them changes the file's package grouping without a source
-        // edit), and the root chain itself keeps running upward.
+        // edit), and the root chain itself keeps running upward — into
+        // the constructed ladder, stopping only at its boundary.
         let mut expected_dirs = vec![root.to_path_buf()];
         for dir in ["pkg/R", "pkg", "other/deep/src", "other/deep", "other"] {
             expected_dirs.push(root.join(dir));
         }
-        let mut dir = root.parent();
-        while let Some(parent) = dir {
-            expected_dirs.push(parent.to_path_buf());
-            dir = parent.parent();
-        }
+        expected_dirs.push(tower.join("a/b"));
+        expected_dirs.push(tower.join("a"));
+        expected_dirs.push(tower.to_path_buf());
         for dir in &expected_dirs {
             for name in ["DESCRIPTION", "NAMESPACE"] {
                 assert!(
@@ -1743,6 +1757,15 @@ mod tests {
                 );
             }
         }
+        // One level above the watched root, still depth-independent:
+        // with no absorbing boundary anywhere the chain must not stop
+        // AT the root. (How far up it runs with no absorber — to the
+        // filesystem top — is not pinned by count; the bounded test
+        // covers the climb with a constructed ladder instead.)
+        assert!(
+            meta.contains(&root.parent().unwrap().join("DESCRIPTION")),
+            "an absorber-less chain must climb past the watched root: {meta:?}"
+        );
     }
 
     /// A root chain must stop at the first ancestor that absorbs it. An

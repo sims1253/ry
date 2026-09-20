@@ -22,7 +22,7 @@ expression: snapshots
   fixture: err_ambiguous_partial_argument.R
 - diagnostics:
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(lengths == 0)`"
       severity: warning
       span:
         column: 6
@@ -624,7 +624,7 @@ expression: snapshots
   fixture: err_missing_required_argument.R
 - diagnostics:
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is always TRUE; the comparison was probably meant for the elements: `any(x > -1)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -1)`"
       severity: warning
       span:
         column: 29
@@ -632,7 +632,7 @@ expression: snapshots
         line: 11
         start: 760
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is always FALSE; the comparison was probably meant for the elements: `any(x < -1)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x < -1)`"
       severity: warning
       span:
         column: 30
@@ -640,7 +640,7 @@ expression: snapshots
         line: 12
         start: 812
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is always FALSE; the comparison was probably meant for the elements: `any(x == -1)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x == -1)`"
       severity: warning
       span:
         column: 30
@@ -648,7 +648,7 @@ expression: snapshots
         line: 13
         start: 864
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is always TRUE; the comparison was probably meant for the elements: `any(x > -1)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -1)`"
       severity: warning
       span:
         column: 31
@@ -1006,7 +1006,7 @@ expression: snapshots
         line: 10
         start: 506
     - code: RY107
-      message: "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(lengths == 0)`"
       severity: warning
       span:
         column: 6

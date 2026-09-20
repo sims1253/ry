@@ -1438,7 +1438,7 @@
       "line": 32,
       "column": 7,
       "severity": "warning",
-      "message": "`any()` returns a length-1 logical, so this comparison is TRUE exactly when the call is FALSE; the comparison was probably meant for the elements: `any(lengths == 0)`"
+      "message": "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(lengths == 0)`"
     },
     "gt::RY001::R/fmt.R:166:7": {
       "package": "gt",

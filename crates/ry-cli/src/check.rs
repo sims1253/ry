@@ -511,12 +511,25 @@ impl WatchState {
         );
     }
 
+    /// Derive the package-metadata dependency set together with its
+    /// snapshot in one step: the single derive/snapshot pairing, shared
+    /// by the initial sync ([`WatchState::sync_meta_stamps`]) and the
+    /// poll's `rederive` path so the two cannot drift apart.
+    fn derive_meta_state(
+        &self,
+        search_roots: &[PathBuf],
+        discovered: &[PathBuf],
+    ) -> (Vec<PathBuf>, Vec<(PathBuf, Option<SystemTime>)>) {
+        let paths = package_meta_paths(search_roots, discovered, self.config_root());
+        let stamps = snapshot_meta_paths(&paths);
+        (paths, stamps)
+    }
+
     /// Derive the package-metadata dependency paths for `discovered`
     /// (the file set the next pass will check) and the CLI roots, and
     /// record their snapshot.
     fn sync_meta_stamps(&mut self, search_roots: &[PathBuf], discovered: &[PathBuf]) {
-        self.meta_paths = package_meta_paths(search_roots, discovered, self.config_root());
-        self.meta_stamps = snapshot_meta_paths(&self.meta_paths);
+        (self.meta_paths, self.meta_stamps) = self.derive_meta_state(search_roots, discovered);
     }
 
     /// Compare the config-anchored inputs against the snapshot; on any
@@ -549,14 +562,20 @@ impl WatchState {
     /// just-captured snapshot and report that a pass is needed. The
     /// installed values are the pre-check ones, so a metadata edit that
     /// lands while the re-check runs still differs on the next poll
-    /// instead of being swallowed by re-reading after the check. The
-    /// candidate set is re-derived once more after a difference: an
-    /// observed change may have moved an absorbing boundary (a boundary
-    /// DESCRIPTION created or deleted — see [`package_meta_paths`]), so
-    /// the next poll must watch the boundary as it now stands. That
-    /// re-derivation does NOT refresh the stamps: if the boundary did
-    /// move, the next poll sees the set difference against the
-    /// pre-check snapshot and settles with one extra pass.
+    /// instead of being swallowed by re-reading after the check. Each
+    /// poll derives at most once: the `rederive` path derives set and
+    /// snapshot together ([`WatchState::derive_meta_state`]), and a
+    /// difference installs that fresh pair directly — the set was
+    /// derived from the disk state of THIS poll, so any absorbing
+    /// boundary move is already reflected and deriving again at the
+    /// tail would rebuild an identical set. Only the cached path
+    /// re-derives after a difference: a cached set may have missed a
+    /// boundary move (a boundary DESCRIPTION created or deleted — see
+    /// [`package_meta_paths`]), so the next poll must watch the
+    /// boundary as it now stands. That re-derivation does NOT refresh
+    /// the stamps: if the boundary did move, the next poll sees the set
+    /// difference against the pre-check snapshot and settles with one
+    /// extra pass.
     fn poll_meta_inputs(
         &mut self,
         search_roots: &[PathBuf],
@@ -564,7 +583,16 @@ impl WatchState {
         rederive: bool,
     ) -> bool {
         if rederive {
-            self.meta_paths = package_meta_paths(search_roots, discovered, self.config_root());
+            // One derivation per poll: install the fresh set either
+            // way (the inputs that produced the cached one moved), and
+            // the fresh snapshot only on a difference.
+            let (paths, current) = self.derive_meta_state(search_roots, discovered);
+            self.meta_paths = paths;
+            if current == self.meta_stamps {
+                return false;
+            }
+            self.meta_stamps = current;
+            return true;
         }
         let current = snapshot_meta_paths(&self.meta_paths);
         if current == self.meta_stamps {

@@ -92,6 +92,13 @@ async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
         .collect()
 }
 
+/// Cap on publications consumed by [`drain_publications`]. This
+/// fixture publishes at most one diagnostic per file across three
+/// files per pass; sixteen covers several passes with wide margin. A
+/// server publishing more than this is stuck, and the drain reports
+/// its last message instead of hanging.
+const DRAIN_PUBLICATION_CAP: u32 = 16;
+
 /// Consume every queued or in-flight `publishDiagnostics` for `uri`
 /// until an idle window passes with none. After this returns, a fresh
 /// publication mark can only be satisfied by a publication caused by
@@ -109,7 +116,7 @@ async fn drain_publications(session: &mut harness::ClientSession, uri: &str) {
                 let received = result.expect("publication receive error during drain");
                 drained += 1;
                 assert!(
-                    drained <= 16,
+                    drained <= DRAIN_PUBLICATION_CAP,
                     "still receiving publications after {drained} drained; last: {received}"
                 );
             }
@@ -593,15 +600,28 @@ fn save_close_matches_the_final_disk_tree() {
         answer_watcher_registration(&mut session).await;
         sync_barrier(&mut session, &use_uri).await;
 
-        let mark = session.publication_mark();
+        // One publication mark per transition: a single mark spanning
+        // the opens and the change could be satisfied by an
+        // intermediate pre-change state when the debounce splits them.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_a_mark)
+            .await
+            .unwrap();
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
             .unwrap();
         let edited = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, edit_mark)
             .await
             .unwrap();
         assert!(

@@ -1121,6 +1121,25 @@ mod tests {
     }
 
     #[test]
+    fn no_op_reorder_keeps_the_warm_state_steady() {
+        // Reordering to the order the project already has takes the
+        // steady-state short-circuit: no file moves, so no name is
+        // invalidated and the warm caches survive. Pinned from the
+        // outside: the incremental result is identical before and
+        // after the no-op reorder, matching a fresh project both
+        // times.
+        let mut project = Project::new();
+        project.add_file("a.R".into(), parse_file("a.R", "f <- function() \"str\""));
+        project.add_file("use.R".into(), parse_file("use.R", "x <- f() + 1L"));
+        project.add_file("z.R".into(), parse_file("z.R", "f <- function() 1L"));
+        project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
+        let before = assert_matches_cold(&mut project);
+        project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
+        let after = assert_matches_cold(&mut project);
+        assert_eq!(format!("{before:?}"), format!("{after:?}"));
+    }
+
+    #[test]
     fn function_dependencies_cover_aliases_callbacks_and_metadata() {
         for (before, after, caller) in [
             (

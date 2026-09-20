@@ -1029,38 +1029,44 @@ impl Backend {
             };
             open_files.push((doc_path.clone(), *version, file));
         }
-        // Canonical project order (#490): disk entries sorted by path,
-        // then open documents sorted by path. Project shadowing follows
-        // insertion order (the last file wins), so assembling from
-        // unsorted HashMaps made the winning definition depend on the
-        // process's hash seed, and close/reopen moved the reopened file
-        // to the end and flipped the winner. Sorting gives the LSP the
-        // CLI's contract (discovery output is sorted by path); open
-        // documents are layered last so the editor's buffer — the
-        // authoritative content for its path — shadows same-named
-        // definitions from indexed disk files. Disk files never shadow
-        // open documents; files in disabled folders are dropped by the
-        // same eligibility rule as open ones. Every open path shadows its
-        // disk twin — not just the eligible ones — so a buffer that grew
-        // past `max-file-bytes` cannot keep contributing its path through
-        // the stale small on-disk twin the index still holds (#488): the
-        // open buffer owns its path, eligible or not.
+        // One path-keyed source view (#490): Project shadowing follows
+        // insertion order (the last file wins), so the assembly must not
+        // let open/closed status decide precedence. Start from the
+        // eligible disk entries, remove the disk counterpart of EVERY
+        // open path, insert each eligible open buffer at its own path,
+        // and sort the unified collection once by the canonical path
+        // ordering the CLI's sorted discovery uses. An open buffer is
+        // authoritative for its own path only: it replaces its path's
+        // disk bytes (same-path authority) but no longer outranks a
+        // different closed file that sorts after it — layering every
+        // open document after every disk entry made merely opening a
+        // byte-identical file flip the winning same-named definition,
+        // a change no edit and no CLI run could reproduce. An INELIGIBLE
+        // open buffer still suppresses its (eligible) stale disk twin —
+        // not just the eligible ones — so a buffer that grew past
+        // `max-file-bytes` cannot keep contributing its path through the
+        // small on-disk twin the index still holds (#488): the open
+        // buffer owns its path, eligible or not, and an ineligible one
+        // contributes nothing at all. Files in disabled folders are
+        // dropped by the same eligibility rule on both sides.
         let mut project_files: Vec<(String, i32, Arc<SourceFile>)> = {
             let state = self.state.lock().await;
             let open_paths: std::collections::HashSet<&str> =
                 state.docs.keys().map(String::as_str).collect();
-            let mut disk_entries: Vec<(String, i32, Arc<SourceFile>)> = state
+            state
                 .disk_files
                 .iter()
                 .filter(|(p, _)| state.eligibility_for_path(p))
                 .filter(|(p, _)| !open_paths.contains(p.as_str()))
                 .map(|(p, file)| (p.clone(), 0, Arc::clone(file)))
-                .collect();
-            disk_entries.sort_by(|a, b| a.0.cmp(&b.0));
-            disk_entries
+                .collect::<Vec<_>>()
         };
-        open_files.sort_by(|a, b| a.0.cmp(&b.0));
         project_files.extend(open_files);
+        // Paths are unique across the two sources — every open path's
+        // disk twin was removed above — so one stable sort by path is
+        // the whole merge; the folder/package partitioning below keeps
+        // this relative order within each group.
+        project_files.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Check each package partition independently through its own
         // ProjectCache, stubs, and workspace context. The root-level

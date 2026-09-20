@@ -105,8 +105,10 @@ late_applier <- function(args) {
   print(args)
 }
 # An unqualified `vec_cast` with no `library(vctrs)` line resolves to
-# nothing, so even the stubbed demand cannot arm: qualification or
-# attachment is what connects the call to the stub.
+# nothing, so it never reaches the overlay stub: qualification or
+# attachment is what connects the call to the stub (which itself
+# declares no parameter types -- the relational `x`-to-`to` demand is
+# a recorded capability gap, not a typed requirement).
 unresolved_vec_cast <- function(args) {
   valid <- map_lgl(args, is_numeric_or_na)
   if (!all(valid)) stop("bad")

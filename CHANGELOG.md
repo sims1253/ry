@@ -136,6 +136,38 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- The LSP now retains watched-file and close-time work until the final
+  analysis converges, instead of trusting the event's own refresh to
+  finish it. `refresh_disk_entry` retries one lost index-generation
+  race and escalates a second loss to a full backstop scan, but the
+  backstop can lose too (another landing during its walk supersedes
+  the scan's commit), and a losing fallback returned while forgetting
+  the path entirely: with no open document and no further event, a
+  watched fix, creation, or deletion stranded forever — the index held
+  stale bytes and the client held stale squiggles, with nothing left
+  to correct them. Every refresh now enqueues a per-path obligation at
+  its epoch claim, BEFORE the blocking read that might lose; the
+  obligation carries what is still owed (bytes or removal, then the
+  owning package's resolution context together with the publication
+  that must follow it, because publishing over a stale import context
+  is not converged either). Terminal outcomes settle their revision
+  exactly — an open buffer owning the path, a `max-files` refusal, a
+  landed install/removal, an Installed scan that fence-covers the
+  claim — while a newer event's mid-read claim keeps its own fresh
+  entry, so an older or unrelated writer never acknowledges another
+  revision's duty. A single reconciliation driver re-runs, per pending
+  path, the same pipeline the watched handler runs for a landed
+  refresh; it never dispatches for a path whose refresh is still in
+  flight (that would supersede a read that may still land, the exact
+  waste the per-path epochs exist to prevent) and idles out — with the
+  enqueue and the idle transition sharing the state lock — until an
+  event or a losing refresh's exit wakes it again. Rounds that retire
+  nothing are bounded, so persistent infrastructure failure ends in a
+  visible warning instead of a spin; folder removal and shutdown cancel
+  their obligations outright. Once a burst of events stops, the next
+  round lands (nothing else moves the generation under silence), so
+  the final analysis reaches the fresh-analysis verdict with no rescue
+  event.
 - Propagate the NULL component of a union return type into RY001's
   condition analysis (#362). A find-or-NULL helper (`locate_input <-
   function(input) if (is.null(input)) return(NULL) else "path"`, the
@@ -426,15 +458,26 @@ All notable changes to ry are documented in this file.
   fixed findings still drop out and the regeneration run reports (and
   fails on) the findings it writes, like the no-config path always did
   (#484).
-- The LSP now assembles its multi-file project in one canonical order:
-  indexed disk files sorted by path, then open documents sorted by path —
-  the CLI's sorted discovery order, with the editor's buffers layered
-  last so an open document's definitions shadow same-named on-disk ones.
-  The order used to come from unsorted HashMaps and close/reopen
-  re-appended the reopened file at the end, so when two files defined
-  the same top-level function the winning definition — and with it
-  inferred calls and diagnostics — depended on the process's hash seed
-  and flipped after closing and reopening an unchanged file (#490).
+- The LSP now assembles its multi-file project as one path-keyed
+  source view: the eligible indexed disk entries with the disk twin of
+  every open path removed, each eligible open buffer inserted at its
+  own path, and the unified collection sorted once by path — the CLI's
+  sorted discovery order. An open buffer is authoritative for its own
+  path only: it replaces that path's on-disk bytes (an unsaved edit, or
+  an over-`max-file-bytes` buffer whose stale small disk twin must not
+  keep contributing, #488), but it does not outrank a different closed
+  file that sorts after it. The previous assemblies decided same-name
+  shadowing by things no edit and no CLI run could reproduce:
+  unsorted HashMap iteration made the winner depend on the process's
+  hash seed and close/reopen re-appended the reopened file at the end
+  (#490), and sorting disk files before all open documents — the first
+  shape of this same unreleased fix — traded that for open/closed
+  status: merely opening a byte-identical file flipped the winning
+  definition. The `Project` side now treats an actual reorder of a
+  warm project as an analysis input too: when the canonical order
+  moves, every name defined by more than one file is invalidated with
+  its defining files, so the warm caches re-derive the new winner
+  without waiting for a content edit to dirty the path.
 - The LSP server now applies inline suppression comments and the
   min-confidence threshold before subtracting the baseline, matching
   `ry check`: with two identical diagnostics (same path, code, and

@@ -226,17 +226,67 @@ impl Project {
     /// merged table follows `order` alone. Paths missing from `order`
     /// sort after the listed ones, keeping their relative order.
     ///
-    /// All caches are keyed by path, so reordering changes nothing but
-    /// the merge order; any shadowing flip it provokes is picked up by
-    /// the usual changed-function dirty tracking.
+    /// A reorder that actually moves entries is an analysis input the
+    /// incremental caches cannot see on their own: `check_incremental`
+    /// rebuilds the merged table in the new order every call, but the
+    /// refinement seed and the emission dirty set are keyed by name and
+    /// path, and with no `update_file` nothing dirties them — the
+    /// previous winner's refined return type would survive and its
+    /// callers would never re-emit. When the sort moves anything, every
+    /// name defined by more than one file (the only names whose winner
+    /// can flip) is invalidated together with its defining files, which
+    /// scopes recomputation to the flip and its dependents instead of
+    /// clearing every project cache. An order that moves nothing is a
+    /// pure no-op, so a steady caller passing the same canonical order
+    /// on every check pays only the position comparison.
     pub fn reorder_files(&mut self, order: &[String]) {
         let rank: HashMap<&str, usize> = order
             .iter()
             .enumerate()
             .map(|(index, path)| (path.as_str(), index))
             .collect();
-        self.files
-            .sort_by_key(|(path, _)| rank.get(path.as_str()).copied().unwrap_or(usize::MAX));
+        // A stable sort cannot change an order that already satisfies
+        // the key, so one adjacent-inversion scan decides whether the
+        // reorder is a no-op before the in-place sort borrows the list.
+        let key = |path: &str| rank.get(path).copied().unwrap_or(usize::MAX);
+        let moved = self
+            .files
+            .windows(2)
+            .any(|pair| key(pair[0].0.as_str()) > key(pair[1].0.as_str()));
+        self.files.sort_by_key(|(path, _)| key(path.as_str()));
+        if !moved || self.collected_files.is_empty() {
+            return;
+        }
+        // Count defining files per name; only multi-file names can flip
+        // their winner when relative order changes. (A name defined
+        // twice within one file already resolves inside that file's
+        // collection, which order cannot move.)
+        let mut definers: HashMap<&str, usize> = HashMap::new();
+        for collected in self.collected_files.values() {
+            for name in collected.fn_table.fns.keys() {
+                *definers.entry(name).or_insert(0) += 1;
+            }
+        }
+        let shadowed: HashSet<&str> = definers
+            .into_iter()
+            .filter_map(|(name, count)| (count > 1).then_some(name))
+            .collect();
+        if shadowed.is_empty() {
+            return;
+        }
+        for (path, collected) in &self.collected_files {
+            if collected
+                .fn_table
+                .fns
+                .keys()
+                .any(|name| shadowed.contains(name.as_str()))
+            {
+                self.dirty_paths.insert(path.clone());
+            }
+        }
+        for name in shadowed {
+            self.invalidated_fns.insert(name.to_string());
+        }
     }
 
     /// Remove a file and its cached pass-1 collection from the project.
@@ -1022,6 +1072,49 @@ mod tests {
         );
         assert_matches_cold(&mut project);
         assert!(project.last_refinement_counts.contains_key("outer"));
+    }
+
+    #[test]
+    fn reorder_only_change_recomputes_the_winning_definition() {
+        // A pure `reorder_files` call carries no `update_file`, so no
+        // path is dirty and no name is invalidated. The merged table
+        // itself follows the new order (`check_incremental` rebuilds it
+        // from the per-file collections every call), but the refinement
+        // cache and the emission dirty set are name/path keyed: without
+        // invalidation a warm project keeps the previous winner's
+        // refined return type and never re-emits its callers. The
+        // shadowing flip must match a fresh project assembled in the
+        // new order.
+        let mut project = Project::new();
+        // Insertion order [use.R, z.R, a.R] puts the character `f` last,
+        // so it wins the first check and use.R flags RY040.
+        project.add_file("use.R".into(), parse_file("use.R", "x <- f() + 1L"));
+        project.add_file("z.R".into(), parse_file("z.R", "f <- function() 1L"));
+        project.add_file("a.R".into(), parse_file("a.R", "f <- function() \"str\""));
+        let first = project.check_incremental();
+        let (_, use_diagnostics) = first
+            .iter()
+            .find(|(path, _)| path == "use.R")
+            .expect("use.R checked");
+        assert!(
+            use_diagnostics.iter().any(|d| d.code == "RY040"),
+            "character f wins in insertion order: {use_diagnostics:?}"
+        );
+
+        // Canonical sorted order [a.R, use.R, z.R]: the integer `f` must
+        // win, exactly like a fresh project in that order, with no
+        // content edit to carry the invalidation.
+        project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
+        assert_matches_cold(&mut project);
+        let second = project.check_incremental();
+        let (_, use_diagnostics) = second
+            .iter()
+            .find(|(path, _)| path == "use.R")
+            .expect("use.R checked");
+        assert!(
+            !use_diagnostics.iter().any(|d| d.code == "RY040"),
+            "integer f must win after the reorder: {use_diagnostics:?}"
+        );
     }
 
     #[test]

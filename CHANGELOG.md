@@ -426,15 +426,26 @@ All notable changes to ry are documented in this file.
   fixed findings still drop out and the regeneration run reports (and
   fails on) the findings it writes, like the no-config path always did
   (#484).
-- The LSP now assembles its multi-file project in one canonical order:
-  indexed disk files sorted by path, then open documents sorted by path —
-  the CLI's sorted discovery order, with the editor's buffers layered
-  last so an open document's definitions shadow same-named on-disk ones.
-  The order used to come from unsorted HashMaps and close/reopen
-  re-appended the reopened file at the end, so when two files defined
-  the same top-level function the winning definition — and with it
-  inferred calls and diagnostics — depended on the process's hash seed
-  and flipped after closing and reopening an unchanged file (#490).
+- The LSP now assembles its multi-file project as one path-keyed
+  source view: the eligible indexed disk entries with the disk twin of
+  every open path removed, each eligible open buffer inserted at its
+  own path, and the unified collection sorted once by path — the CLI's
+  sorted discovery order. An open buffer is authoritative for its own
+  path only: it replaces that path's on-disk bytes (an unsaved edit, or
+  an over-`max-file-bytes` buffer whose stale small disk twin must not
+  keep contributing, #488), but it does not outrank a different closed
+  file that sorts after it. The previous assemblies decided same-name
+  shadowing by things no edit and no CLI run could reproduce:
+  unsorted HashMap iteration made the winner depend on the process's
+  hash seed and close/reopen re-appended the reopened file at the end
+  (#490), and sorting disk files before all open documents — the first
+  shape of this same unreleased fix — traded that for open/closed
+  status: merely opening a byte-identical file flipped the winning
+  definition. The `Project` side now treats an actual reorder of a
+  warm project as an analysis input too: when the canonical order
+  moves, every name defined by more than one file is invalidated with
+  its defining files, so the warm caches re-derive the new winner
+  without waiting for a content edit to dirty the path.
 - The LSP server now applies inline suppression comments and the
   min-confidence threshold before subtracting the baseline, matching
   `ry check`: with two identical diagnostics (same path, code, and

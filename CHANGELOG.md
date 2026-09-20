@@ -136,6 +136,24 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Make RY107 honest about `NA` results and S4 dispatch in its outcome
+  claims. The negating/constant classification is unchanged, but the
+  message no longer asserts unconditional truths: `any()`/`all()`
+  return `NA` when an `NA` element is undetermined (R 4.6.1,
+  runtime-verified: `any(c(FALSE, NA)) > -1` is `NA`, not TRUE), so
+  constant outcomes are now worded as holding "when the base result is
+  not `NA` (an `NA` result compares as `NA`)", the negating wording
+  names its own `NA` case, and the length-1 premise is qualified with
+  "unless an S4 method dispatches" — `any()`/`all()` are S4 generics
+  whose direct or `Summary`-group methods can return any value (even a
+  longer vector), and `base::any()` selects the generic too. The
+  element-level rewrite stays framed as the probable intent. The rule
+  keeps firing on open-world arguments (the founding glue
+  `any(lengths) == 0` shape is retained and tested) rather than going
+  silent on unprovable dispatch; masked or foreign callees were already
+  silent and remain so. Rule registry summary, docs/rules row, and the
+  oracle claim fixture (now asserting the `NA` outcomes) updated;
+  identity, severity, and firing conditions unchanged.
 - Propagate the NULL component of a union return type into RY001's
   condition analysis (#362). A find-or-NULL helper (`locate_input <-
   function(input) if (is.null(input)) return(NULL) else "path"`, the

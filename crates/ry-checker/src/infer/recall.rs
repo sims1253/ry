@@ -27,8 +27,15 @@
 //! preserves the scalar logical's value (`== 1`, `> 0`, ...) is the diffobj
 //! idiom and stays silent, while one that negates it (`== 0`, `!= 1`, ...) or
 //! is constant (`> 1`, `< 0`, ...) computes something other than what the
-//! element-level reading suggests and is reported. The `length(sum(...)) > 0`
-//! half ships as RY105.
+//! element-level reading suggests and is reported. The outcome claims are
+//! honest about the base functions' own result domain: `any()`/`all()`
+//! return `NA` when an `NA` element is undetermined by a deciding
+//! `TRUE`/`FALSE` (and `NA` compares as `NA`), and both are S4 generics —
+//! a direct method or the `Summary` group, selected even through
+//! `base::any()`, can return values outside the domain entirely — so
+//! constant outcomes are worded as holding "when the base result is not
+//! `NA`" and the element-level reading stays a suspicion, not a proven
+//! intent. The `length(sum(...)) > 0` half ships as RY105.
 
 use super::*;
 
@@ -392,11 +399,23 @@ impl Checker {
     ///   glue `R/utils.R:32` — `any(lengths) == 0` where
     ///   `any(lengths == 0)` was meant.
     /// * **constant** (`> 1`, `>= 2`, `< 0`, `== 2`, `> -1`, ...): the
-    ///   guard is always TRUE or always FALSE.
+    ///   guard is always TRUE or always FALSE over the base domain's
+    ///   non-`NA` results.
     ///
     /// The negating and constant outcomes are reported with the element-level
-    /// rewrite. `NA` input propagates to an `NA` result in every family,
-    /// which changes neither classification.
+    /// rewrite. The wording is scoped to the base functions' own result
+    /// domain rather than asserted unconditionally: an `NA` result — for
+    /// `any()`, an `NA` element with no `TRUE` present; for `all()`, an
+    /// `NA` element with no `FALSE` — compares as `NA`, so constant
+    /// outcomes are stated as holding "when the base result is not `NA`".
+    /// `any()`/`all()` are also S4 generics (R 4.6.1 runtime-verified: a
+    /// direct `any` method and a `Summary`-group method can return any
+    /// value, even a longer vector, and `base::any()` still selects the
+    /// generic), so the length-1 premise is qualified and the rewrite is
+    /// framed as the probable intent. An open-world argument is never a
+    /// reason to go silent — the founding glue shape passes a parameter —
+    /// and a scalar or unclassed parameter default never proves
+    /// classlessness for the caller's values.
     ///
     /// Scoped against the neighbors: RY093 and RY100 report a comparison
     /// nested *inside* `length()`/`nchar()`/a math call on the same span this
@@ -481,25 +500,34 @@ impl Checker {
                 other => other,
             }
         };
+        // The outcome text conditions on the base result domain rather
+        // than asserting unconditionally: an `NA` result compares as
+        // `NA` (`any(c(FALSE, NA)) > -1` is `NA`, not TRUE), and an S4
+        // method can leave the domain entirely (a direct `any` method or
+        // the `Summary` group may return any value, even a longer
+        // vector), so "always TRUE/FALSE" is claimed only for the base
+        // computation's non-`NA` results and the negating outcome names
+        // its own `NA` case. The element-level reading that follows is
+        // the probable intent, never a proven one.
         let outcome_text = if when_false == when_true {
             if when_false {
-                "always TRUE"
+                "always TRUE when the base result is not `NA` (an `NA` result compares as `NA`)"
             } else {
-                "always FALSE"
+                "always FALSE when the base result is not `NA` (an `NA` result compares as `NA`)"
             }
         } else {
-            "TRUE exactly when the call is FALSE"
+            "TRUE exactly when the call is FALSE (`NA` when it is `NA`)"
         };
         let message = match (
             self.source_text(span_of(argument)),
             self.source_text(span_of(literal_expr)),
         ) {
             (Some(argument_text), Some(literal_text)) => format!(
-                "`{bare}()` returns a length-1 logical, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
+                "`{bare}()` returns a length-1 logical unless an S4 method dispatches, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
                 op_symbol(suggested_op),
             ),
             _ => format!(
-                "`{bare}()` returns a length-1 logical, so this comparison is {outcome_text}; compare the elements inside the call instead"
+                "`{bare}()` returns a length-1 logical unless an S4 method dispatches, so this comparison is {outcome_text}; compare the elements inside the call instead"
             ),
         };
         self.emit(Severity::Warning, span, "RY107", message);

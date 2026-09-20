@@ -602,7 +602,9 @@ fn ry107_fires_on_negative_literal_constant_outcomes() {
 #[test]
 fn ry107_negative_literal_dead_guard_keeps_the_element_rewrite() {
     // The dead always-TRUE guard still suggests moving the comparison to
-    // the elements, with the folded literal spelled as written.
+    // the elements, with the folded literal spelled as written. The
+    // constant claim is conditioned on the base result not being NA
+    // (R: `any(c(FALSE, NA)) > -1` is NA), never asserted unconditionally.
     let mut parser = RParser::new().expect("parser init");
     let file = parser
         .parse("recall.R", "f <- function(x) if (any(x) > -1) 1\n")
@@ -612,10 +614,91 @@ fn ry107_negative_literal_dead_guard_keeps_the_element_rewrite() {
     let diags = checker.take_diagnostics();
     assert!(
         diags.iter().any(|d| d.code == "RY107"
-            && d.message.contains("always TRUE")
+            && d.message
+                .contains("always TRUE when the base result is not `NA`")
             && d.message.contains("any(x > -1)")),
-        "expected always-TRUE with the element-level rewrite: {diags:?}"
+        "expected the conditioned constant wording with the element-level rewrite: {diags:?}"
     );
+}
+
+#[test]
+fn ry107_constant_claims_are_conditioned_on_the_na_result() {
+    // R (4.6.1, fresh process): `any(c(FALSE, NA))` is NA, and `NA > -1`
+    // and `NA == 2` are NA -- the constant outcome holds only for the
+    // base domain's non-NA results, so both truth values are worded as
+    // "when the base result is not `NA`" with the NA case named.
+    for (src, fragment) in [
+        (
+            "f <- function(x) if (any(x) > -1) 1\n",
+            "always TRUE when the base result is not `NA` (an `NA` result compares as `NA`)",
+        ),
+        (
+            "f <- function(x) if (any(x) == 2) 1\n",
+            "always FALSE when the base result is not `NA` (an `NA` result compares as `NA`)",
+        ),
+    ] {
+        let mut parser = RParser::new().expect("parser init");
+        let file = parser.parse("recall.R", src).expect("parse");
+        let mut checker = Checker::new("recall.R");
+        checker.check(&file);
+        let diags = checker.take_diagnostics();
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "RY107" && d.message.contains(fragment)),
+            "expected conditioned constant wording in {src:?}: {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn ry107_negating_wording_names_its_na_case() {
+    // `any(x) == 0` is NA -- not TRUE -- when the call returns NA, so the
+    // negating wording states its own NA case instead of implying a total
+    // TRUE/FALSE function.
+    let mut parser = RParser::new().expect("parser init");
+    let file = parser
+        .parse("recall.R", "f <- function(x) if (any(x) == 0) 1\n")
+        .expect("parse");
+    let mut checker = Checker::new("recall.R");
+    checker.check(&file);
+    let diags = checker.take_diagnostics();
+    assert!(
+        diags.iter().any(|d| d.code == "RY107"
+            && d.message
+                .contains("TRUE exactly when the call is FALSE (`NA` when it is `NA`)")),
+        "expected the negating wording to name the NA case: {diags:?}"
+    );
+}
+
+#[test]
+fn ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing() {
+    // any()/all() are S4 generics (R 4.6.1, fresh process): a direct
+    // `setMethod("any", ...)` returns 42, a `Summary`-group method returns
+    // c(5, 7), and `base::any()` still selects the generic rather than a
+    // default method -- so the length-1 premise is qualified in the
+    // message ("unless an S4 method dispatches") instead of being stated
+    // as unconditional. The rule must keep firing: the founding glue
+    // shape passes an open-world parameter, and S3 classes never dispatch
+    // any()/all(), so silencing on unknown argument shapes would trade a
+    // real defect for unprovable dispatch.
+    for src in [
+        "f <- function(x) if (any(x) == 0) 1\n",
+        "f <- function(x) if (base::any(x) > -1) 1\n",
+        "f <- function(v) { d <- structure(c(1, 2), class = \"s3obj\"); if (any(d) == 0) 1 }\n",
+    ] {
+        let mut parser = RParser::new().expect("parser init");
+        let file = parser.parse("recall.R", src).expect("parse");
+        let mut checker = Checker::new("recall.R");
+        checker.check(&file);
+        let diags = checker.take_diagnostics();
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "RY107" && d.message.contains("unless an S4 method dispatches")),
+            "expected the dispatch-qualified premise in {src:?}: {diags:?}"
+        );
+    }
 }
 
 #[test]

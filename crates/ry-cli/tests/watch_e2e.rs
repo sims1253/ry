@@ -28,17 +28,28 @@ impl WatchSession {
     /// `root` is the positional check input: a directory to watch, or an
     /// explicit `.R` file whose package ancestors must stay tracked.
     fn spawn(root: &std::path::Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_ry"))
+        Self::spawn_at(None, root)
+    }
+
+    /// Like [`WatchSession::spawn`], with an explicit working directory
+    /// (`None` inherits the test runner's) so the check input can be a
+    /// path RELATIVE to it — the form a user gets from running
+    /// `ry check pkg/R/use.R` inside the parent directory.
+    fn spawn_at(cwd: Option<&std::path::Path>, input: &std::path::Path) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
+        command
             .arg("check")
             .arg("--watch")
             .arg("--color")
             .arg("never")
-            .arg(root)
+            .arg(input)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn ry check --watch");
+            .stderr(Stdio::piped());
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
+        let mut child = command.spawn().expect("failed to spawn ry check --watch");
         let stdout = Arc::new(Mutex::new(String::new()));
         let stderr = Arc::new(Mutex::new(String::new()));
         pump(child.stdout.take(), Arc::clone(&stdout));
@@ -798,6 +809,16 @@ fn watch_empty_workspace_gains_package_and_metadata() {
         passes_before,
         "post-DESCRIPTION pass",
     );
+    // stdout and stderr are separate pipes drained by independent pump
+    // threads, so the stderr summary can land before this pass's stdout
+    // screenful is fully drained: synchronize on the stdout content
+    // itself before comparing exact occurrence counts.
+    wait_for_more(
+        &session.stdout,
+        "`tags` is not bound",
+        tags_after_source,
+        "post-DESCRIPTION diagnostic",
+    );
     assert_eq!(
         occurrences(&session.stdout, "`tags` is not bound"),
         tags_after_source + 1,
@@ -970,4 +991,95 @@ fn watch_ignores_unrelated_package_metadata() {
         session.stdout.lock().unwrap()
     );
     session.assert_alive("after unrelated metadata creation");
+}
+
+/// Metadata ABOVE an absorbing package boundary must not trigger a
+/// re-check either: the watched root is itself a package (DESCRIPTION
+/// at the root), and a fresh one-shot groups every file by that NEAREST
+/// existing DESCRIPTION — an ancestor walk that stops there, so a
+/// DESCRIPTION/NAMESPACE pair created in a directory ABOVE the boundary
+/// cannot change how any watched file resolves. The watch set stops at
+/// the same boundary, so their creation stays silent. The final leg is
+/// the control: the boundary's own NAMESPACE edit still re-checks.
+#[test]
+fn watch_ignores_metadata_above_absorbing_boundary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("proj");
+    write_package_with_import(&pkg, "boundary");
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(&pkg);
+
+    // The root's own metadata resolves the import from the start.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Unrelated package metadata one level ABOVE the boundary: outside
+    // the dependency set, like the sibling-tree control above.
+    std::fs::write(
+        tmp.path().join("DESCRIPTION"),
+        "Package: above\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+
+    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(
+        occurrences(&session.stderr, "checked 1 file(s)"),
+        passes_before,
+        "metadata above the absorbing boundary must not trigger a re-check: {}",
+        session.stderr.lock().unwrap()
+    );
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "metadata above the absorbing boundary must not change the findings: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after above-boundary metadata creation");
+
+    // Control: the boundary's own metadata is inside the set.
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-boundary-edit diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after boundary NAMESPACE edit");
+}
+
+/// A relative explicit-file root — `ry check pkg/R/use.R` run from the
+/// parent directory — must track the same package ancestors as an
+/// absolute one. The ancestor walk resolves its inputs against the
+/// process working directory instead of terminating at the empty path
+/// component `Path::new("pkg").parent()` yields, so the NAMESPACE one
+/// level up still re-checks the file.
+#[test]
+fn watch_relative_root_reacts_to_package_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    write_package_with_import(&pkg, "relroot");
+    let use_r = pkg.join("R/use.R");
+    std::fs::write(&use_r, "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn_at(Some(tmp.path()), std::path::Path::new("pkg/R/use.R"));
+
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-edit diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after NAMESPACE edit through a relative root");
 }

@@ -306,6 +306,14 @@ impl LanguageServer for Backend {
             state.trees.retain(|p, _| !under_removed_root(p));
             state.parsed.retain(|p, _| !under_removed_root(p));
             state.hints.retain(|p, _| !under_removed_root(p));
+            // Cancel reconciliation obligations under removed roots
+            // (P1): the driver must not re-drive paths the removal just
+            // purged — a re-drive would re-add them through the
+            // root-level fallback — and the removal's own
+            // clear-and-republish already settled their duty.
+            state
+                .pending_refreshes
+                .retain(|p, _| !under_removed_root(p));
             // The explicit empty publications below clear these URIs, so
             // they leave the tracked set too (#489).
             state.published_paths.retain(|p| !under_removed_root(p));
@@ -460,6 +468,12 @@ impl LanguageServer for Backend {
                 }
             }
             if landed.is_empty() {
+                // Every event either settled terminally (open buffer,
+                // cap refusal) or left a RETAINED obligation — the
+                // ladder lost its races and its backstop. Wake the
+                // reconciliation driver so the retained paths converge
+                // without needing another event (P1).
+                self.wake_reconciliation().await;
                 return;
             }
             // A landed refresh already claimed the next generation inside
@@ -482,8 +496,9 @@ impl LanguageServer for Backend {
             // resolution pass the scan uses before publishing, so a
             // watched addition resolves its configured globals, library
             // attachments, imports, and load bindings without a rescan
-            // (#527).
-            self.refresh_package_contexts(&landed).await;
+            // (#527). Paths whose group could not settle keep their
+            // obligation for the reconciliation driver.
+            let ctx_settled = self.refresh_package_contexts(&landed).await;
             // A landed refresh with no open document would otherwise never
             // be republished (#528): `republish_all_open_documents` below
             // degenerates to dropped-URI reconciliation, which only clears
@@ -491,9 +506,22 @@ impl LanguageServer for Backend {
             // the debounce instead; a no-op when an open document drives
             // the pass anyway.
             self.schedule_closed_file_publish(landed).await;
+            // Publication scheduled and context settled: the landed
+            // obligations are complete. Unsettled ones stay for the
+            // driver.
+            {
+                let mut state = self.state.lock().await;
+                for path in &ctx_settled {
+                    state.complete_pending_publication(path);
+                }
+            }
         }
 
         self.republish_all_open_documents().await;
+        // Retained obligations (superseded refreshes/backstops from this
+        // or a concurrent event burst) get their driver; a no-op when
+        // everything settled.
+        self.wake_reconciliation().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -561,9 +589,20 @@ impl LanguageServer for Backend {
                 self.spawn_background_index().await;
             }
             // Same staleness as the watched path: the saved bytes are
-            // indexed but their resolution entries are not (#527).
-            self.refresh_package_contexts(std::slice::from_ref(&path))
+            // indexed but their resolution entries are not (#527). The
+            // close's own publications (the empty clear below plus the
+            // remaining documents' reschedule) carry the publication
+            // duty for a settled group; an unsettled group keeps the
+            // obligation for the reconciliation driver.
+            let ctx_settled = self
+                .refresh_package_contexts(std::slice::from_ref(&path))
                 .await;
+            {
+                let mut state = self.state.lock().await;
+                for settled in ctx_settled {
+                    state.complete_pending_publication(&settled);
+                }
+            }
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.
@@ -576,9 +615,25 @@ impl LanguageServer for Backend {
         if let Some(first) = remaining_open_paths.first() {
             self.schedule_diagnostics(path_to_uri(first)).await;
         }
+        // A close-time re-read that lost its ladder left a retained
+        // obligation: the driver re-reads the final disk state and
+        // publishes it without needing another event (P1).
+        self.wake_reconciliation().await;
     }
 
     async fn shutdown(&self) -> LspResult<()> {
+        // Cancel queued reconciliation work: a driver must not resurrect
+        // publications after shutdown. The flag and the purge are one
+        // critical section, and the driver re-checks the flag under the
+        // lock at its round head, at every in-round dispatch, and
+        // before its follow-up publications, so a driver already inside
+        // a round stands down at the next check instead of dispatching
+        // new work; the flag clear with the transition means nothing
+        // sticks active. Claims are refused under the same flag, so no
+        // post-shutdown event can re-seed the emptied map.
+        let mut state = self.state.lock().await;
+        state.shutting_down = true;
+        state.pending_refreshes.clear();
         Ok(())
     }
 

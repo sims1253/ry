@@ -340,6 +340,76 @@ pub mod test_seam {
     pub(crate) async fn maybe_pause_scan_commit() {
         scan_gate().maybe_pause().await;
     }
+
+    thread_local! {
+        static DRIVER_IDLE_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+    }
+
+    fn driver_idle_gate() -> Arc<CommitGate> {
+        DRIVER_IDLE_GATE.with(Arc::clone)
+    }
+
+    /// Arm the driver idle gate: the next reconciliation driver that
+    /// finishes a round without dispatchable work parks BETWEEN its
+    /// last per-path duty check and the lock hold that decides between
+    /// idling out and continuing — the exact window in which an
+    /// in-flight refresh's exit and its dispatcher's epilogue wake can
+    /// land while the active flag still suppresses the wake. Lets a
+    /// test interleave that exit deterministically and prove the
+    /// re-check under the clearing lock keeps the driver scheduled.
+    pub fn arm_driver_idle() {
+        driver_idle_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed driver to arrive at its idle decision point.
+    pub async fn wait_driver_idle() {
+        driver_idle_gate().arrived.notified().await;
+    }
+
+    /// Release the parked driver idle decision.
+    pub fn release_driver_idle() {
+        driver_idle_gate().release.notify_one();
+    }
+
+    /// Called by `run_reconciliation` (production code) just before the
+    /// idle-transition lock hold, holding no lock. No-op when unarmed.
+    pub(crate) async fn maybe_pause_driver_idle() {
+        driver_idle_gate().maybe_pause().await;
+    }
+
+    thread_local! {
+        static RECONCILE_DRIVER_SPAWNS: std::sync::atomic::AtomicUsize =
+            const { std::sync::atomic::AtomicUsize::new(0) };
+        static RECONCILE_ROUNDS: std::sync::atomic::AtomicUsize =
+            const { std::sync::atomic::AtomicUsize::new(0) };
+    }
+
+    /// Number of reconciliation driver tasks actually spawned since
+    /// process start (test-util only). The wake path spawns only when
+    /// no driver is active and obligations are pending, so a burst of
+    /// events over a small path set must keep this far below the event
+    /// count — the observable half of the driver's coalescing contract.
+    pub fn reconciliation_driver_spawns() -> usize {
+        RECONCILE_DRIVER_SPAWNS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Number of reconciliation driver rounds since process start
+    /// (test-util only); each round re-drives every pending path once.
+    pub fn reconciliation_rounds() -> usize {
+        RECONCILE_ROUNDS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    pub(crate) fn note_reconciliation_driver_spawn() {
+        RECONCILE_DRIVER_SPAWNS.with(|count| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+
+    pub(crate) fn note_reconciliation_round() {
+        RECONCILE_ROUNDS.with(|count| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
 }
 
 mod backend;

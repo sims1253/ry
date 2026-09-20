@@ -9,9 +9,11 @@ l <- as.list(x)
 v <- as.vector(x)
 f <- as.factor(x)
 # `vctrs::vec_cast(x, to)` is relationally polymorphic: `x` need only be
-# castable to `to`, so its stub types `x` demand-only (issue #479) -- the
-# numeric demand arms RY110 but asserts no RY092 incompatibility, and
-# legal cross-type casts such as `vec_cast("foo", character())` (the
-# glue upstream suite's own `expect_identical` shape) stay quiet.
+# castable to `to` (`vec_cast(x, NULL)` returns `x` unchanged), so its
+# overlay stub pins R's formals without parameter types -- no RY092
+# assertion and no RY110 demand -- and every legal cross-type cast such
+# as `vec_cast("foo", character())` (the glue upstream suite's own
+# `expect_identical` shape) stays quiet.
 cast_chr <- vctrs::vec_cast("foo", character())
 cast_list <- vctrs::vec_cast(list(), list())
+cast_null <- vctrs::vec_cast(character(), NULL)

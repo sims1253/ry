@@ -44,10 +44,14 @@
 //! function validates, another demands) and a cross-file helper
 //! application stay silent -- the latter because the diagnostic could
 //! not point at the helper's own span without attributing a foreign byte
-//! range to the consuming file. The `vec_cast` demand itself is a
-//! ry-side overlay annotation (`crates/ry-typeshed/overlay/vctrs.json`,
-//! issue #479); the validator-summary hop stays out of scope for the
-//! #351 flow-sensitivity cycle, and upstreaming the stub is the
+//! range to the consuming file. The `vec_cast` demand is relational
+//! (which `x` modes are legal depends on `to`: `vec_cast(x, NULL)`
+//! returns `x` unchanged), so the ry-side overlay stub
+//! (`crates/ry-typeshed/overlay/vctrs.json`) pins only R's formals and
+//! declares no parameter types -- the numeric-target `vec_cast` shape of
+//! the founding hms defect is a recorded capability gap, not a contract
+//! this rule can prove; the validator-summary hop stays out of scope for
+//! the #351 flow-sensitivity cycle, and upstreaming the stub is the
 //! maintainer's call.
 
 use super::*;

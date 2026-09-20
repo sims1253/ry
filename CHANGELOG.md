@@ -168,6 +168,28 @@ All notable changes to ry are documented in this file.
   round lands (nothing else moves the generation under silence), so
   the final analysis reaches the fresh-analysis verdict with no rescue
   event.
+- Remove the unsupported unconditional numeric `x` demand from the
+  ry-side `vctrs::vec_cast` overlay stub. `vec_cast(x, to)` is
+  relational: the modes `x` may take depend on `to` (runtime-verified
+  on R 4.6.1 / vctrs 0.7.3: `vec_cast(x, NULL)` returns `x` unchanged
+  for `character()` and `raw(0)` under the exact hms guard, and
+  `vec_cast(character(), character())` is legal), so the stub's
+  numeric-union `x` type asserted a requirement R only imposes for
+  numeric-family targets. The stub now pins only R's own formals
+  (`x, to, ..., x_arg, to_arg, call`) with no parameter types, keeping
+  arity/resolution behavior identical. The retired `demand_only`
+  parameter flag -- which exempted the type from RY092 while RY110's
+  demand gate consumed it -- is removed with its only use, and stale
+  `demand_only: true` metadata now fails stub parsing by name
+  (`deny_unknown_fields`) instead of silently enforcing its type as an
+  ordinary requirement. Intentional coverage rollback, recorded as the
+  oracle known-gap `vec_cast_vacuous_demand.R`: the numeric-target
+  `vec_cast` RY110 diagnostic (a previously audited true positive --
+  `vec_cast(character(), double())` does error) is lost, because the
+  old implementation had no target-dependent proof and the same
+  diagnostic fired falsely on the legal NULL-target and
+  character-target forms. Base numeric demands (`sqrt`, `mean`, the
+  Math group) keep arming RY110.
 - Propagate the NULL component of a union return type into RY001's
   condition analysis (#362). A find-or-NULL helper (`locate_input <-
   function(input) if (is.null(input)) return(NULL) else "path"`, the

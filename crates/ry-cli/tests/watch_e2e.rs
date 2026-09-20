@@ -25,13 +25,15 @@ struct WatchSession {
 }
 
 impl WatchSession {
-    fn spawn(dir: &std::path::Path) -> Self {
+    /// `root` is the positional check input: a directory to watch, or an
+    /// explicit `.R` file whose package ancestors must stay tracked.
+    fn spawn(root: &std::path::Path) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_ry"))
             .arg("check")
             .arg("--watch")
             .arg("--color")
             .arg("never")
-            .arg(dir)
+            .arg(root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -465,4 +467,507 @@ fn watch_reacts_to_namespace_removal() {
         session.stdout.lock().unwrap()
     );
     session.assert_alive("after NAMESPACE removal");
+}
+
+// The nested-package tests below pin that `ry check --watch` tracks the
+// DESCRIPTION/NAMESPACE of packages nested BELOW the watched root, not
+// just the root's own metadata: a fresh one-shot resolves every
+// discovered file against its nearest DESCRIPTION ancestor, so the
+// watch result must converge with a fresh check after a metadata-only
+// edit, with no R-file touch and no process restart. Distinct
+// timestamps come from the harness's phase discipline, not from sleeps
+// as assertions: every modification waits for the previous pass's
+// observable output first, so successive writes to the same metadata
+// file are separated by at least one 500 ms poll and their mtimes
+// (nanosecond resolution) always differ.
+//
+// Shared fixture: a valid DESCRIPTION plus a NAMESPACE importing one
+// name (`tags` from shiny, resolvable from the bundled stubs without an
+// R installation). Tests that need the import absent write their own
+// NAMESPACE or create it later.
+
+/// Minimal valid package metadata with one import binding.
+fn write_package_with_import(pkg: &std::path::Path, name: &str) {
+    std::fs::create_dir_all(pkg.join("R")).unwrap();
+    std::fs::write(
+        pkg.join("DESCRIPTION"),
+        format!("Package: {name}\nVersion: 0.0.0.9000\n"),
+    )
+    .unwrap();
+    std::fs::write(pkg.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+}
+
+/// Occurrence count of `needle` in a pumped buffer. Used for
+/// disappearance pins: stdout accumulates every screenful, so a finding
+/// going quiet is "the count stops growing", not "the text is gone".
+fn occurrences(buffer: &Mutex<String>, needle: &str) -> usize {
+    buffer.lock().unwrap().matches(needle).count()
+}
+
+/// Emptying a nested NAMESPACE mid-watch re-resolves the package: the
+/// name the `importFrom` used to bind becomes an unbound-variable
+/// finding without any R file being touched, and restoring the import
+/// converges back to the fresh-check result (quiet).
+#[test]
+fn watch_reacts_to_nested_namespace_edit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    write_package_with_import(&pkg, "nestededit");
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // The initial pass resolves `tags` through the nested import.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Drop the import: only pkg/NAMESPACE changes.
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-edit diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Restore the import: the next pass goes quiet again.
+    let tags_before = occurrences(&session.stdout, "`tags` is not bound");
+    let quiet_before = occurrences(&session.stderr, "0 warning(s)");
+    std::fs::write(pkg.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-restore quiet pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, "`tags` is not bound"),
+        tags_before,
+        "restoring the import must not re-report the finding: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after NAMESPACE restore");
+}
+
+/// Creating a nested NAMESPACE mid-watch binds the imported name, and
+/// deleting it unbinds the name again — both without any R file being
+/// touched. The absent NAMESPACE is watched from session start, so the
+/// creation registers like an edit.
+#[test]
+fn watch_reacts_to_nested_namespace_create_and_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("R")).unwrap();
+    std::fs::write(
+        pkg.join("DESCRIPTION"),
+        "Package: nestedcreate\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // Without NAMESPACE the name is unbound from the start.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    wait_for(&session.stdout, "`tags`", "initial unbound diagnostic");
+
+    // Creating the NAMESPACE binds the name: the next pass is quiet.
+    let tags_before = occurrences(&session.stdout, "`tags` is not bound");
+    let quiet_before = occurrences(&session.stderr, "0 warning(s)");
+    std::fs::write(pkg.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-creation quiet pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, "`tags` is not bound"),
+        tags_before,
+        "creating the NAMESPACE must bind the name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Deleting it unbinds the name again.
+    std::fs::remove_file(pkg.join("NAMESPACE")).unwrap();
+    wait_for_more(
+        &session.stdout,
+        "`tags` is not bound",
+        tags_before,
+        "post-deletion diagnostic",
+    );
+    session.assert_alive("after NAMESPACE delete");
+}
+
+/// Creating a nested DESCRIPTION mid-watch isolates the sub-package: a
+/// top-level file that used to share the workspace scope loses the
+/// binding defined inside the package, without any source byte
+/// changing. Deleting the DESCRIPTION merges the scopes back.
+#[test]
+fn watch_reacts_to_nested_description_creation_and_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    std::fs::create_dir_all(pkg.join("R")).unwrap();
+    std::fs::write(pkg.join("R/defs.R"), "only_in_pkg <- 1L\n").unwrap();
+    std::fs::write(tmp.path().join("top.R"), "value <- only_in_pkg\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // One shared scope: the top-level use resolves the package file's
+    // binding, and the absent DESCRIPTION is already watched.
+    wait_for(&session.stderr, "watching 2 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the shared binding: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Isolate the package: only pkg/DESCRIPTION changes.
+    std::fs::write(
+        pkg.join("DESCRIPTION"),
+        "Package: isolate\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    wait_for(&session.stdout, "RY010", "post-creation diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`only_in_pkg`"),
+        "the re-check must flag the now-isolated binding: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Deleting the DESCRIPTION merges the scopes back: the next pass is
+    // quiet.
+    let finding_before = occurrences(&session.stdout, "`only_in_pkg` is not bound");
+    let quiet_before = occurrences(&session.stderr, "0 warning(s)");
+    std::fs::remove_file(pkg.join("DESCRIPTION")).unwrap();
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-deletion quiet pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, "`only_in_pkg` is not bound"),
+        finding_before,
+        "deleting the DESCRIPTION must re-merge the scopes: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after DESCRIPTION delete");
+}
+
+/// Watching a package SUBDIRECTORY (here `pkg/R`) keeps reacting to the
+/// package's own metadata one level up: the root-ancestor chain is the
+/// pre-existing coverage; this pins it against regressions while the
+/// discovered-file chains are added.
+#[test]
+fn watch_package_subdirectory_reacts_to_package_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    write_package_with_import(&pkg, "subdirwatch");
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(&pkg.join("R"));
+
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-edit diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after NAMESPACE edit");
+}
+
+/// Watching an explicit FILE keeps the file's package ancestors
+/// tracked: a fresh one-shot of just that file resolves `tags` through
+/// the nearest NAMESPACE, so the watch session must converge with it.
+#[test]
+fn watch_explicit_file_root_reacts_to_package_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    write_package_with_import(&pkg, "fileroot");
+    let use_r = pkg.join("R/use.R");
+    std::fs::write(&use_r, "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(&use_r);
+
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-edit diagnostic");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after NAMESPACE edit");
+}
+
+/// Sibling packages track their own metadata: editing one package's
+/// NAMESPACE re-checks and flags only that package's use of the import;
+/// the sibling's own findings are untouched by the pass.
+#[test]
+fn watch_sibling_package_metadata_edits_stay_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkga = tmp.path().join("pkga");
+    let pkgb = tmp.path().join("pkgb");
+    write_package_with_import(&pkga, "siblinga");
+    std::fs::create_dir_all(pkgb.join("R")).unwrap();
+    std::fs::write(
+        pkgb.join("DESCRIPTION"),
+        "Package: siblingb\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    std::fs::write(pkga.join("R/use.R"), "page <- tags\n").unwrap();
+    std::fs::write(pkgb.join("R/b.R"), "b_value <- missing_in_b\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // pkgb's unbound name is flagged from the start; pkga's import
+    // resolves.
+    wait_for(&session.stderr, "watching 2 file(s)", "initial pass");
+    wait_for(
+        &session.stdout,
+        "`missing_in_b`",
+        "initial sibling diagnostic",
+    );
+
+    // Dropping pkga's import must land exactly one new pass that flags
+    // pkga's file while pkgb's finding is only re-printed once for that
+    // one pass — the same screenful a fresh check of the tree prints,
+    // with no extra pass and no extra sibling finding.
+    let sibling_before = occurrences(&session.stdout, "`missing_in_b` is not bound");
+    let passes_before = occurrences(&session.stderr, "checked 2 file(s)");
+    std::fs::write(pkga.join("NAMESPACE"), "").unwrap();
+    wait_for_more(
+        &session.stderr,
+        "checked 2 file(s)",
+        passes_before,
+        "post-edit pass",
+    );
+    wait_for(&session.stdout, "`tags`", "post-edit diagnostic");
+    assert_eq!(
+        occurrences(&session.stdout, "`missing_in_b` is not bound"),
+        sibling_before + 1,
+        "one pass must reprint pkgb's finding exactly once: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after sibling metadata edit");
+}
+
+/// An initially empty workspace stays alive, picks up the first source
+/// file, and then tracks the package metadata of the package that grows
+/// around it: creating the DESCRIPTION re-checks (still flagged —
+/// grouping does not bind the name), and creating the NAMESPACE binds
+/// the import.
+#[test]
+fn watch_empty_workspace_gains_package_and_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    let mut session = WatchSession::spawn(tmp.path());
+    wait_for(&session.stderr, "watching 0 file(s)", "watch loop entry");
+
+    // The first source file: unbound, as a fresh check would report.
+    std::fs::create_dir_all(pkg.join("R")).unwrap();
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    wait_for(&session.stdout, "`tags`", "first-file diagnostic");
+
+    // Growing a package around the file: the DESCRIPTION creation must
+    // land a pass that still flags the name — once for that one pass,
+    // the same screenful a fresh check prints.
+    let tags_after_source = occurrences(&session.stdout, "`tags` is not bound");
+    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
+    std::fs::write(
+        pkg.join("DESCRIPTION"),
+        "Package: growaround\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    wait_for_more(
+        &session.stderr,
+        "checked 1 file(s)",
+        passes_before,
+        "post-DESCRIPTION pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, "`tags` is not bound"),
+        tags_after_source + 1,
+        "grouping alone must not bind the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // The NAMESPACE creation binds the import: the quiet pass adds no
+    // new occurrence beyond the two flagged passes already printed.
+    let quiet_before = occurrences(&session.stderr, "0 warning(s)");
+    std::fs::write(pkg.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-NAMESPACE quiet pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, "`tags` is not bound"),
+        tags_after_source + 1,
+        "the import must now bind the name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after package growth");
+}
+
+/// Moving a source file between package directories re-groups it: the
+/// binding defined in one package resolves only while the use lives in
+/// the same package. A rename preserves the file's mtime, so the pass
+/// is driven by the file-set change and the re-derived metadata
+/// dependencies, not by a touched timestamp.
+#[test]
+fn watch_moving_source_between_packages_converges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkga = tmp.path().join("pkga");
+    let pkgb = tmp.path().join("pkgb");
+    for (root, name) in [(&pkga, "movea"), (&pkgb, "moveb")] {
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::write(
+            root.join("DESCRIPTION"),
+            format!("Package: {name}\nVersion: 0.0.0.9000\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(pkga.join("R/a.R"), "shared_val <- 1L\n").unwrap();
+    std::fs::write(pkgb.join("R/b.R"), "take <- shared_val\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // Cross-package use: unbound.
+    wait_for(&session.stderr, "watching 2 file(s)", "initial pass");
+    wait_for(
+        &session.stdout,
+        "`shared_val`",
+        "initial cross-package diagnostic",
+    );
+    let finding = "`shared_val` is not bound";
+
+    // Move the definition into pkgb: same package now, binding resolves.
+    let finding_before = occurrences(&session.stdout, finding);
+    let quiet_before = occurrences(&session.stderr, "0 warning(s)");
+    std::fs::rename(pkga.join("R/a.R"), pkgb.join("R/a.R")).unwrap();
+    wait_for_more(
+        &session.stderr,
+        "0 warning(s)",
+        quiet_before,
+        "post-move quiet pass",
+    );
+    assert_eq!(
+        occurrences(&session.stdout, finding),
+        finding_before,
+        "the moved definition must resolve the use: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Move it back: the use is cross-package again and re-flags.
+    std::fs::rename(pkgb.join("R/a.R"), pkga.join("R/a.R")).unwrap();
+    wait_for_more(
+        &session.stdout,
+        finding,
+        finding_before,
+        "post-move-back diagnostic",
+    );
+    session.assert_alive("after source move back");
+}
+
+/// A discovery-config change that admits previously excluded sources
+/// must also grow the metadata dependency set to cover them: after the
+/// excluded package's file enters the file set, editing that package's
+/// NAMESPACE still converges with a fresh check.
+#[test]
+fn watch_config_admission_tracks_new_metadata_dependencies() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("ry.toml"), "exclude = [\"**/pkg2/**\"]\n").unwrap();
+    std::fs::write(tmp.path().join("main.R"), "top <- 1L\n").unwrap();
+    let pkg2 = tmp.path().join("pkg2");
+    write_package_with_import(&pkg2, "admitted");
+    std::fs::write(pkg2.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    // pkg2 is excluded: one file, and nothing from it is reported.
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the excluded package must not be checked: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Drop the exclude: the reload re-scans and admits pkg2's file; its
+    // NAMESPACE import resolves, so the pass stays quiet.
+    std::fs::write(tmp.path().join("ry.toml"), "").unwrap();
+    wait_for(&session.stderr, "checked 2 file(s)", "post-admission pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the admitted package's import must resolve: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // The admitted package's metadata is now a tracked dependency.
+    std::fs::write(pkg2.join("NAMESPACE"), "").unwrap();
+    wait_for(&session.stdout, "RY010", "post-admission metadata edit");
+    assert!(
+        session.stdout.lock().unwrap().contains("`tags`"),
+        "the re-check must flag the no-longer-imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after admitted metadata edit");
+}
+
+/// Control: metadata of a tree discovery has no R files under — a
+/// sibling directory that is neither a watched root nor an ancestor of
+/// any discovered file — must NOT trigger a pass. Five polls elapse
+/// (the fixed sleep is the harness's established negative-assertion
+/// pattern; positive assertions above stay deadline-based).
+#[test]
+fn watch_ignores_unrelated_package_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path().join("pkg");
+    write_package_with_import(&pkg, "mainpkg");
+    std::fs::write(pkg.join("R/use.R"), "page <- tags\n").unwrap();
+    let mut session = WatchSession::spawn(tmp.path());
+
+    wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "the initial pass must resolve the imported name: {}",
+        session.stdout.lock().unwrap()
+    );
+
+    // Metadata of an R-less sibling tree: outside the dependency set.
+    let unrelated = tmp.path().join("unrelated");
+    std::fs::create_dir_all(&unrelated).unwrap();
+    std::fs::write(
+        unrelated.join("DESCRIPTION"),
+        "Package: unrelated\nVersion: 0.0.0.9000\n",
+    )
+    .unwrap();
+    std::fs::write(unrelated.join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
+
+    let passes_before = occurrences(&session.stderr, "checked 1 file(s)");
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(
+        occurrences(&session.stderr, "checked 1 file(s)"),
+        passes_before,
+        "unrelated metadata must not trigger a re-check: {}",
+        session.stderr.lock().unwrap()
+    );
+    assert!(
+        !session.stdout.lock().unwrap().contains("RY010"),
+        "unrelated metadata must not change the findings: {}",
+        session.stdout.lock().unwrap()
+    );
+    session.assert_alive("after unrelated metadata creation");
 }

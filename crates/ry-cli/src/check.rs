@@ -298,18 +298,19 @@ pub(crate) fn run_check(
     );
     let mut stamps: HashMap<PathBuf, SystemTime> = HashMap::new();
     sync_stamps(&all_paths, &mut stamps);
-    state.sync_input_stamps(&search_roots);
+    state.sync_static_stamps();
+    state.sync_meta_stamps(&search_roots, &all_paths);
 
     let poll_interval = std::time::Duration::from_millis(500);
     loop {
         std::thread::sleep(poll_interval);
 
-        // Reload the non-R inputs first so the rescan below already runs
-        // under a changed discovery config (new excludes, fixture flags,
-        // index caps). Every touch between two polls coalesces into one
-        // reload and one re-check, the same debouncing the R-file mtime
-        // loop below provides.
-        let inputs_changed = state.poll_inputs(&search_roots);
+        // Reload the config-anchored inputs first so the rescan below
+        // already runs under a changed discovery config (new excludes,
+        // fixture flags, index caps). Every touch between two polls
+        // coalesces into one reload and one re-check, the same debouncing
+        // the R-file mtime loop below provides.
+        let inputs_changed = state.poll_static_inputs();
 
         // Re-scan for new/deleted files via shared bounded discovery.
         // Truncation was already reported on the initial scan, so the
@@ -322,8 +323,19 @@ pub(crate) fn run_check(
             false,
         );
 
+        // Poll the package-metadata dependencies AFTER the rescan: the
+        // dependency set is derived from the discovered paths, so it must
+        // follow a config reload's effect on discovery, and a file set
+        // change and the metadata paths it admits are observed by one
+        // poll instead of a lagging second one. The snapshot records the
+        // values as they stand before the re-check below reads them, so
+        // a metadata edit landing DURING the check still differs on the
+        // next poll rather than being swallowed by a fresh post-check
+        // read.
+        let meta_changed = state.poll_meta_inputs(&search_roots, &current.paths);
+
         // Check for any file modification or file set change.
-        let mut changed = inputs_changed || current.paths != all_paths;
+        let mut changed = inputs_changed || meta_changed || current.paths != all_paths;
         if !changed {
             for p in &current.paths {
                 if let Ok(meta) = std::fs::metadata(p)
@@ -358,10 +370,22 @@ pub(crate) fn run_check(
 
 /// The reloadable inputs of one watch session: everything a check pass
 /// reads *besides* the R file set. Watch mode polls the mtimes of the
-/// files these inputs come from (`ry.toml` candidates, the effective
-/// baseline, stub files under the typeshed dirs, per-root
-/// DESCRIPTION/NAMESPACE) and re-derives the affected state when one
-/// changes, so mid-watch edits take effect without a restart (#530).
+/// files these inputs come from and re-derives the affected state when
+/// one changes, so mid-watch edits take effect without a restart (#530).
+/// The inputs split into two classes with different refresh disciplines:
+///
+/// * Static, config-anchored inputs (`ry.toml` candidates, the effective
+///   baseline, stub files under the typeshed dirs): fixed by the CLI
+///   roots and the merged config. A change reloads the
+///   config-derived state.
+/// * Package-metadata dependencies (DESCRIPTION/NAMESPACE along the
+///   roots' ancestor chains and the ancestor chains of the discovered R
+///   files): the roots' half is fixed, the discovered half is re-derived
+///   from the latest bounded discovery, so the set follows membership
+///   and discovery-config changes instead of stopping at the explicit
+///   roots. A change needs no config reload — the re-check itself
+///   re-reads the metadata — only a pass.
+///
 /// The LSP classifies the same inputs as resolution changes
 /// (`did_change_watched_files`); the CLI mirrors that classification
 /// with mtime polling instead of file events.
@@ -392,9 +416,14 @@ struct WatchState {
     /// when the file parses again, with a recovery note.
     config_broken: bool,
     baseline_broken: bool,
-    /// (path, mtime) snapshot of every watched non-R input; `None` is a
+    /// (path, mtime) snapshot of the config-anchored inputs; `None` is a
     /// missing path, so creation and deletion trigger like edits do.
-    input_stamps: Vec<(PathBuf, Option<SystemTime>)>,
+    static_stamps: Vec<(PathBuf, Option<SystemTime>)>,
+    /// (path, mtime) snapshot of the package-metadata dependencies
+    /// derived from the current roots and discovered file set. `None` is
+    /// a missing path, so creating a nearer DESCRIPTION or a NAMESPACE
+    /// for a package that had none registers like an edit.
+    meta_stamps: Vec<(PathBuf, Option<SystemTime>)>,
 }
 
 impl WatchState {
@@ -424,7 +453,8 @@ impl WatchState {
             baseline_from_cli,
             config_broken: false,
             baseline_broken: false,
-            input_stamps: Vec::new(),
+            static_stamps: Vec::new(),
+            meta_stamps: Vec::new(),
         }
     }
 
@@ -455,34 +485,56 @@ impl WatchState {
         }
     }
 
-    /// Record the current snapshot of every watched non-R input.
-    fn sync_input_stamps(&mut self, search_roots: &[PathBuf]) {
-        self.input_stamps = snapshot_inputs(
+    /// Record the current snapshot of the config-anchored inputs.
+    fn sync_static_stamps(&mut self) {
+        self.static_stamps = snapshot_static_inputs(
             &config_candidates(&self.search_start),
             self.cfg.baseline.as_deref(),
             &self.cfg.typeshed,
-            &package_meta_paths(search_roots),
         );
     }
 
-    /// Compare the watched non-R inputs against the snapshot; on any
-    /// difference reload the affected state, refresh the stamp set
-    /// (a reload can change *which* paths are watched), and report
-    /// that the caller must re-run the pass. Pure R-file edits leave
-    /// the snapshot untouched, so R-only iterations skip the reload
-    /// entirely.
-    fn poll_inputs(&mut self, search_roots: &[PathBuf]) -> bool {
-        let current = snapshot_inputs(
+    /// Record the current snapshot of the package-metadata dependencies
+    /// for `discovered` (the file set the next pass will check) and the
+    /// CLI roots.
+    fn sync_meta_stamps(&mut self, search_roots: &[PathBuf], discovered: &[PathBuf]) {
+        self.meta_stamps = snapshot_meta_paths(&package_meta_paths(search_roots, discovered));
+    }
+
+    /// Compare the config-anchored inputs against the snapshot; on any
+    /// difference reload the affected state, refresh the stamp set (a
+    /// reload can change *which* paths are watched), and report that the
+    /// caller must re-run the pass. Pure R-file edits leave the snapshot
+    /// untouched, so R-only iterations skip the reload entirely.
+    fn poll_static_inputs(&mut self) -> bool {
+        let current = snapshot_static_inputs(
             &config_candidates(&self.search_start),
             self.cfg.baseline.as_deref(),
             &self.cfg.typeshed,
-            &package_meta_paths(search_roots),
         );
-        if current == self.input_stamps {
+        if current == self.static_stamps {
             return false;
         }
         self.reload();
-        self.sync_input_stamps(search_roots);
+        self.sync_static_stamps();
+        true
+    }
+
+    /// Compare the package-metadata dependencies of the roots plus the
+    /// freshly discovered file set against the snapshot. On any
+    /// difference — an mtime edit, a creation/deletion (`None`
+    /// swapping with a stamp), or the dependency set itself moving
+    /// because membership or discovery configuration changed — install
+    /// the just-captured snapshot and report that a pass is needed. The
+    /// installed values are the pre-check ones, so a metadata edit that
+    /// lands while the re-check runs still differs on the next poll
+    /// instead of being swallowed by re-reading after the check.
+    fn poll_meta_inputs(&mut self, search_roots: &[PathBuf], discovered: &[PathBuf]) -> bool {
+        let current = snapshot_meta_paths(&package_meta_paths(search_roots, discovered));
+        if current == self.meta_stamps {
+            return false;
+        }
+        self.meta_stamps = current;
         true
     }
 
@@ -616,15 +668,38 @@ fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
     candidates
 }
 
-/// DESCRIPTION/NAMESPACE files that affect resolution of the watched
-/// roots: each root itself (or a file root's parent) plus every
-/// ancestor, so watching a package subdirectory still reacts to the
-/// package's metadata. Watched even when absent so turning a folder
-/// into a package mid-watch (creating DESCRIPTION) triggers a
-/// re-check. Nested packages *below* a watched root are not covered:
-/// only the R-file loop observes those trees.
-fn package_meta_paths(search_roots: &[PathBuf]) -> Vec<PathBuf> {
+/// DESCRIPTION/NAMESPACE paths that affect resolution of the watched
+/// roots and the files discovery actually returns: each root itself (or
+/// a file root's parent) plus every ancestor, and — for every
+/// discovered R file — every directory from its parent up to the first
+/// already-covered ancestor. Both are watched even when absent, so
+/// turning a folder into a package mid-watch (creating DESCRIPTION),
+/// adding a NAMESPACE to a package that had none, or deleting either
+/// triggers a re-check. The per-file chains are what cover packages
+/// nested *below* a watched root: a fresh one-shot resolves each file
+/// against its nearest DESCRIPTION ancestor, so every directory on that
+/// ancestor walk is a resolution input, including directories that only
+/// *could* become the package root (a nearer DESCRIPTION created there
+/// changes the file's grouping without touching any source byte).
+///
+/// The set stays bounded by relevant files and their ancestors: no
+/// recursive scan happens here, the discovered paths come from the
+/// loop's existing bounded discovery, and directories with no
+/// discovered file below them (a sibling package with no R sources)
+/// never enter the set. Directory work is deduplicated: the walk stops
+/// at the first ancestor already in the set, whose own ancestors are in
+/// the set by construction (the root chains run to the filesystem top).
+fn package_meta_paths(search_roots: &[PathBuf], discovered: &[PathBuf]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut push_dir = |dir: &std::path::Path, paths: &mut Vec<PathBuf>| -> bool {
+        if !seen.insert(dir.to_path_buf()) {
+            return false;
+        }
+        paths.push(dir.join("DESCRIPTION"));
+        paths.push(dir.join("NAMESPACE"));
+        true
+    };
     for root in search_roots {
         let mut dir: &std::path::Path = if root.is_file() {
             root.parent().unwrap_or(std::path::Path::new("."))
@@ -632,8 +707,23 @@ fn package_meta_paths(search_roots: &[PathBuf]) -> Vec<PathBuf> {
             root.as_path()
         };
         loop {
-            paths.push(dir.join("DESCRIPTION"));
-            paths.push(dir.join("NAMESPACE"));
+            if !push_dir(dir, &mut paths) {
+                break;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    for file in discovered {
+        let Some(mut dir) = file.parent() else {
+            continue;
+        };
+        loop {
+            if !push_dir(dir, &mut paths) {
+                break;
+            }
             match dir.parent() {
                 Some(parent) => dir = parent,
                 None => break,
@@ -645,17 +735,36 @@ fn package_meta_paths(search_roots: &[PathBuf]) -> Vec<PathBuf> {
     paths
 }
 
-/// (path, mtime) over every watched non-R input: the config
-/// candidates, the effective baseline file, every stub file the
+/// (path, mtime) over the package-metadata dependencies. Missing paths
+/// contribute `None` so creation and deletion register. The insertion
+/// order is deterministic (fixed root order, then the sorted discovered
+/// file set, with the deduplicated walk breaking at the first covered
+/// ancestor), so whole-snapshot equality is order-stable without
+/// sorting.
+fn snapshot_meta_paths(meta_paths: &[PathBuf]) -> Vec<(PathBuf, Option<SystemTime>)> {
+    meta_paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                std::fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .ok(),
+            )
+        })
+        .collect()
+}
+
+/// (path, mtime) over the config-anchored inputs: the config
+/// candidates, the effective baseline file, and every stub file the
 /// loader would read (flat plus one nesting level, mirroring
-/// `discover_stub_files`), and the package metadata paths. Missing
-/// paths contribute `None` so creation and deletion register.
-/// Sorted for a stable whole-snapshot comparison.
-fn snapshot_inputs(
+/// `discover_stub_files`). Missing paths contribute `None` so creation
+/// and deletion register. Sorted for a stable whole-snapshot
+/// comparison.
+fn snapshot_static_inputs(
     config_paths: &[PathBuf],
     baseline: Option<&std::path::Path>,
     stub_dirs: &[PathBuf],
-    meta_paths: &[PathBuf],
 ) -> Vec<(PathBuf, Option<SystemTime>)> {
     let mut snapshot: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
     snapshot.extend(config_paths.iter().map(|path| {
@@ -712,14 +821,6 @@ fn snapshot_inputs(
             )),
         }
     }
-    snapshot.extend(meta_paths.iter().map(|path| {
-        (
-            path.clone(),
-            std::fs::metadata(path)
-                .and_then(|meta| meta.modified())
-                .ok(),
-        )
-    }));
     snapshot.sort();
     snapshot
 }
@@ -1364,6 +1465,92 @@ mod tests {
                 && diagnostic.path.contains("second")
                 && diagnostic.message.contains("only_in_first")
         }));
+    }
+
+    /// The watch metadata-dependency set must cover every ancestor of
+    /// every discovered R file (the nested-package chains below the
+    /// watched root), must deduplicate shared ancestors, and must stay
+    /// bounded: a directory with no discovered file below it — here a
+    /// sibling `empty_pkg` that only *could* become a package — never
+    /// enters the set, because nothing discovery returns resolves
+    /// through it. The expected paths exist on disk only partially, so
+    /// the test also pins that absence does not drop a candidate:
+    /// creating any of them mid-watch must register.
+    #[test]
+    fn package_meta_paths_cover_discovered_ancestors_and_stay_bounded() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        for dir in ["pkg/R", "other/deep/src", "empty_pkg"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let use_r = root.join("pkg/R/use.R");
+        let deep_r = root.join("other/deep/src/deep.R");
+        std::fs::write(&use_r, "page <- tags\n").unwrap();
+        std::fs::write(&deep_r, "deep <- 1L\n").unwrap();
+
+        let meta = package_meta_paths(&[root.to_path_buf()], &[use_r, deep_r]);
+
+        // Every ancestor of a discovered file up to the watched root is
+        // a resolution input (a nearer DESCRIPTION created in any of
+        // them changes the file's package grouping without a source
+        // edit), and the root chain itself keeps running upward.
+        let mut expected_dirs = vec![root.to_path_buf()];
+        for dir in ["pkg/R", "pkg", "other/deep/src", "other/deep", "other"] {
+            expected_dirs.push(root.join(dir));
+        }
+        let mut dir = root.parent();
+        while let Some(parent) = dir {
+            expected_dirs.push(parent.to_path_buf());
+            dir = parent.parent();
+        }
+        for dir in &expected_dirs {
+            for name in ["DESCRIPTION", "NAMESPACE"] {
+                assert!(
+                    meta.contains(&dir.join(name)),
+                    "missing {name} for {}",
+                    dir.display()
+                );
+            }
+        }
+        // Boundedness: nothing below `empty_pkg` and no duplicates —
+        // each unique directory contributes exactly its two candidates.
+        assert!(
+            !meta
+                .iter()
+                .any(|path| path.starts_with(root.join("empty_pkg"))),
+            "a directory with no discovered R file below it must not be watched: {meta:?}"
+        );
+        let mut sorted = meta.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), meta.len(), "duplicate paths: {meta:?}");
+        assert_eq!(meta.len(), 2 * expected_dirs.len(), "set: {meta:?}");
+    }
+
+    /// An explicit-file root must keep the same ancestor coverage as
+    /// watching its directory: a fresh one-shot resolves the file
+    /// against its nearest DESCRIPTION ancestor, so the file's parent
+    /// and every package boundary above it stay watchable even though
+    /// the root itself is not a directory.
+    #[test]
+    fn package_meta_paths_cover_explicit_file_root_ancestors() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("pkg/R")).unwrap();
+        let use_r = root.join("pkg/R/use.R");
+        std::fs::write(&use_r, "page <- tags\n").unwrap();
+
+        let meta = package_meta_paths(std::slice::from_ref(&use_r), std::slice::from_ref(&use_r));
+
+        for dir in [root.join("pkg/R"), root.join("pkg"), root.to_path_buf()] {
+            for name in ["DESCRIPTION", "NAMESPACE"] {
+                assert!(
+                    meta.contains(&dir.join(name)),
+                    "missing {name} for {}",
+                    dir.display()
+                );
+            }
+        }
     }
 
     #[test]

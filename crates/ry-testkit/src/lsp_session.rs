@@ -162,6 +162,19 @@ where
         self.response(method, id).await
     }
 
+    /// Send a request whose method takes NO params and await its
+    /// response. Distinct from [`Self::request`] with `Value::Null`:
+    /// the explicit `"params": null` field is rejected by no-parameter
+    /// handlers (tower-lsp's `shutdown` answers `Unexpected params`),
+    /// while this omits the field entirely, the JSON-RPC absent form
+    /// those handlers require. Non-matching messages received while
+    /// awaiting the response are retained, so publications are not
+    /// lost across the rendezvous.
+    pub async fn request_without_params(&mut self, method: &str) -> io::Result<Value> {
+        let id = self.client.request_without_params(method).await?;
+        self.response(method, id).await
+    }
+
     async fn response(&mut self, method: &str, id: u64) -> io::Result<Value> {
         let response = self
             .receive_matching(0, |message| {

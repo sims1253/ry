@@ -159,12 +159,20 @@ All notable changes to ry are documented in this file.
   path, the same pipeline the watched handler runs for a landed
   refresh; it never dispatches for a path whose refresh is still in
   flight (that would supersede a read that may still land, the exact
-  waste the per-path epochs exist to prevent) and idles out — with the
-  enqueue and the idle transition sharing the state lock — until an
-  event or a losing refresh's exit wakes it again. Rounds that retire
-  nothing are bounded, so persistent infrastructure failure ends in a
-  visible warning instead of a spin; folder removal and shutdown cancel
-  their obligations outright. Once a burst of events stops, the next
+  waste the per-path epochs exist to prevent) and idles out — the idle
+  transition re-derives its verdict and clears its active flag under
+  one state-lock hold, and a refresh whose bytes never landed keeps a
+  driver scheduled from its own exit (a landed one leaves the
+  context-and-publication follow-up to its dispatcher), so an exit
+  landing inside the idle window cannot drop the signal. Rounds that
+  retire nothing are bounded — a round retires an obligation when one
+  settles out of the map, a monotonic count immune to the event
+  arrivals that offset retirements in a map-length comparison — so
+  persistent infrastructure failure ends in a visible warning instead
+  of a spin; folder removal and shutdown cancel their obligations
+  outright, with a driver already inside a round re-checking the
+  shutdown flag under the lock before each dispatch and follow-up, so
+  no work or publication resurrects for the ended session. Once a burst of events stops, the next
   round lands (nothing else moves the generation under silence), so
   the final analysis reaches the fresh-analysis verdict with no rescue
   event.

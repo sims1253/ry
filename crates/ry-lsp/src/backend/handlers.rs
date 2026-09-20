@@ -623,10 +623,17 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> LspResult<()> {
         // Cancel queued reconciliation work: a driver must not resurrect
-        // publications after shutdown. An active driver observes the
-        // emptied map at its next lock check and idles out — the flag
-        // clears with the transition, so nothing sticks active.
-        self.state.lock().await.pending_refreshes.clear();
+        // publications after shutdown. The flag and the purge are one
+        // critical section, and the driver re-checks the flag under the
+        // lock at its round head, at every in-round dispatch, and
+        // before its follow-up publications, so a driver already inside
+        // a round stands down at the next check instead of dispatching
+        // new work; the flag clear with the transition means nothing
+        // sticks active. Claims are refused under the same flag, so no
+        // post-shutdown event can re-seed the emptied map.
+        let mut state = self.state.lock().await;
+        state.shutting_down = true;
+        state.pending_refreshes.clear();
         Ok(())
     }
 

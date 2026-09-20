@@ -61,7 +61,7 @@ struct CachedHints {
 /// analysis built on a stale import context, which is not "converged"
 /// either.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum RefreshDuty {
+enum RefreshDuty {
     /// Indexed bytes (or a confirmed removal), the owning package's
     /// resolution context, and the publication that follows.
     BytesContextPublication,
@@ -72,26 +72,33 @@ pub(super) enum RefreshDuty {
 }
 
 /// One retained reconciliation obligation: the refresh epoch that
-/// claimed it (the revision an acknowledgment must not exceed), the
-/// duty still owed, and how many refreshes for the path are currently
-/// in flight (claimed but not yet returned). The driver never
+/// claimed it (the revision an acknowledgment must not exceed) and the
+/// duty still owed. Whether a refresh for the path is currently in
+/// flight (claimed but not yet returned) lives in
+/// [`State::refreshes_in_flight`], outside this map, so cancelling an
+/// obligation cannot disturb the in-flight accounting. The driver never
 /// dispatches for a path with an in-flight refresh — preempting it
 /// would claim a newer epoch and supersede a read that may still land,
 /// the exact waste #538's start-order rule exists to prevent — so a
 /// losing refresh's exit is what re-wakes the driver for its path.
 #[derive(Clone, Copy)]
-pub(super) struct PendingRefresh {
+struct PendingRefresh {
     epoch: u64,
     duty: RefreshDuty,
-    in_flight: u32,
 }
 
 /// Driver rounds without any obligation retiring before the driver
 /// gives up with a visible warning; see
-/// [`State::reconcile_rounds_without_progress`]. Generous enough that
-/// ordinary churn never trips it — every delivered event is finite, and
-/// under silence a round always lands because nothing else moves the
-/// index generation while the driver re-reads.
+/// [`State::reconcile_rounds_without_progress`]. A round retires an
+/// obligation when one is removed from `pending_refreshes` by settling
+/// (a terminal outcome or a completed context-and-publication phase) —
+/// measured by the monotonic [`State::retired_refreshes`] counter, not
+/// by the map shrinking, because a mid-round event arrival offsets a
+/// real retirement in a length comparison while retiring nothing
+/// itself. Generous enough that ordinary churn never trips it — every
+/// delivered event is finite, and under silence a round always lands
+/// because nothing else moves the index generation while the driver
+/// re-reads.
 const RECONCILE_MAX_STALLED_ROUNDS: u32 = 8;
 
 #[derive(Default)]
@@ -159,12 +166,37 @@ pub(super) struct State {
     /// the entry, so a newer event arriving mid-read keeps its own
     /// fresh obligation. See [`RefreshDuty`] for the phases.
     pending_refreshes: HashMap<String, PendingRefresh>,
+    /// Per-path count of refreshes claimed but not yet returned,
+    /// keyed like `refresh_epochs`. Kept OUTSIDE
+    /// `pending_refreshes` on purpose: obligations are cancelled
+    /// wholesale (folder removal, shutdown, the stall bound) while
+    /// their refreshes are still in flight, and a later event can
+    /// re-enqueue a fresh obligation for the same path before the old
+    /// refresh returns — settling by path against the obligation map
+    /// would let the old refresh's exit decrement the NEW obligation's
+    /// counter, an undercount the driver would read as "idle" before
+    /// preempting the in-flight read, the exact waste the counter
+    /// exists to prevent. The only writers are the claim and the exit
+    /// inside `refresh_disk_entry`, so the count always equals
+    /// claims-minus-returns regardless of what happened to the
+    /// obligations. Like `refresh_epochs`, entries return to zero (and
+    /// leave) as their refreshes exit, never on cancellation.
+    refreshes_in_flight: HashMap<String, u32>,
+    /// Monotonic count of reconciliation obligations RETIRED — removed
+    /// from `pending_refreshes` by settling, not by cancellation. The
+    /// driver's progress measurement compares this across a round:
+    /// folder removals, shutdown, and the stall bound cancel
+    /// obligations without retiring them, so they do not count as the
+    /// driver's progress (each is a one-shot external event that
+    /// shrinks the map toward the driver's exit, not work the driver
+    /// could stall against).
+    retired_refreshes: u64,
     /// True while the reconciliation driver task is between its spawn
-    /// and its idle transition. The idle transition (empty check plus
-    /// flag clear) and every enqueue-side wakeup share the state lock,
-    /// so an obligation cannot appear between the driver's empty check
-    /// and its flag clear: the enqueue either sees the flag still set
-    /// (the running driver re-checks before idling) or finds it clear
+    /// and its idle transition. The idle transition and every
+    /// enqueue-side wakeup share the state lock, so an obligation
+    /// cannot appear between the driver's last duty check and its
+    /// flag clear: the enqueue either sees the flag still set (the
+    /// running driver re-checks before idling) or finds it clear
     /// and spawns a driver itself. At most one driver runs at a time.
     reconcile_driver_active: bool,
     /// Consecutive driver rounds that retired no obligation; bounds the
@@ -172,8 +204,17 @@ pub(super) struct State {
     /// failure, unending index churn) — after
     /// [`RECONCILE_MAX_STALLED_ROUNDS`] such rounds the remaining
     /// obligations are dropped with a visible warning instead of
-    /// spinning (or full-scanning) forever.
+    /// spinning (or full-scanning) forever. Progress is a retired
+    /// obligation (see [`State::retired_refreshes`]), so events
+    /// arriving mid-round cannot mask the rounds' own retirements.
     reconcile_rounds_without_progress: u32,
+    /// Set by `shutdown`: the session is ending, so no reconciliation
+    /// work may be claimed, dispatched, or published afterwards. The
+    /// flag and the obligation purge are one critical section, and
+    /// every claim/dispatch/publication site re-checks it under the
+    /// state lock, so a driver already inside a round cannot resurrect
+    /// work or client publications for the ended session.
+    shutting_down: bool,
     /// Files opened during initialization wait for the first workspace context.
     initial_index_pending: bool,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
@@ -481,7 +522,9 @@ impl State {
     /// inserted at its own, higher epoch and keeps its full duty — so
     /// an older or unrelated writer never acknowledges another
     /// revision's obligation (#538's start-order rule, applied to the
-    /// bookkeeping).
+    /// bookkeeping). A removal here RETIRES the obligation: the
+    /// monotonic `retired_refreshes` count moves, which is the driver's
+    /// progress signal.
     fn settle_pending_refresh(&mut self, path: &str, epoch: u64, landed: bool) {
         let Some(pending) = self.pending_refreshes.get_mut(path) else {
             return;
@@ -493,27 +536,99 @@ impl State {
             pending.duty = RefreshDuty::ContextPublication;
         } else {
             self.pending_refreshes.remove(path);
+            self.retired_refreshes = self.retired_refreshes.wrapping_add(1);
         }
     }
 
-    /// Record that one refresh for `path` finished (its claim's
-    /// counterpart to the enqueue-side `in_flight` increment).
-    /// Returns whether an obligation remains for the path AND no
-    /// refresh is in flight for it — the condition under which the
-    /// reconciliation driver may take over.
-    fn note_refresh_exit(&mut self, path: &str) -> bool {
-        match self.pending_refreshes.get_mut(path) {
-            Some(pending) => {
-                pending.in_flight = pending.in_flight.saturating_sub(1);
-                pending.in_flight == 0
-            }
-            None => false,
+    /// Claim the path's next refresh epoch and enqueue (or re-arm) its
+    /// reconciliation obligation, together with the in-flight slot for
+    /// the claiming refresh — one critical section so a concurrent
+    /// driver or shutdown decision cannot observe the claim without its
+    /// bookkeeping. Returns the claimed epoch, or `None` when the
+    /// session is shutting down: no post-shutdown claim may re-seed the
+    /// maps that `shutdown` left empty.
+    fn claim_refresh_epoch(&mut self, path: &str) -> Option<u64> {
+        if self.shutting_down {
+            return None;
         }
+        self.refresh_epoch_counter = self.refresh_epoch_counter.wrapping_add(1);
+        let refresh_epoch = self.refresh_epoch_counter;
+        self.refresh_epochs.insert(path.to_string(), refresh_epoch);
+        *self
+            .refreshes_in_flight
+            .entry(path.to_string())
+            .or_insert(0) += 1;
+        let pending = self
+            .pending_refreshes
+            .entry(path.to_string())
+            .or_insert(PendingRefresh {
+                epoch: refresh_epoch,
+                duty: RefreshDuty::BytesContextPublication,
+            });
+        pending.epoch = refresh_epoch;
+        pending.duty = RefreshDuty::BytesContextPublication;
+        Some(refresh_epoch)
+    }
+
+    /// Record that one refresh for `path` finished (its claim's
+    /// counterpart to the enqueue-side in-flight increment, kept
+    /// independent of the obligation map's removals). Returns whether
+    /// an obligation remains for the path AND no refresh is in flight
+    /// for it — the condition under which the reconciliation driver
+    /// may take over.
+    fn note_refresh_exit(&mut self, path: &str) -> bool {
+        if let Some(in_flight) = self.refreshes_in_flight.get_mut(path) {
+            *in_flight = in_flight.saturating_sub(1);
+            if *in_flight == 0 {
+                self.refreshes_in_flight.remove(path);
+            }
+        }
+        self.pending_refreshes.contains_key(path) && !self.refreshes_in_flight.contains_key(path)
+    }
+
+    /// Whether some pending obligation is drivable right now: the
+    /// session is not shutting down and at least one owed path has no
+    /// refresh in flight. The driver's idle transition re-derives its
+    /// verdict under the same lock hold that clears the active flag,
+    /// because the duty checks earlier in a round ran under separate,
+    /// earlier lock holds — an in-flight refresh can exit (and its
+    /// dispatcher's epilogue wake can find the flag still set, waking
+    /// nobody) between the last duty check and the clear.
+    fn has_drivable_obligation(&self) -> bool {
+        !self.shutting_down
+            && self
+                .pending_refreshes
+                .iter()
+                .any(|(path, _)| !self.refreshes_in_flight.contains_key(path))
+    }
+
+    /// Fold one finished driver round into the stall bookkeeping:
+    /// `retired_before` is the monotonic retirement count snapshotted
+    /// at the round's start. A round that retired at least one
+    /// obligation resets the stall count (arrivals during the round are
+    /// irrelevant — they retire nothing and are owed work themselves);
+    /// a round that retired nothing increments it, and reaching
+    /// [`RECONCILE_MAX_STALLED_ROUNDS`] drops the surviving
+    /// obligations, returning them for the visible warning.
+    fn reconcile_round_progress(&mut self, retired_before: u64) -> Option<Vec<String>> {
+        if self.retired_refreshes != retired_before {
+            self.reconcile_rounds_without_progress = 0;
+        } else if !self.pending_refreshes.is_empty() {
+            self.reconcile_rounds_without_progress += 1;
+            if self.reconcile_rounds_without_progress >= RECONCILE_MAX_STALLED_ROUNDS {
+                let stuck: Vec<String> = self.pending_refreshes.keys().cloned().collect();
+                self.pending_refreshes.clear();
+                self.reconcile_rounds_without_progress = 0;
+                return Some(stuck);
+            }
+        }
+        None
     }
 
     /// Complete the final phase of a landing obligation — the context
     /// refresh settled and the publication is scheduled — removing the
-    /// entry. Guarded on the duty rather than the epoch because the
+    /// entry (and retiring it: the completion is the driver's progress
+    /// signal). Guarded on the duty rather than the epoch because the
     /// landing epoch is not in scope at the call site: a newer event
     /// overwrote the entry with a FULL duty, which this must not
     /// remove; that event's own refresh completes its own obligation.
@@ -524,6 +639,7 @@ impl State {
             .is_some_and(|pending| pending.duty == RefreshDuty::ContextPublication)
         {
             self.pending_refreshes.remove(path);
+            self.retired_refreshes = self.retired_refreshes.wrapping_add(1);
         }
     }
 
@@ -732,6 +848,21 @@ enum BackgroundIndexOutcome {
     Installed,
     SettledWithoutInstall,
     Superseded,
+}
+
+/// Spawn one reconciliation driver task. A plain function boundary, not
+/// an inline `tokio::spawn` at the wake site: the driver's future
+/// contains the refresh ladder, whose exit-side wake schedules the
+/// driver again, so an inline spawn would make the compiler's Send
+/// obligations circular (the driver's future must be Send because it is
+/// spawned, contains the wake, whose spawn again requires the driver's
+/// future Send). The synchronous call boundary keeps the wake's future
+/// free of the spawned future, breaking the cycle at the cost of one
+/// opaque call.
+fn spawn_reconciliation_driver(backend: Backend) {
+    tokio::spawn(async move {
+        backend.run_reconciliation().await;
+    });
 }
 
 impl Backend {
@@ -1763,13 +1894,18 @@ impl Backend {
     /// Ensure the reconciliation driver runs when obligations are
     /// pending (P1). Cheap and idempotent — the flag check and the
     /// enqueue-side bookkeeping share the state lock, so calling this
-    /// from every handler epilogue cannot spawn more than one driver;
-    /// see [`State::reconcile_driver_active`] for the lost-wakeup
-    /// freedom argument.
+    /// from every handler epilogue and every retained refresh exit
+    /// cannot spawn more than one driver; see
+    /// [`State::reconcile_driver_active`] for the lost-wakeup
+    /// freedom argument. A no-op once shutdown began: the obligations
+    /// are cancelled and no claim can re-seed them.
     async fn wake_reconciliation(&self) {
         let spawn_now = {
             let mut state = self.state.lock().await;
-            if state.reconcile_driver_active || state.pending_refreshes.is_empty() {
+            if state.reconcile_driver_active
+                || state.shutting_down
+                || state.pending_refreshes.is_empty()
+            {
                 false
             } else {
                 state.reconcile_driver_active = true;
@@ -1781,10 +1917,7 @@ impl Backend {
         }
         #[cfg(feature = "test-util")]
         crate::test_seam::note_reconciliation_driver_spawn();
-        let backend = self.clone();
-        tokio::spawn(async move {
-            backend.run_reconciliation().await;
-        });
+        spawn_reconciliation_driver(self.clone());
     }
 
     /// Drive retained watched/close obligations until they settle —
@@ -1802,25 +1935,32 @@ impl Backend {
     /// Liveness: every delivered event is finite, and once the burst
     /// stops nothing else moves the index generation, so the next
     /// round's refresh lands and drains its obligation; the loop exits
-    /// through the idle transition (empty map, flag cleared, both
-    /// under the lock) the moment nothing is owed. Termination under
-    /// pathology is bounded by [`RECONCILE_MAX_STALLED_ROUNDS`]:
-    /// rounds that retire nothing eventually give up with a visible
-    /// warning instead of spinning or full-scanning forever. Root
-    /// removal and shutdown cancel obligations outright, so the driver
-    /// never resurrects work for a workspace that no longer exists.
+    /// through the idle transition (empty or cancelled map, flag
+    /// cleared, both under the lock) the moment nothing is owed.
+    /// Termination under pathology is bounded by
+    /// [`RECONCILE_MAX_STALLED_ROUNDS`]: rounds that retire nothing
+    /// eventually give up with a visible warning instead of spinning
+    /// or full-scanning forever; a round retires an obligation when
+    /// one settles (removed from the map), so mid-round arrivals —
+    /// which offset retirements in a map-length comparison while
+    /// retiring nothing themselves — cannot masquerade as stagnation.
+    /// Root removal and shutdown cancel obligations outright, and both
+    /// the round head and every in-round dispatch re-check the
+    /// shutdown flag under the state lock, so the driver never
+    /// resurrects work or publications for a workspace that no longer
+    /// exists.
     async fn run_reconciliation(&self) {
         loop {
-            let (round, before) = {
+            let (round, retired_before) = {
                 let mut state = self.state.lock().await;
-                if state.pending_refreshes.is_empty() {
+                if state.pending_refreshes.is_empty() || state.shutting_down {
                     state.reconcile_driver_active = false;
                     state.reconcile_rounds_without_progress = 0;
                     return;
                 }
                 (
                     state.pending_refreshes.keys().cloned().collect::<Vec<_>>(),
-                    state.pending_refreshes.len(),
+                    state.retired_refreshes,
                 )
             };
             #[cfg(feature = "test-util")]
@@ -1837,22 +1977,30 @@ impl Backend {
             for path in round {
                 let duty = {
                     let state = self.state.lock().await;
-                    state
-                        .pending_refreshes
-                        .get(&path)
-                        // Never preempt an in-flight refresh: its read
-                        // may still land under its own (newer-than-any
-                        // driver) claim, and a driver-side re-claim would
-                        // supersede it needlessly. Its exit re-wakes the
-                        // driver if the obligation survives it.
-                        .filter(|pending| pending.in_flight == 0)
-                        .map(|pending| pending.duty)
+                    // Shutdown cancels every obligation outright; a
+                    // round already in progress re-checks here, under
+                    // the lock, so no dispatch follows the cancelled
+                    // map even when the purge landed mid-round.
+                    if state.shutting_down {
+                        None
+                    } else {
+                        state
+                            .pending_refreshes
+                            .get(&path)
+                            // Never preempt an in-flight refresh: its read
+                            // may still land under its own (newer-than-any
+                            // driver) claim, and a driver-side re-claim would
+                            // supersede it needlessly. Its exit re-wakes the
+                            // driver if the obligation survives it.
+                            .filter(|_| !state.refreshes_in_flight.contains_key(&path))
+                            .map(|pending| pending.duty)
+                    }
                 };
                 match duty {
                     // Retired while an earlier path was being driven
                     // (its own event's refresh completed the follow-up),
-                    // or owned by an in-flight refresh: nothing for this
-                    // round to do.
+                    // owned by an in-flight refresh, or cancelled by
+                    // shutdown: nothing for this round to do.
                     None => {}
                     Some(RefreshDuty::BytesContextPublication) => {
                         did_work = true;
@@ -1874,17 +2022,41 @@ impl Backend {
                 }
             }
             if !did_work {
+                // Test seam: park between the round's duty checks and
+                // the idle decision below, holding no lock, so a test
+                // can interleave a refresh exit exactly inside the
+                // window the re-check below exists for.
+                #[cfg(feature = "test-util")]
+                crate::test_seam::maybe_pause_driver_idle().await;
                 // Every surviving obligation is owned by an in-flight
-                // refresh (or vanished mid-round). Idle out instead of
-                // spinning against the parked refresh; the exit-side
-                // wakeup re-spawns a driver when the entry is idle and
-                // still owed.
+                // refresh (or vanished mid-round) — but the duty checks
+                // above ran under earlier, separate lock holds, and an
+                // in-flight refresh may have exited in between with its
+                // dispatcher's epilogue wake finding the flag still set
+                // (waking nobody). Re-derive the idle verdict under the
+                // SAME lock hold that clears the flag: if anything is
+                // drivable now, keep driving instead of dropping the
+                // signal; otherwise idle out — the exit-side wakeup
+                // re-spawns a driver when an entry is idle and still
+                // owed.
                 let mut state = self.state.lock().await;
+                if state.has_drivable_obligation() {
+                    continue;
+                }
                 state.reconcile_driver_active = false;
                 state.reconcile_rounds_without_progress = 0;
                 return;
             }
             if !follow_up.is_empty() {
+                // Shutdown may have landed while the dispatched
+                // refreshes were running: their landings are already
+                // committed index state, but the follow-up publications
+                // belong to the ended session and must not go out. The
+                // round head performs the idle transition on the next
+                // pass.
+                if self.state.lock().await.shutting_down {
+                    continue;
+                }
                 // Same order as the watched handler: respawn a retired
                 // initial pass, advance the contexts, then publish.
                 let index_pending = { self.state.lock().await.initial_index_pending };
@@ -1899,20 +2071,12 @@ impl Backend {
                 }
             }
             let mut state = self.state.lock().await;
-            if state.pending_refreshes.len() < before {
-                state.reconcile_rounds_without_progress = 0;
-            } else if !state.pending_refreshes.is_empty() {
-                state.reconcile_rounds_without_progress += 1;
-                if state.reconcile_rounds_without_progress >= RECONCILE_MAX_STALLED_ROUNDS {
-                    let stuck: Vec<String> = state.pending_refreshes.keys().cloned().collect();
-                    tracing::warn!(
-                        paths = ?stuck,
-                        rounds = RECONCILE_MAX_STALLED_ROUNDS,
-                        "watched-file reconciliation stalled; dropping the retained obligations                          (final analysis for these paths may lag until their next event)"
-                    );
-                    state.pending_refreshes.clear();
-                    state.reconcile_rounds_without_progress = 0;
-                }
+            if let Some(stuck) = state.reconcile_round_progress(retired_before) {
+                tracing::warn!(
+                    paths = ?stuck,
+                    rounds = RECONCILE_MAX_STALLED_ROUNDS,
+                    "watched-file reconciliation stalled; dropping the retained obligations (final analysis for these paths may lag until their next event)"
+                );
             }
         }
     }
@@ -2003,47 +2167,47 @@ impl Backend {
         // refresh's entry and wrongly discard the freshest bytes, so
         // those slots persist until the path's next claim or a landed
         // removal — one per distinct refreshed path, never per event.
-        let refresh_epoch = {
-            let mut state = self.state.lock().await;
-            state.refresh_epoch_counter = state.refresh_epoch_counter.wrapping_add(1);
-            let refresh_epoch = state.refresh_epoch_counter;
-            state
-                .refresh_epochs
-                .insert(path_string.clone(), refresh_epoch);
-            // Enqueue the reconciliation obligation BEFORE the read that
-            // might lose its races (P1): the entry rides the same claim,
-            // so a newer event's claim overwrites it with a fresher full
-            // duty and this refresh can only ever settle the revision it
-            // covers. Without the entry, a ladder that loses both
-            // generation races AND its backstop scan returned while
-            // forgetting the path — the watched event's whole duty
-            // stranded with no open document and no future event to
-            // rescue it. The in-flight count pairs with the exit-side
-            // decrement in the wrapper below, so the driver can tell a
-            // path waiting for work from one whose refresh is merely
-            // still running.
-            let pending = state
-                .pending_refreshes
-                .entry(path_string.clone())
-                .or_insert(PendingRefresh {
-                    epoch: refresh_epoch,
-                    duty: RefreshDuty::BytesContextPublication,
-                    in_flight: 0,
-                });
-            pending.epoch = refresh_epoch;
-            pending.duty = RefreshDuty::BytesContextPublication;
-            pending.in_flight += 1;
-            refresh_epoch
+        // The claim also enqueues the reconciliation obligation BEFORE
+        // the read that might lose its races (P1): the entry rides the
+        // same claim, so a newer event's claim overwrites it with a
+        // fresher full duty and this refresh can only ever settle the
+        // revision it covers. Without the entry, a ladder that loses
+        // both generation races AND its backstop scan returned while
+        // forgetting the path — the watched event's whole duty
+        // stranded with no open document and no future event to
+        // rescue it. The in-flight slot pairs with the exit-side
+        // decrement in the wrapper below, so the driver can tell a
+        // path waiting for work from one whose refresh is merely
+        // still running. A shutting-down session claims nothing: the
+        // caller's whole follow-up (context, publication) belongs to
+        // the ended session.
+        let Some(refresh_epoch) = self.state.lock().await.claim_refresh_epoch(&path_string) else {
+            return false;
         };
         let landed = self.refresh_disk_entry_claimed(path, refresh_epoch).await;
-        {
+        let retained_idle = {
             let mut state = self.state.lock().await;
-            state.note_refresh_exit(&path_string);
+            let driver_may_take_over = state.note_refresh_exit(&path_string);
+            // The exit's signal is split by what survived it: a landed
+            // refresh leaves the context-and-publication phase to its
+            // DISPATCHER (this call's caller), whose own follow-up and
+            // epilogue wake cover it — waking here as well would spawn
+            // a driver on every unopposed save, the pure overhead the
+            // coalescing contract forbids. A refresh whose bytes never
+            // landed (superseded, exhausted ladder, lost backstop)
+            // leaves an obligation no one else is guaranteed to drive
+            // except the caller's epilogue, so keep the driver
+            // scheduled from the exit itself instead of trusting every
+            // future caller to remember the epilogue wake.
+            driver_may_take_over
+                && state
+                    .pending_refreshes
+                    .get(&path_string)
+                    .is_some_and(|pending| pending.duty == RefreshDuty::BytesContextPublication)
+        };
+        if retained_idle {
+            self.wake_reconciliation().await;
         }
-        // No wake here: every caller's epilogue wakes (the watched
-        // handler and didClose at their ends, the driver by looping),
-        // and waking from inside the ladder would make the driver's
-        // future recursively contain itself.
         landed
     }
 
@@ -3127,5 +3291,121 @@ fn byte_offset_to_point_relative(start_position: ry_core::Point, new_text: &str)
             row: start_position.row + newlines,
             column: new_text.len() - last_newline - 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod reconcile_accounting_tests {
+    use super::*;
+
+    /// The driver's stall bound must count OBLIGATIONS RETIRED, not a
+    /// shrink of `pending_refreshes`: a round can genuinely retire an
+    /// obligation while a mid-round event arrival re-seeds the map, so
+    /// eight progressing rounds under sustained arrivals would still
+    /// hit a length-based bound and drop obligations that were being
+    /// serviced. Drive the accounting directly: eight offsetting
+    /// rounds (one retirement, one arrival each — the map never
+    /// shrinks) never trip the bound, and only eight truly retirement-
+    /// free rounds drop what remains.
+    #[test]
+    fn stall_progress_counts_retirements_not_map_shrinkage() {
+        let mut state = State::default();
+        let epoch = state.claim_refresh_epoch("/a.R").unwrap();
+        assert!(state.note_refresh_exit("/a.R"));
+
+        // Eight rounds that each retire one obligation while one
+        // arrival lands mid-round: the map size is constant throughout,
+        // so a length comparison would count every round as stalled.
+        let mut current = "/a.R";
+        for round in 0..8 {
+            let retired_before = state.retired_refreshes;
+            // The round drives `current` to a terminal outcome
+            // (settling removes — retires — the obligation)...
+            state.settle_pending_refresh(current, epoch.wrapping_add(round), false);
+            // ...while an event arrives for a fresh path, claimed and
+            // still in flight when the round ends.
+            let arrival = format!("/arrival{round}.R");
+            state.claim_refresh_epoch(&arrival).unwrap();
+            assert_eq!(
+                state.retired_refreshes,
+                retired_before + 1,
+                "round {round} must retire exactly its driven obligation"
+            );
+            assert!(
+                state.reconcile_round_progress(retired_before).is_none(),
+                "a round that retired an obligation is progress; arrivals cannot mask it"
+            );
+            assert_eq!(
+                state.reconcile_rounds_without_progress, 0,
+                "retiring rounds must reset the stall count"
+            );
+            current = Box::leak(arrival.into_boxed_str());
+        }
+
+        // Eight retirement-free rounds over the survivor: the first
+        // seven accumulate, the eighth drops it with the stuck list.
+        for stalled in 1..=8 {
+            let retired_before = state.retired_refreshes;
+            let dropped = state.reconcile_round_progress(retired_before);
+            assert_eq!(state.retired_refreshes, retired_before);
+            if stalled < RECONCILE_MAX_STALLED_ROUNDS {
+                assert!(dropped.is_none(), "round {stalled} is below the bound");
+                assert_eq!(state.reconcile_rounds_without_progress, stalled);
+            } else {
+                let stuck = dropped.expect("the bound's round drops the survivors");
+                assert_eq!(stuck, vec![current.to_string()]);
+                assert!(state.pending_refreshes.is_empty());
+                assert_eq!(state.reconcile_rounds_without_progress, 0);
+            }
+        }
+    }
+
+    /// In-flight accounting must be independent of the obligation map's
+    /// removals: a cancellation (folder removal, shutdown, the stall
+    /// bound) can drop a pending entry while its refresh is still in
+    /// flight, and a later event re-enqueues a FRESH obligation for the
+    /// same path. The old refresh's exit must not decrement the new
+    /// obligation's counter — an undercount the driver would read as
+    /// "idle" and preempt the in-flight read with.
+    #[test]
+    fn in_flight_accounting_survives_obligation_cancellation() {
+        let mut state = State::default();
+        assert!(state.claim_refresh_epoch("/a.R").is_some());
+        // The cancellation drops the obligation (root-removal retain,
+        // shutdown clear, stall drop) but cannot recall the refresh.
+        state.pending_refreshes.clear();
+        // A later event re-enqueues before the old refresh returns.
+        let rearm_epoch = state.claim_refresh_epoch("/a.R").unwrap();
+        assert_eq!(
+            state.refresh_epochs.get("/a.R"),
+            Some(&rearm_epoch),
+            "the fresh claim owns the path"
+        );
+        assert!(
+            !state.note_refresh_exit("/a.R"),
+            "the old refresh's exit must not report the new obligation drivable"
+        );
+        assert!(
+            !state.has_drivable_obligation(),
+            "the driver must not preempt the re-armed refresh that is still in flight"
+        );
+        assert!(
+            state.note_refresh_exit("/a.R"),
+            "the owning refresh's exit is what makes the obligation drivable"
+        );
+        assert!(state.has_drivable_obligation());
+    }
+
+    /// A shut-down session refuses every claim, so no post-shutdown
+    /// event can re-seed the obligation map the shutdown purged.
+    #[test]
+    fn shutdown_refuses_refresh_claims() {
+        let mut state = State::default();
+        assert!(state.claim_refresh_epoch("/a.R").is_some());
+        state.shutting_down = true;
+        state.pending_refreshes.clear();
+        assert!(state.claim_refresh_epoch("/b.R").is_none());
+        assert!(state.pending_refreshes.is_empty());
+        assert!(!state.has_drivable_obligation());
     }
 }

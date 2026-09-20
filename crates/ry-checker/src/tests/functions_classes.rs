@@ -195,16 +195,31 @@ fn sapply_named_callback_simplifies() {
 
 #[test]
 fn sapply_typeshed_callback_simplifies() {
-    // Typeshed callback: `sqrt` returns double.
-    // `sapply(c(1.0, 4.0), sqrt)` simplifies to double vector.
+    // Typeshed callback: `floor` returns double.
+    // `sapply(c(1.0, 4.0), floor)` simplifies to double vector.
     let diags = check(
-        "v <- sapply(c(1.0, 4.0), sqrt)\n\
+        "v <- sapply(c(1.0, 4.0), floor)\n\
              bad <- v + \"x\"\n",
     );
     assert!(
         diags.iter().any(|d| d.code == "RY040"),
-        "expected RY040 from sapply(sqrt) + character, got {:?}",
+        "expected RY040 from sapply(floor) + character, got {:?}",
         diags
+    );
+
+    // The integrated candidate typeshed (vendor/SOURCE cd81a0f) types
+    // the complex-capable math family as union(double, complex) —
+    // `sqrt(-1)` is complex in R, so a plain double claim was wrong.
+    // The simplify rule declines on a union callback return instead of
+    // claiming a double vector, and the arithmetic guard on the
+    // may-be-complex result correctly stays silent.
+    let (diags, scope) = check_with_scope("v <- sapply(c(1.0, 4.0), sqrt)\n");
+    assert!(diags.is_empty(), "{diags:?}");
+    let v = scope.get("v").expect("v should be bound");
+    assert_ne!(
+        v.mode,
+        Mode::Double,
+        "union-returning callbacks must not simplify to a double claim"
     );
 }
 

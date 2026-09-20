@@ -443,10 +443,8 @@ impl Checker {
     /// - RY091 stays silent for every non-required or successfully bound
     ///   parameter.
     /// - RY092 stays silent without a declared type, for opaque/unknown
-    ///   actuals, whenever a union has any compatible overlap, for R's
-    ///   logical/integer/double coercion family, and for `demand_only`
-    ///   parameters (relational demands such as `vec_cast(x, to)`, whose
-    ///   type arms RY110 without asserting the argument's own type).
+    ///   actuals, whenever a union has any compatible overlap, and for R's
+    ///   logical/integer/double coercion family.
     pub(crate) fn check_typeshed_call_arguments(
         &mut self,
         function_name: &str,
@@ -487,13 +485,7 @@ impl Checker {
             if generic_argument_may_dispatch(&self.typeshed.globals, function_name, actual) {
                 continue;
             }
-            // A demand-only parameter types a downstream mode demand
-            // (RY110) without asserting the argument's own type: the
-            // declared type is relationally incomplete (e.g.
-            // `vec_cast(x, to)` accepts any `x` castable to `to`), so an
-            // RY092 provable-incompatibility verdict would false-positive
-            // on legal calls. The demand gate below still reads it.
-            if !parameter.demand_only && types_provably_incompatible(actual, &expected) {
+            if types_provably_incompatible(actual, &expected) {
                 self.emit(
                     Severity::Error,
                     args[argument_index].span,
@@ -999,7 +991,6 @@ mod argument_matching_tests {
                 type_: None,
                 required: false,
                 default: None,
-                demand_only: false,
             })
             .collect::<Vec<_>>();
         assert_eq!(

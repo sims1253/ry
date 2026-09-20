@@ -1,0 +1,1044 @@
+{
+  "schema_version": "2",
+  "package": "curl",
+  "version": "0.0.1",
+  "functions": {
+    "curl": {
+      "params": [
+        "url",
+        "open",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_download": {
+      "params": [
+        "url",
+        "destfile",
+        "quiet",
+        "mode",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_echo": {
+      "params": [
+        "handle",
+        "port",
+        "progress",
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_escape": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_fetch_disk": {
+      "params": [
+        "url",
+        "path",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_fetch_echo": {
+      "params": [
+        "url",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_fetch_memory": {
+      "params": [
+        "url",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_fetch_multi": {
+      "params": [
+        "url",
+        "done",
+        "fail",
+        "pool",
+        "data",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_fetch_stream": {
+      "params": [
+        "url",
+        "fun",
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_modify_url": {
+      "params": [
+        "url",
+        "scheme",
+        "host",
+        "port",
+        "path",
+        "query",
+        "fragment",
+        "user",
+        "password",
+        "params"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_options": {
+      "params": [
+        "filter"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_options_table": {
+      "params": [
+        "filter"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_parse_url": {
+      "params": [
+        "url",
+        "baseurl",
+        "decode",
+        "params",
+        "default_scheme"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_symbols": {
+      "params": [
+        "filter"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_unescape": {
+      "params": [
+        "url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_upload": {
+      "params": [
+        "file",
+        "url",
+        "verbose",
+        "reuse",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "curl_version": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "file_writer": {
+      "params": [
+        "path",
+        "append"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "find_port": {
+      "params": [
+        "range"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "form_data": {
+      "params": [
+        "value",
+        "type"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "form_file": {
+      "params": [
+        "path",
+        "type",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_cookies": {
+      "params": [
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_data": {
+      "params": [
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_reset": {
+      "params": [
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_setform": {
+      "params": [
+        "handle",
+        "...",
+        ".list"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_setheaders": {
+      "params": [
+        "handle",
+        "...",
+        ".list"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "handle_setopt": {
+      "params": [
+        "handle",
+        "...",
+        ".list"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "has_internet": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ie_get_proxy_for_url": {
+      "params": [
+        "target_url"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ie_proxy_info": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_add": {
+      "params": [
+        "handle",
+        "done",
+        "fail",
+        "data",
+        "pool"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_cancel": {
+      "params": [
+        "handle"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_download": {
+      "params": [
+        "urls",
+        "destfiles",
+        "resume",
+        "progress",
+        "multi_timeout",
+        "multiplex",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_fdset": {
+      "params": [
+        "pool"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_list": {
+      "params": [
+        "pool"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_run": {
+      "params": [
+        "timeout",
+        "poll",
+        "pool"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "multi_set": {
+      "params": [
+        "total_con",
+        "host_con",
+        "max_streams",
+        "multiplex",
+        "pool"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_handle": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "new_pool": {
+      "params": [
+        "total_con",
+        "host_con",
+        "max_streams",
+        "multiplex"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nslookup": {
+      "params": [
+        "host",
+        "ipv4_only",
+        "multiple",
+        "error"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_date": {
+      "params": [
+        "datestring"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_headers": {
+      "params": [
+        "txt",
+        "multiple"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parse_headers_list": {
+      "params": [
+        "txt"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "send_mail": {
+      "params": [
+        "mail_from",
+        "mail_rcpt",
+        "message",
+        "smtp_server",
+        "use_ssl",
+        "verbose",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "CURL_HTTP_VERSION_1_0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_1_1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_2_0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_2TLS": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_3": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_3ONLY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_HTTP_VERSION_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_IPRESOLVE_V4": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_IPRESOLVE_V6": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_IPRESOLVE_WHATEVER": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_NETRC_IGNORED": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_NETRC_OPTIONAL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_NETRC_REQUIRED": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_REDIR_GET_ALL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_REDIR_POST_301": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_REDIR_POST_302": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_REDIR_POST_303": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_REDIR_POST_ALL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_DEFAULT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_DEFAULT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_TLSv1_0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_TLSv1_1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_TLSv1_2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_MAX_TLSv1_3": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_TLSv1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_TLSv1_0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_TLSv1_1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_TLSv1_2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_SSLVERSION_TLSv1_3": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_TIMECOND_IFMODSINCE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_TIMECOND_IFUNMODSINCE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_TIMECOND_LASTMOD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURL_TIMECOND_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLALTSVC_H1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLALTSVC_H2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLALTSVC_H3": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLALTSVC_READONLYFILE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_ANY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_ANYSAFE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_AWS_SIGV4": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_BASIC": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_BEARER": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_DIGEST": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_DIGEST_IE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_GSSAPI": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_NEGOTIATE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_NTLM": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLAUTH_ONLY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFOLLOW_ALL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFOLLOW_FIRSTONLY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFOLLOW_OBEYCODE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTP_CREATE_DIR": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTP_CREATE_DIR_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTP_CREATE_DIR_RETRY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPAUTH_DEFAULT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPAUTH_SSL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPAUTH_TLS": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPMETHOD_DEFAULT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPMETHOD_MULTICWD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPMETHOD_NOCWD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPMETHOD_SINGLECWD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPSSL_CCC_ACTIVE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPSSL_CCC_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLFTPSSL_CCC_PASSIVE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLGSSAPI_DELEGATION_FLAG": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLGSSAPI_DELEGATION_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLGSSAPI_DELEGATION_POLICY_FLAG": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLHEADER_SEPARATE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLHEADER_UNIFIED": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLHSTS_ENABLE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLHSTS_READONLYFILE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLMIMEOPT_FORMESCAPE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_HTTP": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_HTTP_1_0": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_HTTPS": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_HTTPS2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_SOCKS4": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_SOCKS4A": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_SOCKS5": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLPROXY_SOCKS5_HOSTNAME": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_AGENT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_ANY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_DEFAULT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_GSSAPI": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_HOST": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_KEYBOARD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_PASSWORD": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSH_AUTH_PUBLICKEY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_ALLOW_BEAST": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_AUTO_CLIENT_CERT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_NATIVE_CA": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_NO_PARTIALCHAIN": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_NO_REVOKE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLSSLOPT_REVOKE_BEST_EFFORT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLUSESSL_ALL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLUSESSL_CONTROL": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLUSESSL_NONE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLUSESSL_TRY": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLWS_NOAUTOPONG": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "CURLWS_RAW_MODE": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

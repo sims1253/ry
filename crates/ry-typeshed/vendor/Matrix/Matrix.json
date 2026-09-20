@@ -1,0 +1,3474 @@
+{
+  "schema_version": "2",
+  "package": "Matrix",
+  "version": "0.0.1",
+  "functions": {
+    "..2dge": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".asmatrix": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".bdiag": {
+      "params": [
+        "lst"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".C2nC": {
+      "params": [
+        "from",
+        "isTri"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".CR2RC": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".CR2T": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2g": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2kind": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2m": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2sparse": {
+      "params": [
+        "from",
+        "repr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2sy": {
+      "params": [
+        "from",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dense2v": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag.dsC": {
+      "params": [
+        "x",
+        "Chx",
+        "res.kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag2dense": {
+      "params": [
+        "from",
+        "kind",
+        "shape",
+        "packed",
+        "uplo"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag2mat": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag2sparse": {
+      "params": [
+        "from",
+        "kind",
+        "shape",
+        "repr",
+        "uplo"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag2sT": {
+      "params": [
+        "from",
+        "uplo",
+        "kind",
+        "drop0"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diag2tT": {
+      "params": [
+        "from",
+        "uplo",
+        "kind",
+        "drop0"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diagN2U": {
+      "params": [
+        "x",
+        "cl",
+        "checkDense"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".diagU2N": {
+      "params": [
+        "x",
+        "cl",
+        "checkDense"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dsy2dsp": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dsy2mat": {
+      "params": [
+        "from",
+        "keep.dimnames"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".dxC2mat": {
+      "params": [
+        "from",
+        "chkUdiag"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".formatSparseSimple": {
+      "params": [
+        "m",
+        "asLogical",
+        "digits",
+        "col.names",
+        "note.dropping.colnames",
+        "dn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".ind2dense": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".ind2sparse": {
+      "params": [
+        "from",
+        "kind",
+        "repr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2C": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2dense": {
+      "params": [
+        "from",
+        "class",
+        "uplo",
+        "diag",
+        "trans"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2dgC": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2diag": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2gen": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2kind": {
+      "params": [
+        "from",
+        "kind",
+        "sparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2lgC": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2m": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2ngC": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2ngCn": {
+      "params": [
+        "from",
+        "na.is.not.0"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2ngTn": {
+      "params": [
+        "from",
+        "na.is.not.0"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2packed": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2R": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2sparse": {
+      "params": [
+        "from",
+        "class",
+        "uplo",
+        "diag",
+        "trans"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2sym": {
+      "params": [
+        "from",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2T": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2tri": {
+      "params": [
+        "from",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2unpacked": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".m2V": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2v": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".M2V": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".n2dgT": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".nC2d": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".nC2l": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".solve.dgC.chol": {
+      "params": [
+        "a",
+        "b",
+        "check"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".solve.dgC.lu": {
+      "params": [
+        "a",
+        "b",
+        "tol",
+        "check"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".solve.dgC.qr": {
+      "params": [
+        "a",
+        "b",
+        "order",
+        "check"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparse2dense": {
+      "params": [
+        "from",
+        "packed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparse2g": {
+      "params": [
+        "from",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparse2kind": {
+      "params": [
+        "from",
+        "kind",
+        "drop0"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparse2m": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparse2v": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".sparseDiagonal": {
+      "params": [
+        "n",
+        "x",
+        "uplo",
+        "shape",
+        "unitri",
+        "kind",
+        "cols"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".SuiteSparse_version": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".symDiagonal": {
+      "params": [
+        "n",
+        "x",
+        "uplo",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".T2Cmat": {
+      "params": [
+        "from",
+        "isTri"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".T2CR": {
+      "params": [
+        "from",
+        "Csparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".tCR2RC": {
+      "params": [
+        "from"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".tCRT": {
+      "params": [
+        "x",
+        "lazy"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".trDiagonal": {
+      "params": [
+        "n",
+        "x",
+        "uplo",
+        "unitri",
+        "kind"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".updateCHMfactor": {
+      "params": [
+        "object",
+        "parent",
+        "mult"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    ".validateCsparse": {
+      "params": [
+        "x",
+        "sort.if.needed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "%&%": {
+      "params": [
+        "x",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "abIseq": {
+      "params": [
+        "from",
+        "to",
+        "by",
+        "length.out",
+        "along.with"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "abIseq1": {
+      "params": [
+        "from",
+        "to"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "aggregateT": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "all.equal": {
+      "params": [
+        "target",
+        "current",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "anyDuplicatedT": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Arith": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.array": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.matrix": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asPerm": {
+      "params": [
+        "pivot",
+        "off",
+        "ioff",
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "asUniqueT": {
+      "params": [
+        "x",
+        "byrow",
+        "isT"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "band": {
+      "params": [
+        "x",
+        "k1",
+        "k2",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bandSparse": {
+      "params": [
+        "n",
+        "m",
+        "k",
+        "diagonals",
+        "symmetric",
+        "repr",
+        "giveCsparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bdiag": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "BunchKaufman": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "c.sparseVector": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cBind": {
+      "params": [
+        "...",
+        "deparse.level"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cbind2": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "chol": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "chol2inv": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Cholesky": {
+      "params": [
+        "A",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "coerce": {
+      "params": [
+        "from",
+        "to",
+        "strict"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colMeans": {
+      "params": [
+        "x",
+        "na.rm",
+        "dims",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colScale": {
+      "params": [
+        "x",
+        "d"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "colSums": {
+      "params": [
+        "x",
+        "na.rm",
+        "dims",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Compare": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "condest": {
+      "params": [
+        "A",
+        "t",
+        "normA",
+        "silent",
+        "quiet"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cov2cor": {
+      "params": [
+        "V"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "crossprod": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "det": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "determinant": {
+      "params": [
+        "x",
+        "logarithm",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diag": {
+      "params": [
+        "x",
+        "nrow",
+        "ncol",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diag<-": {
+      "params": [
+        "x",
+        "value"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diagN2U": {
+      "params": [
+        "x",
+        "cl",
+        "checkDense"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Diagonal": {
+      "params": [
+        "n",
+        "x",
+        "names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diagU2N": {
+      "params": [
+        "x",
+        "cl",
+        "checkDense"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "diff": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dimScale": {
+      "params": [
+        "x",
+        "d1",
+        "d2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dmperm": {
+      "params": [
+        "x",
+        "nAns",
+        "seed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "drop": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "drop0": {
+      "params": [
+        "x",
+        "tol",
+        "is.Csparse",
+        "give.Csparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expand": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expand1": {
+      "params": [
+        "x",
+        "which",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expand2": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "expm": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fac2sparse": {
+      "params": [
+        "from",
+        "to",
+        "drop.unused.levels",
+        "repr",
+        "giveCsparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fac2Sparse": {
+      "params": [
+        "from",
+        "to",
+        "drop.unused.levels",
+        "repr",
+        "giveCsparse",
+        "factorPatt12",
+        "contrasts.arg"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "facmul": {
+      "params": [
+        "x",
+        "factor",
+        "y",
+        "trans",
+        "left",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "forceSymmetric": {
+      "params": [
+        "x",
+        "uplo"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "format": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "formatSparseM": {
+      "params": [
+        "x",
+        "zero.print",
+        "align",
+        "m",
+        "asLogical",
+        "uniDiag",
+        "digits",
+        "cx",
+        "iN0",
+        "dn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "formatSpMatrix": {
+      "params": [
+        "x",
+        "digits",
+        "maxp",
+        "cld",
+        "zero.print",
+        "col.names",
+        "note.dropping.colnames",
+        "uniDiag",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "graph2T": {
+      "params": [
+        "from",
+        "use.weights"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "head": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Hilbert": {
+      "params": [
+        "n"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "image": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "invertPerm": {
+      "params": [
+        "p",
+        "off",
+        "ioff"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "invPerm": {
+      "params": [
+        "p",
+        "zero.p",
+        "zero.res"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.null.DN": {
+      "params": [
+        "dn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isDiagonal": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isLDL": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isPerm": {
+      "params": [
+        "p",
+        "off"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isSymmetric": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isTriangular": {
+      "params": [
+        "object",
+        "upper",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isUniqueT": {
+      "params": [
+        "x",
+        "byrow",
+        "isT"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "KhatriRao": {
+      "params": [
+        "X",
+        "Y",
+        "FUN",
+        "sparseY",
+        "make.dimnames"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "kronecker": {
+      "params": [
+        "X",
+        "Y",
+        "FUN",
+        "make.dimnames",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Logic": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lu": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mat2triplet": {
+      "params": [
+        "x",
+        "uniqT"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Math": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Math2": {
+      "params": [
+        "x",
+        "digits"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Matrix": {
+      "params": [
+        "data",
+        "nrow",
+        "ncol",
+        "byrow",
+        "dimnames",
+        "sparse",
+        "doDiag",
+        "forceCheck"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Matrix.Version": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "MatrixClass": {
+      "params": [
+        "cl",
+        "cld",
+        "...Matrix",
+        "dropVirtual",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mean": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nearPD": {
+      "params": [
+        "x",
+        "corr",
+        "keepDiag",
+        "base.matrix",
+        "do2eigen",
+        "doSym",
+        "doDykstra",
+        "only.values",
+        "ensureSymmetry",
+        "eig.tol",
+        "conv.tol",
+        "posd.tol",
+        "maxit",
+        "conv.norm.type",
+        "trace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nnzero": {
+      "params": [
+        "x",
+        "na.counted"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "norm": {
+      "params": [
+        "x",
+        "type",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "onenormest": {
+      "params": [
+        "A",
+        "t",
+        "A.x",
+        "At.x",
+        "n",
+        "silent",
+        "quiet",
+        "iter.max",
+        "eps"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Ops": {
+      "params": [
+        "e1",
+        "e2"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "pack": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "print": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "printSpMatrix": {
+      "params": [
+        "x",
+        "digits",
+        "maxp",
+        "cld",
+        "zero.print",
+        "col.names",
+        "note.dropping.colnames",
+        "uniDiag",
+        "col.trailer",
+        "align",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "printSpMatrix2": {
+      "params": [
+        "x",
+        "digits",
+        "maxp",
+        "zero.print",
+        "col.names",
+        "note.dropping.colnames",
+        "uniDiag",
+        "suppRows",
+        "suppCols",
+        "col.trailer",
+        "align",
+        "width",
+        "fitWidth",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.coef": {
+      "params": [
+        "qr",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.fitted": {
+      "params": [
+        "qr",
+        "y",
+        "k"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.Q": {
+      "params": [
+        "qr",
+        "complete",
+        "Dvec"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.qty": {
+      "params": [
+        "qr",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.qy": {
+      "params": [
+        "qr",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.R": {
+      "params": [
+        "qr",
+        "complete",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.resid": {
+      "params": [
+        "qr",
+        "y"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr.X": {
+      "params": [
+        "qr",
+        "complete",
+        "ncol",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qr2rankMatrix": {
+      "params": [
+        "qr",
+        "tol",
+        "isBqr",
+        "do.warn"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qrR": {
+      "params": [
+        "qr",
+        "complete",
+        "backPermute",
+        "row.names"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rankMatrix": {
+      "params": [
+        "x",
+        "tol",
+        "method",
+        "sval",
+        "warn.t",
+        "warn.qr"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rBind": {
+      "params": [
+        "...",
+        "deparse.level"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rbind2": {
+      "params": [
+        "x",
+        "y",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rcond": {
+      "params": [
+        "x",
+        "norm",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readHB": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "readMM": {
+      "params": [
+        "file"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rep2abI": {
+      "params": [
+        "x",
+        "times"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowMeans": {
+      "params": [
+        "x",
+        "na.rm",
+        "dims",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowScale": {
+      "params": [
+        "x",
+        "d"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rowSums": {
+      "params": [
+        "x",
+        "na.rm",
+        "dims",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rsparsematrix": {
+      "params": [
+        "nrow",
+        "ncol",
+        "density",
+        "nnz",
+        "symmetric",
+        "rand.x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Schur": {
+      "params": [
+        "x",
+        "vectors",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "show": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "signPerm": {
+      "params": [
+        "p",
+        "off"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "skewpart": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "solve": {
+      "params": [
+        "a",
+        "b",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sparse.model.matrix": {
+      "params": [
+        "object",
+        "data",
+        "contrasts.arg",
+        "xlev",
+        "transpose",
+        "drop.unused.levels",
+        "row.names",
+        "sep",
+        "verbose",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sparseMatrix": {
+      "params": [
+        "i",
+        "j",
+        "p",
+        "x",
+        "dims",
+        "dimnames",
+        "symmetric",
+        "triangular",
+        "index1",
+        "repr",
+        "giveCsparse",
+        "check",
+        "use.last.ij"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sparseVector": {
+      "params": [
+        "x",
+        "i",
+        "length"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "spMatrix": {
+      "params": [
+        "nrow",
+        "ncol",
+        "i",
+        "j",
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "summary": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Summary": {
+      "params": [
+        "x",
+        "...",
+        "na.rm"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "symmpart": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "t": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "T2graph": {
+      "params": [
+        "from",
+        "need.uniq",
+        "edgemode"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tail": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tcrossprod": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "toeplitz": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tril": {
+      "params": [
+        "x",
+        "k",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "triu": {
+      "params": [
+        "x",
+        "k",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "uniqTsparse": {
+      "params": [
+        "x",
+        "class.x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unname": {
+      "params": [
+        "obj",
+        "force"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "unpack": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "update": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "updown": {
+      "params": [
+        "update",
+        "C",
+        "L"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "which": {
+      "params": [
+        "x",
+        "arr.ind",
+        "useNames"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "writeMM": {
+      "params": [
+        "obj",
+        "file",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "zapsmall": {
+      "params": [
+        "x",
+        "digits",
+        "mFUN",
+        "min.d",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    ".__C__abIndex": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__atomicVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__BunchKaufman": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__BunchKaufmanFactorization": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__CHMfactor": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__CHMsimpl": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__CHMsuper": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Cholesky": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__CholeskyFactorization": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__compMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__copMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__corMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__CsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dCHMsimpl": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dCHMsuper": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ddenseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ddiMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__denseLU": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__denseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dgCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dgeMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dgRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dgTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__diagonalMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dpoMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dppMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dspMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dsyMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dtCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dtpMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dtrMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dtRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__dtTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__generalMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__iMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__index": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__indMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__isparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ldenseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ldiMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lgCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lgeMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lgRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lgTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lspMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__lsyMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ltCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ltpMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ltrMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ltRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ltTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__LU": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__MatrixFactorization": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nCHMsimpl": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nCHMsuper": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ndenseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ndiMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ngCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ngeMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ngRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ngTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nspMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__nsyMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ntCMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ntpMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ntrMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ntRMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__ntTMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__number": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__packedMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__pBunchKaufman": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__pCholesky": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__pMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__QR": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__replValue": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__rleDiff": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__RsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__Schur": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__SchurFactorization": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__sparseLU": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__sparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__sparseQR": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__sparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__symmetricMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__triangularMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__TsparseMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__unpackedMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__zMatrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__C__zsparseVector": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__!:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__[<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__*:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__/:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__&:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%*%:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%/%:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%&%:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__%%:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__^:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__+:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__all.equal:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__anyNA:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Arith:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.array:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.complex:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.integer:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.logical:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.matrix:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.numeric:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__as.vector:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__band:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__BunchKaufman:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__cbind2:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__chol:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__chol2inv:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Cholesky:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__coerce:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__colMeans:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__colSums:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Compare:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__cov2cor:stats": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__crossprod:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__determinant:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__diag:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__diag<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__diff:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__dim:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__dim<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__dimnames:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__dimnames<-:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__drop:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__expand:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__expand1:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__expand2:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__expm:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__facmul:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__forceSymmetric:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__format:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__head:utils": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__image:graphics": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__is.finite:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__is.infinite:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__is.na:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__is.nan:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__isDiagonal:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__isSymmetric:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__isTriangular:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__kronecker:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__length:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__log:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Logic:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__lu:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Math:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Math2:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__mean:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__nnzero:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__norm:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Ops:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__pack:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__print:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.coef:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.fitted:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.Q:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.qty:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.qy:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.R:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.resid:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__qr.X:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rbind2:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rcond:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rep:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rowMeans:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__rowSums:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Schur:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__show:methods": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__skewpart:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__solve:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__summary:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__Summary:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__symmpart:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__t:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__tail:utils": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__tcrossprod:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__toeplitz:stats": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__tril:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__triu:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__unname:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__unpack:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__update:stats": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__updown:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__which:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__writeMM:Matrix": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    ".__T__zapsmall:base": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

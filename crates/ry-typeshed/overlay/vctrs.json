@@ -7,18 +7,7 @@
       "params": [
         {
           "name": "x",
-          "type": {
-            "mode": "union",
-            "length": "unknown",
-            "members": [
-              "logical",
-              "integer",
-              "double",
-              "complex"
-            ]
-          },
-          "required": true,
-          "demand_only": true
+          "required": true
         },
         {
           "name": "to",

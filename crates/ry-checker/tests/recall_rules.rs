@@ -677,11 +677,12 @@ fn ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing() {
     // `setMethod("any", ...)` returns 42, a `Summary`-group method returns
     // c(5, 7), and `base::any()` still selects the generic rather than a
     // default method -- so the length-1 premise is qualified in the
-    // message ("unless an S4 method dispatches") instead of being stated
-    // as unconditional. The rule must keep firing: the founding glue
-    // shape passes an open-world parameter, and S3 classes never dispatch
-    // any()/all(), so silencing on unknown argument shapes would trade a
-    // real defect for unprovable dispatch.
+    // message ("unless an `any`/`all` or `Summary`-group method
+    // dispatches") instead of being stated as unconditional. The rule
+    // must keep firing: the founding glue shape passes an open-world
+    // parameter, and dispatch is the rare case -- S3 reaches any()/all()
+    // only through a `Summary` group method (witnessed in the oracle
+    // claim fixture); a plain `any.foo` method never runs.
     for src in [
         "f <- function(x) if (any(x) == 0) 1\n",
         "f <- function(x) if (base::any(x) > -1) 1\n",
@@ -693,9 +694,9 @@ fn ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing() {
         checker.check(&file);
         let diags = checker.take_diagnostics();
         assert!(
-            diags
-                .iter()
-                .any(|d| d.code == "RY107" && d.message.contains("unless an S4 method dispatches")),
+            diags.iter().any(|d| d.code == "RY107"
+                && d.message
+                    .contains("unless an `any`/`all` or `Summary`-group method dispatches")),
             "expected the dispatch-qualified premise in {src:?}: {diags:?}"
         );
     }

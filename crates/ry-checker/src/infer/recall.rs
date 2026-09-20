@@ -500,15 +500,12 @@ impl Checker {
                 other => other,
             }
         };
-        // The outcome text conditions on the base result domain rather
-        // than asserting unconditionally: an `NA` result compares as
-        // `NA` (`any(c(FALSE, NA)) > -1` is `NA`, not TRUE), and an S4
-        // method can leave the domain entirely (a direct `any` method or
-        // the `Summary` group may return any value, even a longer
-        // vector), so "always TRUE/FALSE" is claimed only for the base
-        // computation's non-`NA` results and the negating outcome names
-        // its own `NA` case. The element-level reading that follows is
-        // the probable intent, never a proven one.
+        // Outcome claims are scoped to the base result domain: an `NA`
+        // result compares as `NA`, and a dispatched `any`/`all` or
+        // `Summary`-group method can return any value, so the wording
+        // conditions on the base computation's non-`NA` results. The
+        // element-level reading is the probable intent, never a proven
+        // one.
         let outcome_text = if when_false == when_true {
             if when_false {
                 "always TRUE when the base result is not `NA` (an `NA` result compares as `NA`)"
@@ -523,11 +520,11 @@ impl Checker {
             self.source_text(span_of(literal_expr)),
         ) {
             (Some(argument_text), Some(literal_text)) => format!(
-                "`{bare}()` returns a length-1 logical unless an S4 method dispatches, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
+                "`{bare}()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is {outcome_text}; the comparison was probably meant for the elements: `{bare}({argument_text} {} {literal_text})`",
                 op_symbol(suggested_op),
             ),
             _ => format!(
-                "`{bare}()` returns a length-1 logical unless an S4 method dispatches, so this comparison is {outcome_text}; compare the elements inside the call instead"
+                "`{bare}()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is {outcome_text}; compare the elements inside the call instead"
             ),
         };
         self.emit(Severity::Warning, span, "RY107", message);

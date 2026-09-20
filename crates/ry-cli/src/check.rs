@@ -740,6 +740,17 @@ fn config_candidates(search_start: &std::path::Path) -> Vec<PathBuf> {
 /// start from it — not from the folded [`absolutize`] form — so
 /// discovery and `poll_static_inputs` step over the same directories
 /// in the same order.
+///
+/// Deliberately a local copy rather than a shared `ry_config` helper:
+/// the anchor is three lines with no behavior of its own, exposing it
+/// would widen ry-config's public surface for a single caller outside
+/// the crate, and a shared home intrusive enough to justify that would
+/// couple the crates for a walk this small. Drift is guarded by test
+/// instead: `config_candidates_mirror_discovery_for_dotdot_inputs`
+/// pins the candidate walk to the config discovery actually selects
+/// for dotted directory and file inputs, so a change to discovery's
+/// anchoring fails that test rather than silently diverging the
+/// watched set.
 fn discover_start(path: &std::path::Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -763,22 +774,29 @@ fn discover_start(path: &std::path::Path) -> PathBuf {
 /// `Path::new("pkg").parent()` yields and terminate at the working
 /// directory.
 ///
-/// Known limitation, accepted: folding is lexical, so a `..` that
-/// crosses a symlinked component (`a/symlink/../pkg/DESCRIPTION`)
-/// yields a path the OS never resolves to that file — the kernel
-/// resolves `..` against the link TARGET's parent, not against `a`,
-/// and the one-shot walks (`Path::ancestors` in
-/// `enclosing_package_root`, `Config::discover`) keep the components
-/// as given and therefore read through the link. On such a tree the
-/// snapshot may watch a location the check pass never reads; the
-/// residual risk is a missed auto-refresh (an edit to the file the OS
-/// actually resolves changes no watched stamp), never a spurious pass
-/// and never a wrong result — the pass that does run reads the same
-/// files a fresh check would, and the next unrelated edit or a
-/// restart picks the change up. Canonicalizing the deepest existing
-/// ancestor instead would stat up the tree on every derivation and
-/// churn snapshot entries as creations make ever-deeper prefixes
-/// canonicalizable, so the lexical form stands.
+/// Known limitations, accepted — each costs a missed auto-refresh at
+/// worst, never a spurious pass and never a wrong result (the pass
+/// that does run reads the same files a fresh check would, and the
+/// next unrelated edit or a restart picks the change up):
+/// * Folding is lexical, so a `..` that crosses a symlinked component
+///   (`a/symlink/../pkg/DESCRIPTION`) yields a path the OS never
+///   resolves to that file — the kernel resolves `..` against the link
+///   TARGET's parent, not against `a`, while the one-shot walks
+///   (`Path::ancestors` in `enclosing_package_root`,
+///   `Config::discover`) keep the components as given and therefore
+///   read through the link.
+/// * If [`discover_start`]'s `std::env::current_dir()` fails and the
+///   `.` fallback engages, a relative input folds against an empty
+///   stack: leading `..` components drop out, and the watched
+///   candidates can diverge from the anchoring a working
+///   `current_dir()` would have produced — the same missed-watch class
+///   the config-candidate anchoring avoids, at a severity the next
+///   edit or restart still heals.
+///
+/// Canonicalizing the deepest existing ancestor instead would stat up
+/// the tree on every derivation and churn snapshot entries as creations
+/// make ever-deeper prefixes canonicalizable, so the lexical form
+/// stands.
 fn absolutize(path: &std::path::Path) -> PathBuf {
     let joined = discover_start(path);
     let mut normalized = PathBuf::new();

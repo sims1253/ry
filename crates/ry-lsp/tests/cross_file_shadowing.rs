@@ -98,13 +98,20 @@ async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
 /// later actions. The idle window detects end-of-stream the same way
 /// `quiesce_diagnostics` does; it does not wait for computation, and a
 /// suppressed (deduplicated) no-op refresh simply ends the first
-/// window.
+/// window. The drain is bounded so a server stuck publishing fails the
+/// test with what it last sent instead of hanging.
 async fn drain_publications(session: &mut harness::ClientSession, uri: &str) {
+    let mut drained = 0u32;
     loop {
         let mark = session.publication_mark();
         match tokio::time::timeout(DRAIN, session.published_diagnostics_after(uri, mark)).await {
             Ok(result) => {
-                result.expect("publication receive error during drain");
+                let received = result.expect("publication receive error during drain");
+                drained += 1;
+                assert!(
+                    drained <= 16,
+                    "still receiving publications after {drained} drained; last: {received}"
+                );
             }
             Err(_) => return,
         }
@@ -252,9 +259,17 @@ fn same_path_buffer_replaces_its_own_disk_bytes() {
         );
 
         // Unsaved edit to the integer variant: the buffer replaces
-        // a.R's own disk bytes, so use.R must go clean.
-        let edit_mark = session.publication_mark();
+        // a.R's own disk bytes, so use.R must go clean. The open's own
+        // publication is awaited first: a single mark across
+        // open+change could be satisfied by the pre-change state when
+        // the debounce lands between them.
+        let open_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_mark)
+            .await
+            .unwrap();
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
@@ -321,13 +336,15 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
 
 /// Open/closed subset parity: for every non-empty subset of
 /// {a.R, z.R, use.R} (same bytes as disk), the eventual `use.R`
-/// diagnostics equal the fresh-project result — the CLI's clean verdict
-/// with `z.R`'s integer `f` last in sorted order. Publication
-/// completion is required per state (an awaited publication, never an
-/// absent one). The empty subset is covered separately below: nothing
-/// schedules a publish pass there, so its final analysis is forced with
-/// a watched-file event, which republishes closed files (#528) and is
-/// therefore proof the pass ran.
+/// diagnostics equal the fresh-project result — asserted in full
+/// against the CLI oracle hoisted above the loop, which proves the
+/// whole tree clean and so requires use.R to publish no diagnostics at
+/// all, not merely no RY040. Publication completion is required per
+/// state (an awaited publication, never an absent one). The empty
+/// subset is covered separately below: nothing schedules a publish
+/// pass there, so its final analysis is forced with a watched-file
+/// event, which republishes closed files (#528) and is therefore proof
+/// the pass ran.
 #[test]
 fn open_closed_subsets_agree_with_the_fresh_project() {
     run(async {
@@ -381,8 +398,8 @@ fn open_closed_subsets_agree_with_the_fresh_project() {
                 .unwrap();
             let use_diags = store.get(&use_uri).expect("use.R must be analyzed");
             assert!(
-                !use_diags.iter().any(|d| d["code"] == json!("RY040")),
-                "subset {subset:?}: same bytes must keep the integer f winning: {use_diags:?}"
+                use_diags.is_empty(),
+                "subset {subset:?}: use.R must match the clean CLI oracle exactly, got: {use_diags:?}"
             );
 
             join_session(session, server).await;
@@ -413,8 +430,8 @@ fn open_closed_subsets_agree_with_the_fresh_project() {
             .unwrap();
         let use_diags = store.get(&use_uri).expect("use.R must be analyzed");
         assert!(
-            !use_diags.iter().any(|d| d["code"] == json!("RY040")),
-            "all-closed state must match the fresh project (integer f wins): {use_diags:?}"
+            use_diags.is_empty(),
+            "all-closed state must match the clean CLI oracle exactly, got: {use_diags:?}"
         );
         join_session(session, server).await;
     })
@@ -502,16 +519,28 @@ fn discard_close_returns_to_the_disk_bytes() {
         let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
         sync_barrier(&mut session, &use_uri).await;
 
-        // Open both; edit a.R's buffer to the integer variant -> clean.
-        let mark = session.publication_mark();
+        // Open both, awaiting each open's publication before editing:
+        // a single mark across opens+change could observe the
+        // intermediate pre-change state under a split debounce.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_a_mark)
+            .await
+            .unwrap();
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
             .unwrap();
         let edited = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, edit_mark)
             .await
             .unwrap();
         assert!(

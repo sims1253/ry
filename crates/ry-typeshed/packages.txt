@@ -1,4 +1,7 @@
+MASS
+Matrix
 R6
+RColorBrewer
 Rcpp
 S7
 bayesplot
@@ -8,6 +11,7 @@ brms
 checkmate
 cli
 cmdstanr
+curl
 dbplyr
 dictionar6
 dplyr
@@ -16,6 +20,7 @@ future
 ggplot2
 glue
 grid
+gridExtra
 htmltools
 httr
 igraph
@@ -44,4 +49,6 @@ tidyselect
 tinytest
 vctrs
 withr
+xml2
 zeallot
+zoo

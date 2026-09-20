@@ -4,7 +4,7 @@
 //! like "arg0" (type mirrors the first positional argument) or "unknown".
 //! The checker resolves these slots when applying a signature.
 
-use serde::de::{MapAccess, Visitor};
+use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -478,16 +478,6 @@ pub struct ParamSpec {
     pub required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<bool>,
-    /// Demand-only parameter: the declared `type` arms downstream mode
-    /// demands (RY110's vacuous-guard gate) but is exempt from RY092's
-    /// provable-incompatibility check. For relational demands a
-    /// per-parameter static type cannot express soundly -- e.g.
-    /// `vctrs::vec_cast(x, to)` accepts any `x` castable to `to`, so a
-    /// numeric `x` type would false-positive on legal cross-type casts
-    /// (`vec_cast("foo", glue())`) -- while the type still names modes
-    /// the callee cannot use, which is exactly what a demand gate reads.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub demand_only: bool,
 }
 
 impl<'de> Deserialize<'de> for ParamSpec {
@@ -505,33 +495,37 @@ impl<'de> Deserialize<'de> for ParamSpec {
             required: bool,
             #[serde(default)]
             default: Option<bool>,
-            #[serde(default)]
-            demand_only: bool,
         }
 
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Repr {
-            Name(String),
-            Object(ObjectParamSpec),
-        }
-
-        Ok(match Repr::deserialize(deserializer)? {
-            Repr::Name(name) => Self {
+        // `deny_unknown_fields` is load-bearing for stale metadata: the
+        // retired `demand_only` flag (which used to exempt a parameter's
+        // `type` from RY092's provable-incompatibility check) must make
+        // the whole file fail to parse, not be silently dropped while
+        // the type starts enforcing as an ordinary requirement. Stubs are
+        // always JSON, so buffering one value to try the string shape
+        // first preserves the bare-name spelling while letting the
+        // object shape's unknown-field error surface by name -- an
+        // untagged enum would collapse it into an anonymous "did not
+        // match any variant".
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(name) => Ok(Self {
                 name,
                 type_: None,
                 required: false,
                 default: None,
-                demand_only: false,
-            },
-            Repr::Object(spec) => Self {
-                name: spec.name,
-                type_: spec.type_,
-                required: spec.required,
-                default: spec.default,
-                demand_only: spec.demand_only,
-            },
-        })
+            }),
+            other => {
+                let spec = ObjectParamSpec::deserialize(other)
+                    .map_err(|error| D::Error::custom(error.to_string()))?;
+                Ok(Self {
+                    name: spec.name,
+                    type_: spec.type_,
+                    required: spec.required,
+                    default: spec.default,
+                })
+            }
+        }
     }
 }
 
@@ -1655,27 +1649,37 @@ mod tests {
             .functions
             .get("vec_cast")
             .expect("overlay must supply vec_cast");
-        let x = signature
+        // The stub is inference-only: it pins R's own formals (vctrs
+        // 0.7.3, `formals(vctrs::vec_cast)` is `x, to, ..., x_arg =
+        // caller_arg(x), to_arg = "", call = caller_env()`) so arity
+        // resolution keeps working, but declares no parameter types.
+        // `vec_cast(x, to)` is relational -- the modes `x` may take
+        // depend on `to` (R 4.6.1 / vctrs 0.7.3: `vec_cast(x, NULL)`
+        // returns `x` unchanged and `vec_cast(character(), character())`
+        // is legal, while `vec_cast(character(), double())` errors), and
+        // a per-parameter static type cannot express that without
+        // false RY092/RY110 verdicts on the legal target shapes. The
+        // RY110 numeric-demand diagnostic this stub used to arm is a
+        // recorded capability gap, not a contract (issue #479 follow-up).
+        let params: Vec<&str> = signature
             .params
             .iter()
-            .find(|param| param.name == "x")
-            .expect("vec_cast stub must declare x");
-        let declared = x.type_.as_ref().expect("vec_cast x must be typed");
-        assert_eq!(declared.mode, "union");
-        for member in ["logical", "integer", "double", "complex"] {
+            .map(|param| param.name.as_str())
+            .collect();
+        assert_eq!(params, vec!["x", "to", "...", "x_arg", "to_arg", "call"]);
+        assert!(
+            signature.params.iter().all(|param| param.type_.is_none()),
+            "vec_cast stub must not declare parameter types: the x/to relation has no sound static encoding"
+        );
+        for required in ["x", "to"] {
             assert!(
-                declared.members.contains(&member.to_string()),
-                "vec_cast x must admit {member}"
+                signature
+                    .params
+                    .iter()
+                    .any(|param| param.name == required && param.required),
+                "vec_cast stub must keep {required} required"
             );
         }
-        // `vec_cast` is relationally polymorphic (`x` need only be
-        // castable to `to`: `vec_cast("foo", glue())` is legal), so the
-        // type arms RY110's demand gate without asserting RY092
-        // incompatibility on legal cross-type casts (issue #479).
-        assert!(
-            x.demand_only,
-            "vec_cast x must be demand-only, not an RY092 assertion"
-        );
         // The prefilter flags are computed from the vendored blob alone,
         // so an overlay entry carrying `injects` or a `captures_promise`
         // eval mode would be silently skipped by the conservative package
@@ -1702,6 +1706,62 @@ mod tests {
                 "overlay entry `{name}` declares scan-gated fields invisible to the prefilter flags"
             );
         }
+    }
+
+    /// Retired `demand_only` metadata must fail loudly everywhere a stub
+    /// can enter the system, never silently degrade into ordinary type
+    /// enforcement. Before the flag's removal a `demand_only: true`
+    /// parameter armed RY110's demand gate while staying exempt from
+    /// RY092; a loader that ignored the unknown field would keep the
+    /// `type` and start asserting it as a plain requirement -- the exact
+    /// false-positive the flag existed to prevent (legal cross-type
+    /// `vctrs::vec_cast` calls). `deny_unknown_fields` rejects the file
+    /// at parse time, so both stub directories and the tolerant loader
+    /// exclude it entirely.
+    #[test]
+    fn stale_demand_only_metadata_is_rejected_not_silently_enforced() {
+        let dir = tempfile::tempdir().expect("temp stub dir");
+        let stale = r#"{
+            "schema_version": "2",
+            "package": "vctrs",
+            "version": "stale",
+            "functions": {
+                "vec_cast": {
+                    "params": [
+                        {
+                            "name": "x",
+                            "type": {"mode": "double", "length": "unknown"},
+                            "required": true,
+                            "demand_only": true
+                        },
+                        {"name": "to", "required": true}
+                    ],
+                    "return": {"mode": "opaque", "length": "unknown"}
+                }
+            }
+        }"#;
+        let path = dir.path().join("vctrs.json");
+        std::fs::write(&path, stale).expect("write stale stub");
+        // The normative validator reports the unknown field by name.
+        let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+        assert_eq!(report.error_count(), 1, "{report:?}");
+        assert!(
+            report.problems[0].message.contains("demand_only"),
+            "error must name the retired flag: {}",
+            report.problems[0].message
+        );
+        // The tolerant loader used by long-running frontends drops the
+        // whole file (recording it for warning emission), so the stale
+        // numeric type can never reach argument checking as an ordinary
+        // requirement.
+        let (stubs, errors) =
+            load_stub_dir_with_warnings(dir.path()).expect("stub dir discovery succeeds");
+        assert!(stubs.is_empty(), "stale stub must not load: {stubs:?}");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].to_string().contains("demand_only"),
+            "loader error must name the retired flag: {errors:?}"
+        );
     }
 
     #[test]
@@ -2261,7 +2321,7 @@ mod tests {
     #[test]
     fn typeshed_preserves_embedded_schema_version() {
         let t = load_base().expect("loads");
-        assert_eq!(t.version, "0.0.19");
+        assert_eq!(t.version, "0.0.26");
         assert_eq!(t.schema_version.as_deref(), Some("2"));
     }
 

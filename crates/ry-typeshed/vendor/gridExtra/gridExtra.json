@@ -1,0 +1,232 @@
+{
+  "schema_version": "2",
+  "package": "gridExtra",
+  "version": "0.0.1",
+  "functions": {
+    "arrangeGrob": {
+      "params": [
+        "...",
+        "grobs",
+        "layout_matrix",
+        "vp",
+        "name",
+        "as.table",
+        "respect",
+        "clip",
+        "nrow",
+        "ncol",
+        "widths",
+        "heights",
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "padding"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "combine": {
+      "params": [
+        "...",
+        "along",
+        "join"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ellipseGrob": {
+      "params": [
+        "x",
+        "y",
+        "size",
+        "angle",
+        "ar",
+        "n",
+        "gp",
+        "...",
+        "position.units",
+        "size.units"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.arrange": {
+      "params": [
+        "...",
+        "newpage"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.ellipse": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.ngon": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "grid.table": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gtable_cbind": {
+      "params": [
+        "...",
+        "size",
+        "z"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gtable_combine": {
+      "params": [
+        "...",
+        "along",
+        "join"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gtable_rbind": {
+      "params": [
+        "...",
+        "size",
+        "z"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "marrangeGrob": {
+      "params": [
+        "grobs",
+        "...",
+        "ncol",
+        "nrow",
+        "layout_matrix",
+        "top"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ngonGrob": {
+      "params": [
+        "x",
+        "y",
+        "n",
+        "size",
+        "phase",
+        "angle",
+        "ar",
+        "gp",
+        "...",
+        "position.units",
+        "size.units"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "polygon_regular": {
+      "params": [
+        "n",
+        "phase"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tableGrob": {
+      "params": [
+        "d",
+        "rows",
+        "cols",
+        "theme",
+        "vp",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ttheme_default": {
+      "params": [
+        "base_size",
+        "base_colour",
+        "base_family",
+        "parse",
+        "padding",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ttheme_minimal": {
+      "params": [
+        "base_size",
+        "base_colour",
+        "base_family",
+        "parse",
+        "padding",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

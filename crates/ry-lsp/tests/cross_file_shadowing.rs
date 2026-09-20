@@ -22,7 +22,7 @@ use harness::{
     Published, file_uri, join_session, normalize_diagnostics, published_from_cli_value,
     spawn_session, sync_barrier,
 };
-use ry_testkit::{CliProcess, FixtureProject, rpc_receive_timeout};
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// Idle window for `quiesce_diagnostics`; comfortably exceeds the
@@ -56,21 +56,73 @@ where
 
 /// `ry check --output-format json` on the fixture tree, normalized for
 /// comparison with LSP publications. The CLI is the fresh-project oracle
-/// every subset/state below must converge to.
-fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
-    let output = CliProcess::new(harness::ry_binary())
-        .check(fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
+/// every subset/state below must converge to. The subprocess runs on the
+/// blocking pool: a child wait on the executor thread would stall the
+/// in-process server task sharing the single-threaded runtime.
+async fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
+    let root = fixture.root().to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        // The binary resolves inside the closure too: the first
+        // `ry_binary()` call runs a cargo build, which is just as
+        // blocking as the child wait.
+        std::process::Command::new(harness::ry_binary())
+            .current_dir(&root)
+            .args(["check", "--output-format", "json"])
+            .arg(&root)
+            .output()
+    })
+    .await
+    .expect("CLI subprocess task")
+    .unwrap();
     assert!(
         matches!(output.status.code(), Some(0 | 1)),
         "CLI failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "CLI stdout was not JSON diagnostics ({error}); stdout head: {:?}, stderr head: {:?}",
+            String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(256)]),
+            String::from_utf8_lossy(&output.stderr[..output.stderr.len().min(256)]),
+        )
+    });
     values
         .into_iter()
         .map(|value| published_from_cli_value(&value, fixture.root()))
         .collect()
+}
+
+/// Cap on publications consumed by [`drain_publications`]. This
+/// fixture publishes at most one diagnostic per file across three
+/// files per pass; sixteen covers several passes with wide margin. A
+/// server publishing more than this is stuck, and the drain reports
+/// its last message instead of hanging.
+const DRAIN_PUBLICATION_CAP: u32 = 16;
+
+/// Consume every queued or in-flight `publishDiagnostics` for `uri`
+/// until an idle window passes with none. After this returns, a fresh
+/// publication mark can only be satisfied by a publication caused by
+/// later actions. The idle window detects end-of-stream the same way
+/// `quiesce_diagnostics` does; it does not wait for computation, and a
+/// suppressed (deduplicated) no-op refresh simply ends the first
+/// window. The drain is bounded so a server stuck publishing fails the
+/// test with what it last sent instead of hanging.
+async fn drain_publications(session: &mut harness::ClientSession, uri: &str) {
+    let mut drained = 0u32;
+    loop {
+        let mark = session.publication_mark();
+        match tokio::time::timeout(DRAIN, session.published_diagnostics_after(uri, mark)).await {
+            Ok(result) => {
+                let received = result.expect("publication receive error during drain");
+                drained += 1;
+                assert!(
+                    drained <= DRAIN_PUBLICATION_CAP,
+                    "still receiving publications after {drained} drained; last: {received}"
+                );
+            }
+            Err(_) => return,
+        }
+    }
 }
 
 /// Capabilities advertising dynamic watched-file registration, so tests
@@ -80,16 +132,24 @@ fn watching_capabilities() -> Value {
     json!({"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}})
 }
 
-/// Answer the server's `client/registerCapability` request (if any) so
-/// the session proceeds; the globs themselves are pinned elsewhere.
+/// Answer the server's `client/registerCapability` request. The
+/// sessions that call this advertise dynamic watched-file registration,
+/// so the request must arrive and its response must succeed; a missing
+/// handshake would only surface later as a missing watched-event
+/// publication.
 async fn answer_watcher_registration(session: &mut harness::ClientSession) {
-    let _: Option<Result<Value, _>> = tokio::time::timeout(
+    let result = tokio::time::timeout(
         rpc_receive_timeout(),
         session.respond_to_request("client/registerCapability", json!(null)),
     )
-    .await
-    .ok()
-    .map(|result| result.map_err(|_| ()));
+    .await;
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => panic!("registerCapability response failed: {e}"),
+        Err(_) => panic!(
+            "server never sent client/registerCapability despite advertising watched-files registration"
+        ),
+    }
 }
 
 /// Close and reopen of an unchanged `a.R` must not flip which `f` wins.
@@ -175,18 +235,18 @@ fn same_path_buffer_replaces_its_own_disk_bytes() {
         let scratch = FixtureProject::empty().unwrap();
         scratch.write_file("a.R", F_INT).unwrap();
         scratch.write_file("use.R", USE).unwrap();
-        let char_tree = cli_diagnostics(&fixture);
+        let char_tree = cli_diagnostics(&fixture).await;
         assert!(
             char_tree
                 .iter()
                 .any(|p| p.path.ends_with("use.R") && p.code == "RY040"),
             "fresh CLI on the char-f tree must flag use.R: {char_tree:?}"
         );
+        let scratch_cli = cli_diagnostics(&scratch).await;
         assert!(
-            cli_diagnostics(&scratch).is_empty(),
+            scratch_cli.is_empty(),
             "scratch CLI with the buffer bytes (int f) must be clean"
         );
-        let _ = scratch;
 
         let a_uri = file_uri(&fixture.path("a.R"));
         let use_uri = file_uri(&fixture.path("use.R"));
@@ -206,9 +266,18 @@ fn same_path_buffer_replaces_its_own_disk_bytes() {
         );
 
         // Unsaved edit to the integer variant: the buffer replaces
-        // a.R's own disk bytes, so use.R must go clean.
-        let edit_mark = session.publication_mark();
+        // a.R's own disk bytes, so use.R must go clean. The open's own
+        // publication is awaited first: a single mark across
+        // open+change could be satisfied by the pre-change state when
+        // the debounce lands between them.
+        let open_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
@@ -247,11 +316,22 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
         // Opening a.R with the character variant in the buffer: the
         // buffer owns a.R's path, but z.R (closed, on disk) still sorts
         // last and wins.
-        let mark = session.publication_mark();
+        // One publication per state transition: a mark after opening
+        // use.R, awaited, then a separate mark before opening a.R, so
+        // the assertion observes the post-open-a.R publication instead
+        // of whichever debounced intermediate lands first.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
         let opened = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, open_a_mark)
             .await
             .unwrap();
         assert!(
@@ -263,17 +343,34 @@ fn open_buffer_does_not_outrank_a_later_sorted_closed_file() {
     })
 }
 
-/// Open/closed subset parity: for every subset of {a.R, z.R, use.R}
-/// (same bytes as disk), the eventual `use.R` diagnostics equal the
-/// fresh-project result — the CLI's clean verdict with `z.R`'s integer
-/// `f` last in sorted order. Publication completion is required per
-/// state (an awaited publication, never an absent one), except the
-/// empty subset, where nothing schedules a publish pass; its final
-/// analysis is forced with a watched-file event, which republishes
-/// closed files (#528) and is therefore proof the pass ran.
+/// Open/closed subset parity: for every non-empty subset of
+/// {a.R, z.R, use.R} (same bytes as disk), the eventual `use.R`
+/// diagnostics equal the fresh-project result — asserted in full
+/// against the CLI oracle hoisted above the loop, which proves the
+/// whole tree clean and so requires use.R to publish no diagnostics at
+/// all, not merely no RY040. Publication completion is required per
+/// state (an awaited publication, never an absent one). The empty
+/// subset is covered separately below: nothing schedules a publish
+/// pass there, so its final analysis is forced with a watched-file
+/// event, which republishes closed files (#528) and is therefore proof
+/// the pass ran.
 #[test]
 fn open_closed_subsets_agree_with_the_fresh_project() {
     run(async {
+        // The fresh-project oracle the subsets must converge to, run
+        // explicitly instead of hardcoded: the integer `f` sorts last,
+        // so the whole tree checks clean.
+        {
+            let oracle_fixture = FixtureProject::empty().unwrap();
+            oracle_fixture.write_file("a.R", A_CHAR).unwrap();
+            oracle_fixture.write_file("z.R", F_INT).unwrap();
+            oracle_fixture.write_file("use.R", USE).unwrap();
+            let oracle = cli_diagnostics(&oracle_fixture).await;
+            assert!(
+                oracle.is_empty(),
+                "fresh CLI must be clean with the integer f last: {oracle:?}"
+            );
+        }
         let subsets: Vec<Vec<bool>> = vec![
             vec![true, false, false],
             vec![false, true, false],
@@ -310,8 +407,8 @@ fn open_closed_subsets_agree_with_the_fresh_project() {
                 .unwrap();
             let use_diags = store.get(&use_uri).expect("use.R must be analyzed");
             assert!(
-                !use_diags.iter().any(|d| d["code"] == json!("RY040")),
-                "subset {subset:?}: same bytes must keep the integer f winning: {use_diags:?}"
+                use_diags.is_empty(),
+                "subset {subset:?}: use.R must match the clean CLI oracle exactly, got: {use_diags:?}"
             );
 
             join_session(session, server).await;
@@ -342,8 +439,8 @@ fn open_closed_subsets_agree_with_the_fresh_project() {
             .unwrap();
         let use_diags = store.get(&use_uri).expect("use.R must be analyzed");
         assert!(
-            !use_diags.iter().any(|d| d["code"] == json!("RY040")),
-            "all-closed state must match the fresh project (integer f wins): {use_diags:?}"
+            use_diags.is_empty(),
+            "all-closed state must match the clean CLI oracle exactly, got: {use_diags:?}"
         );
         join_session(session, server).await;
     })
@@ -431,16 +528,30 @@ fn discard_close_returns_to_the_disk_bytes() {
         let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
         sync_barrier(&mut session, &use_uri).await;
 
-        // Open both; edit a.R's buffer to the integer variant -> clean.
-        let mark = session.publication_mark();
+        // Open both, awaiting each open's publication before editing:
+        // a single mark across opens+change could observe the
+        // intermediate pre-change state under a split debounce.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_a_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
             .unwrap();
         let edited = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, edit_mark)
             .await
             .unwrap();
         assert!(
@@ -466,7 +577,7 @@ fn discard_close_returns_to_the_disk_bytes() {
             has_ry040(&closed),
             "discard-close must restore the on-disk semantics: {closed}"
         );
-        let cli = cli_diagnostics(&fixture);
+        let cli = cli_diagnostics(&fixture).await;
         assert!(
             cli.iter()
                 .any(|p| p.path.ends_with("use.R") && p.code == "RY040"),
@@ -493,15 +604,30 @@ fn save_close_matches_the_final_disk_tree() {
         answer_watcher_registration(&mut session).await;
         sync_barrier(&mut session, &use_uri).await;
 
-        let mark = session.publication_mark();
+        // One publication mark per transition: a single mark spanning
+        // the opens and the change could be satisfied by an
+        // intermediate pre-change state when the debounce splits them.
+        let open_use_mark = session.publication_mark();
         session.open(&use_uri, 1, USE).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_use_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+        let open_a_mark = session.publication_mark();
         session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        let _ = session
+            .published_diagnostics_after(&use_uri, open_a_mark)
+            .await
+            .unwrap();
+        drain_publications(&mut session, &use_uri).await;
+        let edit_mark = session.publication_mark();
         session
             .change(&a_uri, 2, json!([{"text": F_INT}]))
             .await
             .unwrap();
         let edited = session
-            .published_diagnostics_after(&use_uri, mark)
+            .published_diagnostics_after(&use_uri, edit_mark)
             .await
             .unwrap();
         assert!(
@@ -530,6 +656,12 @@ fn save_close_matches_the_final_disk_tree() {
             .await
             .unwrap();
 
+        // Drain the no-op watched refresh so close_mark cannot be
+        // satisfied by a queued pre-close publication: the barrier's
+        // inlayHint response does not flush publishes already queued,
+        // and the deduplicated refresh may publish nothing at all.
+        sync_barrier(&mut session, &use_uri).await;
+        drain_publications(&mut session, &use_uri).await;
         // Close: the re-read finds the saved integer bytes; use.R stays
         // clean, matching the final disk tree.
         let close_mark = session.publication_mark();
@@ -548,10 +680,8 @@ fn save_close_matches_the_final_disk_tree() {
             !has_ry040(&closed),
             "save-close must keep the saved semantics: {closed}"
         );
-        assert!(
-            cli_diagnostics(&fixture).is_empty(),
-            "CLI on the final tree is clean"
-        );
+        let final_cli = cli_diagnostics(&fixture).await;
+        assert!(final_cli.is_empty(), "CLI on the final tree is clean");
 
         join_session(session, server).await;
     })

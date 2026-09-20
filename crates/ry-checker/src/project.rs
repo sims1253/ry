@@ -238,7 +238,9 @@ impl Project {
     /// scopes recomputation to the flip and its dependents instead of
     /// clearing every project cache. An order that moves nothing is a
     /// pure no-op, so a steady caller passing the same canonical order
-    /// on every check pays only the position comparison.
+    /// on every check pays only the position comparison. A path listed
+    /// more than once ranks by its last occurrence; callers pass the
+    /// deduplicated canonical order, so the contract never bites.
     pub fn reorder_files(&mut self, order: &[String]) {
         let rank: HashMap<&str, usize> = order
             .iter()
@@ -1020,7 +1022,7 @@ mod tests {
     use super::*;
     use crate::tests::parse_file;
 
-    fn assert_matches_cold(project: &mut Project) {
+    fn assert_matches_cold(project: &mut Project) -> Vec<(String, Vec<Diagnostic>)> {
         let actual = project.check_incremental();
         let mut cold = Project::new();
         for (path, file) in &project.files {
@@ -1030,6 +1032,7 @@ mod tests {
         assert_eq!(project.prev_fn_returns, cold.prev_fn_returns);
         assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        actual
     }
 
     #[test]
@@ -1105,8 +1108,10 @@ mod tests {
         // win, exactly like a fresh project in that order, with no
         // content edit to carry the invalidation.
         project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
-        assert_matches_cold(&mut project);
-        let second = project.check_incremental();
+        // The cold comparison's own warm run carries the assertion: a
+        // second `check_incremental` here would read the cached
+        // diagnostics the first call just produced.
+        let second = assert_matches_cold(&mut project);
         let (_, use_diagnostics) = second
             .iter()
             .find(|(path, _)| path == "use.R")
@@ -1115,6 +1120,25 @@ mod tests {
             !use_diagnostics.iter().any(|d| d.code == "RY040"),
             "integer f must win after the reorder: {use_diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn no_op_reorder_keeps_the_warm_state_steady() {
+        // Reordering to the order the project already has takes the
+        // steady-state short-circuit: no file moves, so no name is
+        // invalidated and the warm caches survive. Pinned from the
+        // outside: the incremental result is identical before and
+        // after the no-op reorder, matching a fresh project both
+        // times.
+        let mut project = Project::new();
+        project.add_file("a.R".into(), parse_file("a.R", "f <- function() \"str\""));
+        project.add_file("use.R".into(), parse_file("use.R", "x <- f() + 1L"));
+        project.add_file("z.R".into(), parse_file("z.R", "f <- function() 1L"));
+        project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
+        let before = assert_matches_cold(&mut project);
+        project.reorder_files(&["a.R".to_string(), "use.R".to_string(), "z.R".to_string()]);
+        let after = assert_matches_cold(&mut project);
+        assert_eq!(format!("{before:?}"), format!("{after:?}"));
     }
 
     #[test]

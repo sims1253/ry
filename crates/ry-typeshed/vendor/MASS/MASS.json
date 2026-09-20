@@ -1,0 +1,1456 @@
+{
+  "schema_version": "2",
+  "package": "MASS",
+  "version": "0.0.1",
+  "functions": {
+    "addterm": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "area": {
+      "params": [
+        "f",
+        "a",
+        "b",
+        "...",
+        "fa",
+        "fb",
+        "limit",
+        "eps"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "as.fractions": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bandwidth.nrd": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "bcv": {
+      "params": [
+        "x",
+        "nb",
+        "lower",
+        "upper"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "boxcox": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "con2tr": {
+      "params": [
+        "obj"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "contr.sdif": {
+      "params": [
+        "n",
+        "contrasts",
+        "sparse"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "corresp": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cov.mcd": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cov.mve": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cov.rob": {
+      "params": [
+        "x",
+        "cor",
+        "quantile.used",
+        "method",
+        "nsamp",
+        "seed"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "cov.trob": {
+      "params": [
+        "x",
+        "wt",
+        "cor",
+        "center",
+        "nu",
+        "maxit",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "denumerate": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dose.p": {
+      "params": [
+        "obj",
+        "cf",
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "dropterm": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "enlist": {
+      "params": [
+        "vec"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "eqscplot": {
+      "params": [
+        "x",
+        "y",
+        "ratio",
+        "tol",
+        "uin",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fbeta": {
+      "params": [
+        "x",
+        "alpha",
+        "beta"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fitdistr": {
+      "params": [
+        "x",
+        "densfun",
+        "start",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "fractions": {
+      "params": [
+        "x",
+        "cycles",
+        "max.denominator",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "frequency.polygon": {
+      "params": [
+        "x",
+        "nclass",
+        "xlab",
+        "ylab",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gamma.dispersion": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "gamma.shape": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ginv": {
+      "params": [
+        "X",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glm.convert": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glm.nb": {
+      "params": [
+        "formula",
+        "data",
+        "weights",
+        "subset",
+        "na.action",
+        "start",
+        "etastart",
+        "mustart",
+        "control",
+        "method",
+        "model",
+        "x",
+        "y",
+        "contrasts",
+        "...",
+        "init.theta",
+        "link"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "glmmPQL": {
+      "params": [
+        "fixed",
+        "random",
+        "family",
+        "data",
+        "correlation",
+        "weights",
+        "control",
+        "niter",
+        "verbose",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hist.FD": {
+      "params": [
+        "x",
+        "prob",
+        "xlab",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hist.scott": {
+      "params": [
+        "x",
+        "prob",
+        "xlab",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "huber": {
+      "params": [
+        "y",
+        "k",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "hubers": {
+      "params": [
+        "y",
+        "k",
+        "mu",
+        "s",
+        "initmu",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "is.fractions": {
+      "params": [
+        "f"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "isoMDS": {
+      "params": [
+        "d",
+        "y",
+        "k",
+        "maxit",
+        "trace",
+        "tol",
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "kde2d": {
+      "params": [
+        "x",
+        "y",
+        "h",
+        "n",
+        "lims"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lda": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ldahist": {
+      "params": [
+        "data",
+        "g",
+        "nbins",
+        "h",
+        "x0",
+        "breaks",
+        "xlim",
+        "ymax",
+        "width",
+        "type",
+        "sep",
+        "col",
+        "xlab",
+        "bty",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lm.gls": {
+      "params": [
+        "formula",
+        "data",
+        "W",
+        "subset",
+        "na.action",
+        "inverse",
+        "method",
+        "model",
+        "x",
+        "y",
+        "contrasts",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lm.ridge": {
+      "params": [
+        "formula",
+        "data",
+        "subset",
+        "na.action",
+        "lambda",
+        "model",
+        "x",
+        "y",
+        "contrasts",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lmsreg": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "loglm": {
+      "params": [
+        "formula",
+        "data",
+        "subset",
+        "na.action",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "loglm1": {
+      "params": [
+        "formula",
+        "data",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "logtrans": {
+      "params": [
+        "object",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lqs": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "lqs.formula": {
+      "params": [
+        "formula",
+        "data",
+        "...",
+        "method",
+        "subset",
+        "na.action",
+        "model",
+        "x.ret",
+        "y.ret",
+        "contrasts"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ltsreg": {
+      "params": [
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mca": {
+      "params": [
+        "df",
+        "nf",
+        "abbrev"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "mvrnorm": {
+      "params": [
+        "n",
+        "mu",
+        "Sigma",
+        "tol",
+        "empirical",
+        "EISPACK"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "nclass.freq": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "neg.bin": {
+      "params": [
+        "theta"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "negative.binomial": {
+      "params": [
+        "theta",
+        "link"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "negexp.SSival": {
+      "params": [
+        "mCall",
+        "data",
+        "LHS"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Null": {
+      "params": [
+        "M"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "parcoord": {
+      "params": [
+        "x",
+        "col",
+        "lty",
+        "var.label",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "polr": {
+      "params": [
+        "formula",
+        "data",
+        "weights",
+        "start",
+        "...",
+        "subset",
+        "na.action",
+        "contrasts",
+        "Hess",
+        "model",
+        "method"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "psi.bisquare": {
+      "params": [
+        "u",
+        "c",
+        "deriv"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "psi.hampel": {
+      "params": [
+        "u",
+        "a",
+        "b",
+        "c",
+        "deriv"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "psi.huber": {
+      "params": [
+        "u",
+        "k",
+        "deriv"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "qda": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rational": {
+      "params": [
+        "x",
+        "cycles",
+        "max.denominator",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "renumerate": {
+      "params": [
+        "x"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rlm": {
+      "params": [
+        "x",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rms.curv": {
+      "params": [
+        "obj"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "rnegbin": {
+      "params": [
+        "n",
+        "mu",
+        "theta"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "sammon": {
+      "params": [
+        "d",
+        "y",
+        "k",
+        "niter",
+        "trace",
+        "magic",
+        "tol"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "select": {
+      "params": [
+        "obj"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "Shepard": {
+      "params": [
+        "d",
+        "x",
+        "p"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stdres": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "stepAIC": {
+      "params": [
+        "object",
+        "scope",
+        "scale",
+        "direction",
+        "trace",
+        "keep",
+        "steps",
+        "use.start",
+        "k",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "studres": {
+      "params": [
+        "object"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theta.md": {
+      "params": [
+        "y",
+        "mu",
+        "dfr",
+        "weights",
+        "limit",
+        "eps"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theta.ml": {
+      "params": [
+        "y",
+        "mu",
+        "n",
+        "weights",
+        "limit",
+        "eps",
+        "trace"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "theta.mm": {
+      "params": [
+        "y",
+        "mu",
+        "dfr",
+        "weights",
+        "limit",
+        "eps"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "truehist": {
+      "params": [
+        "data",
+        "nbins",
+        "h",
+        "x0",
+        "breaks",
+        "prob",
+        "xlim",
+        "ymax",
+        "col",
+        "xlab",
+        "bty",
+        "..."
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "ucv": {
+      "params": [
+        "x",
+        "nb",
+        "lower",
+        "upper"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "width.SJ": {
+      "params": [
+        "x",
+        "nb",
+        "lower",
+        "upper",
+        "method"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "write.matrix": {
+      "params": [
+        "x",
+        "file",
+        "sep",
+        "blocksize"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "abbey": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "accdeaths": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Aids2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Animals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "anorexia": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "bacteria": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "beav1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "beav2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "biopsy": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "birthwt": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Boston": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "cabbages": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "caith": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Cars93": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "cats": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "cement": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "chem": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "coop": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "cpus": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "crabs": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Cushings": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "DDT": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "deaths": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "drivers": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "eagles": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "epil": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "farms": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "fgl": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "forbes": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "GAGurine": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "galaxies": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "gehan": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "genotype": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "geyser": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "gilgais": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "hills": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "housing": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "immer": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Insurance": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "leuk": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "mammals": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "mcycle": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Melanoma": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "menarche": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "michelson": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "minn38": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "motors": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "muscle": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "newcomb": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "nlschools": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "npk": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "npr1": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "oats": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "OME": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "painters": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "petrol": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "phones": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Pima.te": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Pima.tr": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Pima.tr2": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "quine": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Rabbit": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "road": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "rotifer": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Rubber": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "ships": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "shoes": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "shrimp": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "shuttle": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Sitka": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Sitka89": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Skye": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "snails": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "SP500": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "steam": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "stormer": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "survey": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "synth.te": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "synth.tr": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "topo": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "Traffic": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "UScereal": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "UScrime": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "VA": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "waders": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "whiteside": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    },
+    "wtloss": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

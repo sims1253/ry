@@ -340,6 +340,40 @@ pub mod test_seam {
     pub(crate) async fn maybe_pause_scan_commit() {
         scan_gate().maybe_pause().await;
     }
+
+    thread_local! {
+        static RECONCILE_DRIVER_SPAWNS: std::sync::atomic::AtomicUsize =
+            const { std::sync::atomic::AtomicUsize::new(0) };
+        static RECONCILE_ROUNDS: std::sync::atomic::AtomicUsize =
+            const { std::sync::atomic::AtomicUsize::new(0) };
+    }
+
+    /// Number of reconciliation driver tasks actually spawned since
+    /// process start (test-util only). The wake path spawns only when
+    /// no driver is active and obligations are pending, so a burst of
+    /// events over a small path set must keep this far below the event
+    /// count — the observable half of the driver's coalescing contract.
+    pub fn reconciliation_driver_spawns() -> usize {
+        RECONCILE_DRIVER_SPAWNS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Number of reconciliation driver rounds since process start
+    /// (test-util only); each round re-drives every pending path once.
+    pub fn reconciliation_rounds() -> usize {
+        RECONCILE_ROUNDS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    pub(crate) fn note_reconciliation_driver_spawn() {
+        RECONCILE_DRIVER_SPAWNS.with(|count| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+
+    pub(crate) fn note_reconciliation_round() {
+        RECONCILE_ROUNDS.with(|count| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
 }
 
 mod backend;

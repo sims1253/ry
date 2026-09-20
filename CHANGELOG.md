@@ -136,6 +136,38 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- The LSP now retains watched-file and close-time work until the final
+  analysis converges, instead of trusting the event's own refresh to
+  finish it. `refresh_disk_entry` retries one lost index-generation
+  race and escalates a second loss to a full backstop scan, but the
+  backstop can lose too (another landing during its walk supersedes
+  the scan's commit), and a losing fallback returned while forgetting
+  the path entirely: with no open document and no further event, a
+  watched fix, creation, or deletion stranded forever — the index held
+  stale bytes and the client held stale squiggles, with nothing left
+  to correct them. Every refresh now enqueues a per-path obligation at
+  its epoch claim, BEFORE the blocking read that might lose; the
+  obligation carries what is still owed (bytes or removal, then the
+  owning package's resolution context together with the publication
+  that must follow it, because publishing over a stale import context
+  is not converged either). Terminal outcomes settle their revision
+  exactly — an open buffer owning the path, a `max-files` refusal, a
+  landed install/removal, an Installed scan that fence-covers the
+  claim — while a newer event's mid-read claim keeps its own fresh
+  entry, so an older or unrelated writer never acknowledges another
+  revision's duty. A single reconciliation driver re-runs, per pending
+  path, the same pipeline the watched handler runs for a landed
+  refresh; it never dispatches for a path whose refresh is still in
+  flight (that would supersede a read that may still land, the exact
+  waste the per-path epochs exist to prevent) and idles out — with the
+  enqueue and the idle transition sharing the state lock — until an
+  event or a losing refresh's exit wakes it again. Rounds that retire
+  nothing are bounded, so persistent infrastructure failure ends in a
+  visible warning instead of a spin; folder removal and shutdown cancel
+  their obligations outright. Once a burst of events stops, the next
+  round lands (nothing else moves the generation under silence), so
+  the final analysis reaches the fresh-analysis verdict with no rescue
+  event.
 - Propagate the NULL component of a union return type into RY001's
   condition analysis (#362). A find-or-NULL helper (`locate_input <-
   function(input) if (is.null(input)) return(NULL) else "path"`, the

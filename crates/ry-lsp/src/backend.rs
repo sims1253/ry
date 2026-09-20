@@ -53,6 +53,47 @@ struct CachedHints {
     hints: Vec<InlayHint>,
 }
 
+/// What one pending watched/close obligation still owes; see
+/// [`State::pending_refreshes`]. The phases settle in order — bytes
+/// (or a confirmed removal) first, then the owning package's
+/// resolution context together with the publication that must follow
+/// it — because publishing before the context settles would show an
+/// analysis built on a stale import context, which is not "converged"
+/// either.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RefreshDuty {
+    /// Indexed bytes (or a confirmed removal), the owning package's
+    /// resolution context, and the publication that follows.
+    BytesContextPublication,
+    /// The bytes phase settled — a refresh landed an install/removal
+    /// under its claim — leaving the context refresh and the
+    /// publication that must follow it.
+    ContextPublication,
+}
+
+/// One retained reconciliation obligation: the refresh epoch that
+/// claimed it (the revision an acknowledgment must not exceed), the
+/// duty still owed, and how many refreshes for the path are currently
+/// in flight (claimed but not yet returned). The driver never
+/// dispatches for a path with an in-flight refresh — preempting it
+/// would claim a newer epoch and supersede a read that may still land,
+/// the exact waste #538's start-order rule exists to prevent — so a
+/// losing refresh's exit is what re-wakes the driver for its path.
+#[derive(Clone, Copy)]
+pub(super) struct PendingRefresh {
+    epoch: u64,
+    duty: RefreshDuty,
+    in_flight: u32,
+}
+
+/// Driver rounds without any obligation retiring before the driver
+/// gives up with a visible warning; see
+/// [`State::reconcile_rounds_without_progress`]. Generous enough that
+/// ordinary churn never trips it — every delivered event is finite, and
+/// under silence a round always lands because nothing else moves the
+/// index generation while the driver re-reads.
+const RECONCILE_MAX_STALLED_ROUNDS: u32 = 8;
+
 #[derive(Default)]
 pub(super) struct State {
     /// Open documents: path -> current source text. Keeping every open
@@ -104,6 +145,35 @@ pub(super) struct State {
     refresh_epochs: HashMap<String, u64>,
     /// Monotonic source of `refresh_epochs` values; see there (#538).
     refresh_epoch_counter: u64,
+    /// P1 (#551 successor): per-path reconciliation obligations. A
+    /// watched/close event's duty is not "the refresh I dispatched" but
+    /// "final analysis converges to the current disk state": the
+    /// per-file refresh ladder can lose both generation races AND its
+    /// full-scan backstop (superseded by yet another landing), and a
+    /// losing fallback used to return while forgetting the path
+    /// entirely — with no open document and no further event, the fix
+    /// or creation stranded forever. Each entry is enqueued at the
+    /// refresh's epoch claim, BEFORE the blocking read that might lose,
+    /// keyed by path so a burst coalesces into the latest claim, and
+    /// acknowledged only when the acknowledgment's epoch still covers
+    /// the entry, so a newer event arriving mid-read keeps its own
+    /// fresh obligation. See [`RefreshDuty`] for the phases.
+    pending_refreshes: HashMap<String, PendingRefresh>,
+    /// True while the reconciliation driver task is between its spawn
+    /// and its idle transition. The idle transition (empty check plus
+    /// flag clear) and every enqueue-side wakeup share the state lock,
+    /// so an obligation cannot appear between the driver's empty check
+    /// and its flag clear: the enqueue either sees the flag still set
+    /// (the running driver re-checks before idling) or finds it clear
+    /// and spawns a driver itself. At most one driver runs at a time.
+    reconcile_driver_active: bool,
+    /// Consecutive driver rounds that retired no obligation; bounds the
+    /// driver against pathological environments (persistent I/O
+    /// failure, unending index churn) — after
+    /// [`RECONCILE_MAX_STALLED_ROUNDS`] such rounds the remaining
+    /// obligations are dropped with a visible warning instead of
+    /// spinning (or full-scanning) forever.
+    reconcile_rounds_without_progress: u32,
     /// Files opened during initialization wait for the first workspace context.
     initial_index_pending: bool,
     /// Runtime stubs loaded from the workspace's `ry.toml`. Kept in state so
@@ -402,6 +472,61 @@ impl ProjectCache {
 }
 
 impl State {
+    /// Settle the pending obligation for `path` as of `epoch`: a
+    /// landing keeps the entry with only the context-and-publication
+    /// duty owed; a terminal no-landing outcome (open-buffer
+    /// ownership, cap refusal) removes it entirely, because nothing a
+    /// later close or cap change won't re-enqueue remains owed. Only
+    /// entries the epoch still covers move — a newer event's claim was
+    /// inserted at its own, higher epoch and keeps its full duty — so
+    /// an older or unrelated writer never acknowledges another
+    /// revision's obligation (#538's start-order rule, applied to the
+    /// bookkeeping).
+    fn settle_pending_refresh(&mut self, path: &str, epoch: u64, landed: bool) {
+        let Some(pending) = self.pending_refreshes.get_mut(path) else {
+            return;
+        };
+        if pending.epoch > epoch {
+            return;
+        }
+        if landed {
+            pending.duty = RefreshDuty::ContextPublication;
+        } else {
+            self.pending_refreshes.remove(path);
+        }
+    }
+
+    /// Record that one refresh for `path` finished (its claim's
+    /// counterpart to the enqueue-side `in_flight` increment).
+    /// Returns whether an obligation remains for the path AND no
+    /// refresh is in flight for it — the condition under which the
+    /// reconciliation driver may take over.
+    fn note_refresh_exit(&mut self, path: &str) -> bool {
+        match self.pending_refreshes.get_mut(path) {
+            Some(pending) => {
+                pending.in_flight = pending.in_flight.saturating_sub(1);
+                pending.in_flight == 0
+            }
+            None => false,
+        }
+    }
+
+    /// Complete the final phase of a landing obligation — the context
+    /// refresh settled and the publication is scheduled — removing the
+    /// entry. Guarded on the duty rather than the epoch because the
+    /// landing epoch is not in scope at the call site: a newer event
+    /// overwrote the entry with a FULL duty, which this must not
+    /// remove; that event's own refresh completes its own obligation.
+    fn complete_pending_publication(&mut self, path: &str) {
+        if self
+            .pending_refreshes
+            .get(path)
+            .is_some_and(|pending| pending.duty == RefreshDuty::ContextPublication)
+        {
+            self.pending_refreshes.remove(path);
+        }
+    }
+
     /// Return the cached parse for `path` when its version matches the
     /// latest recorded version, else `None`. Pure cache read -- does
     /// NOT parse.
@@ -1635,6 +1760,180 @@ impl Backend {
         }
     }
 
+    /// Ensure the reconciliation driver runs when obligations are
+    /// pending (P1). Cheap and idempotent — the flag check and the
+    /// enqueue-side bookkeeping share the state lock, so calling this
+    /// from every handler epilogue cannot spawn more than one driver;
+    /// see [`State::reconcile_driver_active`] for the lost-wakeup
+    /// freedom argument.
+    async fn wake_reconciliation(&self) {
+        let spawn_now = {
+            let mut state = self.state.lock().await;
+            if state.reconcile_driver_active || state.pending_refreshes.is_empty() {
+                false
+            } else {
+                state.reconcile_driver_active = true;
+                true
+            }
+        };
+        if !spawn_now {
+            return;
+        }
+        #[cfg(feature = "test-util")]
+        crate::test_seam::note_reconciliation_driver_spawn();
+        let backend = self.clone();
+        tokio::spawn(async move {
+            backend.run_reconciliation().await;
+        });
+    }
+
+    /// Drive retained watched/close obligations until they settle —
+    /// the no-rescue-event half of the convergence invariant. Each
+    /// round snapshots the pending paths and re-runs, per path, exactly
+    /// the pipeline the watched handler runs for a landed refresh: the
+    /// per-file refresh ladder (which escalates to a full scan only
+    /// after two lost generation races, so a quiet round is one read,
+    /// not a rescan), the initial-index respawn duty, the package
+    /// context refresh, and the publication. The phases keep their
+    /// order because publishing before the context settles would show
+    /// an analysis over a stale import context — bytes installed but
+    /// obsolete context is not "settled" either.
+    ///
+    /// Liveness: every delivered event is finite, and once the burst
+    /// stops nothing else moves the index generation, so the next
+    /// round's refresh lands and drains its obligation; the loop exits
+    /// through the idle transition (empty map, flag cleared, both
+    /// under the lock) the moment nothing is owed. Termination under
+    /// pathology is bounded by [`RECONCILE_MAX_STALLED_ROUNDS`]:
+    /// rounds that retire nothing eventually give up with a visible
+    /// warning instead of spinning or full-scanning forever. Root
+    /// removal and shutdown cancel obligations outright, so the driver
+    /// never resurrects work for a workspace that no longer exists.
+    async fn run_reconciliation(&self) {
+        loop {
+            let (round, before) = {
+                let mut state = self.state.lock().await;
+                if state.pending_refreshes.is_empty() {
+                    state.reconcile_driver_active = false;
+                    state.reconcile_rounds_without_progress = 0;
+                    return;
+                }
+                (
+                    state.pending_refreshes.keys().cloned().collect::<Vec<_>>(),
+                    state.pending_refreshes.len(),
+                )
+            };
+            #[cfg(feature = "test-util")]
+            crate::test_seam::note_reconciliation_round();
+            // A pending initial index would make every refresh lose its
+            // generation race to the completing pass and gate the
+            // publications below; settle that duty first, exactly like
+            // the watched handler's respawn step.
+            if self.state.lock().await.initial_index_pending {
+                self.spawn_background_index().await;
+            }
+            let mut follow_up: Vec<String> = Vec::new();
+            let mut did_work = false;
+            for path in round {
+                let duty = {
+                    let state = self.state.lock().await;
+                    state
+                        .pending_refreshes
+                        .get(&path)
+                        // Never preempt an in-flight refresh: its read
+                        // may still land under its own (newer-than-any
+                        // driver) claim, and a driver-side re-claim would
+                        // supersede it needlessly. Its exit re-wakes the
+                        // driver if the obligation survives it.
+                        .filter(|pending| pending.in_flight == 0)
+                        .map(|pending| pending.duty)
+                };
+                match duty {
+                    // Retired while an earlier path was being driven
+                    // (its own event's refresh completed the follow-up),
+                    // or owned by an in-flight refresh: nothing for this
+                    // round to do.
+                    None => {}
+                    Some(RefreshDuty::BytesContextPublication) => {
+                        did_work = true;
+                        if self
+                            .refresh_disk_entry(std::path::PathBuf::from(&path))
+                            .await
+                        {
+                            follow_up.push(path);
+                        }
+                    }
+                    // Bytes already settled: re-drive only the context
+                    // refresh and the publication it gates, without
+                    // re-reading (a re-landing would also bump the
+                    // generation and retire unrelated in-flight scans).
+                    Some(RefreshDuty::ContextPublication) => {
+                        did_work = true;
+                        follow_up.push(path);
+                    }
+                }
+            }
+            if !did_work {
+                // Every surviving obligation is owned by an in-flight
+                // refresh (or vanished mid-round). Idle out instead of
+                // spinning against the parked refresh; the exit-side
+                // wakeup re-spawns a driver when the entry is idle and
+                // still owed.
+                let mut state = self.state.lock().await;
+                state.reconcile_driver_active = false;
+                state.reconcile_rounds_without_progress = 0;
+                return;
+            }
+            if !follow_up.is_empty() {
+                // Same order as the watched handler: respawn a retired
+                // initial pass, advance the contexts, then publish.
+                let index_pending = { self.state.lock().await.initial_index_pending };
+                if index_pending {
+                    self.spawn_background_index().await;
+                }
+                let ctx_settled = self.refresh_package_contexts(&follow_up).await;
+                self.publish_landed_paths(&follow_up).await;
+                let mut state = self.state.lock().await;
+                for path in &ctx_settled {
+                    state.complete_pending_publication(path);
+                }
+            }
+            let mut state = self.state.lock().await;
+            if state.pending_refreshes.len() < before {
+                state.reconcile_rounds_without_progress = 0;
+            } else if !state.pending_refreshes.is_empty() {
+                state.reconcile_rounds_without_progress += 1;
+                if state.reconcile_rounds_without_progress >= RECONCILE_MAX_STALLED_ROUNDS {
+                    let stuck: Vec<String> = state.pending_refreshes.keys().cloned().collect();
+                    tracing::warn!(
+                        paths = ?stuck,
+                        rounds = RECONCILE_MAX_STALLED_ROUNDS,
+                        "watched-file reconciliation stalled; dropping the retained obligations                          (final analysis for these paths may lag until their next event)"
+                    );
+                    state.pending_refreshes.clear();
+                    state.reconcile_rounds_without_progress = 0;
+                }
+            }
+        }
+    }
+
+    /// Schedule the debounced project publication for the paths a
+    /// reconciliation round (or a handler follow-up) owes: with an open
+    /// document anywhere, that document's own scheduling drives the
+    /// project-wide pass — the pass publishes every checked file, not
+    /// just open ones — mirroring `did_close`'s pattern; with none, the
+    /// closed-file path carries them (#528).
+    async fn publish_landed_paths(&self, paths: &[String]) {
+        let open = {
+            let state = self.state.lock().await;
+            state.docs.keys().next().cloned()
+        };
+        match open {
+            Some(path) => self.schedule_diagnostics(path_to_uri(&path)).await,
+            None => self.schedule_closed_file_publish(paths.to_vec()).await,
+        }
+    }
+
     /// Refresh one `disk_files` entry from disk, applying the owning
     /// folder's eligibility and the walk's per-file admission rules with
     /// the same bounded decoder the background indexer parses through
@@ -1711,8 +2010,47 @@ impl Backend {
             state
                 .refresh_epochs
                 .insert(path_string.clone(), refresh_epoch);
+            // Enqueue the reconciliation obligation BEFORE the read that
+            // might lose its races (P1): the entry rides the same claim,
+            // so a newer event's claim overwrites it with a fresher full
+            // duty and this refresh can only ever settle the revision it
+            // covers. Without the entry, a ladder that loses both
+            // generation races AND its backstop scan returned while
+            // forgetting the path — the watched event's whole duty
+            // stranded with no open document and no future event to
+            // rescue it. The in-flight count pairs with the exit-side
+            // decrement in the wrapper below, so the driver can tell a
+            // path waiting for work from one whose refresh is merely
+            // still running.
+            let pending = state
+                .pending_refreshes
+                .entry(path_string.clone())
+                .or_insert(PendingRefresh {
+                    epoch: refresh_epoch,
+                    duty: RefreshDuty::BytesContextPublication,
+                    in_flight: 0,
+                });
+            pending.epoch = refresh_epoch;
+            pending.duty = RefreshDuty::BytesContextPublication;
+            pending.in_flight += 1;
             refresh_epoch
         };
+        let landed = self.refresh_disk_entry_claimed(path, refresh_epoch).await;
+        {
+            let mut state = self.state.lock().await;
+            state.note_refresh_exit(&path_string);
+        }
+        // No wake here: every caller's epilogue wakes (the watched
+        // handler and didClose at their ends, the driver by looping),
+        // and waking from inside the ladder would make the driver's
+        // future recursively contain itself.
+        landed
+    }
+
+    /// The ladder proper, running under a claim `refresh_disk_entry`
+    /// already took; see there for the claim/exit bookkeeping.
+    async fn refresh_disk_entry_claimed(&self, path: PathBuf, refresh_epoch: u64) -> bool {
+        let path_string = path.to_string_lossy().into_owned();
         // Snapshot the owning root and config, plus the index
         // generation this attempt's commit must still hold when it
         // lands: the admission checks below must agree with each other
@@ -1783,7 +2121,12 @@ impl Backend {
             if is_open {
                 // The editor's buffer is authoritative; the watched event (or
                 // a save whose bytes the buffer already shadows) changes
-                // nothing the publish path reads.
+                // nothing the publish path reads. Terminal for the
+                // obligation: the buffer owns the path's analysis, and a
+                // future didClose re-enqueues through its own close-time
+                // re-read.
+                let mut state = self.state.lock().await;
+                state.settle_pending_refresh(&path_string, refresh_epoch, false);
                 return false;
             }
             // A newer same-path refresh already claimed the epoch before
@@ -1842,8 +2185,10 @@ impl Backend {
             let mut state = self.state.lock().await;
             // A concurrent `did_open` landed while the read was in flight:
             // installing a disk snapshot now would shadow the live buffer's
-            // entry on the next publish assembly.
+            // entry on the next publish assembly. Terminal for the same
+            // reason as the snapshot-time guard above.
             if state.docs.contains_key(&path_string) {
+                state.settle_pending_refresh(&path_string, refresh_epoch, false);
                 return false;
             }
             // A newer index generation started while the blocking read was
@@ -1936,8 +2281,12 @@ impl Backend {
                         // flight: reclaim the epoch entry here too — a path
                         // the cap keeps refusing never enters the index, so
                         // its claim would otherwise be the one entry nothing
-                        // else retires (#538).
+                        // else retires (#538) — and settle the obligation
+                        // (terminal refusal: the path deliberately stays
+                        // unindexed, like a fresh scan of the same tree
+                        // would leave it).
                         state.refresh_epochs.remove(&parsed_path);
+                        state.settle_pending_refresh(&parsed_path, refresh_epoch, false);
                         return false;
                     }
                     // Claim the next generation in the same critical section
@@ -1946,6 +2295,11 @@ impl Backend {
                     // insert and the retirement — the staleness check no later
                     // writer can slip through. The caller must not bump again;
                     // the landed `true` already carries the retirement (#526).
+                    // Landed: settle the bytes phase of the obligation in
+                    // the same critical section as the insert, under the
+                    // epoch check that just passed — the caller's context
+                    // refresh and publication follow-up owe the rest.
+                    state.settle_pending_refresh(&parsed_path, refresh_epoch, true);
                     state.disk_files.insert(parsed_path, file);
                     state.index_generation = state.index_generation.wrapping_add(1);
                     drop(state);
@@ -1960,6 +2314,7 @@ impl Backend {
                     // reconciled by the caller's republish pass (#489).
                     // The removal lands like an insert — same atomic
                     // retirement, same caller contract.
+                    state.settle_pending_refresh(&path_string, refresh_epoch, true);
                     state.disk_files.remove(&path_string);
                     // The remover held the path's latest epoch (the check
                     // above), so no same-path refresh is in flight behind
@@ -1998,12 +2353,14 @@ impl Backend {
         // drives the republish, the #528 convention every other
         // no-open-document scan call site already follows (the callers'
         // `refresh_package_contexts` is redundant-but-harmless after
-        // the scan's wholesale context rebuild). A superseded scan
-        // returns false and the path converges on its own next event —
-        // a residual strictly rarer than the double-loss that reached
-        // the backstop, self-healing, and better than the pre-fix
-        // behavior of stranding EVERY single loss; only the landed arm
-        // carries the published-immediately guarantee. The churn bound
+        // the scan's wholesale context rebuild). A superseded or
+        // settled-without-install scan returns false and the path's
+        // obligation stays RETAINED for the reconciliation driver (P1):
+        // "converges on its own next event" was the residual the
+        // no-rescue-event invariant forbids — with no open document and
+        // silence, nothing else would ever re-drive the path. Only the
+        // landed arm carries the published-immediately guarantee. The
+        // churn bound
         // is the double-loss precondition itself — two commits inside
         // two consecutive sub-millisecond snapshot-to-commit windows per
         // escalated refresh — plus each spawned pass stays
@@ -2018,10 +2375,24 @@ impl Backend {
         // A settled-without-install or superseded backstop leaves the
         // path to converge on its own next event, like the superseded
         // arm above.
-        matches!(
+        let landed = matches!(
             self.background_index_outcome().await,
             BackgroundIndexOutcome::Installed
-        )
+        );
+        if landed {
+            // The scan fence-covers this claim: the walk re-read the
+            // path after the scan started (which is after the claim),
+            // and the write the event carries predates the claim, so
+            // the installed bytes include it — and the scan's wholesale
+            // commit rebuilt every package context in the same critical
+            // section. Only the caller's publication follow-up remains
+            // owed. A superseded or settled-without-install scan
+            // settles nothing: the obligation stays retained, and the
+            // reconciliation driver re-drives the path.
+            let mut state = self.state.lock().await;
+            state.settle_pending_refresh(&path_string, refresh_epoch, true);
+        }
+        landed
     }
 
     /// Re-resolve the owning package group's resolution context after
@@ -2046,9 +2417,18 @@ impl Backend {
     /// adds no interleave left to untangle: only landed refreshes
     /// reach this function, and the landing refresh for a path is
     /// always its most recently started one.
-    async fn refresh_package_contexts(&self, landed: &[String]) {
+    async fn refresh_package_contexts(&self, landed: &[String]) -> Vec<String> {
         // At most one group install per owning folder per package root.
+        // Returns the paths whose context duty is settled — a landed
+        // group install, a vanished owning folder (the removal path
+        // already cleared and republished), or a root-owned partition
+        // (no stored context to advance). Paths whose group could not
+        // settle keep their reconciliation obligation, so the driver
+        // retries the group instead of leaving the landed bytes paired
+        // with a stale import context forever.
         let mut groups: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+        let mut settled: Vec<String> = Vec::new();
+        let mut path_group: Vec<(String, usize)> = Vec::new();
         {
             let state = self.state.lock().await;
             for path in landed {
@@ -2057,28 +2437,53 @@ impl Backend {
                     // Root-owned partitions check against no stored
                     // context (the publish path passes `None`), so there
                     // is nothing to advance for them.
-                    None => continue,
+                    None => {
+                        settled.push(path.clone());
+                        continue;
+                    }
                 };
                 let package_root = ry_workspace::enclosing_package_root(std::path::Path::new(path));
-                if !groups.contains(&(folder_root.clone(), package_root.clone())) {
-                    groups.push((folder_root, package_root));
-                }
+                let index = match groups
+                    .iter()
+                    .position(|group| *group == (folder_root.clone(), package_root.clone()))
+                {
+                    Some(index) => index,
+                    None => {
+                        groups.push((folder_root, package_root));
+                        groups.len() - 1
+                    }
+                };
+                path_group.push((path.clone(), index));
             }
         }
-        for (folder_root, package_root) in groups {
-            self.refresh_one_package_context(&folder_root, &package_root)
+        let mut group_settled = vec![false; groups.len()];
+        for (index, (folder_root, package_root)) in groups.iter().enumerate() {
+            group_settled[index] = self
+                .refresh_one_package_context(folder_root, package_root)
                 .await;
         }
+        for (path, index) in path_group {
+            if group_settled[index] {
+                settled.push(path);
+            }
+        }
+        settled
     }
 
     /// Snapshot, resolve, and generation-guarded install for one package
     /// group, with one retry and a full-scan backstop on lost races (see
-    /// [`Backend::refresh_package_contexts`]).
+    /// [`Backend::refresh_package_contexts`]). Returns whether the
+    /// group's context duty settled: a landed install, an Installed
+    /// backstop scan (the scan resolves every group wholesale), or a
+    /// vanished owning folder. A superseded or settled-without-install
+    /// backstop and a failed resolve task leave the group unsettled —
+    /// the reconciliation driver retries it rather than letting the
+    /// landed bytes pair with a stale import context.
     async fn refresh_one_package_context(
         &self,
         folder_root: &Path,
         package_root: &Option<PathBuf>,
-    ) {
+    ) -> bool {
         for _ in 0..2 {
             // Snapshot the folder's owned (path, file) pairs plus config,
             // stubs, and the generation the install must still hold. Open
@@ -2104,8 +2509,9 @@ impl Backend {
                 {
                     Some(ctx) => ctx,
                     // The owning folder vanished mid-refresh; the folder
-                    // removal path already cleared and republished.
-                    None => return,
+                    // removal path already cleared and republished, so
+                    // nothing remains owed for this group.
+                    None => return true,
                 };
                 // Component-based membership: a string prefix breaks
                 // when the folder is the filesystem root (`//` never
@@ -2168,7 +2574,10 @@ impl Backend {
                 }
                 Err(error) => {
                     tracing::warn!(%error, "incremental workspace resolution task failed");
-                    return;
+                    // Infrastructure failure (the blocking task itself
+                    // died): unsettled — the driver retries with a
+                    // bounded stall budget instead of looping here.
+                    return false;
                 }
             };
             // Installed: degraded-scope warnings keep scan parity (the
@@ -2193,7 +2602,10 @@ impl Backend {
                 {
                     ctx.workspace_contexts.insert(package_root.clone(), context);
                 } else {
-                    return;
+                    // The owning folder vanished between the snapshot
+                    // and this install; the removal path already
+                    // cleared and republished.
+                    return true;
                 }
             }
             for (path, reason) in &degraded {
@@ -2204,11 +2616,21 @@ impl Backend {
                     )
                     .await;
             }
-            return;
+            return true;
         }
         // Two lost races in a row: a full scan converges every group
-        // through its own generation-guarded commit.
-        self.spawn_background_index().await;
+        // through its own generation-guarded commit. Only an Installed
+        // scan settles this group — the walk resolved and installed
+        // every group's context from current disk. A superseded scan
+        // leaves the duty to its supplanter, and a settled-without-
+        // install pass (an errored walk, generation still held)
+        // installed nothing: both stay unsettled for the reconciliation
+        // driver, which retries the group instead of re-scanning once
+        // per event.
+        matches!(
+            self.background_index_outcome().await,
+            BackgroundIndexOutcome::Installed
+        )
     }
 
     /// Debounce diagnostics: bump the workspace generation counter and

@@ -500,7 +500,7 @@ expression: snapshots
   fixture: err_if_expr_join.R
 - diagnostics:
     - code: RY106
-      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `dplyr::if_else()` when the result must be character"
       severity: warning
       span:
         column: 2
@@ -508,7 +508,7 @@ expression: snapshots
         line: 11
         start: 578
     - code: RY106
-      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both character; use a typed alternative such as `dplyr::if_else()` when the result must be character"
       severity: warning
       span:
         column: 5
@@ -516,7 +516,7 @@ expression: snapshots
         line: 14
         start: 711
     - code: RY106
-      message: "`ifelse()` builds its result from `test`, so an all-`NA` test leaves a logical result even though the branches are both character; use a typed alternative such as `vctrs::if_else()` when the result must be character"
+      message: "`ifelse()` builds its result from `test`, so an all-`NA` test leaves a logical result even though the branches are both character; use a typed alternative such as `dplyr::if_else()` when the result must be character"
       severity: warning
       span:
         column: 5
@@ -524,7 +524,7 @@ expression: snapshots
         line: 16
         start: 823
     - code: RY106
-      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both integer; use a typed alternative such as `vctrs::if_else()` when the result must be integer"
+      message: "`ifelse()` builds its result from `test`, so an empty test leaves a logical result even though the branches are both integer; use a typed alternative such as `dplyr::if_else()` when the result must be integer"
       severity: warning
       span:
         column: 5
@@ -1568,25 +1568,17 @@ expression: snapshots
       severity: warning
       span:
         column: 49
-        end: 968
+        end: 961
         line: 15
-        start: 955
+        start: 948
     - code: RY110
       message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.double` (such as an empty character) which `sqrt()` cannot use as numeric; guard the emptiness too: `is.double(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
       severity: warning
       span:
         column: 47
-        end: 1289
+        end: 1282
         line: 23
-        start: 1276
-    - code: RY110
-      message: "`all(is.na(args))` is vacuously TRUE when `args` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `vec_cast()` cannot use as numeric; guard the emptiness too: `is.numeric(args) || (length(args) > 0 && all(is.na(args)))`"
-      severity: warning
-      span:
-        column: 50
-        end: 1931
-        line: 35
-        start: 1918
+        start: 1269
   fixture: err_vacuous_all_guard_interprocedural.R
 - diagnostics: []
   fixture: ok_ambient_globals.R

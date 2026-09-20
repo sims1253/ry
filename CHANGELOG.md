@@ -136,6 +136,45 @@ All notable changes to ry are documented in this file.
 
 ### Fixed
 
+- Remove the unsupported unconditional numeric `x` demand from the
+  ry-side `vctrs::vec_cast` overlay stub. `vec_cast(x, to)` is
+  relational: the modes `x` may take depend on `to` (runtime-verified
+  on R 4.6.1 / vctrs 0.7.3: `vec_cast(x, NULL)` returns `x` unchanged
+  for `character()` and `raw(0)` under the exact hms guard, and
+  `vec_cast(character(), character())` is legal), so the stub's
+  numeric-union `x` type asserted a requirement R only imposes for
+  numeric-family targets. The stub now pins only R's own formals
+  (`x, to, ..., x_arg, to_arg, call`) with no parameter types, keeping
+  arity/resolution behavior identical. The retired `demand_only`
+  parameter flag -- which exempted the type from RY092 while RY110's
+  demand gate consumed it -- is removed with its only use, and stale
+  `demand_only: true` metadata now fails stub parsing by name
+  (`deny_unknown_fields`) instead of silently enforcing its type as an
+  ordinary requirement. Intentional coverage rollback, recorded as the
+  oracle known-gap `vec_cast_vacuous_demand.R`: the numeric-target
+  `vec_cast` RY110 diagnostic (a previously audited true positive --
+  `vec_cast(character(), double())` does error) is lost, because the
+  old implementation had no target-dependent proof and the same
+  diagnostic fired falsely on the legal NULL-target and
+  character-target forms. Base numeric demands (`sqrt`, `mean`, the
+  Math group) keep arming RY110.
+- Correct RY106's suggested typed alternative: `dplyr::if_else()`, not
+  `vctrs::if_else()`. vctrs has never exported `if_else`; its
+  vectorized if-else is `vec_if_else()` (added in vctrs 0.7.0), while
+  `if_else()` is dplyr's long-standing exported spelling (verified on
+  R 4.6.1: dplyr 1.2.1 exports `if_else`; `exists("if_else",
+  where = asNamespace("vctrs"))` is FALSE on vctrs 0.7.3). The
+  diagnostic text, rule registry summary, and docs table now recommend
+  `dplyr::if_else()`; the quiet corpus fixture that exercised the old
+  spelling (quiet only because the unknown callee is ignored) now uses
+  the real `vctrs::vec_if_else()`, and a new oracle claim fixture
+  executes the recommended function on the collapse shapes: an empty or
+  all-NA condition keeps the branch mode (`character(0)`,
+  `NA_character_` entries), an NA condition entry yields NA or the
+  explicit `missing` value, next to the original `ifelse()` collapse
+  assertions. Message-only change; identity, severity, and firing
+  conditions are untouched, and the `ifelse()` collapse examples in the
+  existing claim fixture are preserved.
 - Make RY107 honest about `NA` results and S4 dispatch in its outcome
   claims. The negating/constant classification is unchanged, but the
   message no longer asserts unconditional truths: `any()`/`all()`
@@ -447,15 +486,26 @@ All notable changes to ry are documented in this file.
   fixed findings still drop out and the regeneration run reports (and
   fails on) the findings it writes, like the no-config path always did
   (#484).
-- The LSP now assembles its multi-file project in one canonical order:
-  indexed disk files sorted by path, then open documents sorted by path —
-  the CLI's sorted discovery order, with the editor's buffers layered
-  last so an open document's definitions shadow same-named on-disk ones.
-  The order used to come from unsorted HashMaps and close/reopen
-  re-appended the reopened file at the end, so when two files defined
-  the same top-level function the winning definition — and with it
-  inferred calls and diagnostics — depended on the process's hash seed
-  and flipped after closing and reopening an unchanged file (#490).
+- The LSP now assembles its multi-file project as one path-keyed
+  source view: the eligible indexed disk entries with the disk twin of
+  every open path removed, each eligible open buffer inserted at its
+  own path, and the unified collection sorted once by path — the CLI's
+  sorted discovery order. An open buffer is authoritative for its own
+  path only: it replaces that path's on-disk bytes (an unsaved edit, or
+  an over-`max-file-bytes` buffer whose stale small disk twin must not
+  keep contributing, #488), but it does not outrank a different closed
+  file that sorts after it. The previous assemblies decided same-name
+  shadowing by things no edit and no CLI run could reproduce:
+  unsorted HashMap iteration made the winner depend on the process's
+  hash seed and close/reopen re-appended the reopened file at the end
+  (#490), and sorting disk files before all open documents — the first
+  shape of this same unreleased fix — traded that for open/closed
+  status: merely opening a byte-identical file flipped the winning
+  definition. The `Project` side now treats an actual reorder of a
+  warm project as an analysis input too: when the canonical order
+  moves, every name defined by more than one file is invalidated with
+  its defining files, so the warm caches re-derive the new winner
+  without waiting for a content edit to dirty the path.
 - The LSP server now applies inline suppression comments and the
   min-confidence threshold before subtracting the baseline, matching
   `ry check`: with two identical diagnostics (same path, code, and

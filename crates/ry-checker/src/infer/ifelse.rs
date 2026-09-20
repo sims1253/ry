@@ -168,8 +168,9 @@ impl Checker {
     /// RY106: warn when the result can collapse to `logical` although
     /// `yes`/`no` agree on a non-logical atomic mode — the typed-NA select
     /// `ifelse(is.na(x), NA_character_, <character>)` that returns
-    /// `logical(0)` for empty `x`, which is why `vctrs::if_else()` and
-    /// `dplyr::if_else()` exist.
+    /// `logical(0)` for empty `x`, which is why `dplyr::if_else()` and
+    /// `vctrs::vec_if_else()` (vctrs >= 0.7.0) exist. There is no
+    /// `vctrs::if_else()`.
     ///
     /// Two premises are admitted:
     ///
@@ -199,7 +200,7 @@ impl Checker {
             span,
             "RY106",
             format!(
-                "`{}()` builds its result from `test`, so {reason} leaves a logical result even though the branches are both {branch_mode}; use a typed alternative such as `vctrs::if_else()` when the result must be {branch_mode}",
+                "`{}()` builds its result from `test`, so {reason} leaves a logical result even though the branches are both {branch_mode}; use a typed alternative such as `dplyr::if_else()` when the result must be {branch_mode}",
                 site.lookup_name
             ),
         );

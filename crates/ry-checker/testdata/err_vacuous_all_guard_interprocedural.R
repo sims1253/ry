@@ -1,4 +1,4 @@
-# expect: RY110, RY110, RY110
+# expect: RY110, RY110
 # Interprocedural vacuous-all guards (issue #479): the guard lives in a
 # helper, the demand in the caller. The hms args.R form behind
 # tidyverse/hms#231: `is_numeric_or_na` returns the vacuous chain,
@@ -28,11 +28,14 @@ to_seconds <- function(seconds) {
 }
 # The founding hms demand itself (tidyverse/hms#231): `check_args`
 # validates elementwise through the helper, and the continuation hands
-# the values to `vctrs::vec_cast()`, whose stubbed `x` demand rejects
-# every vacuous-accept mode (R: `vec_cast(character(), double())`
-# errors). The qualified spelling resolves without any `library()`
-# line, so this site fires exactly when the stub exists -- without it
-# the demand is untyped and the guard stays silent.
+# the values to `vctrs::vec_cast()`. That demand is relational -- the
+# modes `x` may take depend on `to` (R: `vec_cast(character(), double())`
+# errors, but `vec_cast(x, NULL)` returns `x` unchanged), so the
+# overlay stub declares no parameter types and this site stays silent
+# by contract: a runtime-true rejection the checker cannot prove
+# without a target-dependent type. The shape stays here as the
+# near-miss control proving the silence is the stub's honesty, not an
+# unreachable path.
 is_castable_or_na <- function(x) is.numeric(x) || all(is.na(x))
 check_cast_args <- function(args) {
   valid <- map_lgl(args, is_castable_or_na)

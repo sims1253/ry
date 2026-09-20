@@ -158,6 +158,44 @@ All notable changes to ry are documented in this file.
   diagnostic fired falsely on the legal NULL-target and
   character-target forms. Base numeric demands (`sqrt`, `mean`, the
   Math group) keep arming RY110.
+- Correct RY106's suggested typed alternative: `dplyr::if_else()`, not
+  `vctrs::if_else()`. vctrs has never exported `if_else`; its
+  vectorized if-else is `vec_if_else()` (added in vctrs 0.7.0), while
+  `if_else()` is dplyr's long-standing exported spelling (verified on
+  R 4.6.1: dplyr 1.2.1 exports `if_else`; `exists("if_else",
+  where = asNamespace("vctrs"))` is FALSE on vctrs 0.7.3). The
+  diagnostic text, rule registry summary, and docs table now recommend
+  `dplyr::if_else()`; the quiet corpus fixture that exercised the old
+  spelling (quiet only because the unknown callee is ignored) now uses
+  the real `vctrs::vec_if_else()`, and a new oracle claim fixture
+  executes the recommended function on the collapse shapes: an empty or
+  all-NA condition keeps the branch mode (`character(0)`,
+  `NA_character_` entries), an NA condition entry yields NA or the
+  explicit `missing` value, next to the original `ifelse()` collapse
+  assertions. Message-only change; identity, severity, and firing
+  conditions are untouched, and the `ifelse()` collapse examples in the
+  existing claim fixture are preserved.
+- Make RY107 honest about `NA` results and S4 dispatch in its outcome
+  claims. The negating/constant classification is unchanged, but the
+  message no longer asserts unconditional truths: `any()`/`all()`
+  return `NA` when an `NA` element is undetermined (R 4.6.1,
+  runtime-verified: `any(c(FALSE, NA)) > -1` is `NA`, not TRUE), so
+  constant outcomes are now worded as holding "when the base result is
+  not `NA` (an `NA` result compares as `NA`)", the negating wording
+  names its own `NA` case, and the length-1 premise is qualified with
+  "unless an `any`/`all` or `Summary`-group method dispatches" —
+  `any()`/`all()` are S4 generics, and S3 classes intercept them too
+  through the `Summary` group (runtime-verified: a user
+  `Summary.s3grp` returning 42), so any dispatched method can return
+  any value (even a longer vector), and `base::any()` selects the
+  generic too. The
+  element-level rewrite stays framed as the probable intent. The rule
+  keeps firing on open-world arguments (the founding glue
+  `any(lengths) == 0` shape is retained and tested) rather than going
+  silent on unprovable dispatch; masked or foreign callees were already
+  silent and remain so. Rule registry summary, docs/rules row, and the
+  oracle claim fixture (now asserting the `NA` outcomes) updated;
+  identity, severity, and firing conditions unchanged.
 - The LSP now retains watched-file and close-time work until the final
   analysis converges, instead of trusting the event's own refresh to
   finish it. `refresh_disk_entry` retries one lost index-generation

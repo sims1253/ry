@@ -734,6 +734,23 @@ fn discover_start(path: &std::path::Path) -> PathBuf {
 /// fall out of the path at the empty component
 /// `Path::new("pkg").parent()` yields and terminate at the working
 /// directory.
+///
+/// Known limitation, accepted: folding is lexical, so a `..` that
+/// crosses a symlinked component (`a/symlink/../pkg/DESCRIPTION`)
+/// yields a path the OS never resolves to that file — the kernel
+/// resolves `..` against the link TARGET's parent, not against `a`,
+/// and the one-shot walks (`Path::ancestors` in
+/// `enclosing_package_root`, `Config::discover`) keep the components
+/// as given and therefore read through the link. On such a tree the
+/// snapshot may watch a location the check pass never reads; the
+/// residual risk is a missed auto-refresh (an edit to the file the OS
+/// actually resolves changes no watched stamp), never a spurious pass
+/// and never a wrong result — the pass that does run reads the same
+/// files a fresh check would, and the next unrelated edit or a
+/// restart picks the change up. Canonicalizing the deepest existing
+/// ancestor instead would stat up the tree on every derivation and
+/// churn snapshot entries as creations make ever-deeper prefixes
+/// canonicalizable, so the lexical form stands.
 fn absolutize(path: &std::path::Path) -> PathBuf {
     let joined = discover_start(path);
     let mut normalized = PathBuf::new();
@@ -775,10 +792,14 @@ fn absolutize(path: &std::path::Path) -> PathBuf {
 /// Absorbing ancestors are included before the walk stops (their own
 /// metadata is a resolution input); with no absorber anywhere the chain
 /// runs to the filesystem top, exactly as far as the one-shot grouping
-/// walk itself would. The accepted trade: a package root created ABOVE
-/// an absorbing ancestor is not watched, though a fresh check would
-/// honor it — the price of keeping unrelated ancestors (/, /tmp,
-/// $HOME) out of the set. Deleting an absorbing DESCRIPTION IS watched
+/// walk itself would. The accepted trade applies to the CONFIG ROOT
+/// absorber only: a package root created above it is not watched even
+/// though a fresh check would honor it (the grouping walk climbs past
+/// the config root) — the price of keeping unrelated ancestors (/,
+/// /tmp, $HOME) out of the set. Above a DESCRIPTION boundary the stop
+/// loses nothing: the nearest-boundary rule (`enclosing_package_root`
+/// stops at the first existing DESCRIPTION) hides a higher root from a
+/// fresh check too. Deleting an absorbing DESCRIPTION IS watched
 /// (it is a candidate in the set), and the next poll re-derives the
 /// set, so a moved boundary self-heals.
 ///

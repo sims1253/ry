@@ -1,0 +1,50 @@
+{
+  "schema_version": "2",
+  "package": "RColorBrewer",
+  "version": "0.0.1",
+  "functions": {
+    "brewer.pal": {
+      "params": [
+        "n",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "display.brewer.all": {
+      "params": [
+        "n",
+        "type",
+        "select",
+        "exact.n",
+        "colorblindFriendly"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "display.brewer.pal": {
+      "params": [
+        "n",
+        "name"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  },
+  "datasets": {
+    "brewer.pal.info": {
+      "mode": "opaque",
+      "length": "unknown",
+      "na": true
+    }
+  }
+}

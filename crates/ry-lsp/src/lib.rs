@@ -342,6 +342,85 @@ pub mod test_seam {
     }
 
     thread_local! {
+        static PUBLICATION_ACK_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+        static CONTEXT_INSTALL_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+    }
+
+    fn publication_ack_gate() -> Arc<CommitGate> {
+        PUBLICATION_ACK_GATE.with(Arc::clone)
+    }
+
+    fn context_install_gate() -> Arc<CommitGate> {
+        CONTEXT_INSTALL_GATE.with(Arc::clone)
+    }
+
+    /// Arm the publication-ack gate: the next landed-refresh pipeline
+    /// (watched handler, `didClose`, or reconciliation-driver round)
+    /// pauses AFTER its context refresh settles and the publication is
+    /// scheduled, BEFORE it acknowledges the path's pending
+    /// obligation. Lets a test deterministically park an OLDER
+    /// refresh's completion at exactly the point where a
+    /// version-unaware acknowledgement could retire a NEWER event's
+    /// re-armed obligation: while parked, the test advances the newer
+    /// event to its context/publication phase, then resumes the older
+    /// acknowledgement and observes whether the newer entry survives.
+    /// The waiter holds no state lock.
+    pub fn arm_publication_ack() {
+        publication_ack_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed pipeline to arrive at its acknowledgement
+    /// point (context settled, publication scheduled, obligation not
+    /// yet retired).
+    pub async fn wait_publication_ack() {
+        publication_ack_gate().arrived.notified().await;
+    }
+
+    /// Release the paused acknowledgement.
+    pub fn release_publication_ack() {
+        publication_ack_gate().release.notify_one();
+    }
+
+    /// Called by the landed-refresh pipelines (production code)
+    /// between the context/publication settlement and the obligation
+    /// acknowledgement, holding no lock. No-op when not armed.
+    pub(crate) async fn maybe_pause_publication_ack() {
+        publication_ack_gate().maybe_pause().await;
+    }
+
+    /// Arm the context-install gate: the next
+    /// `refresh_one_package_context` attempt pauses AFTER its blocking
+    /// resolve, with the resolved context and its generation snapshot
+    /// in hand, BEFORE taking the lock whose generation guard decides
+    /// the install. Lets a test land a generation-moving writer in
+    /// exactly that window, so the attempt deterministically loses its
+    /// generation race (the retry ladder and its full-scan backstop can
+    /// then be driven the same way, through `arm_scan_commit`). The
+    /// waiter holds no state lock; re-arm between releases to park a
+    /// retry the same way.
+    pub fn arm_context_install() {
+        context_install_gate().armed.store(true, Ordering::Release);
+    }
+
+    /// Wait for the armed context attempt to arrive at its install
+    /// decision point.
+    pub async fn wait_context_install() {
+        context_install_gate().arrived.notified().await;
+    }
+
+    /// Release the paused context install.
+    pub fn release_context_install() {
+        context_install_gate().release.notify_one();
+    }
+
+    /// Called by `refresh_one_package_context` (production code)
+    /// between the blocking resolve and the install lock, holding no
+    /// lock. No-op when not armed.
+    pub(crate) async fn maybe_pause_context_install() {
+        context_install_gate().maybe_pause().await;
+    }
+
+    thread_local! {
         static DRIVER_IDLE_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
     }
 
@@ -382,6 +461,8 @@ pub mod test_seam {
             const { std::sync::atomic::AtomicUsize::new(0) };
         static RECONCILE_ROUNDS: std::sync::atomic::AtomicUsize =
             const { std::sync::atomic::AtomicUsize::new(0) };
+        static BACKGROUND_INDEX_SPAWNS: std::sync::atomic::AtomicUsize =
+            const { std::sync::atomic::AtomicUsize::new(0) };
     }
 
     /// Number of reconciliation driver tasks actually spawned since
@@ -399,6 +480,19 @@ pub mod test_seam {
         RECONCILE_ROUNDS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
     }
 
+    /// Number of background index passes actually spawned (their walk
+    /// attempted) since process start (test-util only): the initial
+    /// index, config/resolution-triggered rescans, initial-pass
+    /// respawns, and every refresh/context ladder escalation to the
+    /// full-scan backstop. The paced driver's no-spin contract is
+    /// observable through it — while completion remains impossible the
+    /// count must stay frozen (a parked driver scans nothing), and a
+    /// stall episode may escalate at most one scan per driven round,
+    /// never one per retry.
+    pub fn background_index_spawns() -> usize {
+        BACKGROUND_INDEX_SPAWNS.with(|count| count.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub(crate) fn note_reconciliation_driver_spawn() {
         RECONCILE_DRIVER_SPAWNS.with(|count| {
             count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -407,6 +501,12 @@ pub mod test_seam {
 
     pub(crate) fn note_reconciliation_round() {
         RECONCILE_ROUNDS.with(|count| {
+            count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+
+    pub(crate) fn note_background_index_spawn() {
+        BACKGROUND_INDEX_SPAWNS.with(|count| {
             count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         });
     }
@@ -455,7 +555,20 @@ where
         state: Arc::new(Mutex::new(State::default())),
     })
     .finish();
-    Server::new(reader, writer, socket).serve(service).await;
+    let server = Server::new(reader, writer, socket);
+    // Test-util builds widen tower-lsp's default of four in-flight
+    // messages: the reconciliation interleave tests park several
+    // watched-file handlers at their commit gates for the whole
+    // interleave (the parked tail is what keeps a bystander's
+    // retirement out of the driver's round window), and a fifth
+    // notification queued behind four parked handlers would never
+    // dispatch — a transport artifact, not the behavior under test.
+    // Production keeps the library default; editors do not wait for
+    // handler completion either way, and the concurrency the server
+    // must tolerate (#538, #526) is unchanged.
+    #[cfg(feature = "test-util")]
+    let server = server.concurrency_level(64);
+    server.serve(service).await;
     Ok(())
 }
 

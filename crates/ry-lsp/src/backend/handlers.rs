@@ -460,11 +460,11 @@ impl LanguageServer for Backend {
                 self.schedule_closed_file_publish(tracked).await;
             }
         } else {
-            let mut landed: Vec<String> = Vec::new();
+            let mut landed: Vec<(String, u64)> = Vec::new();
             for path in r_source_paths {
                 let path_string = path.to_string_lossy().into_owned();
-                if self.refresh_disk_entry(path).await {
-                    landed.push(path_string);
+                if let Some(epoch) = self.refresh_disk_entry(path).await {
+                    landed.push((path_string, epoch));
                 }
             }
             if landed.is_empty() {
@@ -505,14 +505,23 @@ impl LanguageServer for Backend {
             // paths that left the index. Schedule the landed paths through
             // the debounce instead; a no-op when an open document drives
             // the pass anyway.
-            self.schedule_closed_file_publish(landed).await;
+            self.schedule_closed_file_publish(
+                landed.iter().map(|(path, _)| path.clone()).collect(),
+            )
+            .await;
+            // Test seam: park between the context/publication settlement
+            // and the obligation acknowledgement (see `test_seam`).
+            #[cfg(feature = "test-util")]
+            crate::test_seam::maybe_pause_publication_ack().await;
             // Publication scheduled and context settled: the landed
-            // obligations are complete. Unsettled ones stay for the
-            // driver.
+            // obligations are complete — acknowledged with the landing's
+            // own epoch, so an older refresh completing late cannot
+            // retire a newer event's re-armed obligation. Unsettled ones
+            // stay for the driver.
             {
                 let mut state = self.state.lock().await;
-                for path in &ctx_settled {
-                    state.complete_pending_publication(path);
+                for (path, epoch) in &ctx_settled {
+                    state.complete_pending_publication(path, *epoch);
                 }
             }
         }
@@ -571,10 +580,10 @@ impl LanguageServer for Backend {
         // function of the current disk state. Unreadable files leave the
         // index, matching the walk; a dropped entry that previously
         // carried diagnostics is reconciled by the republish below (#489).
-        let refreshed = self
+        let refreshed_epoch = self
             .refresh_disk_entry(std::path::PathBuf::from(&path))
             .await;
-        if refreshed {
+        if let Some(epoch) = refreshed_epoch {
             // The same retirement the watched-file path relies on: the
             // close-time refresh already claimed the next generation
             // inside its commit critical section, so a still-current
@@ -595,12 +604,17 @@ impl LanguageServer for Backend {
             // duty for a settled group; an unsettled group keeps the
             // obligation for the reconciliation driver.
             let ctx_settled = self
-                .refresh_package_contexts(std::slice::from_ref(&path))
+                .refresh_package_contexts(&[(path.clone(), epoch)])
                 .await;
+            // Test seam: park between the context/publication
+            // settlement and the obligation acknowledgement (see
+            // `test_seam`).
+            #[cfg(feature = "test-util")]
+            crate::test_seam::maybe_pause_publication_ack().await;
             {
                 let mut state = self.state.lock().await;
-                for settled in ctx_settled {
-                    state.complete_pending_publication(&settled);
+                for (settled, settled_epoch) in ctx_settled {
+                    state.complete_pending_publication(&settled, settled_epoch);
                 }
             }
         }

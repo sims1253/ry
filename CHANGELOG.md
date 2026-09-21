@@ -215,8 +215,16 @@ All notable changes to ry are documented in this file.
   landed install/removal, an Installed scan that fence-covers the
   claim — while a newer event's mid-read claim keeps its own fresh
   entry, so an older or unrelated writer never acknowledges another
-  revision's duty. A single reconciliation driver re-runs, per pending
-  path, the same pipeline the watched handler runs for a landed
+  revision's duty. The final acknowledgement is version-specific the
+  same way: it carries the landing refresh's own claim epoch — never a
+  lookup of whatever entry is current at acknowledgement time — and
+  retires the obligation only when the completed
+  context-and-publication work demonstrably covers the entry's
+  revision, so an older refresh finishing late cannot consume a newer
+  event's re-armed obligation even after that entry advanced to the
+  same remaining phase. A single reconciliation driver re-runs, per
+  pending path, the same pipeline the watched handler runs for a
+  landed
   refresh; it never dispatches for a path whose refresh is still in
   flight (that would supersede a read that may still land, the exact
   waste the per-path epochs exist to prevent) and idles out — the idle
@@ -225,12 +233,18 @@ All notable changes to ry are documented in this file.
   driver scheduled from its own exit (a landed one leaves the
   context-and-publication follow-up to its dispatcher), so an exit
   landing inside the idle window cannot drop the signal. Rounds that
-  retire nothing are bounded — a round retires an obligation when one
-  settles out of the map, a monotonic count immune to the event
-  arrivals that offset retirements in a map-length comparison — so
-  persistent infrastructure failure ends in a visible warning instead
-  of a spin; folder removal and shutdown cancel their obligations
-  outright, with a driver already inside a round re-checking the
+  retire nothing are paced, never dropped — a round retires an
+  obligation when one settles out of the map, a monotonic count immune
+  to the event arrivals that offset retirements in a map-length
+  comparison, and after eight such rounds the driver retains every
+  obligation, warns once per stall episode, and yields for a short
+  capped backoff before retrying — because a finite stall streak is
+  not evidence that completion became impossible, the bound limits the
+  work performed per unit time, not the obligation's lifetime: only
+  settling, folder removal, or shutdown empties the map, so a burst of
+  supersessions longer than any fixed retry budget still converges
+  once it stops, while a pathologically stuck session can neither spin
+  nor rescan per retry; a driver already inside a round re-checks the
   shutdown flag under the lock before each dispatch and follow-up, so
   no work or publication resurrects for the ended session. Once a burst of events stops, the next
   round lands (nothing else moves the generation under silence), so

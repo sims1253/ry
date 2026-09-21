@@ -13,6 +13,8 @@ ry focuses on types and scope. Use it alongside `air` for formatting and
 [tree-sitter-r](https://github.com/r-lib/tree-sitter-r) and takes inspiration
 from [ty](https://github.com/astral-sh/ty).
 
+The logo and banner were painted by my [lovely mom](https://www.artandfun.net/)
+
 <br clear="right">
 
 ## Install

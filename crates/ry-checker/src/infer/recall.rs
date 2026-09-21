@@ -32,10 +32,12 @@
 //! return `NA` when an `NA` element is undetermined by a deciding
 //! `TRUE`/`FALSE` (and `NA` compares as `NA`), and both are S4 generics —
 //! a direct method or the `Summary` group, selected even through
-//! `base::any()`, can return values outside the domain entirely — so
-//! constant outcomes are worded as holding "when the base result is not
-//! `NA`" and the element-level reading stays a suspicion, not a proven
-//! intent. The `length(sum(...)) > 0` half ships as RY105.
+//! `base::any()`, can return values outside the domain entirely. That
+//! dispatch fact is not only worded into the message: where the inference
+//! establishes the argument as a classed value, the rule goes quiet
+//! outright (see [`Checker::check_any_all_scalar_comparison`]); the
+//! wording qualifier covers the sites that still fire on open-world
+//! arguments. The `length(sum(...)) > 0` half ships as RY105.
 
 use super::*;
 
@@ -412,10 +414,37 @@ impl Checker {
     /// direct `any` method and a `Summary`-group method can return any
     /// value, even a longer vector, and `base::any()` still selects the
     /// generic), so the length-1 premise is qualified and the rewrite is
-    /// framed as the probable intent. An open-world argument is never a
-    /// reason to go silent — the founding glue shape passes a parameter —
-    /// and a scalar or unclassed parameter default never proves
-    /// classlessness for the caller's values.
+    /// framed as the probable intent.
+    ///
+    /// That dispatch fact also bounds the rule's *applicability*, not just
+    /// its wording. The outcome table above evaluates the call under
+    /// FALSE = 0 / TRUE = 1, which is the base functions' result domain;
+    /// when the inference establishes the argument as a classed value —
+    /// `structure(..., class = ...)`, `factor(...)`, S4 `new(...)`, a
+    /// `class(x) <- "..."` write, or an `inherits()` guard's narrowing —
+    /// a method for that class can replace the domain entirely. The R
+    /// oracle witness (`testdata/oracle/any_all_scalar_comparison_claim.R`,
+    /// R 4.6.1) pins the counterexample: a local
+    /// `Summary.s3grp <- function(x, ...) 42` makes `any(sgrp)` return
+    /// `42`, so `any(sgrp) == 42` is a meaningful comparison there while
+    /// the FALSE/TRUE table would call it constant FALSE. Warning at such
+    /// a site would mislead, so an established-class argument silences the
+    /// rule outright ([`Self::any_all_argument_dispatch_is_established`]).
+    ///
+    /// The silence is deliberately narrower than "might dispatch". An
+    /// open-world argument — a parameter (with or without a default; a
+    /// default's class says nothing about the caller's values), or any
+    /// value whose class is unknown, such as `structure(x, class =
+    /// class_name)` — never goes quiet: silencing every argument a caller
+    /// could have classed would erase the rule's purpose, and the founding
+    /// glue shape (`any(lengths) == 0`, glue `R/utils.R:32`) passes an
+    /// open-world parameter. A value established as *plain* — a literal
+    /// vector, or a local bound to a classless base-mode value — keeps
+    /// firing because there the base domain is exactly what runs. For
+    /// those firing sites the premise's "unless an `any`/`all` or
+    /// `Summary`-group method dispatches" qualifier stays in the message:
+    /// it names the residual dispatch risk the applicability gate could
+    /// not rule out.
     ///
     /// Scoped against the neighbors: RY093 and RY100 report a comparison
     /// nested *inside* `length()`/`nchar()`/a math call on the same span this
@@ -455,6 +484,13 @@ impl Checker {
         // The length-1 logical premise holds only for the base functions; a
         // shadowed or differently-imported `any`/`all` may return anything.
         if !self.resolves_to_base_lenient(callee, scope) {
+            return;
+        }
+        // Dispatch-aware applicability: once the argument's class is
+        // established, a method for that class can replace the base result
+        // domain the outcome table below evaluates, so the heuristic is not
+        // known to apply at this site and the rule stays silent.
+        if self.any_all_argument_dispatch_is_established(argument, scope) {
             return;
         }
         let Some(literal) = numeric_literal(literal_expr) else {
@@ -505,7 +541,10 @@ impl Checker {
         // `Summary`-group method can return any value, so the wording
         // conditions on the base computation's non-`NA` results. The
         // element-level reading is the probable intent, never a proven
-        // one.
+        // one. The dispatch qualifier in the premise names the residual
+        // risk the applicability gate above could not rule out: the sites
+        // that reach this wording have open-world or provably plain
+        // arguments.
         let outcome_text = if when_false == when_true {
             if when_false {
                 "always TRUE when the base result is not `NA` (an `NA` result compares as `NA`)"
@@ -530,6 +569,79 @@ impl Checker {
             ),
         };
         self.emit(Severity::Warning, span, "RY107", message);
+    }
+
+    /// Whether the argument of a base `any()`/`all()` call is *established*
+    /// as a dispatch-capable (classed) value, so an `any`/`all` or
+    /// `Summary`-group method for that class may replace the base result
+    /// domain. This is RY107's applicability boundary, the read-only
+    /// mirror of RY105's `scalar_call_argument_is_classless`: both stay at
+    /// the literal/local seam — inferring a class through arbitrary calls
+    /// or operators would duplicate inference and could miss dispatch or
+    /// rebinding — but where RY105 must *prove classlessness* before
+    /// claiming a length, RY107 must *prove classedness* before going
+    /// quiet, so the undecided middle lands on the opposite side.
+    ///
+    /// Established, and silent:
+    ///
+    /// * a local binding whose inferred `RType` carries a known class —
+    ///   `d <- structure(c(1, 2), class = "s3obj")`, `factor(...)`,
+    ///   `new("Widget", ...)`, or a `class(d) <- "..."` write;
+    /// * a binding narrowed to a known class by a guard (`inherits(x,
+    ///   "s3obj")` proves the class on the branch where the comparison
+    ///   runs, whether `x` started as a parameter or a local);
+    /// * the constructor call written inline (`any(structure(x, class =
+    ///   "s3obj")) == 0`), recognized by the read-only half of the
+    ///   class-constructor stage.
+    ///
+    /// Not established, and firing:
+    ///
+    /// * a parameter or defaulted parameter no guard has narrowed — the
+    ///   recorded type describes a default or one call site, never the
+    ///   caller's values (the same open-world reading RY105's seam takes,
+    ///   and the shape the founding glue bug has);
+    /// * a value whose class is merely *unknown* (`structure(x, class =
+    ///   class_name)`, an unbound name): unknown is open-world here, not
+    ///   evidence of dispatch, because the classless base case remains
+    ///   live;
+    /// * a value established as plain — a literal vector, a local bound
+    ///   to a classless base-mode value — where the base domain is
+    ///   exactly what runs.
+    fn any_all_argument_dispatch_is_established(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Ident { name, .. } => {
+                // A parameter's recorded type (default or single call
+                // site) never establishes the runtime class; a narrowing
+                // guard does, and it keeps the parameter marker while
+                // adding the narrowed one.
+                let open_world_parameter = (scope.parameter_bindings.contains(name)
+                    || scope.default_parameter_bindings.contains(name))
+                    && !scope.narrowed_bindings.contains(name);
+                !open_world_parameter
+                    && scope.get(name).is_some_and(|ty| ty.class.has_known_class())
+            }
+            Expr::Call { func, args, .. } => {
+                // Mirror `infer_call`'s name plumbing so the constructor
+                // twin sees the same spelling the constructor stage
+                // would. Both intermediates stay borrowed: this gate
+                // runs at every `any()`/`all()` comparison site, so the
+                // lookups must not allocate on the passing-through path.
+                let Some(name) = crate::infer::call::callee_name(func) else {
+                    return false;
+                };
+                let semantic_name = scope.function_alias(&name).unwrap_or(&name);
+                let lookup_name = crate::semantic_lists::bare_name(semantic_name);
+                self.class_constructor_call_establishes_dispatch(
+                    &name,
+                    func,
+                    semantic_name,
+                    lookup_name,
+                    args,
+                    scope,
+                )
+            }
+            _ => false,
+        }
     }
 
     /// Why `expr` is length 1 for every input, or `None` when that cannot be

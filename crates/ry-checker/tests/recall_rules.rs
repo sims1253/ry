@@ -672,21 +672,23 @@ fn ry107_negating_wording_names_its_na_case() {
 }
 
 #[test]
-fn ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing() {
+fn ry107_open_world_arguments_keep_the_dispatch_qualified_premise() {
     // any()/all() are S4 generics (R 4.6.1, fresh process): a direct
     // `setMethod("any", ...)` returns 42, a `Summary`-group method returns
     // c(5, 7), and `base::any()` still selects the generic rather than a
     // default method -- so the length-1 premise is qualified in the
     // message ("unless an `any`/`all` or `Summary`-group method
-    // dispatches") instead of being stated as unconditional. The rule
-    // must keep firing: the founding glue shape passes an open-world
-    // parameter, and dispatch is the rare case -- S3 reaches any()/all()
-    // only through a `Summary` group method (witnessed in the oracle
-    // claim fixture); a plain `any.foo` method never runs.
+    // dispatches") instead of being stated as unconditional. These
+    // arguments are open-world, so the rule keeps firing: the founding
+    // glue shape passes a parameter, and silencing every argument a
+    // caller could have classed would erase the rule's purpose. The
+    // qualifier names exactly that residual dispatch risk.
     for src in [
         "f <- function(x) if (any(x) == 0) 1\n",
         "f <- function(x) if (base::any(x) > -1) 1\n",
-        "f <- function(v) { d <- structure(c(1, 2), class = \"s3obj\"); if (any(d) == 0) 1 }\n",
+        // A defaulted parameter stays open-world: the default's shape says
+        // nothing about the caller's values.
+        "f <- function(x = c(1, 2)) if (any(x) == 0) 1\n",
     ] {
         let mut parser = RParser::new().expect("parser init");
         let file = parser.parse("recall.R", src).expect("parse");
@@ -699,6 +701,62 @@ fn ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing() {
                     .contains("unless an `any`/`all` or `Summary`-group method dispatches")),
             "expected the dispatch-qualified premise in {src:?}: {diags:?}"
         );
+    }
+}
+
+#[test]
+fn ry107_stays_silent_when_argument_dispatch_is_established() {
+    // The applicability half of the dispatch story: once the inference
+    // establishes the argument as a classed value, a method for that class
+    // can replace the base result domain the FALSE=0/TRUE=1 outcome table
+    // evaluates, so the heuristic is not known to apply and warning would
+    // mislead. The R oracle witness
+    // (testdata/oracle/any_all_scalar_comparison_claim.R, R 4.6.1):
+    // `Summary.s3grp <- function(x, ...) 42` makes `any(sgrp)` return 42,
+    // so `any(sgrp) == 42` is a meaningful comparison there -- the exact
+    // shape a default-domain warning would call constant FALSE.
+    for src in [
+        // A class attached to a local binding.
+        "f <- function(v) { d <- structure(c(1, 2), class = \"s3obj\"); if (any(d) == 0) 1 }\n",
+        // The review's counterexample: the comparison is meaningful under
+        // the dispatched method.
+        "Summary.s3grp <- function(x, ...) 42\nsgrp <- structure(c(FALSE, TRUE), class = \"s3grp\")\nif (any(sgrp) == 42) 1\n",
+        // A class constructor written inline in the call.
+        "f <- function(v) { if (any(structure(c(1, 2), class = \"s3obj\")) == 0) 1 }\n",
+        // `factor()` and S4 `new()` establish dispatch too.
+        "f <- function(v) { d <- factor(v); if (any(d) == 0) 1 }\n",
+        "f <- function(v) { d <- new(\"Widget\", x = v); if (all(d) == 0) 1 }\n",
+        // A `class(x) <- "..."` write carries the same provenance.
+        "f <- function(v) { d <- c(1, 2); class(d) <- \"s3obj\"; if (any(d) == 0) 1 }\n",
+        // An `inherits()` guard proves the class on the branch where the
+        // comparison runs, even for a parameter.
+        "f <- function(x) { if (inherits(x, \"s3obj\")) { if (any(x) == 0) 1 } }\n",
+    ] {
+        assert!(
+            !fires(src, "RY107"),
+            "RY107 fired on an established-dispatch argument: {src:?}"
+        );
+    }
+}
+
+#[test]
+fn ry107_keeps_firing_on_plain_and_unknown_class_arguments() {
+    // The silence is deliberately narrower than "might dispatch": a value
+    // established as plain (base mode, no class) is exactly where the
+    // base domain runs, and a merely unknown class is open-world, not
+    // evidence of dispatch.
+    for src in [
+        // A literal vector operand.
+        "if (any(c(TRUE, FALSE)) == 0) 1\n",
+        // A local bound to a plain, classless value.
+        "f <- function(v) { d <- c(1, 2); if (any(d) == 0) 1 }\n",
+        // A dynamic class attachment leaves the class unknown.
+        "cn <- \"s3obj\"\nf <- function(v) { d <- structure(c(1, 2), class = cn); if (any(d) == 0) 1 }\n",
+        // A defaulted parameter whose default carries a class still says
+        // nothing about the caller's values.
+        "f <- function(x = structure(1, class = \"s3obj\")) if (any(x) == 0) 1\n",
+    ] {
+        assert!(fires(src, "RY107"), "RY107 did not fire on {src:?}");
     }
 }
 

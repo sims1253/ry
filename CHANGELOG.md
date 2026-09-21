@@ -196,6 +196,42 @@ All notable changes to ry are documented in this file.
   silent and remain so. Rule registry summary, docs/rules row, and the
   oracle claim fixture (now asserting the `NA` outcomes) updated;
   identity, severity, and firing conditions unchanged.
+- Make RY107's dispatch story an applicability gate, not just a message
+  qualifier. The wording fix above left the rule computing its
+  FALSE=0/TRUE=1 outcome table even where the inference itself
+  establishes that a method replaces that result domain: a classed
+  argument reaches `any()`/`all()` through the `Summary` group (S3) or
+  a direct method (S4), and the repository's own R oracle demonstrates
+  the counterexample (`Summary.s3grp <- function(x, ...) 42` makes
+  `any(sgrp)` return 42, so `any(sgrp) == 42` is a meaningful
+  comparison the default-domain table would call constant FALSE —
+  `stopifnot(identical(any(sgrp) == 42, TRUE))` now runs in the claim
+  fixture as the quiet boundary's witness). RY107 now stays silent
+  when the argument's class is established: a local bound to a classed
+  value (`structure(..., class = ...)`, `factor()`, S4 `new()`, a
+  `class(x) <- "..."` write), the constructor written inline in the
+  call, or a binding an `inherits()` guard narrowed to a known class.
+  The gate lives at the same literal/local seam as RY105's
+  `scalar_call_argument_is_classless` (a new read-only mirror of the
+  class-constructor stage's resolution gates backs the inline cases),
+  with the undecided middle landing on the opposite side: RY105 must
+  prove classlessness before claiming a length, RY107 must prove
+  classedness before going quiet. Everything else keeps firing —
+  parameters and defaulted parameters (a default's class says nothing
+  about the caller's values; silencing every open-world argument would
+  erase the rule's purpose, and the founding glue shape passes a
+  parameter), values whose class is merely unknown (a dynamic
+  `class = class_name`), and provably plain values (literal vectors,
+  classless locals), which retain the "unless an `any`/`all` or
+  `Summary`-group method dispatches" qualifier for exactly that
+  residual risk. The
+  `ry107_premise_is_qualified_for_s4_dispatch_and_keeps_firing` test
+  that deliberately preserved the classed-argument warning is replaced
+  by the split pair
+  `ry107_open_world_arguments_keep_the_dispatch_qualified_premise` /
+  `ry107_stays_silent_when_argument_dispatch_is_established` plus a
+  plain-and-unknown-class firing control; the glue founding positive
+  and the NA-conditioned wording tests are untouched.
 - The LSP now retains watched-file and close-time work until the final
   analysis converges, instead of trusting the event's own refresh to
   finish it. `refresh_disk_entry` retries one lost index-generation

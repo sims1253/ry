@@ -721,6 +721,16 @@ impl State {
     /// and landed after the older claim, so its context pass covered
     /// everything the older revision owed. If the entry was already
     /// retired, the acknowledgement is a no-op.
+    ///
+    /// INVARIANT on the `<=`: epochs come from one strictly increasing
+    /// counter ([`State::refresh_epoch_counter`]), so claim order is a
+    /// total order for the process's lifetime. The counter's
+    /// `wrapping_add` bounds that claim the same way
+    /// [`State::index_generation`] and [`State::refresh_epochs`]
+    /// already document and accept: a misorder needs a full 2^64-claim
+    /// wrap between one obligation's claim and its acknowledgement —
+    /// the same u64 wrap those counters' epoch/generation checks accept
+    /// rather than defend against, because no session approaches it.
     fn complete_pending_publication(&mut self, path: &str, epoch: u64) {
         if self.pending_refreshes.get(path).is_some_and(|pending| {
             pending.duty == RefreshDuty::ContextPublication && pending.epoch <= epoch

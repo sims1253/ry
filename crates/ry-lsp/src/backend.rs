@@ -2232,6 +2232,16 @@ impl Backend {
                         rounds = RECONCILE_ROUNDS_BEFORE_PACING,
                         "watched-file reconciliation stalled; retaining the obligations and pacing retries (final analysis for these paths may lag until their workspace settles)"
                     );
+                } else {
+                    // The episode's entry warned; every later paced
+                    // round stays observable at debug level, so an
+                    // operator can still see the driver alive inside a
+                    // permanently pathological episode without warn
+                    // spam per retry.
+                    tracing::debug!(
+                        delay_ms = delay.as_millis() as u64,
+                        "watched-file reconciliation still stalled; retaining the obligations and pacing the retry"
+                    );
                 }
                 // Yield with no lock held, then retry: the pace bounds
                 // rounds per wall-clock while completion stays

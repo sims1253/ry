@@ -2,7 +2,7 @@
 
 ![Hand-painted ry banner with rye stalks and watercolor washes](images/banner.webp)
 
-<img align="right" src="images/icon.webp" alt="Hand-painted ry logo with rye stalks inside a circle" width="128">
+<img align="right" src="images/icon.webp" alt="Hand-painted ry logo with rye stalks inside a circle" width="128" height="128">
 
 [ry](https://github.com/sims1253/ry) checks R code as you type. The extension
 provides project diagnostics, inlay hints for inferred types, and code actions

@@ -115,10 +115,11 @@ const RECONCILE_ROUNDS_BEFORE_PACING: u32 = 8;
 /// round doubles it, capped at [`RECONCILE_PACE_CAP_MILLIS`], so
 /// rounds per wall-clock stay bounded while completion remains
 /// impossible. Both ends stay deliberately small — tens of
-/// milliseconds to a cap well under a second — so end-to-end
-/// convergence is delayed by less than a debounce period
-/// (`schedule_diagnostics` waits ~180ms) even deep into a stall
-/// episode, and any retirement resets the ladder.
+/// milliseconds to a cap well under a second: each paced round delays
+/// work by at most the cap (on the order of, and eventually
+/// exceeding, the ~180ms `schedule_diagnostics` debounce), the
+/// cumulative convergence delay grows with the episode's length, and
+/// any retirement resets the ladder.
 const RECONCILE_PACE_BASE_MILLIS: u64 = 40;
 
 /// The paced-delay cap, in milliseconds; see
@@ -3601,10 +3602,11 @@ mod reconcile_accounting_tests {
                     <= std::time::Duration::from_millis(RECONCILE_PACE_CAP_MILLIS)
             );
         }
-        // Below the bound the driver does not sleep at all; the
-        // function's value there is simply never consulted.
-        assert!(
-            reconcile_pace_delay(0) <= std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS)
+        // Below the bound the driver does not sleep at all; rung 0
+        // still computes the base delay, pinning the ladder's floor.
+        assert_eq!(
+            reconcile_pace_delay(0),
+            std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS)
         );
     }
 

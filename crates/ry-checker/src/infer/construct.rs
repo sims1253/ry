@@ -278,6 +278,195 @@ impl Checker {
             )
     }
 
+    /// The read-only half of [`Self::infer_class_constructor_call`]:
+    /// whether this direct call provably attaches a *known* class to its
+    /// result, and therefore establishes that S3/S4 method dispatch can
+    /// replace what the base function would have computed. Consumers are
+    /// applicability gates that run before operand inference collapses
+    /// the call to a type (RY107's dispatch boundary); they cannot invoke
+    /// the constructor stage itself, which infers arguments and mutates
+    /// the scope, so this predicate mirrors that stage's resolution gates
+    /// and argument-shape guards with a conservative bias: every case it
+    /// cannot decide reads as "not established" and leaves the caller's
+    /// default heuristic in force.
+    pub(crate) fn class_constructor_call_establishes_dispatch(
+        &self,
+        original_name: &str,
+        original_callee: &Expr,
+        semantic_name: &str,
+        lookup_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        if lookup_name == "structure" {
+            // Spelling aliases and an unavailable namespace do not prove
+            // which function object was captured (the constructor stage
+            // returns `unknown` for both), so neither may lend a class.
+            if original_name != semantic_name
+                || (matches!(original_callee, Expr::String(_, _)) && semantic_name.contains("::"))
+            {
+                return false;
+            }
+            if self.structure_namespace_unavailable(semantic_name, scope) {
+                return false;
+            }
+            if !self.user_stubs.contains_key("base")
+                && self.resolves_to_base_lenient(semantic_name, scope)
+            {
+                return self.resolves_to_base(semantic_name, scope)
+                    && !self.structure_bare_callee_unavailable(semantic_name, scope)
+                    && self.structure_args_attach_known_class(args, scope);
+            }
+            return false;
+        }
+        if matches!(lookup_name, "factor" | "new") {
+            let package = if lookup_name == "factor" {
+                "base"
+            } else {
+                "methods"
+            };
+            // Only a proven base `factor` / methods `new` is a constructor
+            // here. `Ordinary` resolves to some other function whose result
+            // the constructor stage never modeled, and `Unknown`/
+            // `AmbientUncertainty` degrade to an unknown class -- none of
+            // them establishes dispatch.
+            if !matches!(
+                self.special_call_provenance(
+                    original_name,
+                    original_callee,
+                    semantic_name,
+                    lookup_name,
+                    package,
+                    scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            ) {
+                return false;
+            }
+            if lookup_name == "factor" {
+                // The base constructor always attaches class "factor".
+                return true;
+            }
+            return self.methods_new_args_attach_known_class(args);
+        }
+        false
+    }
+
+    /// Whether a proven base `structure(...)` call attaches a *known*
+    /// class. Mirrors the argument-shape guards of
+    /// [`Self::infer_structure_call`] -- the payload/`.Data` binding, the
+    /// `...`/parser-opaque splice forms, and the duplicate-binding
+    /// tolerance the constructor stage refuses to pick a side of -- and
+    /// then reads the same `class = ...` literal through
+    /// [`Self::structure_class_literal`]. `class = NULL` clears the
+    /// attribute instead of attaching one, and a literal the stage would
+    /// report as `ClassLiteral::Unknown` (a dynamic class) leaves the
+    /// class open-world, so neither establishes dispatch.
+    fn structure_args_attach_known_class(&self, args: &[Arg], scope: &Scope) -> bool {
+        let matched = match_argument_names(
+            &[".Data", "..."],
+            args.iter()
+                .map(|arg| arg.name.as_deref().map(semantic_argument_name)),
+        );
+        let Some(payload) = matched.arg_for_param(0) else {
+            return false;
+        };
+        let exact_payloads = args
+            .iter()
+            .filter(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".Data"))
+            .count();
+        let partial_payloads = args
+            .iter()
+            .filter(|arg| {
+                arg.name
+                    .as_deref()
+                    .map(semantic_argument_name)
+                    .is_some_and(|name| !name.is_empty() && ".Data".starts_with(name))
+            })
+            .count();
+        if exact_payloads > 1
+            || (exact_payloads == 0 && partial_payloads > 1)
+            || args.iter().enumerate().any(|(index, arg)| {
+                matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                    || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
+                    || (index != payload && arg.name.is_none())
+            })
+        {
+            return false;
+        }
+        // A literal NULL payload degrades the whole construction to
+        // `unknown` in the constructor stage; other payloads cannot be
+        // proven NULL read-only, and only a provable one matters here.
+        if matches!(&args[payload].value, Expr::Null(_)) {
+            return false;
+        }
+        let mut class_args = args.iter().filter(|arg| {
+            matches!(
+                arg.name.as_deref().map(semantic_argument_name),
+                Some("class")
+            )
+        });
+        let class_arg = match (class_args.next(), class_args.next()) {
+            // Absent, or repeated (a runtime-invalid binding the stage
+            // refuses to arbitrate): no class is established either way.
+            (Some(single), None) => single,
+            _ => return false,
+        };
+        if matches!(&class_arg.value, Expr::Null(_)) {
+            return false;
+        }
+        matches!(
+            self.structure_class_literal(&class_arg.value, scope),
+            ClassLiteral::Single(_) | ClassLiteral::Multi(_)
+        )
+    }
+
+    /// Whether a proven `methods::new(...)` call attaches a *known*
+    /// class, mirroring the `Class`-binding guards of
+    /// [`Self::infer_methods_new`]: an unambiguous `Class` actual (the
+    /// stage's duplicate-exact/partial-partial tolerance included), no
+    /// `...`/parser-opaque arguments, and a non-empty string literal
+    /// outside [`crate::semantic_lists::PLAIN_NEW_CLASSES`] (those lower
+    /// to the payload's own plain shape).
+    fn methods_new_args_attach_known_class(&self, args: &[Arg]) -> bool {
+        let matched = match_argument_names(
+            &["Class", "..."],
+            args.iter()
+                .map(|arg| arg.name.as_deref().map(semantic_argument_name)),
+        );
+        let Some(class_index) = matched.arg_for_param(0) else {
+            return false;
+        };
+        let exact = args
+            .iter()
+            .filter(|arg| arg.name.as_deref().map(semantic_argument_name) == Some("Class"))
+            .count();
+        let partial = args
+            .iter()
+            .filter(|arg| {
+                arg.name
+                    .as_deref()
+                    .map(semantic_argument_name)
+                    .is_some_and(|name| !name.is_empty() && "Class".starts_with(name))
+            })
+            .count();
+        if exact > 1
+            || (exact == 0 && partial > 1)
+            || args.iter().any(|arg| {
+                matches!(&arg.value, Expr::Ident { name, .. } if name == "...")
+                    || matches!(&arg.value, Expr::Unknown(_) | Expr::Missing(_))
+            })
+        {
+            return false;
+        }
+        matches!(
+            &args[class_index].value,
+            Expr::String(class, _)
+                if !class.is_empty()
+                    && !crate::semantic_lists::PLAIN_NEW_CLASSES.contains(&class.as_str())
+        )
+    }
+
     /// The atomic-constructor stage of `infer_call`: `c`, `list`,
     /// `data.frame`, `t`, and `as.data.frame`.
     pub(crate) fn infer_atomic_constructor_call(

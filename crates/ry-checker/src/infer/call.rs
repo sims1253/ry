@@ -2088,7 +2088,7 @@ enum CallHeadFunctionEvidence {
 
 /// The callee of a direct call, spelled as an identifier or a string
 /// literal head (R permits `"fn"(...)`). Indirect callees have no name.
-fn callee_name(func: &Expr) -> Option<String> {
+pub(crate) fn callee_name(func: &Expr) -> Option<String> {
     match func {
         // R permits a string literal as a call head, e.g. `"[<-"(...)`.
         // Treat it exactly like the corresponding identifier so it takes

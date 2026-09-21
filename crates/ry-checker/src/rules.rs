@@ -243,7 +243,7 @@ pub const RULES: &[Rule] = &[
         code: "RY107",
         name: "any-all-scalar-comparison",
         default_severity: Severity::Warning,
-        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`). Outcome claims are scoped to the base result domain (`FALSE`, `TRUE`, `NA`): an `NA` result compares as `NA`, and a dispatched method can return something else (an S4 `any`/`all` method, or an S3/S4 `Summary` group method).",
+        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`). Outcome claims are scoped to the base result domain (`FALSE`, `TRUE`, `NA`): an `NA` result compares as `NA`, and a dispatched method can return something else (an S4 `any`/`all` method, or an S3/S4 `Summary` group method) -- so once the argument's class is established (`structure(..., class = ...)`, `factor()`, S4 `new()`, a `class(x) <-` write, or an `inherits()` narrowing) the rule stays silent, while open-world and provably plain arguments keep the dispatch-qualified warning.",
     },
     Rule {
         code: "RY108",

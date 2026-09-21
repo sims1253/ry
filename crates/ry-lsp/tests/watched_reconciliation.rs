@@ -23,6 +23,17 @@
 //! (`x <- never_bound_here`, RY010) — never a competing-definition
 //! observable — with `main.R`/`b.R`/`c.R`/`d.R` as unrelated
 //! bystanders.
+//!
+//! Two later hardening regressions live here too. The versioned
+//! completion token: an older refresh's final acknowledgement must not
+//! retire a newer event's re-armed obligation even after the newer
+//! entry advanced to the context/publication phase — pinned with a
+//! resolution-sensitive observable (a `load()` span inside an isolated
+//! `DESCRIPTION` package) so only the surviving obligation's context
+//! refresh can move the verdict. And the paced (not dropped) stall
+//! bound: obligations outlive any finite supersession streak, with the
+//! driver's retry rate bounded by its backoff and no background pass
+//! per retry while completion is impossible.
 
 mod harness;
 
@@ -87,6 +98,21 @@ fn has_ry010(diagnostics: &[Value]) -> bool {
     diagnostics.iter().any(|d| d["code"] == json!("RY010"))
 }
 
+/// Whether the diagnostics carry the RY010 report for the binding `` `a` ``
+/// starting at `line` — the resolution-sensitive observable: whether a
+/// use AFTER a `load()` call resolves depends on the installed
+/// package-group context's load inventory (keyed by the load call's
+/// byte offset in the file's parse), never on the re-parse alone.
+fn has_ry010_for_a_at_line(diagnostics: &[Value], line: u64) -> bool {
+    diagnostics.iter().any(|d| {
+        d["code"] == json!("RY010")
+            && d["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("`a`"))
+            && d["range"]["start"]["line"].as_u64() == Some(line)
+    })
+}
+
 fn run<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -140,13 +166,26 @@ struct Ladder {
 }
 
 async fn settled_ladder(a_initial: &str) -> Ladder {
+    settled_ladder_in("a.R", a_initial, &[]).await
+}
+
+/// [`settled_ladder`] with the ladder's target path and extra non-source
+/// files placed before the initial index: the acknowledgement-ordering
+/// regression below points the target at a file inside its own
+/// `DESCRIPTION` package and ships the package's metadata and `data.rda`
+/// through `extra`, so the package-group isolation the test's observable
+/// depends on exists from the first scan.
+async fn settled_ladder_in(a_relative: &str, a_initial: &str, extra: &[(&str, &[u8])]) -> Ladder {
     let fixture = FixtureProject::empty().unwrap();
+    for (relative, bytes) in extra {
+        fixture.write_file(relative, *bytes).unwrap();
+    }
     fixture.write_file("main.R", "w <- 1L\n").unwrap();
-    fixture.write_file("a.R", a_initial).unwrap();
+    fixture.write_file(a_relative, a_initial).unwrap();
     fixture.write_file("b.R", "o <- 1L\n").unwrap();
     fixture.write_file("c.R", "p <- 1L\n").unwrap();
     fixture.write_file("d.R", "q <- 1L\n").unwrap();
-    let a_uri = file_uri(&fixture.path("a.R"));
+    let a_uri = file_uri(&fixture.path(a_relative));
     let b_uri = file_uri(&fixture.path("b.R"));
     let c_uri = file_uri(&fixture.path("c.R"));
     let d_uri = file_uri(&fixture.path("d.R"));
@@ -245,6 +284,36 @@ async fn land_unrelated(ladder: &mut Ladder, name: &str, uri: &str, content: &st
     ry_lsp::test_seam::release_post_refresh_commit();
 }
 
+/// Land `name` and LEAVE its refresh parked at the post-commit gate: the
+/// bytes are committed (the generation bump that defeats a parked
+/// racer is already sealed) but the handler tail — its own group's
+/// context refresh, its acknowledgement, and above all its epilogue
+/// wake — is held back. Two determinism properties follow: no bystander
+/// epilogue can spawn the reconciliation driver mid-interleave, and no
+/// bystander's own context refresh can consume an armed context-install
+/// arm. The caller owes exactly one `release_post_refresh_commit` per
+/// parked bystander (the gate's release wakes one parked arrival per
+/// notify) once the interleave is done, so the tails drain before
+/// teardown.
+async fn land_unrelated_parked(ladder: &mut Ladder, name: &str, uri: &str, content: &str) {
+    ladder.fixture.write_file(name, content).unwrap();
+    ry_lsp::test_seam::arm_post_refresh_commit();
+    ladder
+        .session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": uri, "type": 2}]}),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_post_refresh_commit(),
+    )
+    .await
+    .expect("the bystander refresh must land and park at the post-commit gate");
+}
+
 /// Drive A's ladder to the superseded backstop: attempt 0 loses to B,
 /// the retry loses to C, the escalation scan loses to D. Returns with
 /// every gate released and SILENCE thereafter — the exact state in
@@ -252,6 +321,98 @@ async fn land_unrelated(ladder: &mut Ladder, name: &str, uri: &str, content: &st
 async fn exhaust_ladder_and_supersede_the_backstop(ladder: &mut Ladder, a_final: &str) {
     park_ladder_backstop(ladder, a_final).await;
     ry_lsp::test_seam::release_scan_commit();
+}
+
+/// Force ONE retirement-free driver round: the round's dispatched
+/// refresh for `a.R` loses attempt 0 to `b.R`, the retry to `c.R`, and
+/// the escalation scan to `d.R` — and, decisively for the stall
+/// accounting, every bystander lands through
+/// [`land_unrelated_parked`], so its generation bump is sealed while
+/// its handler tail (its own context refresh, its acknowledgement,
+/// its RETIREMENT) is held parked: a retirement landing inside the
+/// round reads as the driver's own progress and resets the stall
+/// count, so a streak built with released bystanders never reaches
+/// the bound at all. The round's dispatch is the watched event's own
+/// refresh when `first` is set (the event is sent here) and the
+/// driver's re-drive otherwise — the driver re-claims a fresh epoch
+/// on its own, so no event is needed to keep the streak going.
+/// Returns with every gate released and the round provably ended
+/// without landing and without retiring anything: one round added to
+/// the stall count, the obligation retained. The caller owes three
+/// `release_post_refresh_commit` calls per round (one per parked
+/// bystander) once the streak is over.
+async fn stall_one_reconcile_round(ladder: &mut Ladder, a_final: &str, bump: u32, first: bool) {
+    // The round's refresh parks at the armed commit gate (attempt 0,
+    // post-read). The arm happens before the preceding round's
+    // released scan can make progress: the single-threaded test
+    // runtime only advances server tasks across the test's awaits.
+    ry_lsp::test_seam::arm_refresh_commit();
+    if first {
+        ladder.fixture.write_file("a.R", a_final).unwrap();
+        ladder
+            .session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": ladder.a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_refresh_commit(),
+    )
+    .await
+    .expect("the round's dispatched refresh must reach the armed commit gate");
+
+    // First loss: `b.R` lands (bump sealed) while attempt 0 is parked,
+    // and stays parked so its retirement cannot pollute the round.
+    let b_uri = ladder.b_uri.clone();
+    land_unrelated_parked(ladder, "b.R", &b_uri, &format!("o <- {}L\n", bump + 2)).await;
+
+    // Re-arm while attempt 0 is still parked so the retry parks too,
+    // then release: attempt 0's commit fails the moved generation and
+    // the retry re-reads and parks at the re-armed gate.
+    ry_lsp::test_seam::arm_refresh_commit();
+    ry_lsp::test_seam::release_refresh_commit();
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_refresh_commit(),
+    )
+    .await
+    .expect("the retry must reach the re-armed commit gate");
+
+    // Second loss: `c.R` lands (parked) while the retry is parked.
+    let c_uri = ladder.c_uri.clone();
+    land_unrelated_parked(ladder, "c.R", &c_uri, &format!("p <- {}L\n", bump + 2)).await;
+
+    // Arm the scan's commit gate, then release the retry: its commit
+    // fails the generation check, the escalation spawns the backstop
+    // scan, and the scan parks at its own gate.
+    ry_lsp::test_seam::arm_scan_commit();
+    ry_lsp::test_seam::release_refresh_commit();
+    tokio::time::timeout(rpc_receive_timeout(), ry_lsp::test_seam::wait_scan_commit())
+        .await
+        .expect("the escalation must spawn the backstop scan");
+
+    // The scan's loss: `d.R` lands (parked) while the scan is parked at
+    // its commit, so the scan's generation check will fail when
+    // released — the round ends with no landing, no retirement, and
+    // the obligation retained.
+    let d_uri = ladder.d_uri.clone();
+    land_unrelated_parked(ladder, "d.R", &d_uri, &format!("q <- {}L\n", bump + 2)).await;
+    ry_lsp::test_seam::release_scan_commit();
+}
+
+/// Release every bystander a [`stall_one_reconcile_round`] streak
+/// parked (three per round): each release wakes one parked post-commit
+/// arrival, whose handler tail then settles its own ROOT group, retires
+/// its own obligation, and drains. Sync on purpose — the released tails
+/// run across the caller's next await.
+fn release_parked_bystanders(rounds: u32) {
+    for _ in 0..rounds * 3 {
+        ry_lsp::test_seam::release_post_refresh_commit();
+    }
 }
 
 /// The `exhaust_ladder_and_supersede_the_backstop` prefix, stopping one
@@ -389,6 +550,403 @@ fn superseded_backstop_then_silence_converges_clean_to_error() {
         assert!(
             cli_flags(&ladder.fixture, "a.R"),
             "true-positive control: the CLI on the final tree flags a.R"
+        );
+
+        join_session(ladder.session, ladder.server).await;
+    })
+}
+
+/// Beyond the old drop bound: more than eight finite rounds of
+/// supersession, then silence with NO rescue notification — the
+/// driver must retain the obligation past its stall bound (pacing
+/// itself, not dropping) and converge the repaired closed file to its
+/// clean state. Pre-fix, the eighth stalled round purged the map and
+/// the stale RY010 stood forever.
+#[test]
+fn stalled_rounds_beyond_the_pace_bound_retain_and_converge_error_to_clean() {
+    run(async {
+        let mut ladder = settled_ladder("x <- never_bound_here\n").await;
+
+        // True-positive control: the pre-ladder tree flags `a.R` in a
+        // fresh CLI run, so the post-fix cleanliness below cannot pass
+        // vacuously.
+        assert!(
+            cli_flags(&ladder.fixture, "a.R"),
+            "the CLI must flag the pre-fix tree"
+        );
+
+        // Ten forced losses — the first belongs to the event's own
+        // refresh, so ten are NINE stalled driver rounds, one past the
+        // bound — each forced through the full loss chain (attempt 0,
+        // retry, backstop scan) with the driver re-driving `a.R` on its
+        // own after the first. Rounds at and beyond the bound pace (a
+        // bounded backoff before the next dispatch), which the waits
+        // below simply absorb.
+        for round in 0..10 {
+            stall_one_reconcile_round(&mut ladder, "x <- 1L\n", round, round == 0).await;
+        }
+        release_parked_bystanders(10);
+
+        // Silence: no further events. The next round has nothing left
+        // to lose, lands the fix, settles the context, publishes, and
+        // retires the obligation.
+        let a_diagnostics = await_diagnostics_where(
+            &mut ladder.session,
+            &ladder.a_uri,
+            |diagnostics| !has_ry010(diagnostics),
+            6,
+        )
+        .await;
+        assert!(
+            !has_ry010(&a_diagnostics),
+            "the obligation retained past the stall bound must converge a.R to its fixed bytes: {a_diagnostics:?}"
+        );
+        assert!(
+            !cli_flags(&ladder.fixture, "a.R"),
+            "neighboring valid control: the CLI on the final tree is clean"
+        );
+
+        join_session(ladder.session, ladder.server).await;
+    })
+}
+
+/// The clean-to-error direction of the beyond-the-bound convergence:
+/// a newly broken closed file must GAIN its diagnostic after more
+/// than eight stalled rounds and silence, not only a repaired one
+/// clear it.
+#[test]
+fn stalled_rounds_beyond_the_pace_bound_retain_and_converge_clean_to_error() {
+    run(async {
+        let mut ladder = settled_ladder("x <- 1L\n").await;
+
+        assert!(
+            !cli_flags(&ladder.fixture, "a.R"),
+            "the CLI must be clean on the pre-edit tree"
+        );
+
+        for round in 0..10 {
+            stall_one_reconcile_round(&mut ladder, "x <- never_bound_here\n", round, round == 0)
+                .await;
+        }
+        release_parked_bystanders(10);
+
+        let a_diagnostics =
+            await_diagnostics_where(&mut ladder.session, &ladder.a_uri, has_ry010, 6).await;
+        assert!(
+            has_ry010(&a_diagnostics),
+            "the obligation retained past the stall bound must converge a.R to its broken bytes: {a_diagnostics:?}"
+        );
+        assert!(
+            cli_flags(&ladder.fixture, "a.R"),
+            "true-positive control: the CLI on the final tree flags a.R"
+        );
+
+        join_session(ladder.session, ladder.server).await;
+    })
+}
+
+/// Blocker 1 (version-specific completion): an OLDER refresh's final
+/// acknowledgement must not retire a NEWER event's re-armed obligation,
+/// even after the newer entry has advanced to the context/publication
+/// phase — the exact shape a duty-only acknowledgement mistakes for its
+/// own completed phase. The bytes are resolution-sensitive on purpose:
+/// `pkgA/a.R` calls `load("data.rda")` (one object, `a`) and uses `a`
+/// on both sides of the call, so B's landing owes a real package-group
+/// context refresh — the load inventory the check consults is installed
+/// state, keyed by the load call's byte offset in the owning parse, and
+/// a re-parse alone cannot re-key it. (The checker's search-path
+/// leniency after a `load()` call makes the STALE publication's
+/// diagnostics coincide with the fresh one's, so the entry-survival
+/// assertion cannot ride on diagnostic content; it rides on the
+/// re-attempt below, and the closing assertions pin the
+/// convergence-to-fresh-analysis agreement on these same
+/// resolution-sensitive bytes.)
+///
+/// The interleave, driven through the gates: A lands and parks AFTER
+/// its context settles and its publication is scheduled, BEFORE its
+/// acknowledgement; B lands newer bytes (the entry re-arms at B's
+/// higher epoch and advances to the context/publication phase), and
+/// B's immediate context attempt loses attempt 0 to `b.R`, the retry
+/// to `c.R`, and the escalated backstop scan to `d.R` — every
+/// bystander left parked at its post-commit gate so no epilogue wake
+/// spawns the driver and no bystander tail steals an armed gate. A's
+/// parked acknowledgement then resumes while B's scan is still parked:
+/// pre-fix it removed B's entry by phase name alone — nothing was left
+/// that owed `pkgA`'s context, so no worker ever re-attempts the group
+/// and the armed wait for the re-attempt times out. Post-fix the
+/// entry's higher epoch keeps it owed, and A's epilogue wake (the
+/// first wake nothing parks) spawns the driver to finish B's
+/// superseded attempt under silence. The bystanders live in the ROOT
+/// package group (no `DESCRIPTION`), so their own tails can never
+/// settle `pkgA`'s context — only B's pipeline or the driver can,
+/// which is what makes the pre-fix outcome deterministic.
+#[test]
+fn older_acknowledgement_cannot_retire_a_newer_resolution_obligation() {
+    run(async {
+        let mut ladder = settled_ladder_in(
+            "pkgA/a.R",
+            "load(\"data.rda\")\na\n",
+            &[
+                ("pkgA/DESCRIPTION", b"Package: pkgA\nVersion: 0.0.1\n"),
+                (
+                    "pkgA/data.rda",
+                    include_bytes!("../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
+                ),
+            ],
+        )
+        .await;
+
+        assert!(
+            !cli_flags(&ladder.fixture, "a.R"),
+            "the CLI must be clean on the pre-edit tree (the load sits above the use)"
+        );
+
+        // Park A after its context work: the armed acknowledgement gate
+        // stops the watched handler between the settled
+        // context/publication and the obligation retirement.
+        ry_lsp::test_seam::arm_publication_ack();
+        ladder
+            .fixture
+            .write_file("pkgA/a.R", "load(\"data.rda\")\na\na\n")
+            .unwrap();
+        ladder
+            .session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": ladder.a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_publication_ack(),
+        )
+        .await
+        .expect("A's pipeline must park between its settled context and its acknowledgement");
+
+        // B's event lands newer bytes: the entry re-arms at B's epoch and
+        // advances to the context/publication phase when the refresh
+        // lands. B's bytes move the `load()` call below one use and
+        // keep one above it — the after-load use is the context-gated
+        // observable (A's stale inventory keys A's byte offset, so the
+        // moved call introduces nothing until the group re-resolves).
+        // B's immediate context attempt parks at the armed install
+        // gate, after its resolve, before the install's generation
+        // guard.
+        ry_lsp::test_seam::arm_context_install();
+        ladder
+            .fixture
+            .write_file("pkgA/a.R", "a\nload(\"data.rda\")\na\n")
+            .unwrap();
+        ladder
+            .session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": ladder.a_uri, "type": 2}]}),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_context_install(),
+        )
+        .await
+        .expect("B's immediate context attempt must park at the install gate");
+
+        // Loss 1: `b.R` lands (generation bumped) while B's attempt 0 is
+        // parked, and stays parked itself so its epilogue cannot spawn
+        // the driver. The re-armed install gate can then only be
+        // consumed by B's ladder retry.
+        let b_uri = ladder.b_uri.clone();
+        land_unrelated_parked(&mut ladder, "b.R", &b_uri, "o <- 2L\n").await;
+        ry_lsp::test_seam::arm_context_install();
+        ry_lsp::test_seam::release_context_install();
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_context_install(),
+        )
+        .await
+        .expect("B's retry must park at the re-armed install gate");
+
+        // Loss 2: `c.R` lands while the retry is parked. The retry's
+        // release then fails the generation guard and escalates the
+        // full-scan backstop, which parks at its own commit gate after
+        // the walk.
+        let c_uri = ladder.c_uri.clone();
+        land_unrelated_parked(&mut ladder, "c.R", &c_uri, "p <- 2L\n").await;
+        ry_lsp::test_seam::arm_scan_commit();
+        ry_lsp::test_seam::release_context_install();
+        tokio::time::timeout(rpc_receive_timeout(), ry_lsp::test_seam::wait_scan_commit())
+            .await
+            .expect("B's escalated backstop scan must park at its commit gate");
+
+        // A's parked acknowledgement resumes — while B's scan is still
+        // parked and every bystander tail with it, so no driver exists
+        // yet. The context gate is armed FIRST so the driver's own
+        // `pkgA` attempt (the only context attempt left anywhere: B's
+        // ladder is exhausted behind its parked scan, and the parked
+        // bystanders owe only their ROOT group) deterministically parks
+        // when it runs. Pre-fix the removal is the bug: the duty name
+        // matched A's completed phase, so B's entry vanished with the
+        // group's context still owed, no worker ever re-attempts
+        // `pkgA`, and the armed wait below times out. Post-fix the
+        // entry's higher epoch keeps it owed, and A's epilogue wake
+        // (the first wake nothing parks) spawns the driver to finish
+        // it — the observable form of "B's entry survives A's
+        // acknowledgement".
+        ry_lsp::test_seam::arm_context_install();
+        ry_lsp::test_seam::release_publication_ack();
+        // The scan's loss: `d.R` lands (the generation moves again) while
+        // the scan is parked at its commit, sealing its superseded
+        // verdict — and defeating the driver's parked first install
+        // too, whose ladder retry then settles: exactly the
+        // supersession chain the entry's survival is for.
+        let d_uri = ladder.d_uri.clone();
+        land_unrelated_parked(&mut ladder, "d.R", &d_uri, "q <- 2L\n").await;
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_context_install(),
+        )
+        .await
+        .expect("the surviving obligation's driver must re-attempt pkgA's context after A's acknowledgement");
+        ry_lsp::test_seam::release_scan_commit();
+        // Release the parked driver attempt: its install loses the
+        // generation guard to `d.R`'s bump, the retry re-snapshots and
+        // installs, the driver publishes and retires the entry at B's
+        // own epoch.
+        ry_lsp::test_seam::release_context_install();
+        // Release the three parked bystanders: their tails settle their
+        // own ROOT group, acknowledge their own obligations, and drain —
+        // none of which can advance `pkgA`'s context.
+        ry_lsp::test_seam::release_post_refresh_commit();
+        ry_lsp::test_seam::release_post_refresh_commit();
+        ry_lsp::test_seam::release_post_refresh_commit();
+
+        // Silence: no further events. Pre-fix, every publication pairs
+        // B's bytes with A's stale inventory — the moved `load()` call
+        // introduces nothing, so the after-load use keeps firing and
+        // nothing is left that owes `pkgA`'s context. Post-fix the
+        // driver converges the group: the fresh inventory keys B's own
+        // byte offset, the after-load use resolves again, and only the
+        // use above the load reports.
+        let a_diagnostics = await_diagnostics_where(
+            &mut ladder.session,
+            &ladder.a_uri,
+            |diagnostics| {
+                has_ry010_for_a_at_line(diagnostics, 0) && !has_ry010_for_a_at_line(diagnostics, 2)
+            },
+            8,
+        )
+        .await;
+        assert!(
+            has_ry010_for_a_at_line(&a_diagnostics, 0),
+            "the use above the load() call must report against the fresh inventory too: {a_diagnostics:?}"
+        );
+        assert!(
+            !has_ry010_for_a_at_line(&a_diagnostics, 2),
+            "B's surviving obligation must re-key the load inventory so the after-load use resolves: {a_diagnostics:?}"
+        );
+        assert!(
+            cli_flags(&ladder.fixture, "a.R"),
+            "true-positive control: the CLI on the final tree flags exactly the use above the load() call"
+        );
+
+        join_session(ladder.session, ladder.server).await;
+    })
+}
+
+/// Blocker 2 (no-spin): in the paced regime the driver's retry rate is
+/// bounded by the backoff and a stalled round never launches a fresh
+/// background pass per retry. Nine forced losses — the first the
+/// event's own refresh, so eight stalled driver rounds, the bound
+/// exactly — leave the driver in the paced regime with the obligation
+/// RETAINED (the beyond-bound convergence tests carry that half); the
+/// window below then arms the
+/// per-file commit gate — completion becomes impossible, because the
+/// next dispatched refresh parks mid-ladder — and watches the
+/// counters across a fixed wall-clock interval: exactly ONE round may
+/// start (the single paced retry, which then parks) and ZERO
+/// background passes may spawn. An unbounded retry loop would run
+/// hundreds of rounds into the window and a scan-per-retry loop would
+/// inflate the spawn count; the paced backoff
+/// (`reconcile_pace_delay`) is what keeps rounds per wall-clock
+/// bounded while completion stays impossible. Releasing the parked
+/// attempt makes completion possible again, and the retained
+/// obligation converges under silence.
+#[test]
+fn paced_driver_neither_spins_nor_rescans_while_completion_is_impossible() {
+    run(async {
+        let mut ladder = settled_ladder("x <- never_bound_here\n").await;
+
+        assert!(
+            cli_flags(&ladder.fixture, "a.R"),
+            "the CLI must flag the pre-fix tree"
+        );
+
+        for round in 0..9 {
+            stall_one_reconcile_round(&mut ladder, "x <- 1L\n", round, round == 0).await;
+        }
+
+        // The driver has folded its eighth retirement-free round and
+        // now paces before its ninth dispatch. Arm the gate BEFORE any
+        // further await — the single-threaded test runtime only advances
+        // server tasks across awaits — so the ninth dispatch
+        // deterministically parks, and snapshot the counters.
+        ry_lsp::test_seam::arm_refresh_commit();
+        let rounds_before = ry_lsp::test_seam::reconciliation_rounds();
+        let scans_before = ry_lsp::test_seam::background_index_spawns();
+
+        // Rendezvous with the parked ninth dispatch instead of guessing
+        // when it started: the paced backoff (at most the cap) plus the
+        // dispatch's own work are absorbed by the timeout, so a slow
+        // runner cannot turn the round count into a race.
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the paced retry must reach the armed commit gate");
+        // Hold the observation window open across several backoff
+        // periods: an unpaced driver would start (and, with the gate
+        // now consumed, land) further rounds inside it.
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+
+        // Exactly one round started (the paced retry) and it parked at
+        // the armed gate, still owing the retained obligation — a tenth
+        // round cannot begin while the ninth is parked, and the parked
+        // attempt has not reached (and cannot reach) its ladder's scan
+        // escalation.
+        assert_eq!(
+            ry_lsp::test_seam::reconciliation_rounds(),
+            rounds_before + 1,
+            "the paced driver may start exactly one round per backoff window while completion is impossible"
+        );
+        assert_eq!(
+            ry_lsp::test_seam::background_index_spawns(),
+            scans_before,
+            "a parked round must not escalate (or re-walk) a background pass"
+        );
+
+        // Completion becomes possible again: nothing has moved the
+        // generation since the ninth round's last loss, so the parked
+        // attempt lands, and the retained obligation converges without
+        // any rescue event.
+        ry_lsp::test_seam::release_refresh_commit();
+        release_parked_bystanders(9);
+        let a_diagnostics = await_diagnostics_where(
+            &mut ladder.session,
+            &ladder.a_uri,
+            |diagnostics| !has_ry010(diagnostics),
+            6,
+        )
+        .await;
+        assert!(
+            !has_ry010(&a_diagnostics),
+            "the obligation retained through the impossible window must converge a.R once completion is possible again: {a_diagnostics:?}"
+        );
+        assert!(
+            !cli_flags(&ladder.fixture, "a.R"),
+            "neighboring valid control: the CLI on the final tree is clean"
         );
 
         join_session(ladder.session, ladder.server).await;

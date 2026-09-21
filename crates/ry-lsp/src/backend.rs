@@ -130,16 +130,19 @@ const RECONCILE_PACE_CAP_MILLIS: u64 = 320;
 /// per consecutive paced round beyond the first, capped. Pure
 /// function of the stall counter so tests can pin each rung exactly.
 fn reconcile_pace_delay(rounds_without_progress: u32) -> std::time::Duration {
-    // The ladder's shape is pinned at compile time: three doublings of
-    // the base must reach the cap exactly, so the `.min(3)` below names
-    // the cap's rung and no rung can overshoot into the clamp. Editing
-    // either constant independently now fails to compile.
-    const _: () = assert!(RECONCILE_PACE_BASE_MILLIS << 3 == RECONCILE_PACE_CAP_MILLIS);
+    /// Doublings of the base needed to reach the cap exactly; the
+    /// rung clamp below and the shape assert share the name, so
+    /// editing either endpoint constant without keeping the ladder
+    /// walkable fails to compile.
+    const RECONCILE_PACE_LADDER_DEPTH: u32 = 3;
+    const _: () = assert!(
+        RECONCILE_PACE_BASE_MILLIS << RECONCILE_PACE_LADDER_DEPTH == RECONCILE_PACE_CAP_MILLIS
+    );
     let doublings = rounds_without_progress
         .saturating_sub(RECONCILE_ROUNDS_BEFORE_PACING)
-        // The base already sits at rung 0; three doublings reach the
-        // cap, and every later paced round stays there.
-        .min(3);
+        // The base already sits at rung 0; the ladder's depth reaches
+        // the cap, and every later paced round stays there.
+        .min(RECONCILE_PACE_LADDER_DEPTH);
     let millis = (RECONCILE_PACE_BASE_MILLIS << doublings).min(RECONCILE_PACE_CAP_MILLIS);
     std::time::Duration::from_millis(millis)
 }

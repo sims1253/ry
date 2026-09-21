@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.26",
+  "version": "0.0.18",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -463,6 +463,7 @@
       "PP.test",
       "Pair",
       "Quote",
+      "R.Version",
       "R.home",
       "RNGkind",
       "RNGversion",
@@ -1035,6 +1036,7 @@
       "dfbeta",
       "dfbetas",
       "dffits",
+      "dgeom",
       "dget",
       "dhyper",
       "diag<-",
@@ -1054,6 +1056,7 @@
       "dir.create",
       "dir.exists",
       "dlogis",
+      "dmultinom",
       "dnbinom",
       "doPrimitiveMethod",
       "dontCheck",
@@ -1683,6 +1686,7 @@
       "person",
       "personList",
       "persp",
+      "pgeom",
       "phyper",
       "pico",
       "pictex",
@@ -1793,11 +1797,14 @@
       "pushBackLength",
       "pweibull",
       "pwilcox",
+      "qbinom",
       "qbirthday",
       "qcauchy",
+      "qgeom",
       "qhyper",
       "qlogis",
       "qnbinom",
+      "qpois",
       "qqline",
       "qqnorm",
       "qqplot",
@@ -2387,25 +2394,22 @@
     },
     "AIC": {
       "params": [
-        "object",
-        "...",
-        "k"
+        "object"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
-        "na": true
+        "mode": "double",
+        "length": "1",
+        "na": false
       }
     },
     "BIC": {
       "params": [
-        "object",
-        "..."
+        "object"
       ],
       "return": {
-        "mode": "opaque",
-        "length": "unknown",
-        "na": true
+        "mode": "double",
+        "length": "1",
+        "na": false
       }
     },
     "Filter": {
@@ -2572,7 +2576,7 @@
         "na": true
       }
     },
-    "R.Version": {
+    "R.version": {
       "params": [],
       "return": {
         "mode": "list",
@@ -2674,12 +2678,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -2774,14 +2774,9 @@
     "append": {
       "params": [
         "x",
-        "values",
-        "after"
+        "values"
       ],
-      "return": {
-        "mode": "opaque",
-        "length": "unknown",
-        "na": true
-      }
+      "return": "concat_of_args"
     },
     "apply": {
       "params": [
@@ -2980,26 +2975,17 @@
     },
     "as.vector": {
       "params": [
-        "x",
-        "mode"
+        "x"
       ],
-      "return": {
-        "mode": "opaque",
-        "length": "unknown",
-        "na": true
-      }
+      "return": "arg0"
     },
     "asin": {
       "params": [
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -3019,12 +3005,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -3383,12 +3365,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -3397,12 +3375,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -3501,40 +3475,35 @@
       "params": [
         "x",
         "shape1",
-        "shape2",
-        "ncp",
-        "log"
+        "shape2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "dbinom": {
       "params": [
         "x",
         "size",
-        "prob",
-        "log"
+        "prob"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "dchisq": {
       "params": [
         "x",
-        "df",
-        "ncp",
-        "log"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "debug": {
@@ -3606,53 +3575,36 @@
     "dexp": {
       "params": [
         "x",
-        "rate",
-        "log"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "df": {
       "params": [
         "x",
         "df1",
-        "df2",
-        "ncp",
-        "log"
+        "df2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "dgamma": {
       "params": [
         "x",
         "shape",
-        "rate",
-        "scale",
-        "log"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "dgeom": {
-      "params": [
-        "x",
-        "prob",
-        "log"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "diag": {
@@ -3729,39 +3681,24 @@
       "params": [
         "x",
         "meanlog",
-        "sdlog",
-        "log"
+        "sdlog"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "dmultinom": {
-      "params": [
-        "x",
-        "size",
-        "prob",
-        "log"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "1",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "dnorm": {
       "params": [
         "x",
         "mean",
-        "sd",
-        "log"
+        "sd"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "do.call": {
@@ -3814,13 +3751,12 @@
     "dpois": {
       "params": [
         "x",
-        "lambda",
-        "log"
+        "lambda"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "drop": {
@@ -3832,27 +3768,24 @@
     "dt": {
       "params": [
         "x",
-        "df",
-        "ncp",
-        "log"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "dunif": {
       "params": [
         "x",
         "min",
-        "max",
-        "log"
+        "max"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "duplicated": {
@@ -3968,12 +3901,8 @@
         }
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -4448,8 +4377,7 @@
         "mode": "yes_or_no",
         "length": "test",
         "na": true
-      },
-      "return_mode": {"kind": "test_template", "test": "test", "values": ["yes", "no"]}
+      }
     },
     "inherits": {
       "params": [
@@ -5031,12 +4959,8 @@
         }
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -5045,12 +4969,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -5069,12 +4989,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -5776,113 +5692,82 @@
       "params": [
         "q",
         "shape1",
-        "shape2",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "shape2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pbinom": {
       "params": [
         "q",
         "size",
-        "prob",
-        "lower.tail",
-        "log.p"
+        "prob"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pchisq": {
       "params": [
         "q",
-        "df",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pexp": {
       "params": [
         "q",
-        "rate",
-        "lower.tail",
-        "log.p"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pf": {
       "params": [
         "q",
         "df1",
-        "df2",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pgamma": {
       "params": [
         "q",
         "shape",
-        "rate",
-        "scale",
-        "lower.tail",
-        "log.p"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "pgeom": {
-      "params": [
-        "q",
-        "prob",
-        "lower.tail",
-        "log.p"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "plnorm": {
       "params": [
         "q",
         "meanlog",
-        "sdlog",
-        "lower.tail",
-        "log.p"
+        "sdlog"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "pmatch": {
@@ -5920,14 +5805,12 @@
       "params": [
         "q",
         "mean",
-        "sd",
-        "lower.tail",
-        "log.p"
+        "sd"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "polyroot": {
@@ -5943,14 +5826,12 @@
     "ppois": {
       "params": [
         "q",
-        "lambda",
-        "lower.tail",
-        "log.p"
+        "lambda"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "prcomp": {
@@ -6045,183 +5926,117 @@
     "pt": {
       "params": [
         "q",
-        "df",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "punif": {
       "params": [
         "q",
         "min",
-        "max",
-        "lower.tail",
-        "log.p"
+        "max"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qbeta": {
       "params": [
         "p",
         "shape1",
-        "shape2",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "shape2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "qbinom": {
-      "params": [
-        "p",
-        "size",
-        "prob",
-        "lower.tail",
-        "log.p"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qchisq": {
       "params": [
         "p",
-        "df",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qexp": {
       "params": [
         "p",
-        "rate",
-        "lower.tail",
-        "log.p"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qf": {
       "params": [
         "p",
         "df1",
-        "df2",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df2"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qgamma": {
       "params": [
         "p",
         "shape",
-        "rate",
-        "scale",
-        "lower.tail",
-        "log.p"
+        "rate"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "qgeom": {
-      "params": [
-        "p",
-        "prob",
-        "lower.tail",
-        "log.p"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qlnorm": {
       "params": [
         "p",
         "meanlog",
-        "sdlog",
-        "lower.tail",
-        "log.p"
+        "sdlog"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qnorm": {
       "params": [
         "p",
         "mean",
-        "sd",
-        "lower.tail",
-        "log.p"
+        "sd"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
-      }
-    },
-    "qpois": {
-      "params": [
-        "p",
-        "lambda",
-        "lower.tail",
-        "log.p"
-      ],
-      "return": {
-        "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "qt": {
       "params": [
         "p",
-        "df",
-        "ncp",
-        "lower.tail",
-        "log.p"
+        "df"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "quade.test": {
@@ -6248,14 +6063,12 @@
       "params": [
         "p",
         "min",
-        "max",
-        "lower.tail",
-        "log.p"
+        "max"
       ],
       "return": {
         "mode": "double",
-        "length": "unknown",
-        "na": true
+        "length": "arg0",
+        "na": false
       }
     },
     "quote": {
@@ -6912,13 +6725,9 @@
         "digits"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
-        "na": true
+        "na": false
       }
     },
     "sin": {
@@ -6926,12 +6735,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -6940,12 +6745,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -7112,12 +6913,8 @@
         }
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -7462,12 +7259,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -7476,12 +7269,8 @@
         "x"
       ],
       "return": {
-        "mode": "union",
+        "mode": "double",
         "length": "arg0",
-        "members": [
-          "double",
-          "complex"
-        ],
         "na": true
       }
     },
@@ -7868,6 +7657,14 @@
       ],
       "return": {
         "mode": "arg0",
+        "length": "unknown",
+        "na": false
+      }
+    },
+    "version": {
+      "params": [],
+      "return": {
+        "mode": "list",
         "length": "unknown",
         "na": false
       }

@@ -896,6 +896,19 @@ fn paced_driver_neither_spins_nor_rescans_while_completion_is_impossible() {
         let rounds_before = ry_lsp::test_seam::reconciliation_rounds();
         let scans_before = ry_lsp::test_seam::background_index_spawns();
 
+        // Rendezvous with the parked ninth dispatch instead of guessing
+        // when it started: the paced backoff (at most the cap) plus the
+        // dispatch's own work are absorbed by the timeout, so a slow
+        // runner cannot turn the round count into a race.
+        tokio::time::timeout(
+            rpc_receive_timeout(),
+            ry_lsp::test_seam::wait_refresh_commit(),
+        )
+        .await
+        .expect("the paced retry must reach the armed commit gate");
+        // Hold the observation window open across several backoff
+        // periods: an unpaced driver would start (and, with the gate
+        // now consumed, land) further rounds inside it.
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 
         // Exactly one round started (the paced retry) and it parked at

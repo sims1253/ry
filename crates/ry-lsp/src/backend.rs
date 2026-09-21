@@ -130,6 +130,11 @@ const RECONCILE_PACE_CAP_MILLIS: u64 = 320;
 /// per consecutive paced round beyond the first, capped. Pure
 /// function of the stall counter so tests can pin each rung exactly.
 fn reconcile_pace_delay(rounds_without_progress: u32) -> std::time::Duration {
+    // The ladder's shape is pinned at compile time: three doublings of
+    // the base must reach the cap exactly, so the `.min(3)` below names
+    // the cap's rung and no rung can overshoot into the clamp. Editing
+    // either constant independently now fails to compile.
+    const _: () = assert!(RECONCILE_PACE_BASE_MILLIS << 3 == RECONCILE_PACE_CAP_MILLIS);
     let doublings = rounds_without_progress
         .saturating_sub(RECONCILE_ROUNDS_BEFORE_PACING)
         // The base already sits at rung 0; three doublings reach the
@@ -691,7 +696,14 @@ impl State {
             // is nothing left to pace.
             return ReconcileRoundProgress::Progress;
         }
-        self.reconcile_rounds_without_progress += 1;
+        // Saturating, not wrapping: the counter feeds the ladder's
+        // rung comparisons, and a wrapped value would corrupt them.
+        // Saturating at the ceiling is the correct asymptote anyway —
+        // a permanently pathological session stays at the cap delay —
+        // and the ceiling is unreachable on any real clock (2^32
+        // rounds at the 40ms floor is years).
+        self.reconcile_rounds_without_progress =
+            self.reconcile_rounds_without_progress.saturating_add(1);
         if self.reconcile_rounds_without_progress < RECONCILE_ROUNDS_BEFORE_PACING {
             return ReconcileRoundProgress::Stalled;
         }
@@ -2187,9 +2199,7 @@ impl Backend {
                     self.spawn_background_index().await;
                 }
                 let ctx_settled = self.refresh_package_contexts(&follow_up).await;
-                let follow_up_paths: Vec<String> =
-                    follow_up.iter().map(|(path, _)| path.clone()).collect();
-                self.publish_landed_paths(&follow_up_paths).await;
+                self.publish_landed_paths(&follow_up).await;
                 // Test seam: park between the context/publication
                 // settlement and the obligation acknowledgement (see
                 // `test_seam`).
@@ -2239,15 +2249,22 @@ impl Backend {
     /// document anywhere, that document's own scheduling drives the
     /// project-wide pass — the pass publishes every checked file, not
     /// just open ones — mirroring `did_close`'s pattern; with none, the
-    /// closed-file path carries them (#528).
-    async fn publish_landed_paths(&self, paths: &[String]) {
+    /// closed-file path carries them (#528). Takes the round's
+    /// `(path, epoch)` pairs so the churn path pays no second
+    /// path-vector copy; the epochs ride along unused here.
+    async fn publish_landed_paths(&self, paths: &[(String, u64)]) {
         let open = {
             let state = self.state.lock().await;
             state.docs.keys().next().cloned()
         };
         match open {
             Some(path) => self.schedule_diagnostics(path_to_uri(&path)).await,
-            None => self.schedule_closed_file_publish(paths.to_vec()).await,
+            None => {
+                self.schedule_closed_file_publish(
+                    paths.iter().map(|(path, _)| path.clone()).collect(),
+                )
+                .await
+            }
         }
     }
 

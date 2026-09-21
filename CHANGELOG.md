@@ -4,7 +4,97 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-22
+
+This release adds six new rules (RY106-RY111) whose founding fixtures are
+shipped upstream defects, models `<<-` superassignment and
+`formals<-`/`body<-` constructed closures in the binding analysis,
+propagates NULL union members into RY001's condition analysis, and
+extends RY000 to R's parser-trust boundary (native-pipe right-hand
+sides base R rejects, non-UTF-8 sources, a leading byte order mark).
+The language server converges on watched-file changes: R sources
+refresh the disk index, same-path refreshes order by a per-path epoch,
+stale diagnostics clear from every stopped document, and a
+reconciliation driver retains watched work until the final analysis
+settles. The vendored typeshed refreshes to r-typeshed 0.6.0 (seven new
+export inventories, base corrections through base 0.0.26). The minimum
+supported Rust version is now 1.90 for tree-sitter 0.27. Core and the
+VS Code extension are 0.11.0.
+
+### Changed
+
+- The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
+  0.27.0 and tree-sitter-language 0.1.8 require rustc 1.90. Prebuilt release
+  binaries are unaffected; only building from source needs a newer toolchain
+  (#466).
+- Update tree-sitter from 0.26.13 to 0.27.0 and tree-sitter-language from
+  0.1.7 to 0.1.8 (#466, taking over the dependabot update from #465).
+
 ### Added
+
+- Add RY110 (`vacuous-all-guard`): `all(is.na(x))` is vacuously TRUE when
+  `x` is zero-length, so a validation guard of the shape
+  `is.numeric(x) || all(is.na(x))` accepts any empty non-numeric input --
+  the pre-fix hms guard behind tidyverse/hms#231, where
+  `hms(seconds = character())` passed validation and then failed inside
+  `vec_cast()`. Fires only when the vacuously accepted value reaches a
+  downstream mode demand a typeshed stub declares (a parameter `type`,
+  as RY092 checks) and the guard and demand share the binding (a nested
+  closure's same-named parameter never matches); the fix is hms's own
+  (`length(x) > 0 &&` before the `all()`). The founding hms shape itself
+  is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
+  the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
+  #479 (#462).
+- Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
+  `test` vector and only overwrites selected positions, so a zero-length or
+  all-`NA` test yields a `logical` result even when `yes`/`no` agree on
+  another mode -- the typed-NA select behind tidyverse/hms#231, where
+  `as.character(hms())` returned `logical(0)` instead of `character(0)`.
+  Fires for definite collapses (a literal empty or `NA` test) and for
+  typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
+  (#461).
+- RY109 flags formal defaults that reference the formal itself, such as
+  `function(x, y, copy = copy)` or `function(n = n + 1)`. The reference can
+  only resolve to the promise, so triggering the default errors in R
+  ("promise already under evaluation: recursive default argument
+  reference") while a supplied argument is unaffected; dtplyr shipped
+  exactly this bug (parent commit bffe46e, `R/step-join.R:162` and
+  `R/tidyeval-across.R:6,20`, fixed upstream in dbe32a6). ry warns without
+  requiring a provable force in the body -- RY098 keeps its stricter
+  proven-forcing diagnosis -- because such a default can never evaluate
+  successfully; a warning, not an error, because defusing helpers such as
+  enquo() can still capture the promise unevaluated. Defaults referencing
+  a different formal (`x = y, y = 1L`) are legal and stay quiet, as do
+  quoted defaults that capture the formal (`substitute(x)`) (#364).
+- RY107 flags scalar comparisons on `any()`/`all()` results, such as
+  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
+  compared instead of the elements, so negating comparisons are always
+  wrong and constant-outcome comparisons are dead guards. Comparisons
+  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
+  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
+- Add RY108 (`seq-defaulted-forward`): a `seq.*` S3 method that uses its
+  defaulted `to` without a `missing(to)` check, behind tidyverse/hms#231,
+  where `seq(hms(1), length.out = 3)` returned `hms(c(1, 1, 1))` because
+  the unconditional cast and forward treated the defaulted `to = hms(1)`
+  as a supplied endpoint. The rule rides a new supplied-vs-defaulted flow
+  analysis over formals (`missing()` tests refine `if` arms, early exits
+  guard continuations, cached `m <- missing(p)` tests decode like direct
+  calls), designed for reuse by the argument rules; `seq.Date`-style
+  guards, a `to` without a default, and a `NULL` default stay quiet
+  (#463).
+
+- Refresh the vendored typeshed to r-typeshed 0.6.0 (base 0.0.26): new
+  export inventories for xml2, Matrix, RColorBrewer, MASS, zoo,
+  gridExtra, and curl, so wholesale imports and bare names from those
+  packages resolve without installed copies. The base stub corrections
+  ride along: the distribution-family density/CDF/quantile recycling
+  and missingness sweep, complex-capable math functions returning
+  their double/complex union, and `AIC`/`BIC`, `append`, `as.vector`,
+  and the `R.version` family giving up their false scalar facts.
+  `ifelse` now carries its `test_template` return-mode rule upstream
+  (#472), replacing the local overlay the RY106 work introduced; the
+  `median` and `vec_cast` overlays stay ry-side until upstream ships
+  them.
 
 - Add a `# oracle: must-flag-only RYxxx` marker to the oracle test
   harness: the fixture's R run must error and the checker must emit the
@@ -135,6 +225,66 @@ All notable changes to ry are documented in this file.
   the sync provenance (`SOURCE`) is write-only (#479).
 
 ### Fixed
+
+- Model superassignment (`x <<- v`, `v ->> x`) from a nested closure as a
+  possible type update to the enclosing binding: every `<<-` target in a
+  function body (nested closure bodies included) becomes unknown-typed in
+  the definition scope once the definition is walked, and a target whose
+  rebound root cannot be named (`f()$a <<- v`) discards all value facts.
+  The initialization idiom `token <- NULL` mutated only through `<<-`
+  inside a callback kept its stale NULL type forever, so the loop/branch
+  conditions that R runs fine were flagged -- the vendored json-parser
+  family (pak's `R/json.R`: `token <<- tokens[ptr]` in `read_token`,
+  `while (token != "}")` in `parse_object`/`parse_array`), flexdashboard's
+  `source_file <<- input` in `pre_knit`, jsonlite's `out[[...]] <<- x`
+  callback, and curl's `expected[i] <<- ...` download handlers. The
+  update lands at the definition's position in the sequential walk: a
+  read that precedes the `<<-`-writing definition cannot have seen the
+  write at runtime either and keeps its proven type. Reads of a name that
+  only ever materializes through `<<-` stop producing RY010, and calls on
+  such bindings stop producing RY070; `<<-` never writes the writing
+  closure's own frame (R semantics verified: a same-named formal stays
+  untouched), which the forwarded-default oracle fixture pins (#374).
+- Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse
+  produced a recovered tree. Such files report only their RY000 "unparseable
+  region" diagnostics, which are the actionable signal: findings derived from
+  parser-repaired structure -- including the corpus's empty-name RY010
+  (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
+- Silence the diagnostics that only exist because a placeholder function
+  literal was analyzed as the final closure the replacement-function
+  machinery completes: RY010 on names the `alist()`-installed formals
+  bind, and -- only under `body(x) <- v`, which discards the walked body
+  wholesale -- RY080 on its callback results. `trafo <- function()
+  return(x)` followed by `formals(trafo) <- alist(x = )` and/or
+  `body(trafo) <- substitute(...)` builds a closure whose formals and
+  body ry never sees complete, so walking the placeholder as static
+  source flagged names the construction binds at runtime -- distr6's
+  genExp trafo and makeChecks assertion builders were 17 corpus false
+  positives. Matching is lexical and source-ordered (the replacement
+  marks the literal bound to its name at that point in the statement
+  list; a rebind ends the association, and `local({...})` argument
+  blocks are separate runtime scopes in both directions). A
+  `formals<-`-only placeholder keeps RY080 and findings from closures
+  nested in its body: only the formals list is swapped, so they survive
+  verbatim. `environment(f) <-` grants no opacity; ordinary static
+  definitions are untouched (#380, the other half of #467's
+  recovered-tree suppression).
+- Flag native-pipe (`|>`) right-hand sides that base R's parser rejects
+  but tree-sitter accepts, such as `x |> z[.]`, `x |> { ... }`, and
+  `x |> sqrt`, as RY000 syntax errors mirroring R's own messages
+  ("function '[' not supported in RHS call of a pipe", "The pipe
+  operator requires a function call as RHS"). The rewriteable shapes
+  stay silent: calls with ordinary heads (including `pkg::f(y)`,
+  `"f"(y)`, and `(\(d) d)()`), and extraction chains rooted at the `_`
+  placeholder (`x |> _$a`, R 4.3+). The accept/reject boundary was
+  verified form by form against R 4.6.1 (#375).
+- Flag non-UTF-8 source files (CP1252/Latin-1 bytes) with an RY000 encoding
+  diagnostic instead of silently checking them clean, matching R's parser,
+  which rejects such files with "invalid multibyte character in parser".
+  Invalid bytes inside comments and `%...%` special-operator tokens are
+  tolerated exactly like R's lexer (which scans them raw), a flagged file
+  reports only its RY000, and the flag flows through the shared read boundary
+  so `ry check` and the LSP's on-disk index agree (#376).
 
 - Remove the unsupported unconditional numeric `x` demand from the
   ry-side `vctrs::vec_cast` overlay stub. `vec_cast(x, to)` is
@@ -779,139 +929,6 @@ All notable changes to ry are documented in this file.
   only failure latency (every wait is event-driven and returns the
   moment the message arrives), so the tests keep their assertions,
   their ordering pins, and their speed.
-
-## [0.11.0] - 2026-09-16
-
-This release adds five new rules (RY106-RY110) whose founding fixtures are
-shipped upstream defects, models `<<-` superassignment and
-`formals<-`/`body<-` constructed closures in the binding analysis, and extends
-RY000 to R's parser-trust boundary (native-pipe right-hand sides base R
-rejects, non-UTF-8 sources). The minimum supported Rust version is now 1.90
-for tree-sitter 0.27. Core and the VS Code extension are 0.11.0.
-
-### Changed
-
-- The minimum supported Rust version is now 1.90 (was 1.88): tree-sitter
-  0.27.0 and tree-sitter-language 0.1.8 require rustc 1.90. Prebuilt release
-  binaries are unaffected; only building from source needs a newer toolchain
-  (#466).
-- Update tree-sitter from 0.26.13 to 0.27.0 and tree-sitter-language from
-  0.1.7 to 0.1.8 (#466, taking over the dependabot update from #465).
-
-### Added
-
-- Add RY110 (`vacuous-all-guard`): `all(is.na(x))` is vacuously TRUE when
-  `x` is zero-length, so a validation guard of the shape
-  `is.numeric(x) || all(is.na(x))` accepts any empty non-numeric input --
-  the pre-fix hms guard behind tidyverse/hms#231, where
-  `hms(seconds = character())` passed validation and then failed inside
-  `vec_cast()`. Fires only when the vacuously accepted value reaches a
-  downstream mode demand a typeshed stub declares (a parameter `type`,
-  as RY092 checks) and the guard and demand share the binding (a nested
-  closure's same-named parameter never matches); the fix is hms's own
-  (`length(x) > 0 &&` before the `all()`). The founding hms shape itself
-  is interprocedural -- the guard sits in the `is_numeric_or_na` helper,
-  the demand in `hms()`'s unstubbed `vec_cast` -- and stays silent until
-  #479 (#462).
-- Add RY106 (`ifelse-mode-collapse`): `ifelse()` seeds its result from the
-  `test` vector and only overwrites selected positions, so a zero-length or
-  all-`NA` test yields a `logical` result even when `yes`/`no` agree on
-  another mode -- the typed-NA select behind tidyverse/hms#231, where
-  `as.character(hms())` returned `logical(0)` instead of `character(0)`.
-  Fires for definite collapses (a literal empty or `NA` test) and for
-  typed-NA selects over maybe-empty tests; suggests `vctrs::if_else()`
-  (#461).
-- RY109 flags formal defaults that reference the formal itself, such as
-  `function(x, y, copy = copy)` or `function(n = n + 1)`. The reference can
-  only resolve to the promise, so triggering the default errors in R
-  ("promise already under evaluation: recursive default argument
-  reference") while a supplied argument is unaffected; dtplyr shipped
-  exactly this bug (parent commit bffe46e, `R/step-join.R:162` and
-  `R/tidyeval-across.R:6,20`, fixed upstream in dbe32a6). ry warns without
-  requiring a provable force in the body -- RY098 keeps its stricter
-  proven-forcing diagnosis -- because such a default can never evaluate
-  successfully; a warning, not an error, because defusing helpers such as
-  enquo() can still capture the promise unevaluated. Defaults referencing
-  a different formal (`x = y, y = 1L`) are legal and stay quiet, as do
-  quoted defaults that capture the formal (`substitute(x)`) (#364).
-- RY107 flags scalar comparisons on `any()`/`all()` results, such as
-  `any(lengths) == 0` where `any(lengths == 0)` is meant: the scalar is
-  compared instead of the elements, so negating comparisons are always
-  wrong and constant-outcome comparisons are dead guards. Comparisons
-  that preserve the any/all value (`== 1`, `!= 0`, `> 0`) stay quiet,
-  keeping idioms like diffobj's `!all(diff(x)) == 1L` clean (#356).
-- Add RY108 (`seq-defaulted-forward`): a `seq.*` S3 method that uses its
-  defaulted `to` without a `missing(to)` check, behind tidyverse/hms#231,
-  where `seq(hms(1), length.out = 3)` returned `hms(c(1, 1, 1))` because
-  the unconditional cast and forward treated the defaulted `to = hms(1)`
-  as a supplied endpoint. The rule rides a new supplied-vs-defaulted flow
-  analysis over formals (`missing()` tests refine `if` arms, early exits
-  guard continuations, cached `m <- missing(p)` tests decode like direct
-  calls), designed for reuse by the argument rules; `seq.Date`-style
-  guards, a `to` without a default, and a `NULL` default stay quiet
-  (#463).
-
-### Fixed
-
-- Model superassignment (`x <<- v`, `v ->> x`) from a nested closure as a
-  possible type update to the enclosing binding: every `<<-` target in a
-  function body (nested closure bodies included) becomes unknown-typed in
-  the definition scope once the definition is walked, and a target whose
-  rebound root cannot be named (`f()$a <<- v`) discards all value facts.
-  The initialization idiom `token <- NULL` mutated only through `<<-`
-  inside a callback kept its stale NULL type forever, so the loop/branch
-  conditions that R runs fine were flagged -- the vendored json-parser
-  family (pak's `R/json.R`: `token <<- tokens[ptr]` in `read_token`,
-  `while (token != "}")` in `parse_object`/`parse_array`), flexdashboard's
-  `source_file <<- input` in `pre_knit`, jsonlite's `out[[...]] <<- x`
-  callback, and curl's `expected[i] <<- ...` download handlers. The
-  update lands at the definition's position in the sequential walk: a
-  read that precedes the `<<-`-writing definition cannot have seen the
-  write at runtime either and keeps its proven type. Reads of a name that
-  only ever materializes through `<<-` stop producing RY010, and calls on
-  such bindings stop producing RY070; `<<-` never writes the writing
-  closure's own frame (R semantics verified: a same-named formal stays
-  untouched), which the forwarded-default oracle fixture pins (#374).
-- Suppress semantic diagnostics (RY010, RY070, ...) on files whose parse
-  produced a recovered tree. Such files report only their RY000 "unparseable
-  region" diagnostics, which are the actionable signal: findings derived from
-  parser-repaired structure -- including the corpus's empty-name RY010
-  (`variable `` is not bound`) -- were noise on top of the parse failure (#380).
-- Silence the diagnostics that only exist because a placeholder function
-  literal was analyzed as the final closure the replacement-function
-  machinery completes: RY010 on names the `alist()`-installed formals
-  bind, and -- only under `body(x) <- v`, which discards the walked body
-  wholesale -- RY080 on its callback results. `trafo <- function()
-  return(x)` followed by `formals(trafo) <- alist(x = )` and/or
-  `body(trafo) <- substitute(...)` builds a closure whose formals and
-  body ry never sees complete, so walking the placeholder as static
-  source flagged names the construction binds at runtime -- distr6's
-  genExp trafo and makeChecks assertion builders were 17 corpus false
-  positives. Matching is lexical and source-ordered (the replacement
-  marks the literal bound to its name at that point in the statement
-  list; a rebind ends the association, and `local({...})` argument
-  blocks are separate runtime scopes in both directions). A
-  `formals<-`-only placeholder keeps RY080 and findings from closures
-  nested in its body: only the formals list is swapped, so they survive
-  verbatim. `environment(f) <-` grants no opacity; ordinary static
-  definitions are untouched (#380, the other half of #467's
-  recovered-tree suppression).
-- Flag native-pipe (`|>`) right-hand sides that base R's parser rejects
-  but tree-sitter accepts, such as `x |> z[.]`, `x |> { ... }`, and
-  `x |> sqrt`, as RY000 syntax errors mirroring R's own messages
-  ("function '[' not supported in RHS call of a pipe", "The pipe
-  operator requires a function call as RHS"). The rewriteable shapes
-  stay silent: calls with ordinary heads (including `pkg::f(y)`,
-  `"f"(y)`, and `(\(d) d)()`), and extraction chains rooted at the `_`
-  placeholder (`x |> _$a`, R 4.3+). The accept/reject boundary was
-  verified form by form against R 4.6.1 (#375).
-- Flag non-UTF-8 source files (CP1252/Latin-1 bytes) with an RY000 encoding
-  diagnostic instead of silently checking them clean, matching R's parser,
-  which rejects such files with "invalid multibyte character in parser".
-  Invalid bytes inside comments and `%...%` special-operator tokens are
-  tolerated exactly like R's lexer (which scans them raw), a flagged file
-  reports only its RY000, and the flag flows through the shared read boundary
-  so `ry check` and the LSP's on-disk index agree (#376).
 
 ## [0.10.0] - 2026-09-15
 

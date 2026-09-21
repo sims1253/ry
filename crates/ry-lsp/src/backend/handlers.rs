@@ -603,9 +603,9 @@ impl LanguageServer for Backend {
             // remaining documents' reschedule) carry the publication
             // duty for a settled group; an unsettled group keeps the
             // obligation for the reconciliation driver.
-            let ctx_settled = self
-                .refresh_package_contexts(&[(path.clone(), epoch)])
-                .await;
+            // The close's `path` is done — moved into the pairs below —
+            // because every later step keys on `uri`.
+            let ctx_settled = self.refresh_package_contexts(&[(path, epoch)]).await;
             // Test seam: park between the context/publication
             // settlement and the obligation acknowledgement (see
             // `test_seam`).

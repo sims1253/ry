@@ -2260,8 +2260,10 @@ impl Backend {
     /// project-wide pass — the pass publishes every checked file, not
     /// just open ones — mirroring `did_close`'s pattern; with none, the
     /// closed-file path carries them (#528). Takes the round's
-    /// `(path, epoch)` pairs so the churn path pays no second
-    /// path-vector copy; the epochs ride along unused here.
+    /// `(path, epoch)` pairs so the caller side pays no second
+    /// path-vector copy (the closed-file branch still clones the paths
+    /// out of the pairs — it needs owned strings per schedule); the
+    /// epochs ride along unused here.
     async fn publish_landed_paths(&self, paths: &[(String, u64)]) {
         let open = {
             let state = self.state.lock().await;

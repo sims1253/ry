@@ -622,17 +622,20 @@ impl Checker {
             }
             Expr::Call { func, args, .. } => {
                 // Mirror `infer_call`'s name plumbing so the constructor
-                // twin sees the same spelling the constructor stage would.
+                // twin sees the same spelling the constructor stage
+                // would. Both intermediates stay borrowed: this gate
+                // runs at every `any()`/`all()` comparison site, so the
+                // lookups must not allocate on the passing-through path.
                 let Some(name) = crate::infer::call::callee_name(func) else {
                     return false;
                 };
-                let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
-                let lookup_name = crate::semantic_lists::bare_name(&semantic_name).to_string();
+                let semantic_name = scope.function_alias(&name).unwrap_or(&name);
+                let lookup_name = crate::semantic_lists::bare_name(semantic_name);
                 self.class_constructor_call_establishes_dispatch(
                     &name,
                     func,
-                    &semantic_name,
-                    &lookup_name,
+                    semantic_name,
+                    lookup_name,
                     args,
                     scope,
                 )

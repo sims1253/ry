@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-22
+
+- Fix the banner and logo in the Marketplace and Open VSX readme: vsce
+  rewrote the relative image paths against the repository root, where
+  `editors/code/` paths do not resolve, so both images showed only their
+  alt text. The readme now carries absolute URLs, and the unused webp
+  copies stay out of the VSIX (`icon.png` remains as the listing icon).
+  Extension-only release bundling the same verified ry 0.11.0 core
+  binaries (core tag `v0.11.0`).
+
 ## [0.11.0] - 2026-09-22
 
 - Bundle ry 0.11.0 with the six new rules RY106-RY111, superassignment and

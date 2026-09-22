@@ -17,3 +17,8 @@ bun.lock
 # TypeScript sources and source maps are not shipped.
 **/*.map
 **/*.ts
+
+# The readme references the webp images by absolute URL (vsce rewrites
+# relative paths against the repository root), so the packaged copies
+# serve nothing. icon.png stays: it is the marketplace listing icon.
+images/*.webp

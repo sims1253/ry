@@ -31,9 +31,10 @@
 //! resolution-sensitive observable (a `load()` span inside an isolated
 //! `DESCRIPTION` package) so only the surviving obligation's context
 //! refresh can move the verdict. And the paced (not dropped) stall
-//! bound: obligations outlive any finite supersession streak, with the
-//! driver's retry rate bounded by its backoff and no background pass
-//! per retry while completion is impossible.
+//! bound: obligations outlive any finite supersession streak, with each
+//! successive unsuccessful round provably waiting out its backoff rung
+//! before the next dispatch begins, and no background pass per paced
+//! retry.
 
 mod harness;
 
@@ -342,10 +343,21 @@ async fn exhaust_ladder_and_supersede_the_backstop(ladder: &mut Ladder, a_final:
 /// `release_post_refresh_commit` calls per round (one per parked
 /// bystander) once the streak is over.
 async fn stall_one_reconcile_round(ladder: &mut Ladder, a_final: &str, bump: u32, first: bool) {
-    // The round's refresh parks at the armed commit gate (attempt 0,
-    // post-read). The arm happens before the preceding round's
-    // released scan can make progress: the single-threaded test
-    // runtime only advances server tasks across the test's awaits.
+    park_round_dispatch(ladder, a_final, first).await;
+    lose_the_parked_round(ladder, bump).await;
+}
+
+/// The [`stall_one_reconcile_round`] prefix: arm the per-file commit
+/// gate and rendezvous with the round's dispatched refresh — the
+/// watched event's own when `first` (the event is sent here, after the
+/// arm), the driver's re-drive otherwise. The arm happens before the
+/// preceding round's released scan can make progress: the
+/// single-threaded test runtime only advances server tasks across the
+/// test's awaits, so the dispatch deterministically parks. Returns
+/// with the dispatch parked at the gate; the caller owes the loss
+/// chain ([`lose_the_parked_round`]) and, through it, the paired
+/// release.
+async fn park_round_dispatch(ladder: &mut Ladder, a_final: &str, first: bool) {
     ry_lsp::test_seam::arm_refresh_commit();
     if first {
         ladder.fixture.write_file("a.R", a_final).unwrap();
@@ -364,7 +376,16 @@ async fn stall_one_reconcile_round(ladder: &mut Ladder, a_final: &str, bump: u32
     )
     .await
     .expect("the round's dispatched refresh must reach the armed commit gate");
+}
 
+/// The [`stall_one_reconcile_round`] suffix, on a dispatch parked by
+/// [`park_round_dispatch`]: force it through the full loss chain —
+/// attempt 0 loses to `b.R`, the retry to `c.R`, the escalation scan to
+/// `d.R` — with every bystander landing parked at its post-commit gate
+/// so no retirement can pollute the round. Returns with the scan
+/// released and the round folded retirement-free: one round added to
+/// the stall count, the obligation retained.
+async fn lose_the_parked_round(ladder: &mut Ladder, bump: u32) {
     // First loss: `b.R` lands (bump sealed) while attempt 0 is parked,
     // and stays parked so its retirement cannot pollute the round.
     let b_uri = ladder.b_uri.clone();
@@ -855,26 +876,33 @@ fn older_acknowledgement_cannot_retire_a_newer_resolution_obligation() {
     })
 }
 
-/// Blocker 2 (no-spin): in the paced regime the driver's retry rate is
-/// bounded by the backoff and a stalled round never launches a fresh
-/// background pass per retry. Nine forced losses — the first the
-/// event's own refresh, so eight stalled driver rounds, the bound
-/// exactly — leave the driver in the paced regime with the obligation
-/// RETAINED (the beyond-bound convergence tests carry that half); the
-/// window below then arms the
-/// per-file commit gate — completion becomes impossible, because the
-/// next dispatched refresh parks mid-ladder — and watches the
-/// counters across a fixed wall-clock interval: exactly ONE round may
-/// start (the single paced retry, which then parks) and ZERO
-/// background passes may spawn. An unbounded retry loop would run
-/// hundreds of rounds into the window and a scan-per-retry loop would
-/// inflate the spawn count; the paced backoff
-/// (`reconcile_pace_delay`) is what keeps rounds per wall-clock
-/// bounded while completion stays impossible. Releasing the parked
-/// attempt makes completion possible again, and the retained
+/// Blocker 2 (paced retries, pinned rung by rung): a driver whose
+/// rounds keep RETURNING unsuccessfully — each losing its ladder to
+/// sealed bystander bumps, folding, and owing the next round — must
+/// not begin that next round before its pace rung expires. Nine forced
+/// losses (the first the event's own refresh) are eight stalled driver
+/// rounds: the eighth fold retains the obligation and enters the paced
+/// regime. Rounds nine through twelve then each park their dispatch,
+/// lose the full chain, and fold; every dispatch rendezvouses at the
+/// armed commit gate, and the interval from the PREVIOUS round's scan
+/// release to that rendezvous — inside which the fold, the pace sleep,
+/// and the next round's head and read all run — must cover the full
+/// rung (`reconcile_pace_delay`: 40ms doubled per further stalled
+/// round, capped at 320ms). The bounds are one-sided on purpose:
+/// scheduler noise can only LENGTHEN a measured interval, so wall
+/// clock needs no mock here — with the pacing sleep removed, the next
+/// round begins after only its own milliseconds of work and the first
+/// rung's bound fails, which is precisely the mutation this test
+/// exists to catch (a window that watches a PARKED dispatch proves
+/// nothing about the wait between rounds: the parked dispatch blocks
+/// its own round's fold, so the single driver cannot advance even
+/// unpaced). The scan counter carries the no-rescan half across
+/// rounds that DO escalate: four stalled rounds, exactly four ladder
+/// backstops — never a background pass per paced retry. Releasing the
+/// parked bystanders makes completion possible again, and the retained
 /// obligation converges under silence.
 #[test]
-fn paced_driver_neither_spins_nor_rescans_while_completion_is_impossible() {
+fn paced_rounds_cannot_begin_before_their_backoff_expires() {
     run(async {
         let mut ladder = settled_ladder("x <- never_bound_here\n").await;
 
@@ -883,56 +911,49 @@ fn paced_driver_neither_spins_nor_rescans_while_completion_is_impossible() {
             "the CLI must flag the pre-fix tree"
         );
 
+        // Nine forced losses — the first belongs to the event's own
+        // refresh, so nine are EIGHT stalled driver rounds, entering
+        // the paced regime: the eighth fold retains the obligation and
+        // yields for the first rung before round nine.
         for round in 0..9 {
             stall_one_reconcile_round(&mut ladder, "x <- 1L\n", round, round == 0).await;
         }
 
-        // The driver has folded its eighth retirement-free round and
-        // now paces before its ninth dispatch. Arm the gate BEFORE any
-        // further await — the single-threaded test runtime only advances
-        // server tasks across awaits — so the ninth dispatch
-        // deterministically parks, and snapshot the counters.
-        ry_lsp::test_seam::arm_refresh_commit();
-        let rounds_before = ry_lsp::test_seam::reconciliation_rounds();
         let scans_before = ry_lsp::test_seam::background_index_spawns();
 
-        // Rendezvous with the parked ninth dispatch instead of guessing
-        // when it started: the paced backoff (at most the cap) plus the
-        // dispatch's own work are absorbed by the timeout, so a slow
-        // runner cannot turn the round count into a race.
-        tokio::time::timeout(
-            rpc_receive_timeout(),
-            ry_lsp::test_seam::wait_refresh_commit(),
-        )
-        .await
-        .expect("the paced retry must reach the armed commit gate");
-        // Hold the observation window open across several backoff
-        // periods: an unpaced driver would start (and, with the gate
-        // now consumed, land) further rounds inside it.
-        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        // Rounds nine through twelve: time each dispatch's rendezvous
+        // from the previous round's release (the timer starts before
+        // the arm, with no await in between, so the previous fold and
+        // its pace sleep fall inside the measured window), then lose
+        // the round — one more retirement-free fold, the next rung
+        // grown. The rung values mirror `reconcile_pace_delay`.
+        let rungs_ms = [40u64, 80, 160, 320];
+        for (index, rung_ms) in rungs_ms.into_iter().enumerate() {
+            let started = std::time::Instant::now();
+            park_round_dispatch(&mut ladder, "x <- 1L\n", false).await;
+            let elapsed = started.elapsed();
+            assert!(
+                elapsed >= std::time::Duration::from_millis(rung_ms),
+                "round {} must not begin before its {rung_ms}ms pace rung expires; the dispatch arrived after only {elapsed:?}",
+                9 + index,
+            );
+            lose_the_parked_round(&mut ladder, 9 + index as u32).await;
+        }
 
-        // Exactly one round started (the paced retry) and it parked at
-        // the armed gate, still owing the retained obligation — a tenth
-        // round cannot begin while the ninth is parked, and the parked
-        // attempt has not reached (and cannot reach) its ladder's scan
-        // escalation.
+        // The no-rescan bound, across rounds that do escalate: four
+        // stalled rounds spawned exactly their four ladder backstops,
+        // and no paced retry spawned anything.
         assert_eq!(
-            ry_lsp::test_seam::reconciliation_rounds(),
-            rounds_before + 1,
-            "the paced driver may start exactly one round per backoff window while completion is impossible"
-        );
-        assert_eq!(
-            ry_lsp::test_seam::background_index_spawns(),
-            scans_before,
-            "a parked round must not escalate (or re-walk) a background pass"
+            ry_lsp::test_seam::background_index_spawns() - scans_before,
+            rungs_ms.len(),
+            "a stalled round may escalate only its own ladder backstop — never a background pass per paced retry"
         );
 
         // Completion becomes possible again: nothing has moved the
-        // generation since the ninth round's last loss, so the parked
-        // attempt lands, and the retained obligation converges without
-        // any rescue event.
-        ry_lsp::test_seam::release_refresh_commit();
-        release_parked_bystanders(9);
+        // generation since the twelfth round's last loss, so the next
+        // paced dispatch lands, and the retained obligation converges
+        // without any rescue event.
+        release_parked_bystanders(13);
         let a_diagnostics = await_diagnostics_where(
             &mut ladder.session,
             &ladder.a_uri,
@@ -942,7 +963,7 @@ fn paced_driver_neither_spins_nor_rescans_while_completion_is_impossible() {
         .await;
         assert!(
             !has_ry010(&a_diagnostics),
-            "the obligation retained through the impossible window must converge a.R once completion is possible again: {a_diagnostics:?}"
+            "the obligation retained through the paced episode must converge a.R once completion is possible again: {a_diagnostics:?}"
         );
         assert!(
             !cli_flags(&ladder.fixture, "a.R"),

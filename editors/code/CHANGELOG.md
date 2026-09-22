@@ -2,17 +2,20 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-22
+
+- Bundle ry 0.11.0 with the six new rules RY106-RY111, superassignment and
+  dynamically constructed closure modeling, and the RY000 pipe-RHS,
+  non-UTF-8, and byte-order-mark parser-trust checks.
+- Bundle the language server's watched-file convergence work: edits,
+  creations, and deletions of unopened R files refresh the index and
+  republish diagnostics, stale diagnostics clear when a file leaves
+  analysis, and configuration reloads converge with a fresh server.
 - Defer loading the language client and Effect machinery until after
   activation completes: the benchmarked activation time drops from
   ~153 ms to ~87 ms with identical server startup behavior. The client
   log channel is now created lazily on first use instead of at module
   load.
-
-## [0.11.0] - 2026-09-16
-
-- Bundle ry 0.11.0 with the five new rules RY106-RY110, superassignment and
-  dynamically constructed closure modeling, and the RY000 pipe-RHS and
-  non-UTF-8 parser-trust checks.
 
 ## [0.10.0] - 2026-09-13
 

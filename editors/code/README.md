@@ -1,8 +1,12 @@
 # ry: static checker for R
 
-![Hand-painted ry banner with rye stalks and watercolor washes](images/banner.webp)
+<!-- Image links must stay absolute: vsce rewrites relative paths against
+     the repository root, where editors/code/ does not exist, and the
+     marketplaces render the rewritten (broken) URLs from the VSIX. -->
 
-<img align="right" src="images/icon.webp" alt="Hand-painted ry logo with rye stalks inside a circle" width="128" height="128">
+![Hand-painted ry banner with rye stalks and watercolor washes](https://github.com/sims1253/ry/raw/main/editors/code/images/banner.webp)
+
+<img align="right" src="https://github.com/sims1253/ry/raw/main/editors/code/images/icon.webp" alt="Hand-painted ry logo with rye stalks inside a circle" width="128" height="128">
 
 [ry](https://github.com/sims1253/ry) checks R code as you type. The extension
 provides project diagnostics, inlay hints for inferred types, and code actions

@@ -13,7 +13,6 @@
  */
 
 import * as path from "path";
-import { Effect, Schema } from "effect";
 import { runBinary } from "./process";
 import * as fs from "fs";
 import { BUNDLED_RY_EXECUTABLE, RY_BINARY_NAME } from "./constants";
@@ -99,10 +98,6 @@ function findOnPath(binary: string): string | undefined {
   return undefined;
 }
 
-const decodeVersion = Schema.decodeUnknown(
-  Schema.parseJson(Schema.Struct({ version: Schema.String })),
-);
-
 interface VersionProbe {
   stats: fs.Stats;
   version: VersionInfo;
@@ -110,41 +105,43 @@ interface VersionProbe {
 
 const versionProbes = new Map<string, VersionProbe>();
 
-const statBinary = (binaryPath: string) =>
-  Effect.tryPromise({
-    try: () => fs.promises.stat(binaryPath),
-    catch: () => undefined,
-  }).pipe(Effect.catchAll(() => Effect.succeed(undefined)));
-
 /** An unavailable binary or invalid response produces an unknown version. */
-export const getRyVersion = (binaryPath: string) =>
-  Effect.gen(function* () {
-    const stats = yield* statBinary(binaryPath);
-    const cached = stats && versionProbes.get(binaryPath);
-    if (
-      cached &&
-      (["dev", "ino", "ctimeMs", "mtimeMs", "size"] as const).every(
-        (key) => cached.stats[key] === stats[key],
-      )
-    ) {
-      return cached.version;
-    }
-    versionProbes.delete(binaryPath);
-    const version = yield* runBinary(binaryPath, [
+export async function getRyVersion(
+  binaryPath: string,
+): Promise<VersionInfo | undefined> {
+  const stats = await fs.promises.stat(binaryPath).catch(() => undefined);
+  const cached = stats && versionProbes.get(binaryPath);
+  if (
+    cached &&
+    (["dev", "ino", "ctimeMs", "mtimeMs", "size"] as const).every(
+      (key) => cached.stats[key] === stats[key],
+    )
+  )
+    return cached.version;
+  versionProbes.delete(binaryPath);
+  try {
+    const { stdout } = await runBinary(binaryPath, [
       "version",
       "--output-format",
       "json",
-    ]).pipe(
-      Effect.flatMap(({ stdout }) => decodeVersion(stdout)),
-      Effect.map(({ version }) => versionFromString(version)),
-      Effect.catchAll(() => Effect.succeed(undefined)),
-    );
+    ]);
+    const response: unknown = JSON.parse(stdout);
+    if (
+      !response ||
+      typeof response !== "object" ||
+      !("version" in response) ||
+      typeof response.version !== "string"
+    )
+      return undefined;
+    const version = versionFromString(response.version);
     // Retry failed probes on the next restart.
-    if (stats && version !== undefined) {
+    if (stats && version !== undefined)
       versionProbes.set(binaryPath, { stats, version });
-    }
     return version;
-  });
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Check if the resolved binary meets the minimum version for a capability.

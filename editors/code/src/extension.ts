@@ -1,10 +1,4 @@
-/**
- * Activation entry — kept deliberately small. The language client and
- * Effect are loaded through a dynamic import in `runtime()`, so their
- * module evaluation happens after activation completes instead of
- * inside the activation window. Command handlers and the deferred boot
- * below are the only things that can trigger the load.
- */
+/** Load the language client after activation, on deferred boot or a command. */
 
 import * as vscode from "vscode";
 import { RY_SETTINGS_NAMESPACE } from "./common/constants";

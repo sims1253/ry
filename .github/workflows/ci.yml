@@ -120,8 +120,6 @@ jobs:
             any::vctrs
       - name: Verify oracle R packages are importable
         # Missing fixture packages must not silently reduce CI coverage.
-        # A duplicate run: key makes GitHub reject the whole workflow
-        # file, so keep exactly one block per step.
         run: |
           Rscript -e 'stopifnot(requireNamespace("purrr"), requireNamespace("mirai"), requireNamespace("carrier"), requireNamespace("dplyr"), requireNamespace("ggplot2"), requireNamespace("rlang"), requireNamespace("data.table"), requireNamespace("testthat"), requireNamespace("vctrs"))'
       # Typeshed auditing and stub generation moved to the r-typeshed

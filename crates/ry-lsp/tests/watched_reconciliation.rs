@@ -80,19 +80,14 @@ async fn await_diagnostics_where(
 /// tests forward `workspace/didChangeWatchedFiles` events like a real
 /// client (see `watched_closed_publish.rs`).
 fn watching_capabilities() -> Value {
-    json!({"workspace": {"didChange_watchedFiles": {"dynamicRegistration": true}}})
+    json!({"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}})
 }
 
-/// Answer the server's `client/registerCapability` request (if any) so
-/// the session proceeds; the globs themselves are pinned elsewhere.
 async fn answer_watcher_registration(session: &mut ClientSession) {
-    let _: Option<Result<Value, _>> = tokio::time::timeout(
-        rpc_receive_timeout(),
-        session.respond_to_request("client/registerCapability", json!(null)),
-    )
-    .await
-    .ok()
-    .map(|result| result.map_err(|_| ()));
+    session
+        .respond_to_request("client/registerCapability", json!(null))
+        .await
+        .unwrap();
 }
 
 fn has_ry010(diagnostics: &[Value]) -> bool {

@@ -156,8 +156,8 @@ impl Checker {
         // them to logical poisons downstream comparisons (testthat
         // `R/parallel-taskq.R:194`).
         if is_atomic_branch_mode(result.mode)
-            && !(matches!(test_ty.length, Length::Zero)
-                && !self.test_binding_is_open_world(test_expr, scope))
+            && (!matches!(test_ty.length, Length::Zero)
+                || self.test_binding_is_open_world(test_expr, scope))
         {
             let collapsed = RType::new(Mode::Logical, result.length);
             return Some(RType::union(std::sync::Arc::from([collapsed, result])));
@@ -187,7 +187,7 @@ impl Checker {
         let Some(branch_mode) = site.branch_mode else {
             return;
         };
-        if !site.definite_collapse && !(site.may_be_empty && site.typed_na_branch) {
+        if !(site.definite_collapse || site.may_be_empty && site.typed_na_branch) {
             return;
         }
         let reason = if site.definitely_na {

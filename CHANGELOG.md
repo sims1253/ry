@@ -4,6 +4,11 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
+- Reduce the VS Code extension bundle by replacing Effect with async functions.
+
 ## [0.11.0] - 2026-09-22
 
 This release adds six new rules (RY106-RY111) whose founding fixtures are

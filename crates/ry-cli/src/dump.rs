@@ -13,8 +13,9 @@ use miette::{IntoDiagnostic, Result};
 use ry_core::ast::{BinOpKind, Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 
-use crate::check::{self, load_user_stubs, report_truncation, sort_and_deduplicate_paths};
+use crate::check::report_truncation;
 use crate::pipeline;
+use crate::pipeline::{load_user_stubs, sort_and_deduplicate_paths};
 
 #[derive(serde::Serialize)]
 struct TypesDump {
@@ -525,7 +526,7 @@ pub(crate) fn run_dump_types(
                 path.display()
             );
         }
-        for (path, records) in check::check_project_with_scope_capture(group.check_input) {
+        for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {
             records_by_path.insert(path, records);
         }
     }

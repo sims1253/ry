@@ -178,7 +178,7 @@ pub(crate) fn union_guard_continuation_refinement(views: UnionGuardViews<'_>) ->
             if views.then_return_diverges
                 || views.else_return_diverges
                 || !views.then_reaches
-                || !(views.else_reaches || !views.has_else)
+                || (!views.else_reaches && views.has_else)
             {
                 return None;
             }

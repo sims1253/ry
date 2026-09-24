@@ -417,77 +417,44 @@ impl FormalSupplyWalk<'_, '_> {
         else_: Option<&[Stmt]>,
         point: &mut SupplyPoint,
     ) {
-        match self.classify_condition(cond, point) {
-            None => {
-                // The condition itself may force the formal (`if (to > 0)`),
-                // which is exactly an unguarded use.
-                self.walk_expr(cond, point);
-                self.walk_arms(then, else_, point, point.alive, point.alive);
-            }
-            Some(SupplyTest::Decoded {
-                then: then_fact,
-                else_: else_fact,
-            }) => {
-                // A test's argument positions are guarded by evaluation
-                // order: `missing(p) && p > 0` never evaluates `p > 0`
-                // when the value is defaulted.
-                self.walk_cond_silently(cond, point);
-                let then_alive = self.arm_state(point, then_fact);
-                let else_alive = self.arm_state(point, else_fact);
-                self.walk_arms(then, else_, point, then_alive, else_alive);
-            }
-            Some(SupplyTest::Mention) => {
-                self.walk_cond_silently(cond, point);
-                let silent = self.arm_state(point, Supply::Supplied);
-                self.walk_arms(then, else_, point, silent, silent);
-            }
-        }
-    }
-
-    /// Walk both arms from forked states and merge the states that reach
-    /// the continuation. A diverging arm (`return`, `stop()`,
-    /// `UseMethod`) contributes nothing; with no `else`, the implicit
-    /// fall-through path carries the condition's else-fact (for a decoded
-    /// test) or the inherited state (for a foreign condition).
-    fn walk_arms(
-        &mut self,
-        then: Option<&[Stmt]>,
-        else_: Option<&[Stmt]>,
-        point: &mut SupplyPoint,
-        then_alive: Option<Supply>,
-        else_alive: Option<Supply>,
-    ) {
+        let (then_alive, else_alive) = self.condition_arms(cond, point);
         let mut then_point = point.clone();
         then_point.alive = then_alive;
         if let Some(then) = then {
             self.walk_stmts(then, &mut then_point);
         }
-        let then_diverges = then.is_some_and(|then| self.checker.block_diverges(then));
-        match else_ {
-            Some(else_statements) => {
-                let mut else_point = point.clone();
-                else_point.alive = else_alive;
-                self.walk_stmts(else_statements, &mut else_point);
-                let else_diverges = self.checker.block_diverges(else_statements);
-                *point = match (then_diverges, else_diverges) {
-                    (true, true) => {
-                        let mut dead = point.clone();
-                        dead.alive = None;
-                        dead
-                    }
-                    (true, false) => else_point,
-                    (false, true) => then_point,
-                    (false, false) => merge_points(&then_point, &else_point),
-                };
-            }
+        let mut else_point = point.clone();
+        else_point.alive = else_alive;
+        if let Some(else_) = else_ {
+            self.walk_stmts(else_, &mut else_point);
+        }
+        merge_live_arms(
+            point,
+            then_point,
+            then.is_some_and(|arm| self.checker.block_diverges(arm)),
+            else_point,
+            else_.is_some_and(|arm| self.checker.block_diverges(arm)),
+        );
+    }
+
+    fn condition_arms(
+        &mut self,
+        cond: &Expr,
+        point: &mut SupplyPoint,
+    ) -> (Option<Supply>, Option<Supply>) {
+        match self.classify_condition(cond, point) {
             None => {
-                let mut fall_through = point.clone();
-                fall_through.alive = else_alive;
-                *point = if then_diverges {
-                    fall_through
-                } else {
-                    merge_points(&then_point, &fall_through)
-                };
+                self.walk_expr(cond, point);
+                (point.alive, point.alive)
+            }
+            Some(SupplyTest::Decoded { then, else_ }) => {
+                self.walk_cond_silently(cond, point);
+                (self.arm_state(point, then), self.arm_state(point, else_))
+            }
+            Some(SupplyTest::Mention) => {
+                self.walk_cond_silently(cond, point);
+                let silent = self.arm_state(point, Supply::Supplied);
+                (silent, silent)
             }
         }
     }
@@ -559,14 +526,6 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
-    /// `if` in expression position. Unlike the statement form, a
-    /// non-diverging then-arm does not rebind anything, so the
-    /// continuation merges the then-arm's state (a proven-defaulted
-    /// promise survives `lim <- if (missing(p)) e` with no `else`) with
-    /// the fall-through's else-fact — which is why that shape followed by
-    /// a `p` forward still reports. A diverging then-arm (`if
-    /// (missing(p)) return(...)`) leaves only the fall-through reaching
-    /// the continuation and is silent, mirroring the statement form.
     fn walk_expr_if(
         &mut self,
         cond: &Expr,
@@ -574,77 +533,22 @@ impl FormalSupplyWalk<'_, '_> {
         else_: Option<&Expr>,
         point: &mut SupplyPoint,
     ) {
-        match self.classify_condition(cond, point) {
-            None => {
-                self.walk_expr(cond, point);
-                let mut then_point = point.clone();
-                self.walk_expr(then, &mut then_point);
-                let then_diverges = self.checker.expr_diverges_full(then);
-                self.merge_expr_arms(then_point, then_diverges, else_, point, point.alive);
-            }
-            Some(SupplyTest::Decoded {
-                then: then_fact,
-                else_: else_fact,
-            }) => {
-                self.walk_cond_silently(cond, point);
-                let mut then_point = point.clone();
-                then_point.alive = self.arm_state(point, then_fact);
-                self.walk_expr(then, &mut then_point);
-                let then_diverges = self.checker.expr_diverges_full(then);
-                let else_alive = self.arm_state(point, else_fact);
-                self.merge_expr_arms(then_point, then_diverges, else_, point, else_alive);
-            }
-            Some(SupplyTest::Mention) => {
-                self.walk_cond_silently(cond, point);
-                let silent = self.arm_state(point, Supply::Supplied);
-                let mut then_point = point.clone();
-                then_point.alive = silent;
-                self.walk_expr(then, &mut then_point);
-                let then_diverges = self.checker.expr_diverges_full(then);
-                self.merge_expr_arms(then_point, then_diverges, else_, point, silent);
-            }
+        let (then_alive, else_alive) = self.condition_arms(cond, point);
+        let mut then_point = point.clone();
+        then_point.alive = then_alive;
+        self.walk_expr(then, &mut then_point);
+        let mut else_point = point.clone();
+        else_point.alive = else_alive;
+        if let Some(else_) = else_ {
+            self.walk_expr(else_, &mut else_point);
         }
-    }
-
-    /// Merge the expression-if arms into `point`. `then_diverges` drops
-    /// the then-arm's state; with no `else`, the fall-through carries
-    /// `fall_alive` (the condition's else-fact, or the pre-`if` state for
-    /// a foreign condition).
-    fn merge_expr_arms(
-        &mut self,
-        then_point: SupplyPoint,
-        then_diverges: bool,
-        else_: Option<&Expr>,
-        point: &mut SupplyPoint,
-        fall_alive: Option<Supply>,
-    ) {
-        match else_ {
-            Some(else_expr) => {
-                let mut else_point = point.clone();
-                else_point.alive = fall_alive;
-                self.walk_expr(else_expr, &mut else_point);
-                let else_diverges = self.checker.expr_diverges_full(else_expr);
-                *point = match (then_diverges, else_diverges) {
-                    (true, true) => {
-                        let mut dead = point.clone();
-                        dead.alive = None;
-                        dead
-                    }
-                    (true, false) => else_point,
-                    (false, true) => then_point,
-                    (false, false) => merge_points(&then_point, &else_point),
-                };
-            }
-            None => {
-                let mut fall_through = point.clone();
-                fall_through.alive = fall_alive;
-                *point = if then_diverges {
-                    fall_through
-                } else {
-                    merge_points(&then_point, &fall_through)
-                };
-            }
-        }
+        merge_live_arms(
+            point,
+            then_point,
+            self.checker.expr_diverges_full(then),
+            else_point,
+            else_.is_some_and(|arm| self.checker.expr_diverges_full(arm)),
+        );
     }
 
     /// A nested closure's body and parameter defaults are not analyzed.
@@ -845,6 +749,22 @@ fn iterator_provably_nonempty(iter: &Expr) -> bool {
                 && matches!(rhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
         }
         _ => false,
+    }
+}
+
+/// Only arms that reach the continuation contribute their state.
+fn merge_live_arms(
+    point: &mut SupplyPoint,
+    then: SupplyPoint,
+    then_diverges: bool,
+    else_: SupplyPoint,
+    else_diverges: bool,
+) {
+    match (then_diverges, else_diverges) {
+        (true, true) => point.alive = None,
+        (true, false) => *point = else_,
+        (false, true) => *point = then,
+        (false, false) => *point = merge_points(&then, &else_),
     }
 }
 

@@ -164,7 +164,7 @@ export async function startServer(
     } catch (error) {
       logger.error(`Server cleanup failed: ${errorMessage(error)}`);
     }
-    throw new Error(message);
+    throw new Error(message, { cause });
   }
   return newLSClient;
 }

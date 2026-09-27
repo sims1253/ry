@@ -526,6 +526,9 @@ impl FormalSupplyWalk<'_, '_> {
         }
     }
 
+    /// With no `else`, a non-diverging then-arm merges with the fall-through's
+    /// else-fact: `lim <- if (missing(p)) e` keeps a proven-defaulted promise
+    /// alive. A diverging then-arm leaves only the fall-through state.
     fn walk_expr_if(
         &mut self,
         cond: &Expr,

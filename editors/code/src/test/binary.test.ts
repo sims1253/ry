@@ -1,4 +1,3 @@
-import { Effect, Either } from "effect";
 import { runBinary } from "../common/process";
 /**
  * Unit tests for binary resolution trust behavior.
@@ -104,7 +103,7 @@ it.skipIf(process.platform === "win32")(
         { mode: 0o755 },
       );
       let resolved = false;
-      const probe = Effect.runPromise(getRyVersion(binary)).then((version) => {
+      const probe = getRyVersion(binary).then((version) => {
         resolved = true;
         return version;
       });
@@ -134,7 +133,7 @@ it.skipIf(process.platform === "win32")(
         fs.writeFileSync(binary, `#!/bin/sh\nprintf '%s\\n' '${output}'\n`, {
           mode: 0o755,
         });
-        expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+        expect(await getRyVersion(binary)).toBeUndefined();
       }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -153,8 +152,8 @@ it.skipIf(process.platform === "win32")(
       fs.writeFileSync(binary, `#!/bin/sh\necho run >> "$0.marker"\nexit 1\n`, {
         mode: 0o755,
       });
-      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
-      expect(await Effect.runPromise(getRyVersion(binary))).toBeUndefined();
+      expect(await getRyVersion(binary)).toBeUndefined();
+      expect(await getRyVersion(binary)).toBeUndefined();
       expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -163,28 +162,19 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("returns an unknown version when the executable is missing", async () => {
-  expect(
-    await Effect.runPromise(getRyVersion("/nonexistent/ry")),
-  ).toBeUndefined();
+  expect(await getRyVersion("/nonexistent/ry")).toBeUndefined();
 });
 
-it("keeps process failures in the typed error channel", async () => {
-  const result = await Effect.runPromise(
-    runBinary("/nonexistent/ry", []).pipe(Effect.either),
+it("reports the executable path when a process fails", async () => {
+  await expect(runBinary("/nonexistent/ry", [])).rejects.toThrow(
+    "/nonexistent/ry",
   );
-  expect(Either.isLeft(result)).toBe(true);
-  if (Either.isLeft(result)) {
-    expect(result.left._tag).toBe("ProcessError");
-    expect(result.left.binaryPath).toBe("/nonexistent/ry");
-    expect(String(result.left)).toContain("ENOENT");
-    expect(String(result.left)).toContain("/nonexistent/ry");
-  }
 });
 
 it.skipIf(process.platform === "win32")(
-  "CLI effects are lazy and reusable, with cached version probes",
+  "version probes are cached until the executable changes",
   async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-effect-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
     try {
       const binary = path.join(dir, "ry");
       fs.writeFileSync(
@@ -193,10 +183,8 @@ it.skipIf(process.platform === "win32")(
         { mode: 0o755 },
       );
       fs.utimesSync(binary, 1_700_000_000, 1_700_000_000);
-      const probe = getRyVersion(binary);
-      expect(fs.existsSync(binary + ".marker")).toBe(false);
-      await Effect.runPromise(probe);
-      expect(await Effect.runPromise(probe)).toEqual({
+      await getRyVersion(binary);
+      expect(await getRyVersion(binary)).toEqual({
         major: 0,
         minor: 9,
         patch: 0,
@@ -213,7 +201,7 @@ it.skipIf(process.platform === "win32")(
       fs.renameSync(replacement, binary);
       expect(fs.statSync(binary).size).toBe(stats.size);
       expect(fs.statSync(binary).mtimeMs).toBe(stats.mtimeMs);
-      expect(await Effect.runPromise(probe)).toEqual({
+      expect(await getRyVersion(binary)).toEqual({
         major: 0,
         minor: 9,
         patch: 1,

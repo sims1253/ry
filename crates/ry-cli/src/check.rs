@@ -1,11 +1,4 @@
-//! Unified diagnostics query — one entry point for the CLI.
-//!
-//! The caller supplies parsed files and workspace context; the module
-//! returns diagnostics. This file also owns the `ry check` command's
-//! orchestration (`run_check` and its one-pass driver `run_check_once`):
-//! config/CLI flag merging, file discovery, watch mode, output rendering,
-//! and the exit-code policy. main.rs keeps only argument parsing and
-//! dispatch.
+//! The `check` command: configuration, discovery, watch mode, and diagnostic output.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -21,77 +14,7 @@ use miette::Result;
 use ry_config as config;
 
 use crate::CheckArgs;
-use crate::pipeline;
-
-/// Input for a unified diagnostics check.
-pub struct CheckInput {
-    /// Parsed source files as (path, SourceFile) tuples.
-    pub files: Vec<(String, Arc<ry_core::SourceFile>)>,
-    /// User typeshed stubs.
-    pub user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
-    /// Workspace context (package metadata, bindings).
-    pub workspace: ry_workspace::WorkspaceContext,
-}
-
-impl CheckInput {
-    fn into_project(self) -> ry_checker::Project {
-        let mut project = ry_checker::Project::new();
-        let workspace = self.workspace;
-        project.set_loaded(workspace.attached_packages);
-        project.set_bare_loaded(workspace.bare_bindings);
-        project.set_user_stubs(self.user_stubs);
-        project.set_external_bindings(workspace.external_bindings);
-        project.set_imported_from(workspace.imported_bindings);
-        project.set_external_s3_methods(workspace.s3_methods);
-        project.set_load_bindings(workspace.load_bindings);
-        for (path, file) in self.files {
-            project.add_file_arc(path, file);
-        }
-        project
-    }
-}
-
-/// Run a one-shot project check with workspace metadata.
-pub fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    input.into_project().check()
-}
-
-/// Run the same one-shot check, additionally snapshotting every file's
-/// lexical scopes (top level plus each walked function body).
-///
-/// The pipeline is identical to [`check_project`] -- same workspace
-/// metadata, shared fixpoint, one pass -- so captured types match what a
-/// `check` run infers. Returns one `(path, records)` entry per file, in
-/// input order. Diagnostics are computed as usual but discarded: the
-/// dump consumer (`ry dump-types`) treats diagnostics as irrelevant to
-/// its exit code and output.
-pub fn check_project_with_scope_capture(
-    input: CheckInput,
-) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    check_project_with_facts_capture(input, false).scopes
-}
-
-pub(crate) struct CapturedFacts {
-    pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
-    pub references: Vec<(String, ry_checker::ReferenceFacts)>,
-}
-
-/// Capture scope snapshots and optional reference evidence in one project check.
-pub(crate) fn check_project_with_facts_capture(
-    input: CheckInput,
-    references: bool,
-) -> CapturedFacts {
-    let mut project = input.into_project();
-    project.enable_scope_capture();
-    if references {
-        project.enable_reference_capture();
-    }
-    project.check();
-    CapturedFacts {
-        scopes: project.take_scope_records(),
-        references: project.take_reference_facts(),
-    }
-}
+use crate::pipeline::{self, check_project, load_user_stubs, sort_and_deduplicate_paths};
 
 /// Drive `ry check`: merge the CLI flags with `ry.toml`, discover the
 /// R files, check them once, and keep re-checking in watch mode.
@@ -1272,27 +1195,6 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     })
 }
 
-/// Load package stubs from every `--typeshed` directory, later
-/// directories replacing same-named packages from earlier ones. Warnings
-/// are surfaced; an unreadable directory keeps the run going.
-pub(crate) fn load_user_stubs(
-    dirs: &[PathBuf],
-) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
-    let mut merged = std::collections::BTreeMap::new();
-    for dir in dirs {
-        match ry_typeshed::load_stub_dir_with_warnings(dir) {
-            Ok((stubs, warnings)) => {
-                for warning in warnings {
-                    eprintln!("ry: warning: {warning}");
-                }
-                merged.extend(stubs);
-            }
-            Err(error) => eprintln!("ry: warning: {error}"),
-        }
-    }
-    Arc::new(merged)
-}
-
 /// Deterministic diagnostic order (confidence, path, position, code,
 /// severity, message), then drop exact duplicates.
 pub(crate) fn sort_and_deduplicate_diagnostics(diagnostics: &mut Vec<ry_checker::Diagnostic>) {
@@ -1396,11 +1298,6 @@ pub(crate) fn report_truncation(report: &ry_workspace::TruncationReport, root: &
     }
 }
 
-pub(crate) fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
-    paths.sort();
-    paths.dedup();
-}
-
 /// One discovery pass over the search roots: the discovered file set
 /// plus the directories the walk could not read.
 struct Scan {
@@ -1488,6 +1385,7 @@ fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::Syste
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::{CheckInput, check_project_with_scope_capture};
     use ry_core::Span;
 
     fn diag(path: &str, line: usize, col: usize, code: &'static str) -> ry_checker::Diagnostic {

@@ -2,17 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::{Component, Path};
 
-use crate::FixtureProject;
-
 pub type DriverError = Box<dyn Error + Send + Sync + 'static>;
-
-/// An owning-crate adapter that observes diagnostics at a published seam.
-pub trait Driver {
-    fn published_diagnostics(
-        &mut self,
-        fixture: &FixtureProject,
-    ) -> Result<Vec<ObservedDiagnostic>, DriverError>;
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -32,23 +22,6 @@ pub struct ObservedPosition {
     /// Zero-based column in [`Self::encoding`].
     pub character: u32,
     pub encoding: PositionEncoding,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservedRange {
-    pub start: ObservedPosition,
-    pub end: Option<ObservedPosition>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservedDiagnostic {
-    pub path: String,
-    pub code: String,
-    pub severity: String,
-    pub message: String,
-    pub range: ObservedRange,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<String>,
 }
 
 /// Make an observed path stable without resolving symlinks or requiring it to exist.

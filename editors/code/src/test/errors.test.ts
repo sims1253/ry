@@ -1,7 +1,6 @@
 // Partial VS Code doubles expose only the methods these failure paths use.
 /* oxlint-disable typescript/consistent-type-assertions */
 import { describe, expect, it, mock } from "bun:test";
-import { Effect, Exit } from "effect";
 
 const logs: string[] = [];
 let startFailure: unknown;
@@ -47,7 +46,7 @@ mock.module("vscode-languageclient/node", () => ({
   },
 }));
 
-const { causeMessage, errorMessage } = await import("../common/errors");
+const { errorMessage } = await import("../common/errors");
 
 const { startServer, stopServer } = await import("../common/server");
 
@@ -57,15 +56,9 @@ describe("server failure details", () => {
     disposed = 0;
     startFailure = new Error("spawn ENOENT");
     stopFailure = undefined;
-    const result = await Effect.runPromiseExit(
+    await expect(
       startServer("ry", "/missing/ry", {} as never, {} as never),
-    );
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result)) {
-      expect(causeMessage(result.cause)).toContain("spawn ENOENT");
-      expect(causeMessage(result.cause)).not.toContain("core-effect");
-      expect(causeMessage(result.cause)).toContain("/missing/ry");
-    }
+    ).rejects.toThrow("Server failed to start at /missing/ry: spawn ENOENT");
     expect(logs.join("\n")).toContain("spawn ENOENT");
     expect(disposed).toBe(1);
   });
@@ -74,24 +67,18 @@ describe("server failure details", () => {
     const client = {
       dispose: () => Promise.reject(new Error("shutdown failed")),
     };
-    const result = await Effect.runPromiseExit(stopServer(client as never));
-    expect(Exit.isFailure(result)).toBe(true);
-    if (Exit.isFailure(result))
-      expect(causeMessage(result.cause)).toBe("shutdown failed");
+    await expect(stopServer(client as never)).rejects.toThrow(
+      "shutdown failed",
+    );
   });
 });
 
-it("unwraps Promise errors and preserves string rejections", async () => {
+it("preserves error messages and string rejections", () => {
   for (const reason of [
     new Error("document unavailable"),
     "document unavailable",
   ]) {
-    const message = await Effect.runPromise(
-      Effect.tryPromise(() => Promise.reject(reason)).pipe(
-        Effect.catchAll((error) => Effect.succeed(errorMessage(error))),
-      ),
-    );
-    expect(message).toBe("document unavailable");
+    expect(errorMessage(reason)).toBe("document unavailable");
   }
 });
 
@@ -99,12 +86,9 @@ it("logs cleanup failure without hiding the original startup failure", async () 
   logs.length = 0;
   startFailure = new Error("initialization failed");
   stopFailure = new Error("cleanup failed");
-  const result = await Effect.runPromiseExit(
+  await expect(
     startServer("ry", "/broken/ry", {} as never, {} as never),
-  );
-  expect(Exit.isFailure(result)).toBe(true);
-  if (Exit.isFailure(result))
-    expect(causeMessage(result.cause)).toContain("initialization failed");
+  ).rejects.toThrow("initialization failed");
   expect(logs.join("\n")).toContain("initialization failed");
   expect(logs.join("\n")).toContain("cleanup failed");
 });

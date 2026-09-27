@@ -1,8 +1,5 @@
-//! Front half of the analysis pipeline, shared by `ry check` and
-//! `ry dump-types`: config discovery, parallel parsing, per-package
-//! grouping, and workspace-context construction. Both commands feed off
-//! these helpers so their file sets, resolution roots, and workspace
-//! models cannot drift apart.
+//! Shared analysis for `check`, `dump-types`, and `dump-facts`.
+//! Commands own their output and failure policies.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,6 +7,94 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use ry_config as config;
+
+/// Input for a unified diagnostics check.
+pub(crate) struct CheckInput {
+    /// Parsed source files as (path, SourceFile) tuples.
+    pub files: Vec<(String, Arc<ry_core::SourceFile>)>,
+    /// User typeshed stubs.
+    pub user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
+    /// Workspace context (package metadata, bindings).
+    pub workspace: ry_workspace::WorkspaceContext,
+}
+
+impl CheckInput {
+    fn into_project(self) -> ry_checker::Project {
+        let mut project = ry_checker::Project::new();
+        let workspace = self.workspace;
+        project.set_loaded(workspace.attached_packages);
+        project.set_bare_loaded(workspace.bare_bindings);
+        project.set_user_stubs(self.user_stubs);
+        project.set_external_bindings(workspace.external_bindings);
+        project.set_imported_from(workspace.imported_bindings);
+        project.set_external_s3_methods(workspace.s3_methods);
+        project.set_load_bindings(workspace.load_bindings);
+        for (path, file) in self.files {
+            project.add_file_arc(path, file);
+        }
+        project
+    }
+}
+
+/// Run a one-shot project check with workspace metadata.
+pub(crate) fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    input.into_project().check()
+}
+
+/// Capture each file's lexical scopes in input order. Diagnostics are discarded.
+pub(crate) fn check_project_with_scope_capture(
+    input: CheckInput,
+) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
+    check_project_with_facts_capture(input, false).scopes
+}
+
+pub(crate) struct CapturedFacts {
+    pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
+    pub references: Vec<(String, ry_checker::ReferenceFacts)>,
+}
+
+/// Capture scope snapshots and optional reference evidence in one project check.
+pub(crate) fn check_project_with_facts_capture(
+    input: CheckInput,
+    references: bool,
+) -> CapturedFacts {
+    let mut project = input.into_project();
+    project.enable_scope_capture();
+    if references {
+        project.enable_reference_capture();
+    }
+    project.check();
+    CapturedFacts {
+        scopes: project.take_scope_records(),
+        references: project.take_reference_facts(),
+    }
+}
+
+/// Load package stubs from every `--typeshed` directory, later
+/// directories replacing same-named packages from earlier ones. Warnings
+/// are surfaced; an unreadable directory keeps the run going.
+pub(crate) fn load_user_stubs(
+    dirs: &[PathBuf],
+) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
+    let mut merged = std::collections::BTreeMap::new();
+    for dir in dirs {
+        match ry_typeshed::load_stub_dir_with_warnings(dir) {
+            Ok((stubs, warnings)) => {
+                for warning in warnings {
+                    eprintln!("ry: warning: {warning}");
+                }
+                merged.extend(stubs);
+            }
+            Err(error) => eprintln!("ry: warning: {error}"),
+        }
+    }
+    Arc::new(merged)
+}
+
+pub(crate) fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
+    paths.sort();
+    paths.dedup();
+}
 
 /// Discover a ry.toml by walking up from `search_start`.
 ///
@@ -174,25 +259,12 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     })
 }
 
-/// Group path strings by enclosing package root, keeping each group's
-/// input indices in ascending order. Re-export of the shared boundary in
-/// `ry_workspace` so the CLI and the language server cannot drift apart;
-/// see there for the invariant. Non-package scripts share the `None`
-/// group so ordinary multi-file workflows keep their source()-style
-/// visibility.
-pub(crate) fn group_by_package_root<'a, I>(paths: I) -> BTreeMap<Option<PathBuf>, Vec<usize>>
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    ry_workspace::group_by_package_root(paths)
-}
-
 /// One per-package group, ready for the checker: the group's files and
 /// workspace context wrapped as a `CheckInput`, plus the degraded-scope
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
-    pub check_input: crate::check::CheckInput,
+    pub check_input: CheckInput,
     pub degraded_scopes: Vec<(PathBuf, &'static str)>,
 }
 
@@ -201,7 +273,7 @@ pub(crate) struct ResolvedGroup {
 /// about library scoping or resolution roots.
 ///
 /// Each DESCRIPTION root becomes its own group (see
-/// [`group_by_package_root`]). A group without a package root resolves
+/// [`ry_workspace::group_by_package_root`]). A group without a package root resolves
 /// against the first entry of `fallback_roots` that is set — `ry check`
 /// passes the config root, `dump-types` passes `--project-root` and then
 /// the config root — and finally against the working directory. The
@@ -215,7 +287,7 @@ pub(crate) fn resolve_groups(
     user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     fallback_roots: &[Option<&Path>],
 ) -> miette::Result<Vec<ResolvedGroup>> {
-    let groups = group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
+    let groups = ry_workspace::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
     let mut resolved = Vec::with_capacity(groups.len());
     for (group_root, indices) in &groups {
         let resolution_root = group_root
@@ -258,7 +330,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         resolved.push(ResolvedGroup {
             resolution_root,
-            check_input: crate::check::CheckInput {
+            check_input: CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),
                 workspace: package_scope,

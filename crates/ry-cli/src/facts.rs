@@ -307,7 +307,7 @@ pub(crate) fn run_dump_facts(
         }
         paths.extend(found.files);
     }
-    check::sort_and_deduplicate_paths(&mut paths);
+    pipeline::sort_and_deduplicate_paths(&mut paths);
     for path in &paths {
         utf8_path(path)?;
     }
@@ -349,7 +349,7 @@ pub(crate) fn run_dump_facts(
             }),
         );
     }
-    let user_stubs = check::load_user_stubs(&cfg.typeshed);
+    let user_stubs = pipeline::load_user_stubs(&cfg.typeshed);
     let groups = pipeline::resolve_groups(
         &parsed,
         &cfg,
@@ -406,7 +406,7 @@ pub(crate) fn run_dump_facts(
         contexts.push(json!({"id": context_id, "inputs": context}));
         let imported = workspace.imported_bindings.clone();
         let group_files = input.files.clone();
-        let facts = check::check_project_with_facts_capture(input, references);
+        let facts = pipeline::check_project_with_facts_capture(input, references);
         let mut captures: HashMap<_, _> = facts.scopes.into_iter().collect();
         let mut reference_captures: HashMap<_, _> = facts.references.into_iter().collect();
         for (path, file) in group_files {

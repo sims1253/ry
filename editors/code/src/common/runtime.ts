@@ -1,12 +1,6 @@
-/**
- * Deferred runtime — the heavyweight extension logic (Effect, the
- * language client, binary resolution) sits behind the dynamic import in
- * `src/extension.ts`, so evaluating these modules happens after
- * activation rather than inside it.
- */
+/** Language client and binary resolution load after extension activation. */
 
-import { Effect } from "effect";
-import { causeMessage, errorMessage } from "./errors";
+import { errorMessage } from "./errors";
 import * as vscode from "vscode";
 import { LOG_CHANNEL_NAME, RY_SETTINGS_NAMESPACE } from "./constants";
 import { LazyOutputChannel, logger } from "./logger";
@@ -53,7 +47,7 @@ const disabledRuntime = (): Runtime => ({
 
 /**
  * Boot the extension runtime: channels, status item, listeners, and the
- * first server start (deferred one more tick, as before).
+ * first server start on the next tick.
  */
 export function start(context: vscode.ExtensionContext): Runtime {
   const serverId = RY_SETTINGS_NAMESPACE;
@@ -106,68 +100,59 @@ export function start(context: vscode.ExtensionContext): Runtime {
     logger.error(message);
     if (serverState && resolvedBinary) statusItem.setReady(resolvedBinary);
     else statusItem.setError(message);
-    void Effect.runPromise(
-      Effect.gen(function* () {
-        const action = yield* Effect.tryPromise(() =>
-          Promise.resolve(
-            vscode.window.showErrorMessage(message, "Show Logs", "Configure"),
-          ),
+    void (async () => {
+      try {
+        const action = await vscode.window.showErrorMessage(
+          message,
+          "Show Logs",
+          "Configure",
         );
         if (action === "Show Logs") outputChannel.show();
-        else if (action === "Configure") {
-          yield* Effect.tryPromise(() =>
-            Promise.resolve(
-              vscode.commands.executeCommand(
-                "workbench.action.openSettings",
-                "ry.path",
-              ),
-            ),
+        else if (action === "Configure")
+          await vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "ry.path",
           );
-        }
-      }).pipe(
-        Effect.catchAll((error) => Effect.sync(() => logger.error(error))),
-      ),
-    );
-  };
-  const runServer = () =>
-    Effect.gen(function* () {
-      const nextSettings = readSettings();
-      const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
-      const nextBinary = { path, version: yield* getRyVersion(path) };
-      const error = checkVersionCapability(
-        nextBinary,
-        MINIMUM_SETTINGS_CHANNEL_VERSION,
-        "settings channel",
-      );
-      if (error) {
-        reportFailure(error);
-        return;
+      } catch (error) {
+        logger.error(errorMessage(error));
       }
-
-      statusItem.setBusy();
-      const nextClient = yield* startServer(
-        serverId,
-        path,
-        outputChannel,
-        traceOutputChannel,
-      );
-      const previous = serverState;
-      serverState = nextClient;
-      resolvedBinary = nextBinary;
-      settings = nextSettings;
-      statusItem.setReady(nextBinary);
-      if (previous) {
-        yield* stopServer(previous).pipe(
-          Effect.catchAll((error) =>
-            Effect.sync(() =>
-              reportFailure(
-                `Failed to stop the previous server: ${errorMessage(error)}`,
-              ),
-            ),
-          ),
+    })();
+  };
+  const runServer = async () => {
+    const nextSettings = readSettings();
+    const path = findRyBinaryPath(nextSettings, !vscode.workspace.isTrusted);
+    const nextBinary = { path, version: await getRyVersion(path) };
+    const error = checkVersionCapability(
+      nextBinary,
+      MINIMUM_SETTINGS_CHANNEL_VERSION,
+      "settings channel",
+    );
+    if (error) {
+      reportFailure(error);
+      return;
+    }
+    statusItem.setBusy();
+    const nextClient = await startServer(
+      serverId,
+      path,
+      outputChannel,
+      traceOutputChannel,
+    );
+    const previous = serverState;
+    serverState = nextClient;
+    resolvedBinary = nextBinary;
+    settings = nextSettings;
+    statusItem.setReady(nextBinary);
+    if (previous) {
+      try {
+        await stopServer(previous);
+      } catch (error) {
+        reportFailure(
+          `Failed to stop the previous server: ${errorMessage(error)}`,
         );
       }
-    });
+    }
+  };
 
   // Restart orchestration: at most one restart runs, at most one pends.
   const requestRestart = async () => {
@@ -184,30 +169,24 @@ export function start(context: vscode.ExtensionContext): Runtime {
     }
 
     restartQueued = false;
-    restartPromise = Effect.runPromise(
-      Effect.gen(function* () {
-        // Publish the in-flight promise before even a synchronous failure completes.
-        yield* Effect.yieldNow();
+    restartPromise = (async () => {
+      // Assign restartPromise before a synchronous failure can clear it.
+      await Promise.resolve();
+      try {
         do {
           restartQueued = false;
-          yield* runServer().pipe(
-            Effect.catchAllCause((cause) =>
-              Effect.sync(() =>
-                reportFailure(
-                  `Failed to start the ${LOG_CHANNEL_NAME} server: ${causeMessage(cause)}`,
-                ),
-              ),
-            ),
-          );
+          try {
+            await runServer();
+          } catch (error) {
+            reportFailure(
+              `Failed to start the ${LOG_CHANNEL_NAME} server: ${errorMessage(error)}`,
+            );
+          }
         } while (restartQueued);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            restartPromise = null;
-          }),
-        ),
-      ),
-    );
+      } finally {
+        restartPromise = null;
+      }
+    })();
     await restartPromise;
   };
 
@@ -254,33 +233,22 @@ export function start(context: vscode.ExtensionContext): Runtime {
     showLogs: () => logger.channel.show(),
     showServerLogs: () => outputChannel.show(),
     debugInformation: () =>
-      Effect.runPromise(
-        debugInformationCommand(resolvedBinary ?? undefined, settings),
-      ),
+      debugInformationCommand(resolvedBinary ?? undefined, settings),
     explainRule: () =>
       resolvedBinary
-        ? Effect.runPromise(explainRuleCommand(resolvedBinary.path))
+        ? explainRuleCommand(resolvedBinary.path)
         : Promise.resolve(),
-    shutdown: () => {
+    shutdown: async () => {
       shutdownStarted = true;
       if (bootImmediate != null) {
         clearImmediate(bootImmediate);
         bootImmediate = null;
       }
-      return Effect.runPromise(
-        Effect.gen(function* () {
-          const pendingRestart = restartPromise;
-          if (pendingRestart != null) {
-            yield* Effect.tryPromise(() => pendingRestart).pipe(
-              Effect.catchAll(() => Effect.void),
-            );
-          }
-          if (serverState != null) {
-            yield* stopServer(serverState);
-            serverState = null;
-          }
-        }),
-      );
+      await restartPromise?.catch(() => {});
+      if (serverState != null) {
+        await stopServer(serverState);
+        serverState = null;
+      }
     },
   };
 }

@@ -224,6 +224,36 @@ fn ry_toml_without_error_override_keeps_warning_non_fatal() {
 }
 
 #[test]
+fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("example.R");
+    fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
+    let default = ry_check(&path);
+    assert!(!String::from_utf8_lossy(&default.stdout).contains("RY113"));
+
+    fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
+    let audited = ry_check(&path);
+    let output = String::from_utf8_lossy(&audited.stdout);
+    assert!(
+        output.contains("RY113") && output.contains("RY034"),
+        "{output}"
+    );
+
+    fs::write(&path, "1L == NA # ry: ignore[RY034]\n").unwrap();
+    let used = ry_check(&path);
+    assert!(!String::from_utf8_lossy(&used.stdout).contains("RY113"));
+
+    fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "warn = [\"RY113\"]\nexclude = [\"example.R\"]\n",
+    )
+    .unwrap();
+    let excluded = ry_check(tmp.path());
+    assert!(!String::from_utf8_lossy(&excluded.stdout).contains("RY113"));
+}
+
+#[test]
 fn ry_toml_exclude_patterns_skip_matched_files() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(

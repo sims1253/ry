@@ -167,6 +167,18 @@ codes, it suppresses nothing in ry. Put explanatory prose after a native
 configuration to disable directive validation; a bare ignore cannot hide
 its own RY112 finding.
 
+Enable the unused-ignore audit with `--warn RY113` or `warn = ["RY113"]` in
+`ry.toml`. It checks valid `ry: ignore[...]` comments, including standalone
+ones, one code at a time. The initial audit covers RY034 and RY102, whose
+premises are local syntax; ignores for inference-dependent rules remain
+unaudited until the checker can prove their analysis was complete. A code is
+considered used if the checker found it on the target line before inline
+suppression, severity filtering, baseline subtraction, or confidence
+thresholds. Disabled rules, files with parse errors, excluded files, bare
+ignores, `noqa`, and file ignores receive no unused finding. RY113 points to
+the comment. Use `--ignore RY113` or `ignore = ["RY113"]` to disable it;
+an inline ignore cannot hide the audit itself.
+
 Prefer a rule-specific inline suppression or `globals` entry for dynamic
 workspaces. ry intentionally does not suppress diagnostics merely because an
 expression appears inside `expect_error()`: the setup expression is ordinary R

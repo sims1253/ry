@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::Component;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -151,7 +150,7 @@ pub(crate) fn run_check(
     // Collect the initial file set via the shared bounded discovery
     // module (issue #48). CLI and LSP use the same eligibility,
     // extension, hidden-directory, symlink, exclude, and test-fixture rules.
-    let overlay_identity = stdin_path.as_deref().map(lexical_absolute).transpose()?;
+    let overlay_identity = stdin_path.as_deref().map(source_identity).transpose()?;
     let mut overlay_alias = None;
     let mut search_roots = Vec::new();
     if paths.is_empty() {
@@ -161,10 +160,19 @@ pub(crate) fn run_check(
             if path.as_os_str() == "-" {
                 continue;
             }
-            if overlay_identity
-                .as_deref()
-                .is_some_and(|identity| lexical_absolute(&path).as_deref().ok() == Some(identity))
-            {
+            let aliases_overlay = match overlay_identity.as_ref() {
+                Some(_) if path.as_path() == stdin_path.as_deref().expect("stdin has a path") => {
+                    true
+                }
+                Some(identity) if path.exists() || source_parent(&path).exists() => {
+                    source_identity(&path)? == *identity
+                }
+                // A separate requested root with no existing parent is
+                // diagnosed by the missing-root check below, not silently
+                // treated as an alias of the stdin source.
+                _ => false,
+            };
+            if aliases_overlay {
                 // An explicit alias of the overlay is already supplied by
                 // stdin, including when this file has never been saved.
                 overlay_alias.get_or_insert(path);
@@ -201,7 +209,7 @@ pub(crate) fn run_check(
         true,
         explain_files,
         overlay_identity.as_deref(),
-    );
+    )?;
     report_read_errors(&scan.read_errors);
     let mut all_paths = scan.paths;
 
@@ -243,8 +251,13 @@ pub(crate) fn run_check(
             &search_roots,
             overlay_alias.as_deref(),
         )?;
-        all_paths
-            .retain(|discovered| lexical_absolute(discovered).as_ref().ok() != Some(&identity));
+        let mut distinct = Vec::with_capacity(all_paths.len() + 1);
+        for discovered in all_paths {
+            if source_identity(&discovered)? != identity {
+                distinct.push(discovered);
+            }
+        }
+        all_paths = distinct;
         all_paths.push(checked_path.clone());
         sort_and_deduplicate_paths(&mut all_paths);
         if explain_files {
@@ -356,7 +369,7 @@ pub(crate) fn run_check(
             false,
             false,
             None,
-        );
+        )?;
 
         // Poll the package-metadata dependencies AFTER the rescan: the
         // dependency set is derived from the discovered paths, so it must
@@ -1445,7 +1458,7 @@ fn rescan(
     report: bool,
     explain: bool,
     overlay_identity: Option<&std::path::Path>,
-) -> Scan {
+) -> Result<Scan> {
     let mut scan = Scan {
         paths: Vec::new(),
         read_errors: Vec::new(),
@@ -1455,9 +1468,11 @@ fn rescan(
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
         if explain {
             for file in &result.files {
-                if !overlay_identity.is_some_and(|identity| {
-                    lexical_absolute(file).as_deref().ok() == Some(identity)
-                }) {
+                let is_overlay = match overlay_identity {
+                    Some(identity) => source_identity(file)? == identity,
+                    None => false,
+                };
+                if !is_overlay {
                     eprintln!("ry: include {}", file.display());
                 }
             }
@@ -1480,7 +1495,7 @@ fn rescan(
     sort_and_deduplicate_paths(&mut scan.paths);
     scan.read_errors.sort();
     scan.read_errors.dedup();
-    scan
+    Ok(scan)
 }
 
 /// Exit code for a run that could not walk a requested input: failure,
@@ -1493,26 +1508,36 @@ fn discovery_exit_code(cfg: &config::Config) -> ExitCode {
     }
 }
 
-/// Compare discovered disk entries with a logical source path without
-/// requiring either entry to exist. `absolute` removes `.`; fold `..` as
-/// well so a directory walk cannot add the same file under another spelling.
-/// This deliberately does not resolve symlinks: source identity follows the
-/// named workspace entry, as discovery's exclusion policy does.
-fn lexical_absolute(path: &std::path::Path) -> Result<PathBuf> {
+/// Resolve the filesystem identity of an existing file or the would-be
+/// identity of an unsaved final filename. Canonicalizing the parent first
+/// gives `link/../new.R` the OS meaning of `link/..` when `link` is a
+/// symlink; lexical `..` folding would alias an unrelated file. The parent
+/// must exist, just as it must before an ordinary file can be saved.
+fn source_parent(path: &std::path::Path) -> &std::path::Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."))
+}
+
+fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
     use miette::IntoDiagnostic;
 
-    let absolute = std::path::absolute(path).into_diagnostic()?;
-    let mut clean = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::ParentDir => {
-                clean.pop();
-            }
-            Component::CurDir => {}
-            other => clean.push(other.as_os_str()),
+    match path.canonicalize() {
+        Ok(identity) => Ok(identity),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let name = path
+                .file_name()
+                .ok_or_else(|| miette::miette!("--stdin-filename must end in a source filename"))?;
+            let parent = source_parent(path).canonicalize().map_err(|error| {
+                miette::miette!(
+                    "cannot resolve parent of --stdin-filename {}: {error}",
+                    path.display()
+                )
+            })?;
+            Ok(parent.join(name))
         }
+        Err(error) => Err(error).into_diagnostic(),
     }
-    Ok(clean)
 }
 
 /// Reuse the disk invocation's path spelling when a directory or direct
@@ -1526,13 +1551,13 @@ fn overlay_path_for_roots(
     alias: Option<&std::path::Path>,
 ) -> Result<PathBuf> {
     for path in discovered {
-        if lexical_absolute(path)? == identity {
+        if source_identity(path)? == identity {
             return Ok(path.clone());
         }
     }
     for root in roots {
         if root.is_dir()
-            && let Ok(relative) = identity.strip_prefix(lexical_absolute(root)?)
+            && let Ok(relative) = identity.strip_prefix(source_identity(root)?)
         {
             return Ok(root.join(relative));
         }

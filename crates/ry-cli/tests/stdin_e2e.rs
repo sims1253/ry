@@ -15,7 +15,11 @@ fn run(root: &Path, args: &[&str], input: &[u8]) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(input).unwrap();
+    if let Err(error) = child.stdin.take().unwrap().write_all(input) {
+        // Argument-validation failures may exit before the writer reaches
+        // the pipe. The status/stderr assertions below verify that path.
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe, "{error}");
+    }
     child.wait_with_output().unwrap()
 }
 
@@ -149,11 +153,28 @@ fn unsaved_file_is_checked_without_writing_it() {
     assert_eq!(codes(&duplicate_operand), ["RY040"]);
     assert!(!String::from_utf8_lossy(&duplicate_operand.stderr).contains("no such file"));
     assert!(!path.exists());
+
+    let bare_alias = run(
+        temp.path(),
+        &[
+            "new.R",
+            "-",
+            "--stdin-filename",
+            "./new.R",
+            "--output-format",
+            "json",
+        ],
+        b"\"buffer\" + 1L\n",
+    );
+    assert_eq!(codes(&bare_alias), ["RY040"]);
+    assert!(!String::from_utf8_lossy(&bare_alias.stderr).contains("no such file"));
+    assert!(!temp.path().join("new.R").exists());
 }
 
 #[test]
 fn explicit_stdin_errors_and_watch_rejection_are_clear() {
     let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("directory")).unwrap();
     for (args, expected) in [
         (vec!["-"], "requires --stdin-filename"),
         (vec!["-", "-", "--stdin-filename", "a.R"], "only once"),
@@ -161,6 +182,10 @@ fn explicit_stdin_errors_and_watch_rejection_are_clear() {
         (
             vec!["-", "--stdin-filename", "a.R", "--watch"],
             "--watch cannot be used with stdin",
+        ),
+        (
+            vec!["-", "--stdin-filename", "directory"],
+            "must name a source file, not a directory",
         ),
     ] {
         let output = run(temp.path(), &args, b"x <- 1L\n");
@@ -171,6 +196,52 @@ fn explicit_stdin_errors_and_watch_rejection_are_clear() {
         );
         assert!(output.stdout.is_empty(), "{output:?}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_parent_dotdot_replaces_the_actual_source() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("a/b")).unwrap();
+    fs::write(temp.path().join("a/foo.R"), b"\"stale\" + 1L\n").unwrap();
+    fs::write(temp.path().join("foo.R"), b"\"neighbor\" + 2L\n").unwrap();
+    symlink("a/b", temp.path().join("link")).unwrap();
+    let buffer = b"updated <- 1L\n";
+    let args = |logical| {
+        run(
+            temp.path(),
+            &[
+                ".",
+                "-",
+                "--stdin-filename",
+                logical,
+                "--output-format",
+                "json",
+                "--explain-files",
+            ],
+            buffer,
+        )
+    };
+    let through_link = args("link/../foo.R");
+    let direct = args("a/foo.R");
+    assert_eq!(through_link.status, direct.status);
+    assert_eq!(json(&through_link), json(&direct));
+    assert_eq!(codes(&through_link), ["RY040"]);
+    assert_eq!(json(&through_link)[0]["path"], "./foo.R");
+    let explained = String::from_utf8_lossy(&through_link.stderr);
+    assert!(
+        explained.contains("include ./a/foo.R (stdin overlay)"),
+        "{explained}"
+    );
+
+    // The final file may be unsaved while its symlinked parent already
+    // exists; it must still use the parent's filesystem meaning.
+    let unsaved_link = args("link/../new.R");
+    let unsaved_direct = args("a/new.R");
+    assert_eq!(json(&unsaved_link), json(&unsaved_direct));
+    assert!(!temp.path().join("a/new.R").exists());
 }
 
 #[test]

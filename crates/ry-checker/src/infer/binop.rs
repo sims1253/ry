@@ -670,9 +670,7 @@ impl Checker {
     /// later short-circuit guard can reuse. Keep it separate from RType:
     /// `is.null(x) || ...` also admits NULL, which other rules must still see.
     pub(crate) fn mark_scalar_assertions(&self, args: &[Arg], scope: &mut Scope) {
-        if !self.resolves_to_base_lenient("stopifnot", scope)
-            || self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope)
-        {
+        if !self.resolves_to_base_lenient("stopifnot", scope) {
             return;
         }
         // Arguments run from left to right. A later argument can replace a
@@ -692,6 +690,12 @@ impl Checker {
     }
 
     pub(crate) fn scalar_assertion_subject(&self, expr: &Expr, scope: &Scope) -> Option<String> {
+        // Parentheses are calls in R. A local `(` can return TRUE without
+        // evaluating the enclosed guard, whether this fact is consumed by
+        // stopifnot or by a branch's ScalarThen narrowing.
+        if self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope) {
+            return None;
+        }
         match expr {
             Expr::BinOp {
                 op: BinOpKind::OrOr,
@@ -721,25 +725,31 @@ impl Checker {
             Expr::BinOp {
                 op: BinOpKind::AndAnd,
                 lhs,
-                rhs,
+                rhs: assertion_rhs,
                 ..
             } => {
-                if ops_chooser::operator_rebound(self, "&&", scope)
-                    || !self.scalar_assertion_pure_rhs(rhs, scope)
-                {
+                if ops_chooser::operator_rebound(self, "&&", scope) {
                     return None;
                 }
                 // R 4.2+ requires a length-one logical LHS of `&&`. For
                 // an unclassed value, a base comparison with a scalar
                 // literal has that same length as its subject.
-                let Expr::BinOp { op, lhs, rhs, .. } = lhs.as_ref() else {
+                let Expr::BinOp {
+                    op,
+                    lhs,
+                    rhs: comparison_rhs,
+                    ..
+                } = lhs.as_ref()
+                else {
                     return None;
                 };
                 if !matches!(
                     op,
                     BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
-                ) || !matches!(rhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
-                    || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                ) || !matches!(
+                    comparison_rhs.as_ref(),
+                    Expr::Integer(..) | Expr::Double(..)
+                ) || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
                     || self.project_defines_comparison_method()
                 {
                     return None;
@@ -747,8 +757,9 @@ impl Checker {
                 let Expr::Ident { name, .. } = lhs.as_ref() else {
                     return None;
                 };
-                self.scalar_assertion_class_safe(name, scope)
-                    .then(|| name.clone())
+                (self.scalar_assertion_class_safe(name, scope)
+                    && self.scalar_assertion_pure_rhs(assertion_rhs, name, scope))
+                .then(|| name.clone())
             }
             Expr::BinOp {
                 op: BinOpKind::Eq,
@@ -792,10 +803,22 @@ impl Checker {
     /// the rest of that assertion cannot replace it. Admit ordinary literal
     /// and comparison expressions; a call, assignment, block, or overloaded
     /// comparison can run arbitrary R code before `stopifnot` returns.
-    fn scalar_assertion_pure_rhs(&self, expr: &Expr, scope: &Scope) -> bool {
+    fn scalar_assertion_pure_rhs(&self, expr: &Expr, subject: &str, scope: &Scope) -> bool {
         match expr {
-            Expr::Ident { .. }
-            | Expr::Integer(..)
+            Expr::Ident { name, .. } => {
+                // The subject was forced by `is.null(subject)` before this
+                // point. Another formal can still hold an unevaluated default
+                // whose first read reassigns the subject. A local value is
+                // safe only while no unknown binding effect can replace it
+                // with a delayed or active binding.
+                name == subject
+                    || (scope.get(name).is_some()
+                        && !scope.is_parameter(name)
+                        && !scope.search_path_unknown
+                        && !scope.data_mask_unknown
+                        && !scope.effects_unknown)
+            }
+            Expr::Integer(..)
             | Expr::Double(..)
             | Expr::Logical(..)
             | Expr::String(..)
@@ -812,8 +835,8 @@ impl Checker {
                 ) && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
                     && !self.project_defines_comparison_method() =>
             {
-                self.scalar_assertion_pure_rhs(lhs, scope)
-                    && self.scalar_assertion_pure_rhs(rhs, scope)
+                self.scalar_assertion_pure_rhs(lhs, subject, scope)
+                    && self.scalar_assertion_pure_rhs(rhs, subject, scope)
             }
             _ => false,
         }

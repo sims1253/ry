@@ -2080,6 +2080,28 @@ fn scalar_assertion_rejects_effectful_rhs_before_carrying_a_fact() {
 }
 
 #[test]
+fn scalar_assertion_does_not_force_another_formals_default_as_pure() {
+    for source in [
+        "f <- function(x, ok = { x <- c(1L, 2L); TRUE }) { stopifnot(is.null(x) || (x > 0 && ok)); if (is.null(x) || x == 1L) TRUE else FALSE }; f(1L)",
+        "f <- function(x, n = { x <- c(1L, 2L); 3L }) { stopifnot(is.null(x) || (x > 0 && x <= n)); if (is.null(x) || x == 1L) TRUE else FALSE }; f(1L)",
+        "f <- function(x) { delayedAssign('n', { x <- c(1L, 2L); 3L }); stopifnot(is.null(x) || (x > 0 && x <= n)); if (is.null(x) || x == 1L) TRUE else FALSE }; f(1L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "forcing a promise may replace the asserted value: {source}: {diagnostics:?}"
+        );
+    }
+    let pure_local = check(
+        "f <- function(x) { n <- 3L; stopifnot(is.null(x) || (x > 0 && x <= n)); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        pure_local.iter().all(|d| d.code != "RY032"),
+        "{pure_local:?}"
+    );
+}
+
+#[test]
 fn parameter_guards_respect_scalar_membership_and_exact_length() {
     for source in [
         "f <- function(x) is.null(x) || 'value' %in% x",
@@ -2229,6 +2251,24 @@ fn loop_vector_fact_flows_through_simple_aliases_but_not_safe_overwrites() {
             "a safe overwrite or masked operator must stay quiet: {source}: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn scalar_then_refuses_shadowed_parentheses_in_guards_and_assertions() {
+    for source in [
+        "`(` <- function(x) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { if ((length(x) == 1L)) { if (x == 1L && TRUE) i }; x <- 1L } }",
+        "`(` <- function(x) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { stopifnot((length(x) == 1L)); if (x == 1L && TRUE) i; x <- 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "a masked parenthesis never proves scalar length: {source}: {diagnostics:?}"
+        );
+    }
+    let base = check(
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { if ((length(x) == 1L)) { if (x == 1L && TRUE) i }; x <- 1L } }",
+    );
+    assert!(base.iter().all(|d| d.code != "RY032"), "{base:?}");
 }
 
 #[test]

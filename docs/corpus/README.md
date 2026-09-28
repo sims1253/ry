@@ -21,7 +21,7 @@ causes.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 100 | 36 / 41 / 0 (+23 unowned) | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 99 | 36 / 41 / 0 (+22 unowned) | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 433 | 85 / 348 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its

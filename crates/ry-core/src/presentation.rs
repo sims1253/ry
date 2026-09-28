@@ -1,5 +1,7 @@
 //! Bounded presentation of inferred facts. These strings are not declarations.
 
+use std::fmt::{self, Write};
+
 use crate::types::{Length, Mode, RType};
 
 const HINT_BYTES: usize = 160;
@@ -58,6 +60,13 @@ impl Renderer {
         self.text.push_str(value);
     }
 
+    fn escaped_name(&mut self, name: &str) {
+        // Debug escaping writes through the bounded formatter. Formatting a
+        // full name first would allocate and scan source-sized input even
+        // after the display budget had been exhausted.
+        let _ = write!(self, "{name:?}");
+    }
+
     fn finish(mut self) -> TypeView {
         if self.truncated {
             // Reserve the visible marker even when the buffer is full.
@@ -81,8 +90,9 @@ impl Renderer {
             self.truncated = true;
             return;
         }
+        self.push(&format!("{}<len={}>", ty.mode, length(ty.length)));
         if ty.mode == Mode::Union {
-            self.push("union[");
+            self.push("[");
             if let Some(members) = &ty.members {
                 let shown = if self.compact {
                     members.len().min(3)
@@ -90,6 +100,9 @@ impl Renderer {
                     members.len()
                 };
                 for (index, member) in members.iter().take(shown).enumerate() {
+                    if self.truncated {
+                        break;
+                    }
                     if index != 0 {
                         self.push(", ");
                     }
@@ -102,9 +115,7 @@ impl Renderer {
                 self.push("?");
             }
             self.push("]");
-            return;
         }
-        self.push(&format!("{}<len={}>", ty.mode, length(ty.length)));
         if ty.class.known {
             if ty.class.len > 0 || !self.compact {
                 self.push(if self.compact { ":" } else { " class=[" });
@@ -115,11 +126,14 @@ impl Renderer {
                     .take(usize::from(ty.class.len))
                     .enumerate()
                 {
+                    if self.truncated {
+                        break;
+                    }
                     if index != 0 {
                         self.push(",");
                     }
                     match name {
-                        Some(name) => self.push(&format!("{:?}", name)),
+                        Some(name) => self.escaped_name(name),
                         None => self.push("?"),
                     }
                 }
@@ -144,10 +158,14 @@ impl Renderer {
                     schema.columns.len()
                 };
                 for (index, (name, field_ty)) in schema.columns.iter().take(shown).enumerate() {
+                    if self.truncated {
+                        break;
+                    }
                     if index != 0 {
                         self.push(", ");
                     }
-                    self.push(&format!("{:?}: ", name));
+                    self.escaped_name(name);
+                    self.push(": ");
                     self.ty(field_ty, depth + 1);
                 }
                 if shown < schema.columns.len() {
@@ -180,6 +198,9 @@ impl Renderer {
                 } else {
                     self.push(" function=partial(params=[");
                     for (index, param) in signature.params.iter().enumerate() {
+                        if self.truncated {
+                            break;
+                        }
                         if index != 0 {
                             self.push(", ");
                         }
@@ -190,7 +211,7 @@ impl Renderer {
                     self.push(")");
                 }
             }
-            None if ty.mode == Mode::Function => {
+            None if matches!(ty.mode, Mode::Function | Mode::Union) => {
                 self.push(if self.compact {
                     " (params?, return?)"
                 } else {
@@ -198,6 +219,20 @@ impl Renderer {
                 });
             }
             None => {}
+        }
+    }
+}
+
+impl Write for Renderer {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        if self.truncated {
+            return Err(fmt::Error);
+        }
+        self.push(value);
+        if self.truncated {
+            Err(fmt::Error)
+        } else {
+            Ok(())
         }
     }
 }
@@ -274,6 +309,28 @@ mod tests {
     }
 
     #[test]
+    fn union_view_keeps_its_common_metadata() {
+        let base = RType::union(Arc::from([
+            RType::scalar(Mode::Integer),
+            RType::scalar(Mode::Character),
+        ]));
+        let tagged = base.clone().with_class(ClassVector::single("tagged"));
+        let tagged = tagged.with_columns(Arc::new(ColumnSchema {
+            columns: vec![("value".into(), RType::scalar(Mode::Integer))],
+            complete: false,
+            locally_constructed: false,
+        }));
+        let plain = expanded_type(&base);
+        let decorated = expanded_type(&tagged);
+        assert!(!decorated.truncated);
+        assert_ne!(plain, decorated);
+        assert!(decorated.text.contains("union<len=1>["));
+        assert!(decorated.text.contains("class=[\"tagged\"]"));
+        assert!(decorated.text.contains("\"value\": integer"));
+        assert!(decorated.text.contains("; open}"));
+    }
+
+    #[test]
     fn nesting_and_long_names_mark_incomplete_views() {
         let mut ty = RType::scalar(Mode::Integer);
         for _ in 0..20 {
@@ -296,5 +353,25 @@ mod tests {
             locally_constructed: true,
         }));
         assert!(expanded_type(&escaped).text.contains("\"a\\\"b\\n\""));
+    }
+
+    #[test]
+    fn wide_schema_and_source_sized_name_obey_output_budget() {
+        let huge_name = "\\\"".repeat(200_000);
+        let mut columns = vec![(huge_name, RType::scalar(Mode::Integer))];
+        columns.extend(
+            (0..100_000).map(|index| (format!("late{index}"), RType::scalar(Mode::Integer))),
+        );
+        let ty = RType::new(Mode::List, Length::Unknown).with_columns(Arc::new(ColumnSchema {
+            columns,
+            complete: true,
+            locally_constructed: true,
+        }));
+        let started = std::time::Instant::now();
+        let view = expanded_type(&ty);
+        assert!(view.truncated);
+        assert!(view.text.len() <= DETAIL_BYTES);
+        assert!(view.text.ends_with('…'));
+        assert!(started.elapsed().as_secs() < 2);
     }
 }

@@ -244,6 +244,23 @@ fn inlay_hint_summary_and_detail_keep_schema_meanings_separate() {
 }
 
 #[test]
+fn inlay_hint_expands_classed_union_from_function_body() {
+    let hints = inlay_hints(
+        "f <- function(flag) {\n  x <- structure(if (flag) 1L else \"a\", class = \"tagged\")\n  x\n}\n",
+    );
+    let hint = hints
+        .iter()
+        .find(
+            |hint| matches!(&hint.label, InlayHintLabel::String(label) if label.contains("union")),
+        )
+        .expect("assignment of classed union has a hint");
+    let Some(InlayHintTooltip::String(detail)) = &hint.tooltip else {
+        panic!("expected expanded detail");
+    };
+    assert!(detail.contains("class=[\"tagged\"]"), "{detail}");
+}
+
+#[test]
 fn inlay_hints_skip_opaque_types() {
     // A call to an unknown function resolves to `Mode::Opaque`
     // ("we don't know"), so `result` must NOT get a hint: showing

@@ -612,10 +612,12 @@ impl Checker {
                     if value_has_list_origin {
                         scope.mark_list_origin(name.to_string());
                     }
-                    if let Expr::Function { span, .. } = value
-                        && !self.enclosing_formals.is_empty()
-                    {
-                        scope.mark_lexical_function(name.to_string(), *span);
+                    if let Expr::Function { span, .. } = value {
+                        if self.enclosing_formals.is_empty() {
+                            scope.mark_bound_function_definition(name.to_string(), *span);
+                        } else {
+                            scope.mark_lexical_function(name.to_string(), *span);
+                        }
                     }
                     if plain_vector {
                         scope.mark_plain_ops_vector(semantic_argument_name(name).to_string());
@@ -910,7 +912,18 @@ impl Checker {
                 }
                 None => RType::unknown(),
             };
-            if let Some(entry) = self.declared_body_parameter(declaration.as_ref(), p, &t) {
+            // The authored default is independent evidence. The call-site
+            // refined `t` can become unknown when every observed call
+            // supplies the formal, but that does not erase a literal
+            // contradiction in the function definition itself.
+            let authored_default = p
+                .default
+                .as_ref()
+                .map(infer_literal_default)
+                .unwrap_or_else(RType::unknown);
+            if let Some(entry) =
+                self.declared_body_parameter(declaration.as_ref(), p, &authored_default)
+            {
                 if p.default.is_some() {
                     fn_scope.insert_parameter_default(p.name.clone(), entry);
                 } else {

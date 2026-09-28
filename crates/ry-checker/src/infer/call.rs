@@ -242,7 +242,8 @@ impl Checker {
         }
 
         // The argument-inference stage.
-        let mut call = self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope);
+        let mut call =
+            self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope, span);
 
         // The argument-validation stage.
         self.check_call_arguments(&name, &lookup_name, &call, args, span);
@@ -1280,6 +1281,7 @@ impl Checker {
         lookup_name: &str,
         args: &[Arg],
         scope: &mut Scope,
+        call_span: Span,
     ) -> CallResolution {
         let inherited_sig = self.resolve_user_s3_inherited_sig(lookup_name);
         let inherited_s3_metadata = inherited_sig.is_some();
@@ -1338,6 +1340,27 @@ impl Checker {
                     .map(|(_, function)| function.clone())
             })
         };
+        // A local binding may be an earlier literal, a later rebind, or a
+        // branch join. The flat table is last-definition-wins, so its
+        // declaration is safe only when the current binding is absent (a
+        // cross-file/deferred lookup) or has the identical source span.
+        let declaration_user_function = user_function
+            .as_ref()
+            .filter(|function| {
+                if scope.get(lookup_name).is_some() {
+                    function.source_path == self.path
+                        && scope.lexical_definition(lookup_name) == Some(function.definition_span)
+                } else {
+                    // A deferred call inside a function may resolve a later
+                    // definition. An eager top-level call cannot use a function
+                    // defined later in this same file; the table's future entry
+                    // is not evidence about the current binding.
+                    !self.enclosing_formals.is_empty()
+                        || function.source_path != self.path
+                        || function.definition_span.start < call_span.start
+                }
+            })
+            .cloned();
         if let Some(function) = &user_function {
             self.record_signature_read(function.return_slot);
         }
@@ -1474,6 +1497,7 @@ impl Checker {
             arg_types,
             resolved_sig,
             user_function,
+            declaration_user_function,
             lexical_declaration_function,
             lexical_callable,
             locally_shadows_stub: false,
@@ -1534,7 +1558,7 @@ impl Checker {
             original_name,
             lookup_name,
             resolution
-                .user_function
+                .declaration_user_function
                 .as_ref()
                 .or(resolution.lexical_declaration_function.as_ref()),
             args,
@@ -2096,6 +2120,8 @@ struct CallResolution {
     /// The project FnTable entry for the call, unless a lexical callable
     /// shadows it.
     user_function: Option<UserFn>,
+    /// Flat entry only when source identity agrees with the current binding.
+    declaration_user_function: Option<UserFn>,
     /// Exact direct lexical binding, used only for adopted declarations.
     lexical_declaration_function: Option<UserFn>,
     /// Whether a lexical function binding shadows every table lookup.

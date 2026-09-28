@@ -663,6 +663,17 @@ impl Scope {
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>, definition: Span) {
         let name = name.into();
         self.mark_lexical_callable(name.clone());
+        self.mark_bound_function_definition(name, definition);
+    }
+
+    /// Keep the exact source identity of a direct literal binding without
+    /// changing ordinary top-level function resolution through the table.
+    pub(crate) fn mark_bound_function_definition(
+        &mut self,
+        name: impl Into<String>,
+        definition: Span,
+    ) {
+        let name = name.into();
         self.journal_lexical_definition(&name);
         self.lexical_definitions.insert(name, definition);
     }

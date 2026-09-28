@@ -99,6 +99,26 @@ fn kinds(checker: &Checker) -> Vec<DeclarationFindingKind> {
         .collect()
 }
 
+fn all_named_function_spans(file: &SourceFile, name: &str) -> Vec<Span> {
+    use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+    use std::ops::ControlFlow;
+
+    let mut spans = Vec::new();
+    let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| {
+        if let AstNode::Stmt(Stmt::Assign {
+            target: Expr::Ident { name: bound, .. },
+            value: Expr::Function { span, .. },
+            ..
+        }) = node
+            && bound == name
+        {
+            spans.push(*span);
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
+    spans
+}
+
 #[test]
 fn adopted_entry_and_return_are_independent_and_rebinding_is_ordinary() {
     let file = parse(
@@ -245,6 +265,103 @@ fn default_mismatch_is_separate_from_omission_and_known_call_mismatch() {
             .iter()
             .any(|finding| finding.message.contains("formal `x`"))
     );
+}
+
+#[test]
+fn authored_default_is_checked_even_when_every_call_supplies_a_valid_actual() {
+    let file = parse(
+        "default-all-supplied.R",
+        "f <- function(x = \"wrong\") { x }\nf(1L)\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Defaulted),
+        None,
+    )]);
+    checker.check(&file);
+    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    assert!(
+        checker.declaration_findings()[0]
+            .message
+            .contains("default for `x`")
+    );
+}
+
+#[test]
+fn eager_top_level_call_never_borrows_a_later_same_name_contract() {
+    let file = parse(
+        "top-level-order.R",
+        "f <- function(x) { x }\nf(\"text\")\nf <- function(x) { x }\nf(\"text\")\n",
+    );
+    let spans = all_named_function_spans(&file, "f");
+    assert_eq!(spans.len(), 2);
+    let mut later = record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    later.source.target = DeclarationTarget::LocalFunction {
+        path: file.path.clone(),
+        definition: spans[1],
+        display_name: Some("f".into()),
+    };
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![later]);
+    checker.check(&file);
+    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    let after = file.source.rfind("f(\"text\")").unwrap();
+    assert!(checker.declaration_findings()[0].span.start >= after);
+}
+
+#[test]
+fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
+    let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
+    let mut checker = Checker::new(&eager.path);
+    checker.set_declaration_records(vec![record(
+        &eager,
+        "f",
+        ("x", AtomicMode::Character, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&eager);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+
+    let deferred = parse(
+        "deferred.R",
+        "g <- function() { f(1L) }\nf <- function(x) { x }\ng()\n",
+    );
+    checker.set_declaration_records(vec![record(
+        &deferred,
+        "f",
+        ("x", AtomicMode::Character, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&deferred);
+    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+#[test]
+fn same_offset_in_another_file_cannot_identify_a_local_eager_binding() {
+    let first = parse("a.R", "f <- function(x) { x }\nf(1L)\n");
+    let second = parse("b.R", "f <- function(x) { x }\n");
+    assert_eq!(
+        named_function_span(&first, "f"),
+        named_function_span(&second, "f")
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first);
+    project.add_file(second.path.clone(), second.clone());
+    project.set_declaration_records(vec![record(
+        &second,
+        "f",
+        ("x", AtomicMode::Character, SupplyStatus::Required),
+        None,
+    )]);
+    project.check();
+    assert!(project.declaration_findings()[0].1.is_empty());
 }
 
 #[test]
@@ -732,6 +849,125 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
 }
 
 #[test]
+fn zero_or_one_iteration_does_not_select_either_declared_literal() {
+    for (loop_body, expected_integer_mismatch) in [
+        ("while (flag) { inner <- function(x) { x }; break }", false),
+        ("for (i in 1L) { inner <- function(x) { x } }", true),
+    ] {
+        for actual in ["1L", "\"text\""] {
+            let source = format!(
+                "outer <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body}; inner({actual}) }}\nouter(TRUE)\n"
+            );
+            let file = parse("two-loop-definitions.R", &source);
+            let spans = all_named_function_spans(&file, "inner");
+            assert_eq!(spans.len(), 2);
+            let mut first = record(
+                &file,
+                "outer",
+                ("x", AtomicMode::Integer, SupplyStatus::Required),
+                None,
+            );
+            first.source.target = DeclarationTarget::LocalFunction {
+                path: file.path.clone(),
+                definition: spans[0],
+                display_name: Some("inner".into()),
+            };
+            let mut second = first.clone();
+            second.source.provider = "second".into();
+            second.source.target = DeclarationTarget::LocalFunction {
+                path: file.path.clone(),
+                definition: spans[1],
+                display_name: Some("inner".into()),
+            };
+            if let Translation::Exact(signature) = &mut second.translation {
+                signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
+            }
+            let mut checker = Checker::new(&file.path);
+            checker.set_declaration_records(vec![first, second]);
+            checker.check(&file);
+            let mismatch = kinds(&checker).contains(&DeclarationFindingKind::Mismatch);
+            assert_eq!(
+                mismatch,
+                expected_integer_mismatch && actual == "1L",
+                "loop: {loop_body}, actual: {actual}, findings: {:?}",
+                checker.declaration_findings()
+            );
+        }
+    }
+}
+
+#[test]
+fn branch_only_function_introduction_cannot_borrow_flat_identity() {
+    for actual in ["1L", "\"text\""] {
+        let source = format!(
+            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ if (flag) inner <- function(x) {{ x }}; inner({actual}) }}\nouter(TRUE)\n"
+        );
+        let file = parse("branch-introduction.R", &source);
+        let spans = all_named_function_spans(&file, "inner");
+        assert_eq!(spans.len(), 2);
+        let mut top = record(
+            &file,
+            "inner",
+            ("x", AtomicMode::Character, SupplyStatus::Required),
+            None,
+        );
+        let mut nested = top.clone();
+        nested.source.provider = "nested".into();
+        nested.source.target = DeclarationTarget::LocalFunction {
+            path: file.path.clone(),
+            definition: spans[1],
+            display_name: Some("inner".into()),
+        };
+        if let Translation::Exact(signature) = &mut nested.translation {
+            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
+        }
+        top.source.target = DeclarationTarget::LocalFunction {
+            path: file.path.clone(),
+            definition: spans[0],
+            display_name: Some("inner".into()),
+        };
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![top, nested]);
+        checker.check(&file);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "actual: {actual}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn loop_rebinding_to_nonfunction_clears_old_definition_identity() {
+    let file = parse(
+        "loop-nonfunction.R",
+        "inner <- function(x) { x }\nouter <- function() { inner <- function(x) { x }; for (i in 1L) { inner <- 1L }; inner(\"text\") }\nouter()\n",
+    );
+    let spans = all_named_function_spans(&file, "inner");
+    let mut top = record(
+        &file,
+        "inner",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut nested = top.clone();
+    nested.source.target = DeclarationTarget::LocalFunction {
+        path: file.path.clone(),
+        definition: spans[1],
+        display_name: Some("inner".into()),
+    };
+    top.source.target = DeclarationTarget::LocalFunction {
+        path: file.path.clone(),
+        definition: spans[0],
+        display_name: Some("inner".into()),
+    };
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![top, nested]);
+    checker.check(&file);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+#[test]
 fn loop_carried_widening_never_borrows_flat_contract_before_rebinding() {
     for loop_body in [
         "for (i in 1L) { inner(1L); inner <- function(x) { x } }",
@@ -769,10 +1005,13 @@ fn loop_carried_widening_never_borrows_flat_contract_before_rebinding() {
 }
 
 #[test]
-fn iterator_binding_shadows_flat_contract_only_when_callable_is_possible() {
+fn iterator_binding_never_borrows_shadowed_flat_contract() {
     for (iter, expected) in [
         ("list(function(x) { x })", Vec::new()),
-        ("1L", vec![DeclarationFindingKind::Mismatch]),
+        // A nonfunction iterator shadows the top-level function too; the
+        // call itself is invalid, but its arguments cannot be checked
+        // against the shadowed function's declaration.
+        ("1L", Vec::new()),
     ] {
         let source = format!(
             "inner <- function(x) {{ x }}\nouter <- function() {{ for (inner in {iter}) {{ inner(1L) }} }}\nouter()\n"
@@ -842,6 +1081,7 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
     assert_eq!(project.declaration_findings()[1].1.len(), 1);
 
     project.set_declaration_records(vec![character.clone()]);
+    assert!(project.declaration_findings().is_empty());
     project.check_incremental();
     assert_eq!(project.emit_count, 2);
     assert!(project.declaration_findings()[1].1.is_empty());

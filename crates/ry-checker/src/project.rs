@@ -193,6 +193,7 @@ impl Project {
             return;
         }
         self.declarations = Arc::new(DeclarationSet::new(records));
+        self.declaration_findings.clear();
         self.dirty_paths
             .extend(self.files.iter().map(|(path, _)| path.clone()));
     }

@@ -39,6 +39,7 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .extend(incoming.loop_vector_bindings.iter().cloned());
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
+    joined.dynamic_bindings_unknown |= incoming.dynamic_bindings_unknown;
     joined.literal_values_unknown |= incoming.literal_values_unknown;
     joined.has_escaped_slot_names |= incoming.has_escaped_slot_names;
 }
@@ -128,6 +129,7 @@ impl Checker {
         // leaving the loop. A previously recorded safe break cannot erase it.
         scope.ops_environment_unknown |= inner.ops_environment_unknown;
         scope.effects_unknown |= inner.effects_unknown;
+        scope.dynamic_bindings_unknown |= inner.dynamic_bindings_unknown;
         scope.literal_values_unknown |= inner.literal_values_unknown;
         scope.has_escaped_slot_names |= inner.has_escaped_slot_names;
         let mut exits = frame.breaks;
@@ -162,6 +164,7 @@ impl Checker {
             let vector_before = scope.loop_vector_bindings.clone();
             scope.ops_environment_unknown |= exit.ops_environment_unknown;
             scope.effects_unknown |= exit.effects_unknown;
+            scope.dynamic_bindings_unknown |= exit.dynamic_bindings_unknown;
             scope.literal_values_unknown |= exit.literal_values_unknown;
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {

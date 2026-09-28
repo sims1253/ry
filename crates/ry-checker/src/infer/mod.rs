@@ -1420,6 +1420,8 @@ impl Checker {
         scope.ops_environment_unknown |=
             then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
         scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
+        scope.dynamic_bindings_unknown |=
+            then_delta.dynamic_bindings_unknown || else_delta.dynamic_bindings_unknown;
         scope.literal_values_unknown |=
             then_delta.literal_values_unknown || else_delta.literal_values_unknown;
         scope.has_escaped_slot_names |=
@@ -3077,6 +3079,11 @@ impl Checker {
         crate::semantic_lists::is_quoting_form(name)
             || is_nse_symbol_fn(name)
             || self.resolve_typeshed_sig(name).is_some()
+            || self
+                .fn_table
+                .fns
+                .get(name)
+                .is_some_and(|function| function.may_install_caller_binding)
             || self
                 .typeshed
                 .globals

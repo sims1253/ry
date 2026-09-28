@@ -2130,6 +2130,74 @@ fn scalar_proof_rejects_a_subject_promise_that_rebinds_itself() {
 }
 
 #[test]
+fn scalar_proof_rejects_a_replaced_literal_default_binding() {
+    for (index, source) in [
+        include_str!("../../testdata/oracle/assertion_subject_active_binding.R"),
+        include_str!("../../testdata/oracle/assertion_subject_delayed_binding.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_binding.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_default_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_passed_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_transitive_local.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_alias_local.R"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "case {index}: the assertion consumed a scalar but the binding can now be a vector: {diagnostics:?}"
+        );
+    }
+    let after_assertion = check(
+        "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); delayedAssign('x', { x <- c(1L, 2L); 1L }, assign.env = environment()); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        after_assertion.iter().any(|d| d.code == "RY032"),
+        "a later binding installation revokes an earlier scalar proof: {after_assertion:?}"
+    );
+
+    for source in [
+        "local_install <- function() { makeActiveBinding('y', function() 1L, environment()) }; f <- function(x = 1L) { local_install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "read_parent <- function() parent.frame(); f <- function(x = 1L) { read_parent(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "a helper without a caller-frame binding install keeps the proof: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn scalar_proof_rejects_cross_file_caller_binding_helper() {
+    let mut project = Project::new();
+    project.add_file(
+        "helper.R".into(),
+        parse_file(
+            "helper.R",
+            "install <- function(env) makeActiveBinding('x', function() c(1L, 2L), env)\nbridge <- function(target) install(target)\n",
+        ),
+    );
+    project.add_file(
+        "consumer.R".into(),
+        parse_file(
+            "consumer.R",
+            "f <- function(x = NULL) { bridge(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }\n",
+        ),
+    );
+    let diagnostics: Vec<_> = project
+        .check()
+        .into_iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY032"),
+        "cross-file helper can replace the binding: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn stopifnot_named_controls_do_not_validate_the_continuation() {
     let parameter = check(
         "f <- function(x) { stopifnot(local = is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",

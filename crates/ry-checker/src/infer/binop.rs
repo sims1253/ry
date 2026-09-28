@@ -807,13 +807,19 @@ impl Checker {
     /// replacing the formal itself with a vector, as in
     /// `x = { x <- c(1L, 2L); 1L }`. The comparison/length test sees the
     /// scalar result, but a later read sees the vector. Only a literal
-    /// default is known to leave its own binding alone on first force.
+    /// default is known to leave its own binding alone on first force,
+    /// provided no earlier unknown effect could replace that binding with an
+    /// active binding or a different promise.
     fn scalar_assertion_subject_stable_on_force(&self, name: &str, scope: &Scope) -> bool {
-        !scope.is_default_parameter(name)
-            || self
-                .enclosing_formals
-                .last()
-                .is_some_and(|formals| formals.literal_defaults.contains(name))
+        !scope.effects_unknown
+            && !scope.search_path_unknown
+            && !scope.data_mask_unknown
+            && !scope.dynamic_bindings_unknown
+            && (!scope.is_default_parameter(name)
+                || self
+                    .enclosing_formals
+                    .last()
+                    .is_some_and(|formals| formals.literal_defaults.contains(name)))
     }
 
     /// The first operand of `&&` proves its subject scalar only if evaluating

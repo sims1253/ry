@@ -371,6 +371,10 @@ pub struct Scope {
     /// An unmodeled call may force promises that mutate this frame or install
     /// active bindings. Later expression inference cannot reuse caller facts.
     pub(crate) effects_unknown: bool,
+    /// A binding-installing primitive may have replaced a value with an
+    /// active binding or promise. The name may still look like a parameter,
+    /// but forcing it need not leave the binding stable.
+    pub(crate) dynamic_bindings_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
     pub(crate) literal_values_unknown: bool,
@@ -425,6 +429,7 @@ impl Clone for Scope {
             has_escaped_slot_names: self.has_escaped_slot_names,
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             literal_functions: self.literal_functions.clone(),
             known_strings: self.known_strings.clone(),
@@ -457,6 +462,7 @@ impl Scope {
     pub(crate) fn independent_execution_scope(&self) -> Self {
         let mut scope = self.clone();
         scope.loop_frame = None;
+        scope.dynamic_bindings_unknown = false;
         scope.known_strings.clear();
         scope.unreachable = false;
         // The new frame's code is never the syntactic operand of the
@@ -778,6 +784,12 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
+    /// A bounded syntactic summary for helpers that can install an active or
+    /// delayed binding in their caller's frame through `parent.frame()`.
+    pub(crate) may_install_caller_binding: bool,
+    /// Direct call names in this body, used once to propagate the bounded
+    /// caller-binding summary through package-local wrappers.
+    pub(crate) caller_binding_callees: Vec<String>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -895,6 +907,39 @@ pub(crate) struct FnTable {
 }
 
 impl FnTable {
+    /// Propagate the bounded caller-binding effect through local wrappers.
+    /// The reverse graph keeps the work linear even for a long helper chain.
+    /// Project checks rebuild this table from pass-1 file summaries before
+    /// each propagation, so an edit that removes an installer retracts the
+    /// previously derived effects as well.
+    pub(crate) fn propagate_caller_binding_installers(&mut self) {
+        let mut callers: HashMap<String, Vec<String>> = HashMap::new();
+        let mut work = Vec::new();
+        for (name, function) in &self.fns {
+            if function.may_install_caller_binding {
+                work.push(name.clone());
+            }
+            for callee in &function.caller_binding_callees {
+                callers
+                    .entry(callee.clone())
+                    .or_default()
+                    .push(name.clone());
+            }
+        }
+        while let Some(callee) = work.pop() {
+            if let Some(parents) = callers.get(callee.as_str()) {
+                for caller in parents {
+                    if let Some(function) = self.fns.get_mut(caller)
+                        && !function.may_install_caller_binding
+                    {
+                        function.may_install_caller_binding = true;
+                        work.push(caller.clone());
+                    }
+                }
+            }
+        }
+    }
+
     fn append_collected(
         &mut self,
         collected: &FnTable,
@@ -1195,6 +1240,7 @@ impl Checker {
         // emit diagnostics yet - the body's `return` types depend on the
         // table being fully populated.
         self.collect_fns(&file.stmts);
+        Arc::make_mut(&mut self.fn_table).propagate_caller_binding_installers();
 
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.

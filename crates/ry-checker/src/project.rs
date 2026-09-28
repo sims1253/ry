@@ -651,6 +651,7 @@ impl Project {
     }
 
     fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+        self.fn_table.propagate_caller_binding_installers();
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -695,6 +696,7 @@ impl Project {
                 table.append_collected(&collected.fn_table, &mut slots, &collected.return_slots);
             }
             table.known_vars = self.pooled_known_vars();
+            table.propagate_caller_binding_installers();
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
             refiner = Checker::with_tables("__project_pass2__", table, slots);
@@ -1033,6 +1035,47 @@ mod tests {
         assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
         actual
+    }
+
+    #[test]
+    fn caller_binding_summary_retracts_after_helper_edit() {
+        let mut project = Project::new();
+        project.add_file(
+            "helper.R".into(),
+            parse_file(
+                "helper.R",
+                "install <- function(env) makeActiveBinding('x', function() c(1L, 2L), env)",
+            ),
+        );
+        project.add_file(
+            "wrapper.R".into(),
+            parse_file("wrapper.R", "bridge <- function(target) install(target)"),
+        );
+        project.add_file(
+            "consumer.R".into(),
+            parse_file(
+                "consumer.R",
+                "saved <- bridge\nf <- function(x = NULL) { saved(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }",
+            ),
+        );
+        let initial = project.check();
+        assert!(
+            initial
+                .iter()
+                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+            "caller-binding helper must revoke the scalar proof: {initial:?}"
+        );
+        project.update_file(
+            "helper.R".into(),
+            parse_file("helper.R", "install <- function(env) invisible(NULL)").into(),
+        );
+        let updated = assert_matches_cold(&mut project);
+        assert!(
+            updated
+                .iter()
+                .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+            "removing the helper effect restores the scalar proof: {updated:?}"
+        );
     }
 
     #[test]

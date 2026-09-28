@@ -177,6 +177,7 @@ pub(crate) struct Mark {
     provenance: Option<(Span, bool, Option<ReferenceBlocker>)>,
     loop_frame: Option<usize>,
     effects_unknown: bool,
+    dynamic_bindings_unknown: bool,
     ops_environment_unknown: bool,
     has_escaped_slot_names: bool,
 }
@@ -189,6 +190,7 @@ pub(crate) struct BranchDelta {
     pub changed: BranchChanges,
     pub unreachable: bool,
     pub effects_unknown: bool,
+    pub dynamic_bindings_unknown: bool,
     pub ops_environment_unknown: bool,
     pub has_escaped_slot_names: bool,
 }
@@ -406,6 +408,7 @@ impl Scope {
             len: self.undo.len(),
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             has_escaped_slot_names: self.has_escaped_slot_names,
             data_mask_unknown: self.data_mask_unknown,
@@ -469,6 +472,7 @@ impl Scope {
         let delta = BranchDelta {
             literal_values_unknown: self.literal_values_unknown,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             has_escaped_slot_names: self.has_escaped_slot_names,
             unreachable: self.unreachable,
@@ -539,6 +543,7 @@ impl Scope {
         }
         self.loop_frame = mark.loop_frame;
         self.effects_unknown = mark.effects_unknown;
+        self.dynamic_bindings_unknown = mark.dynamic_bindings_unknown;
         self.ops_environment_unknown = mark.ops_environment_unknown;
         self.has_escaped_slot_names = mark.has_escaped_slot_names;
         self.literal_values_unknown = mark.literal_values_unknown;
@@ -736,6 +741,10 @@ mod tests {
         assert_eq!(left.loop_frame, right.loop_frame);
         assert_eq!(left.unreachable, right.unreachable);
         assert_eq!(left.effects_unknown, right.effects_unknown);
+        assert_eq!(
+            left.dynamic_bindings_unknown,
+            right.dynamic_bindings_unknown
+        );
         assert_eq!(left.ops_environment_unknown, right.ops_environment_unknown);
         assert_eq!(left.has_escaped_slot_names, right.has_escaped_slot_names);
         assert_eq!(left.search_path_unknown, right.search_path_unknown);
@@ -796,6 +805,7 @@ mod tests {
         let inner = scope.begin_snapshot();
         scope.insert("`x`", RType::scalar(Mode::Logical));
         scope.invalidate_unknown_effects();
+        scope.dynamic_bindings_unknown = true;
         scope.insert("x", RType::scalar(Mode::Integer));
         scope.loop_frame = None;
         scope.unreachable = true;
@@ -805,7 +815,12 @@ mod tests {
         assert_eq!(independent.loop_frame, None);
         assert!(!independent.unreachable);
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
-        assert!(delta.effects_unknown && delta.ops_environment_unknown && delta.unreachable);
+        assert!(
+            delta.effects_unknown
+                && delta.dynamic_bindings_unknown
+                && delta.ops_environment_unknown
+                && delta.unreachable
+        );
         assert_same_scope(&scope, &before_inner);
         scope.clear_ops_facts();
         scope.finish_snapshot(outer, BranchChanges::default());

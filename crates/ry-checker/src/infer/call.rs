@@ -23,6 +23,22 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        // These primitives can install an active binding or a promise after
+        // an earlier value was read. A scalar assertion about that value
+        // cannot certify the later binding. Keep this narrower than the
+        // general unknown-effect flag: that flag also makes base predicate
+        // identity opaque and would hide the existing RY032 warning.
+        if callee_name(func).is_some_and(|name| {
+            matches!(
+                crate::semantic_lists::bare_name(&name),
+                "makeActiveBinding" | "delayedAssign"
+            )
+        }) {
+            scope.dynamic_bindings_unknown = true;
+            for name in scope.scalar_asserted_bindings.clone() {
+                scope.clear_scalar_asserted(&name);
+            }
+        }
         if !pure {
             scope.invalidate_ops_environment();
         }
@@ -243,6 +259,21 @@ impl Checker {
 
         // The argument-inference stage.
         let mut call = self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope);
+        // A top-level helper may be reached through a function-valued scope
+        // binding before the FnTable return stage. Preserve its bounded
+        // caller-binding effect on that path too. A formal or nested lexical
+        // callable is not certified by the project-wide name table.
+        if !scope.is_parameter(&lookup_name)
+            && call
+                .user_function
+                .as_ref()
+                .is_some_and(|function| function.may_install_caller_binding)
+        {
+            scope.dynamic_bindings_unknown = true;
+            for name in scope.scalar_asserted_bindings.clone() {
+                scope.clear_scalar_asserted(&name);
+            }
+        }
 
         // The argument-validation stage.
         self.check_call_arguments(&lookup_name, &call, args, span);

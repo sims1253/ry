@@ -4,6 +4,54 @@ use crate::semantic_lists::bare_name;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
+/// A small caller-effect summary, collected once with the function body.
+/// `parent.frame()` or an environment supplied through a formal can pass the
+/// caller's frame to a binding installer. We also retain direct calls so a
+/// wrapper around such a helper receives the same conservative summary.
+/// A local installer without either route does not taint callers.
+fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<String>) {
+    let mut parent_frame = false;
+    let mut installer = false;
+    let mut installer_uses_formal = false;
+    let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
+    for param in params {
+        if let Some(default) = &param.default {
+            let _ = walk_expr(default, Walk::ALL, |node, _| {
+                if let AstNode::Expr(Expr::Call { func, .. }) = node
+                    && ident_name(func).is_some_and(|name| bare_name(name) == "parent.frame")
+                {
+                    parent_frame = true;
+                }
+                ControlFlow::<(), Descend>::Continue(Descend::Into)
+            });
+        }
+    }
+    let mut callees = HashSet::new();
+    let _ = walk_stmts(body, Walk::ALL, |node, _| {
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+            && let Some(name) = ident_name(func)
+        {
+            let name = bare_name(name);
+            callees.insert(name.to_string());
+            match name {
+                "parent.frame" => parent_frame = true,
+                "makeActiveBinding" | "delayedAssign" => {
+                    installer = true;
+                    installer_uses_formal |= args.iter().any(|arg| {
+                        matches!(&arg.value, Expr::Ident { name, .. } if formals.contains(name.as_str()))
+                    });
+                }
+                _ => {}
+            }
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
+    (
+        installer && (parent_frame || installer_uses_formal),
+        callees.into_iter().collect(),
+    )
+}
+
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
         // Project refinement has no single source file; carry escaped local
@@ -288,6 +336,8 @@ impl Checker {
     // allocated return slot so callers can wire up S3 dispatch entries
     // that share the same slot.
     pub(crate) fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) -> usize {
+        let (may_install_caller_binding, caller_binding_callees) =
+            helper_caller_binding_summary(params, &body);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -327,6 +377,8 @@ impl Checker {
             UserFn {
                 params,
                 body,
+                may_install_caller_binding,
+                caller_binding_callees,
                 return_slot: slot,
             },
         );

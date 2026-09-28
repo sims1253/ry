@@ -176,9 +176,9 @@ considered used if the checker found it on the target line before inline
 suppression, severity filtering, baseline subtraction, or confidence
 thresholds. Disabled rules, files with parse errors, excluded files, bare
 ignores, `noqa`, and file ignores receive no unused finding. Anonymous
-function bodies walked only for return inference and unmodeled expression
-regions are unaudited; direct named function bodies remain eligible. RY113 points to
-the comment. Use `--ignore RY113` or `ignore = ["RY113"]` to disable it;
+function bodies and unmodeled expression regions are unaudited; direct named
+function bodies remain eligible. RY113 points to the comment. Use
+`--ignore RY113` or `ignore = ["RY113"]` to disable it;
 an inline ignore cannot hide the audit itself.
 
 Prefer a rule-specific inline suppression or `globals` entry for dynamic

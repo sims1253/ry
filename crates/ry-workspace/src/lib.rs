@@ -207,7 +207,7 @@ impl DecodedRSource {
 /// keeps it and only the flag records it. Both the valid-UTF-8 and the
 /// Latin-1 transcode path preserve the BOM's three bytes verbatim in
 /// `text`, so the flag is exactly `bytes.starts_with(BOM)`.
-fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
+pub fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
     let leading_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     if let Ok(text) = std::str::from_utf8(bytes) {
         return DecodedRSource {

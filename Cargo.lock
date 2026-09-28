@@ -1435,6 +1435,7 @@ name = "ry-core"
 version = "0.11.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
  "tree-sitter",

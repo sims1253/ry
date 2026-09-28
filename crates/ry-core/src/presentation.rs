@@ -228,7 +228,7 @@ impl Renderer {
                     self.push(")");
                 }
             }
-            None if matches!(ty.mode, Mode::Function | Mode::Union) => {
+            None if matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union) => {
                 self.push(if self.compact {
                     " (params?, return?)"
                 } else {
@@ -288,7 +288,7 @@ mod tests {
     #[test]
     fn expanded_view_distinguishes_absent_and_empty_metadata() {
         let unknown = expanded_type(&RType::unknown()).text;
-        assert!(unknown.contains("class=? columns=?"));
+        assert!(unknown.contains("class=? columns=? function=?"));
         let empty = RType::new(Mode::List, Length::Zero).with_columns(Arc::new(ColumnSchema {
             columns: vec![],
             complete: true,

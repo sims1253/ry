@@ -73,6 +73,10 @@ merges only if:
 
 When inference is uncertain, return `unknown` and say nothing.
 
+For semantic, performance, and concurrency changes, use the short
+[evidence playbook](docs/contributing/evidence.md) and its optional experiment
+template to retain decisive controls, failed approaches, and replay commands.
+
 ## Typeshed changes
 
 Never add a function name you have not verified against R.

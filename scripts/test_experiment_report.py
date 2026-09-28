@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Controls for the experiment report's evidence and failure states."""
+
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+
+import experiment_report as report
+
+
+def finding(code, line, column=1):
+    return {"code": code, "line": line, "column": column}
+
+
+class FindingDiffTests(unittest.TestCase):
+    def test_historical_324_shape_exposes_lost_true_positive(self):
+        # Models the failure shape; this does not rerun the historical experiment.
+        retained = finding("RY010", 3)
+        lost_tp = finding("RY040", 8)
+        replacement = finding("RY041", 12)
+        fixture = {"expected_additions": [replacement], "expected_removals": [lost_tp]}
+        before = [retained, lost_tp]
+        after = [retained, replacement]
+        added, removed, state, reason = report.evaluate_fixture(
+            fixture, before, after, {report.identity(lost_tp): "true_positive"})
+        self.assertEqual(len(before), len(after))
+        self.assertEqual(added, [{**replacement, "label": "unreviewed"}])
+        self.assertEqual(removed, [{**lost_tp, "label": "true_positive"}])
+        self.assertEqual((state, reason), ("failed", "reviewed true positive removed"))
+
+    def test_expected_added_finding_and_quiet_control(self):
+        new = finding("RY106", 5)
+        self.assertEqual(report.evaluate_fixture({"expected_additions": [new]}, [], [new], {})[2], "passed")
+        self.assertEqual(report.evaluate_fixture({}, [], [], {})[2], "passed")
+        self.assertEqual(report.evaluate_fixture({}, [], [new], {})[2], "failed")
+
+    def test_triage_label_requires_matching_pinned_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            ledger = source / "ledger.json"
+            ledger.write_text(json.dumps({"packages": [{"name": "pkg", "commit": "a" * 40}],
+                                          "findings": [{"package": "pkg", "path": "R/file.R",
+                                                        "code": "RY040", "line": 8, "column": 1,
+                                                        "label": "true_positive"}]}))
+            fixture = {"path": "R/file.R", "workload": {"revision": "a" * 40},
+                       "triage": {"ledger": "ledger.json", "package": "pkg", "path": "R/file.R"}}
+            labels, digest = report.labels_for(fixture, source)
+            self.assertEqual(labels[("RY040", 8, 1)], "true_positive")
+            self.assertEqual(digest, report.sha256(ledger))
+            fixture["workload"]["revision"] = "b" * 40
+            with self.assertRaisesRegex(ValueError, "pin differs"):
+                report.labels_for(fixture, source)
+
+
+class InstructionStatusTests(unittest.TestCase):
+    def setUp(self):
+        self.old = {"schema_version": 1, "metadata": {"backend": "callgrind", "rustc": "1.98.1"},
+                    "packages": [{"package": "one", "revision": "a" * 40, "tree": "b" * 40,
+                                  "url": "https://example.invalid/one", "status": "measured", "instructions": 123}]}
+        self.new = json.loads(json.dumps(self.old))
+
+    def test_changed_workload_pin_is_incomparable(self):
+        self.new["packages"][0]["revision"] = "c" * 40
+        self.assertEqual(report.compare_instructions(self.old, self.new)[0], "incomparable")
+
+    def test_missing_counter_is_unavailable(self):
+        self.new["metadata"]["backend"] = "unavailable"
+        self.assertEqual(report.compare_instructions(self.old, self.new)[0], "unavailable")
+
+    def test_same_metadata_is_comparable_without_claiming_exact_repetition(self):
+        self.new["packages"][0]["instructions"] = 128
+        self.assertEqual(report.compare_instructions(self.old, self.new)[0], "passed")
+
+
+class RunStatusTests(unittest.TestCase):
+    def make_experiment(self, root):
+        manifest = {"schema_version": 1, "hypothesis": "one", "expected_change": "two",
+                    "reference": "HEAD~1", "candidate": "HEAD", "invariants": ["no lost TP"],
+                    "fixtures": [{"name": "witness", "role": "witness", "path": "witness.R"},
+                                 {"name": "quiet", "role": "quiet_control", "path": "quiet.R"}]}
+        path = root / "manifest.json"
+        path.write_text(json.dumps(manifest))
+        return report.Experiment(path, root / "out", "full")
+
+    def test_failed_subprocess_stays_failed_with_raw_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            row = experiment.command("failure", ["python3", "-c", "import sys; print('bad'); sys.exit(7)"], Path(directory))
+            self.assertEqual((row["status"], row["exit_code"]), ("failed", 7))
+            self.assertEqual(Path(row["stdout"]).read_text(), "bad\n")
+            self.assertEqual(experiment.finish(), 1)
+            self.assertFalse(json.loads((experiment.output / "report.json").read_text())["fully_validated"])
+
+    def test_instruction_adapter_does_not_inject_distinct_cargo_target_dir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            row = experiment.command("probe", ["python3", "-c", "import os; print(os.getenv('CARGO_TARGET_DIR', 'unset'))"],
+                                     Path(directory), cargo_target=False)
+            self.assertEqual(row["status"], "passed")
+            self.assertEqual(Path(row["stdout"]).read_text(), "unset\n")
+            self.assertNotIn("CARGO_TARGET_DIR", row["environment"])
+
+    def test_missing_r_is_unavailable_and_full_never_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(report.shutil, "which", return_value=None):
+                row = experiment.command("oracle", ["cargo", "test"], Path(directory), requires_r=True)
+            self.assertEqual(row["status"], "unavailable")
+            experiment.finish()
+            self.assertEqual(experiment.report["status"], "unavailable")
+            self.assertFalse(experiment.report["fully_validated"])
+
+    def test_cancellation_is_recorded_in_both_reports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(experiment, "setup", side_effect=report.Cancelled("interrupted")):
+                self.assertEqual(experiment.run(), 1)
+            self.assertEqual(experiment.report["status"], "cancelled")
+            self.assertIn("cancelled", (experiment.output / "report.md").read_text())
+
+    def test_targeted_can_pass_but_never_claim_full_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.profile = "targeted"
+            experiment.stage("fixture-diff-witness", "passed")
+            experiment.stage("fixture-diff-quiet", "passed")
+            experiment.stage("instructions", "skipped", reason="not selected")
+            self.assertEqual(experiment.finish(), 0)
+            self.assertFalse(experiment.report["fully_validated"])
+
+    def test_full_validation_requires_ordered_gates_and_comparable_counter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            for name, _, _ in report.GATES:
+                experiment.stage(name, "passed")
+            experiment.stage("fixture-diff-witness", "passed")
+            experiment.stage("fixture-diff-quiet", "passed")
+            experiment.stage("instructions", "passed")
+            self.assertEqual(experiment.finish(), 0)
+            self.assertTrue(experiment.report["fully_validated"])
+            experiment.report["stages"][-1]["status"] = "incomparable"
+            self.assertEqual(experiment.finish(), 1)
+            self.assertFalse(experiment.report["fully_validated"])
+
+    def test_changed_instruction_sample_pin_is_incomparable_before_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.manifest["instructions"] = {"enabled": True}
+            for side, content in (("reference", "old"), ("candidate", "new")):
+                ecosystem = experiment.output / side / "ecosystem"
+                ecosystem.mkdir(parents=True)
+                (ecosystem / "instruction-packages.txt").write_text(content)
+            (experiment.output / "candidate" / "ecosystem" / "instructions.py").write_text("harness")
+            experiment.run_instructions()
+            self.assertEqual(experiment.report["stages"][-1]["status"], "incomparable")
+            experiment.finish()
+            self.assertFalse(experiment.report["fully_validated"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -106,6 +106,63 @@ pub struct TypehintConfig {
     pub root: Option<PathBuf>,
 }
 
+/// A strict, reusable config-root-relative glob scope. Relative source
+/// paths are anchored at the process working directory, then matched only
+/// when they remain under the owning config directory. No filesystem reads
+/// or symlink resolution are required, so editor overlays use the same rule.
+#[derive(Debug, Clone)]
+pub struct ScopedPaths {
+    root: PathBuf,
+    patterns: Vec<glob::Pattern>,
+}
+
+impl ScopedPaths {
+    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
+        let patterns = patterns
+            .iter()
+            .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            patterns,
+        })
+    }
+
+    pub fn matches(&self, source: &Path) -> bool {
+        let Ok(source) = std::path::absolute(source) else {
+            return false;
+        };
+        let Ok(relative) = source.strip_prefix(&self.root) else {
+            return false;
+        };
+        // A lexical `..` after the root can escape its ownership. Decline
+        // such ambiguous spellings rather than treating them as in-scope.
+        if relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        let relative = relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        self.patterns
+            .iter()
+            .any(|pattern| pattern.matches(&relative))
+    }
+}
+
+impl TypehintConfig {
+    /// Compile the audited, explicitly adopted source scope once per
+    /// analysis. Programmatically built invalid configs remain disabled.
+    pub fn adopted_scope(&self) -> Option<ScopedPaths> {
+        if !self.adopt || self.version.as_deref() != Some("0.1.0") || self.paths.is_empty() {
+            return None;
+        }
+        ScopedPaths::new(self.root.as_deref()?, &self.paths).ok()
+    }
+}
+
 /// Parsed contents of a `ry.toml` project config file.
 ///
 /// The schema is intentionally minimal and conservative; we can add
@@ -270,12 +327,13 @@ impl Config {
                 }
             })?;
         }
-        cfg.annotations.typehint.root = Some(
-            std::path::absolute(root).map_err(|source| ConfigError::Read {
-                path: path.to_path_buf(),
-                source,
-            })?,
-        );
+        cfg.annotations.typehint.root =
+            Some(
+                std::path::absolute(root).map_err(|source| ConfigError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                })?,
+            );
         for pattern in &cfg.annotations.typehint.paths {
             glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
                 ConfigError::InvalidAnnotationPattern {
@@ -553,7 +611,9 @@ pub enum ConfigError {
         pattern: String,
         source: glob::PatternError,
     },
-    #[error("config file {path} must set typehint version = '0.1.0' and nonempty paths when adopt = true")]
+    #[error(
+        "config file {path} must set typehint version = '0.1.0' and nonempty paths when adopt = true"
+    )]
     InvalidTypehintAdoption { path: PathBuf },
 }
 
@@ -589,8 +649,11 @@ mod tests {
     fn typehint_adoption_requires_an_audited_version_and_path_scope() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("ry.toml");
-        fs::write(&path, "[annotations.typehint]\nadopt = true\npaths = ['R/**']\n")
-            .unwrap();
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\npaths = ['R/**']\n",
+        )
+        .unwrap();
         assert!(matches!(
             Config::load_file(&path),
             Err(ConfigError::InvalidTypehintAdoption { .. })
@@ -611,8 +674,27 @@ mod tests {
         .unwrap();
         let config = Config::load_file(&path).unwrap();
         assert!(config.annotations.typehint.adopt);
-        assert_eq!(config.annotations.typehint.version.as_deref(), Some("0.1.0"));
-        assert_eq!(config.annotations.typehint.root.as_deref(), Some(dir.path()));
+        assert_eq!(
+            config.annotations.typehint.version.as_deref(),
+            Some("0.1.0")
+        );
+        assert_eq!(
+            config.annotations.typehint.root.as_deref(),
+            Some(dir.path())
+        );
+        let scope = config.annotations.typehint.adopted_scope().unwrap();
+        assert!(scope.matches(&dir.path().join("R/code.R")));
+        assert!(scope.matches(&dir.path().join("R/sub/code.R")));
+        assert!(!scope.matches(&dir.path().join("tests/code.R")));
+        assert!(!scope.matches(&dir.path().join("R/../outside.R")));
+        assert!(!scope.matches(&dir.path().join("../outside/R/code.R")));
+
+        let mut disabled = config.annotations.typehint;
+        disabled.adopt = false;
+        assert!(disabled.adopted_scope().is_none());
+        disabled.adopt = true;
+        disabled.version = Some("future".into());
+        assert!(disabled.adopted_scope().is_none());
     }
 
     #[test]

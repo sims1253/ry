@@ -30,6 +30,40 @@ fn note_capture_write(
     }
 }
 
+/// Walk only the body of a literal that is used as a call head. Bodies of
+/// literal values passed around without an immediate call stay deferred.
+fn collect_immediate_outward_writes(body: &[Stmt], outward: &mut FxSet<String>) {
+    let _ = walk_stmts(
+        body,
+        Walk {
+            fn_bodies: false,
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) => {
+                    if let Some(name) = binding_name(lhs) {
+                        outward.insert(name.to_string());
+                    }
+                }
+                AstNode::Expr(Expr::Call { func, .. }) => {
+                    if let Expr::Function { params, body, .. } = func.as_ref() {
+                        outward.extend(collect_default_writes(params).1);
+                        collect_immediate_outward_writes(body, outward);
+                    }
+                }
+                _ => {}
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+}
+
 /// Defaults are promises evaluated in the called function's frame when
 /// forced. Return their ordinary local writes separately from outward `<<-`
 /// writes; neither is an unconditional effect at function definition time.
@@ -78,6 +112,12 @@ pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<
                                     }
                                     _ => {}
                                 }
+                            }
+                        }
+                        AstNode::Expr(Expr::Call { func, .. }) => {
+                            if let Expr::Function { params, body, .. } = func.as_ref() {
+                                outward.extend(collect_default_writes(params).1);
+                                collect_immediate_outward_writes(body, &mut outward);
                             }
                         }
                         _ => {}
@@ -144,6 +184,8 @@ impl Checker {
         let mut frames = vec![FxMap::<String, Span>::default()];
         let mut rebound = FxSet::<Span>::default();
         let mut literal_names = FxMap::<String, Vec<Span>>::default();
+        let mut global_literals = FxSet::<Span>::default();
+        let mut global_writes = FxSet::<String>::default();
         let mut superassigned = FxSet::<String>::default();
         let _ = walk_stmts(
             stmts,
@@ -175,6 +217,12 @@ impl Checker {
                             } if operation_span == span
                         );
                         if !wrapped_superassign && let Some(name) = binding_name(target) {
+                            if function_depth == 0 {
+                                global_writes.insert(name.to_string());
+                                if let Some(span) = function_literal_span(value) {
+                                    global_literals.insert(span);
+                                }
+                            }
                             note_capture_write(
                                 frames.last_mut().expect("top-level frame"),
                                 name,
@@ -184,13 +232,18 @@ impl Checker {
                             );
                         }
                     }
-                    AstNode::Stmt(Stmt::For { name, .. }) => note_capture_write(
-                        frames.last_mut().expect("top-level frame"),
-                        name,
-                        None,
-                        &mut rebound,
-                        &mut literal_names,
-                    ),
+                    AstNode::Stmt(Stmt::For { name, .. }) => {
+                        if function_depth == 0 {
+                            global_writes.insert(name.clone());
+                        }
+                        note_capture_write(
+                            frames.last_mut().expect("top-level frame"),
+                            name,
+                            None,
+                            &mut rebound,
+                            &mut literal_names,
+                        );
+                    }
                     AstNode::Expr(Expr::BinOp {
                         op: BinOpKind::Assign,
                         lhs,
@@ -198,6 +251,12 @@ impl Checker {
                         ..
                     }) => {
                         if let Some(name) = binding_name(lhs) {
+                            if function_depth == 0 {
+                                global_writes.insert(name.to_string());
+                                if let Some(span) = function_literal_span(rhs) {
+                                    global_literals.insert(span);
+                                }
+                            }
                             note_capture_write(
                                 frames.last_mut().expect("top-level frame"),
                                 name,
@@ -230,18 +289,31 @@ impl Checker {
                 ControlFlow::Continue(Descend::Into)
             },
         );
-        for name in superassigned {
-            if let Some(spans) = literal_names.get(&name) {
+        for name in &superassigned {
+            if let Some(spans) = literal_names.get(name) {
                 rebound.extend(spans.iter().copied());
             }
         }
-        Arc::make_mut(&mut self.fn_table)
-            .rebound_after_capture
-            .extend(
-                rebound
-                    .into_iter()
-                    .map(|span| (self.path.clone(), span.start, span.end)),
-            );
+        let table = Arc::make_mut(&mut self.fn_table);
+        for (name, spans) in literal_names {
+            for span in spans {
+                let key = (self.path.clone(), span.start, span.end);
+                if global_literals.contains(&span) && table.definition_fns.contains_key(&key) {
+                    table
+                        .capture_literal_bindings
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(key);
+                }
+            }
+        }
+        table.rebound_after_capture.extend(
+            rebound
+                .into_iter()
+                .map(|span| (self.path.clone(), span.start, span.end)),
+        );
+        table.global_capture_writes.extend(global_writes);
+        table.outward_capture_writes.extend(superassigned);
     }
 
     // Records one identifier-bound assignment from the collection

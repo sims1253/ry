@@ -18,7 +18,7 @@
 
 use crate::declaration_check::DeclarationSet;
 use crate::{
-    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, ReturnSlots,
+    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;
@@ -134,6 +134,9 @@ pub struct Project {
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
+    /// A write-only file edit can change which captured declaration is
+    /// provable without changing function names, return slots, or known_vars.
+    prev_capture_rebounds: FxSet<(String, usize, usize)>,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
     /// Escaped operator names gate refinement and emission across the project.
@@ -497,6 +500,7 @@ impl Project {
         self.refinement_dependencies.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
+        self.prev_capture_rebounds.clear();
         self.prev_callable_vars.clear();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
@@ -823,10 +827,13 @@ impl Project {
             || self.prev_callable_vars != self.fn_table.callable_vars
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
+        let capture_rebounds_changed =
+            self.prev_capture_rebounds != self.fn_table.rebound_after_capture;
         let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call
             || loaded_changed
             || known_vars_changed
+            || capture_rebounds_changed
             || self.callable_names_changed()
         {
             self.files.iter().map(|(p, _)| p.as_str()).collect()
@@ -1047,6 +1054,7 @@ impl Project {
         self.prev_loaded = Some(self.loaded.clone());
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
+        self.prev_capture_rebounds = self.fn_table.rebound_after_capture.clone();
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;

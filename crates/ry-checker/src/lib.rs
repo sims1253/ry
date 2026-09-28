@@ -883,10 +883,21 @@ pub(crate) struct FnTable {
     /// Declaration checks address this map by source identity; ordinary
     /// inference still uses the name-indexed last-definition table.
     pub(crate) definition_fns: FxMap<(String, usize, usize), UserFn>,
+    /// Global-frame direct literal bindings addressable by declaration
+    /// source identity. Kept by binding name for cross-file invalidation;
+    /// nested local literals cannot be changed by another file's global
+    /// write. Unlike `fns`, this retains earlier same-name definitions.
+    pub(crate) capture_literal_bindings: FxMap<String, FxSet<(String, usize, usize)>>,
     /// A closure captures an environment, not a frozen binding value. If a
     /// later assignment in that environment can replace a literal, its
     /// captured identity cannot prove a deferred call contract.
     pub(crate) rebound_after_capture: FxSet<(String, usize, usize)>,
+    /// Ordinary writes in this file's global frame, including expressions,
+    /// control tests, and `for` binders. Nested local writes are excluded.
+    pub(crate) global_capture_writes: FxSet<String>,
+    /// Explicit `<<-` may reach an enclosing/global frame. Kept separately
+    /// because ordinary nested locals must not invalidate other files.
+    pub(crate) outward_capture_writes: FxSet<String>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -939,25 +950,27 @@ impl FnTable {
         return_slots.0.extend_from_slice(&collected_slots.0);
 
         // Project files share a global environment, but the inventory does
-        // not prove source execution order. A same-named write in another
-        // file makes either function's captured value uncertain. Direct
-        // source-ordered calls still use their exact local definition.
-        for (name, function) in &self.fns {
-            if collected.known_vars.contains(name) {
-                self.rebound_after_capture.insert((
-                    function.source_path.clone(),
-                    function.definition_span.start,
-                    function.definition_span.end,
-                ));
+        // not prove execution order. Broader syntactic writes come from the
+        // scope-aware mutation scan, not `known_vars` (which deliberately
+        // omits expression-position assignments and loop binders).
+        for name in collected
+            .global_capture_writes
+            .iter()
+            .chain(&collected.outward_capture_writes)
+        {
+            if let Some(definitions) = self.capture_literal_bindings.get(name) {
+                self.rebound_after_capture
+                    .extend(definitions.iter().cloned());
             }
         }
-        for (name, function) in &collected.fns {
-            if self.known_vars.contains(name) {
-                self.rebound_after_capture.insert((
-                    function.source_path.clone(),
-                    function.definition_span.start,
-                    function.definition_span.end,
-                ));
+        for name in self
+            .global_capture_writes
+            .iter()
+            .chain(&self.outward_capture_writes)
+        {
+            if let Some(definitions) = collected.capture_literal_bindings.get(name) {
+                self.rebound_after_capture
+                    .extend(definitions.iter().cloned());
             }
         }
 
@@ -984,8 +997,18 @@ impl FnTable {
                 function.return_slot += slot_offset;
                 (key.clone(), function)
             }));
+        for (name, definitions) in &collected.capture_literal_bindings {
+            self.capture_literal_bindings
+                .entry(name.clone())
+                .or_default()
+                .extend(definitions.iter().cloned());
+        }
         self.rebound_after_capture
             .extend(collected.rebound_after_capture.iter().cloned());
+        self.global_capture_writes
+            .extend(collected.global_capture_writes.iter().cloned());
+        self.outward_capture_writes
+            .extend(collected.outward_capture_writes.iter().cloned());
         self.s3_methods.extend(
             collected
                 .s3_methods

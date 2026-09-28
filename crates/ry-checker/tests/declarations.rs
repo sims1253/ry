@@ -677,6 +677,61 @@ fn forced_default_local_assignment_can_shadow_an_outward_contract() {
 }
 
 #[test]
+fn default_iife_outward_write_is_distinct_from_literal_and_local_write() {
+    for (default, body, mismatch) in [
+        (
+            "(function() { f <<- function(x) { x } })()",
+            "z; f(\"bad\")",
+            false,
+        ),
+        (
+            "(function(y = (f <<- function(x) { x })) { y })()",
+            "z; f(\"bad\")",
+            false,
+        ),
+        (
+            "(function() { (function() { f <<- function(x) { x } })() })()",
+            "z; f(\"bad\")",
+            false,
+        ),
+        (
+            "function() { f <<- function(x) { x } }",
+            "z; f(\"bad\")",
+            true,
+        ),
+        (
+            "(function() { f <- function(x) { x } })()",
+            "z; f(\"bad\")",
+            true,
+        ),
+        (
+            "(function() { f <<- function(x) { x } })()",
+            "f(\"bad\")",
+            false, // the default may remain unforced; its effect is uncertain
+        ),
+    ] {
+        let source = format!(
+            "f <- function(x) {{ x }}\nouter <- function(z = {default}) {{ {body} }}\nouter()\n"
+        );
+        let file = parse("default-iife.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "default: {default}; body: {body}; findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
 fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
     let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
     let mut checker = Checker::new(&eager.path);
@@ -782,6 +837,144 @@ fn project_deferred_capture_stays_uncertain_across_files() {
             .iter()
             .any(|finding| finding.kind == DeclarationFindingKind::Mismatch)
     }));
+}
+
+fn project_mismatch_count(project: &Project, path: &str) -> usize {
+    project
+        .declaration_findings()
+        .iter()
+        .find(|(file, _)| file == path)
+        .expect("project contains requested file")
+        .1
+        .iter()
+        .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+        .count()
+}
+
+#[test]
+fn project_capture_inventory_includes_global_expression_control_binder_and_outward_writes() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) { x }\nf(\"bad\")\nouter <- function() { f(\"bad\") }\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    for (second_source, expected) in [
+        ("invisible(f <- function(x) { x })", 1),
+        ("if ({ f <- function(x) { x }; TRUE }) 1L", 1),
+        ("for (f in list(function(x) { x })) 1L", 1),
+        (
+            "mutate <- function() { f <<- function(x) { x } }; mutate()",
+            1,
+        ),
+        (
+            "mutate <- function(z = (f <<- function(x) { x })) { z }; mutate()",
+            1,
+        ),
+        (
+            "mutate <- function(z = (function() { f <<- function(x) { x } })()) { z }; mutate()",
+            1,
+        ),
+        (
+            "mutate <- function(z = (function() { f <- function(x) { x } })()) { z }; mutate()",
+            2,
+        ),
+        (
+            "mutate <- function() { f <- function(x) { x } }; mutate()",
+            2,
+        ),
+        ("g <- function(x) { x }", 2),
+    ] {
+        let second = parse("second.R", second_source);
+        let mut project = Project::new();
+        project.add_file(first.path.clone(), first.clone());
+        project.add_file(second.path.clone(), second);
+        project.set_declaration_records(vec![declaration.clone()]);
+        project.check();
+        assert_eq!(
+            project_mismatch_count(&project, &first.path),
+            expected,
+            "second file: {second_source}, findings: {:?}",
+            project.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn project_capture_write_edits_and_removal_match_cold_analysis() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) { x }\nouter <- function() { f(\"bad\") }\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.add_file("second.R".into(), parse("second.R", "g <- 1L\n"));
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+
+    for (source, expected) in [
+        ("invisible(f <- function(x) { x })\n", 0),
+        ("g <- 1L\n", 1),
+        ("mutate <- function() { f <<- function(x) { x } }\n", 0),
+        ("g <- 2L\n", 1),
+    ] {
+        let second = parse("second.R", source);
+        project.update_file("second.R".into(), Arc::new(second.clone()));
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &first.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(second.path.clone(), second);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+    project.remove_file("second.R");
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+}
+
+#[test]
+fn other_file_global_write_does_not_replace_a_nested_local_literal() {
+    let first = parse(
+        "first.R",
+        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; inner() }\n",
+    );
+    let mut declaration = record(
+        &first,
+        "outer",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    declaration.source.target = DeclarationTarget::LocalFunction {
+        path: first.path.clone(),
+        definition: all_named_function_spans(&first, "f")[0],
+        display_name: Some("f".into()),
+    };
+    for second_source in [
+        "invisible(f <- function(x) { x })",
+        "mutate <- function() { f <<- function(x) { x } }; mutate()",
+    ] {
+        let second = parse("second.R", second_source);
+        let mut project = Project::new();
+        project.add_file(first.path.clone(), first.clone());
+        project.add_file(second.path.clone(), second);
+        project.set_declaration_records(vec![declaration.clone()]);
+        project.check();
+        assert_eq!(project_mismatch_count(&project, &first.path), 1);
+    }
 }
 
 #[test]

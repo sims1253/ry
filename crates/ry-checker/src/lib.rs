@@ -13,6 +13,7 @@
 #![allow(clippy::collapsible_if)]
 
 mod collect;
+mod declaration_check;
 pub mod diagnostics;
 mod fixpoint;
 pub mod format;
@@ -32,6 +33,7 @@ pub use reference_facts::{
 pub mod rules;
 pub mod semantic_lists;
 
+pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
@@ -716,6 +718,9 @@ pub struct ScopeRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct UserFn {
     pub(crate) params: Vec<UserParam>,
+    /// Definition identity, independent of a same-spelled binding elsewhere.
+    pub(crate) source_path: String,
+    pub(crate) definition_span: Span,
     // The function body, shared via `Arc` so the per-fixpoint-iteration
     // clone in `refine_fn_return` is a cheap refcount bump rather than a
     // deep clone of every statement. The body is immutable after
@@ -733,6 +738,7 @@ pub(crate) struct UserParam {
     pub(crate) name: String,
     pub(crate) type_: RType,
     pub(crate) required: bool,
+    pub(crate) defaulted: bool,
     pub(crate) defused: bool,
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
@@ -927,6 +933,9 @@ pub struct Checker {
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
     pub(crate) diagnostics: Vec<Diagnostic>,
+    /// Explicitly adopted structured records. Empty unless a caller opts in.
+    pub(crate) declarations: Arc<declaration_check::DeclarationSet>,
+    pub(crate) declaration_findings: Vec<DeclarationFinding>,
     pub(crate) path: String,
     /// Source text corresponding to `path`, set at every production check seam.
     /// Messages that quote source spelling slice this exact text by parser
@@ -1179,6 +1188,8 @@ impl Checker {
             typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
             diagnostics: Vec::new(),
+            declarations: Arc::new(declaration_check::DeclarationSet::default()),
+            declaration_findings: Vec::new(),
             path: path.to_string(),
             source: String::new(),
             escaped_operator_bindings: false,
@@ -1336,6 +1347,7 @@ impl Checker {
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.declaration_findings.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1377,6 +1389,10 @@ impl Checker {
         // R's parser rejects it before any syntax consideration.
         let encoding_flagged = self.emit_encoding_diagnostics(file);
         self.emit_parse_errors(file);
+        if !encoding_flagged && file.parse_errors.is_empty() {
+            self.declaration_findings
+                .extend(self.declarations.reports_for(&file.path));
+        }
         // A recovered tree is partly invented by parser repair: the
         // statements, calls, and identifiers the checker walks can be
         // artifacts that exist nowhere in the source. Semantic rules
@@ -1401,6 +1417,9 @@ impl Checker {
         }
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
+            // Declarations are semantic claims too. A repaired AST cannot
+            // establish their attachment or a call/return mismatch.
+            self.declaration_findings.clear();
         }
         // The top level is itself a lexical scope in R; record it after
         // the walk so the snapshot reflects every top-level assignment.
@@ -1473,6 +1492,40 @@ impl Checker {
 
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
         std::mem::take(&mut self.diagnostics)
+    }
+
+    /// Install explicit structured source records for the next check.
+    /// Recognition alone is not adoption: only records whose evidence use is
+    /// `AdoptedContract` can affect body assumptions or produce mismatches.
+    /// Callers re-install records after annotation-only source edits.
+    pub fn set_declaration_records(
+        &mut self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) {
+        self.declarations = Arc::new(declaration_check::DeclarationSet::new(records));
+    }
+
+    pub(crate) fn set_shared_declarations(
+        &mut self,
+        declarations: Arc<declaration_check::DeclarationSet>,
+    ) {
+        self.declarations = declarations;
+    }
+
+    /// Original records, including unadopted and unsupported entries, for
+    /// the adapter/export layer. This does not imply successful checking.
+    pub fn declaration_records(&self) -> &[ry_core::declarations::DeclarationRecord] {
+        self.declarations.records()
+    }
+
+    /// Findings from the latest check, separate from existing R diagnostics.
+    /// The first public provider adapter maps these to rule codes.
+    pub fn declaration_findings(&self) -> &[DeclarationFinding] {
+        &self.declaration_findings
+    }
+
+    pub fn take_declaration_findings(&mut self) -> Vec<DeclarationFinding> {
+        std::mem::take(&mut self.declaration_findings)
     }
 
     /// Build the outermost scope for a checked file. Shiny app fragments are

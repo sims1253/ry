@@ -840,6 +840,7 @@ impl Checker {
         scope: &Scope,
     ) {
         let diagnostic_start = self.diagnostics.len();
+        let declaration = self.declaration_for_body(span, params);
         // RY110's `map`-family provenance (issue #479) resolves by bare
         // local name, so each body walks a working copy of the incoming
         // table: a nested closure inherits the enclosing function's
@@ -898,7 +899,13 @@ impl Checker {
                 }
                 None => RType::unknown(),
             };
-            if p.default.is_some() {
+            if let Some(entry) = self.declared_body_parameter(declaration.as_ref(), p, &t) {
+                if p.default.is_some() {
+                    fn_scope.insert_parameter_default(p.name.clone(), entry);
+                } else {
+                    fn_scope.insert_parameter(p.name.clone(), entry);
+                }
+            } else if p.default.is_some() {
                 fn_scope.insert_parameter_default(p.name.clone(), t);
             } else {
                 fn_scope.insert_parameter(p.name.clone(), t);
@@ -919,6 +926,7 @@ impl Checker {
         for s in body {
             self.walk_stmt(s, &mut fn_scope, None);
         }
+        self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();

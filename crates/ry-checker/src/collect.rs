@@ -80,7 +80,7 @@ impl Checker {
                 table.callable_vars.remove(name);
             }
         }
-        if let (Some(name), Expr::Function { params, body, .. }) = (binding_name(target), value) {
+        if let (Some(name), Expr::Function { params, body, span }) = (binding_name(target), value) {
             // An S3 method named like `print.foo` is recorded both
             // as a regular function (so the name resolves to its
             // return type if called directly) and as an S3 method
@@ -107,12 +107,12 @@ impl Checker {
                         })
                 });
             if let Some((generic, class)) = looks_like_s3 {
-                let slot = self.record_fn(name.to_string(), params, body.clone());
+                let slot = self.record_fn(name.to_string(), params, body.clone(), *span);
                 Arc::make_mut(&mut self.fn_table)
                     .s3_methods
                     .insert((generic.to_string(), class), slot);
             } else {
-                let _ = self.record_fn(name.to_string(), params, body.clone());
+                let _ = self.record_fn(name.to_string(), params, body.clone(), *span);
             }
             self.collect_forwarded_calls(name, params, body);
             self.collect_nested_fns_in_body(name, body);
@@ -198,7 +198,7 @@ impl Checker {
                 let Some(class) = args.get(1).and_then(|arg| s4_signature_class(&arg.value)) else {
                     return;
                 };
-                let Some(Expr::Function { params, body, .. }) = args
+                let Some(Expr::Function { params, body, span }) = args
                     .iter()
                     .skip(2)
                     .find(|arg| matches!(arg.value, Expr::Function { .. }))
@@ -207,7 +207,7 @@ impl Checker {
                     return;
                 };
                 let method_name = format!("__s4__{generic}__{class}");
-                let slot = self.record_fn(method_name.clone(), params, body.clone());
+                let slot = self.record_fn(method_name.clone(), params, body.clone(), *span);
                 if let Some(first) = Arc::make_mut(&mut self.fn_table)
                     .fns
                     .get_mut(&method_name)
@@ -265,13 +265,13 @@ impl Checker {
                         Expr::Function {
                             params,
                             body: inner_body,
-                            ..
+                            span,
                         },
                     ) = (target, value)
                 {
                     let mangled = format!("{}${}", outer, inner);
                     let next_outer = mangled.clone();
-                    let _ = self.record_fn(mangled, params, inner_body.clone());
+                    let _ = self.record_fn(mangled, params, inner_body.clone(), *span);
                     // Recurse one more level so doubly-nested factories
                     // are also collected.
                     self.collect_nested_fns_in_body(&next_outer, inner_body);
@@ -287,7 +287,13 @@ impl Checker {
     // Record a user-defined function. Returns the index of the
     // allocated return slot so callers can wire up S3 dispatch entries
     // that share the same slot.
-    pub(crate) fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) -> usize {
+    pub(crate) fn record_fn(
+        &mut self,
+        name: String,
+        params: &[Param],
+        body: Vec<Stmt>,
+        span: Span,
+    ) -> usize {
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -306,6 +312,7 @@ impl Checker {
                     name: p.name.clone(),
                     type_: t,
                     required,
+                    defaulted: p.default.is_some(),
                     defused: parameter_is_defused(&body, &p.name),
                     quoting: parameter_is_quoted(&body, params, &p.name),
                     injection: None,
@@ -326,6 +333,8 @@ impl Checker {
             name.clone(),
             UserFn {
                 params,
+                source_path: self.path.clone(),
+                definition_span: span,
                 body,
                 return_slot: slot,
             },

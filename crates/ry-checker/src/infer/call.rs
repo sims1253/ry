@@ -245,7 +245,7 @@ impl Checker {
         let mut call = self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope);
 
         // The argument-validation stage.
-        self.check_call_arguments(&lookup_name, &call, args, span);
+        self.check_call_arguments(&name, &lookup_name, &call, args, span);
 
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
@@ -1464,6 +1464,7 @@ impl Checker {
     /// `base::inherits` is a lookup-order bug, not a missing argument.
     fn check_call_arguments(
         &mut self,
+        original_name: &str,
         lookup_name: &str,
         resolution: &CallResolution,
         args: &[Arg],
@@ -1504,6 +1505,14 @@ impl Checker {
             }
             _ => {}
         }
+        self.check_declaration_call(
+            original_name,
+            lookup_name,
+            resolution.user_function.as_ref(),
+            resolution.lexical_callable,
+            args,
+            &resolution.arg_types,
+        );
     }
 
     /// The dynamic-loader stage: scope-populating calls suppress

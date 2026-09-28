@@ -16,7 +16,10 @@
 //! single-file use cases (the corpus harness and the existing unit
 //! tests rely on this).
 
-use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
+use crate::declaration_check::DeclarationSet;
+use crate::{
+    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, ReturnSlots,
+};
 use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
@@ -27,6 +30,7 @@ struct FileEmission {
     index: usize,
     path: String,
     diagnostics: Vec<Diagnostic>,
+    declaration_findings: Vec<DeclarationFinding>,
     scopes: Vec<crate::ScopeRecord>,
     references: crate::ReferenceFacts,
     read_fns: HashSet<String>,
@@ -56,6 +60,10 @@ pub struct Project {
     /// Serves `check_incremental`, which reuses them for files outside
     /// the dirty set instead of re-checking those files.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
+    /// Opt-in authored records and their latest per-file findings. The
+    /// original records remain available to the adapter/export layer.
+    declarations: Arc<DeclarationSet>,
+    declaration_findings: Vec<(String, Vec<DeclarationFinding>)>,
     /// Packages declared in `ry.toml`'s `packages` key, unioned at
     /// `check()` time with packages attached via `library`/`require` in
     /// any file. Seeded into every pass-3 emitter
@@ -171,6 +179,30 @@ impl Project {
     /// Construct an empty project with no files and empty tables.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the project's complete adopted/candidate record set. An
+    /// annotation-only edit changes this input even when R ASTs and inferred
+    /// returns are identical, so every file is re-emitted on the next warm
+    /// check. Reinstalling identical records is a no-op.
+    pub fn set_declaration_records(
+        &mut self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) {
+        if self.declarations.records() == records.as_slice() {
+            return;
+        }
+        self.declarations = Arc::new(DeclarationSet::new(records));
+        self.dirty_paths
+            .extend(self.files.iter().map(|(path, _)| path.clone()));
+    }
+
+    pub fn declaration_records(&self) -> &[ry_core::declarations::DeclarationRecord] {
+        self.declarations.records()
+    }
+
+    pub fn declaration_findings(&self) -> &[(String, Vec<DeclarationFinding>)] {
+        &self.declaration_findings
     }
 
     /// Add a parsed file to the project. Call this for every file
@@ -835,6 +867,7 @@ impl Project {
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
         let bare_loaded = Arc::new(std::mem::take(&mut self.bare_loaded));
         let user_stubs = Arc::clone(&self.user_stubs);
+        let declarations = Arc::clone(&self.declarations);
 
         // Split files into those that need emission and those that can
         // reuse cached diagnostics.
@@ -865,6 +898,7 @@ impl Project {
                     Arc::clone(&fn_table),
                     Arc::clone(&return_slots),
                 );
+                emitter.set_shared_declarations(Arc::clone(&declarations));
                 emitter.disable_user_call_argument_validation();
                 emitter.set_shared_known_vars(Arc::clone(&package_known_vars));
                 emitter.set_shared_loaded(Arc::clone(&loaded));
@@ -912,6 +946,7 @@ impl Project {
                     index: i,
                     path: path.clone(),
                     diagnostics: emitter.take_diagnostics(),
+                    declaration_findings: emitter.take_declaration_findings(),
                     scopes: records,
                     references,
                     read_fns,
@@ -963,23 +998,45 @@ impl Project {
                 .collect();
         }
 
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
-            .into_iter()
-            .map(|emission| (emission.index, (emission.path, emission.diagnostics)))
-            .collect();
+        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>, Vec<DeclarationFinding>)> =
+            per_file
+                .into_iter()
+                .map(|emission| {
+                    (
+                        emission.index,
+                        (
+                            emission.path,
+                            emission.diagnostics,
+                            emission.declaration_findings,
+                        ),
+                    )
+                })
+                .collect();
+
+        let mut declaration_findings = Vec::with_capacity(self.files.len());
 
         for (i, (path, _)) in self.files.iter().enumerate() {
-            if let Some((p, d)) = emitted_map.remove(&i) {
+            if let Some((p, d, findings)) = emitted_map.remove(&i) {
+                declaration_findings.push((p.clone(), findings));
                 result.push((p, d));
             } else if let Some(idx) = self.diagnostics.iter().position(|(dp, _)| dp == path) {
                 // Clone cached diagnostics (they're unchanged).
                 result.push(self.diagnostics[idx].clone());
+                declaration_findings.push(
+                    self.declaration_findings
+                        .iter()
+                        .find(|(stored_path, _)| stored_path == path)
+                        .cloned()
+                        .unwrap_or_else(|| (path.clone(), Vec::new())),
+                );
             } else {
                 // No cached diagnostics and not emitted (shouldn't happen
                 // after the first check, but handle gracefully).
                 result.push((path.clone(), Vec::new()));
+                declaration_findings.push((path.clone(), Vec::new()));
             }
         }
+        self.declaration_findings = declaration_findings;
 
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());

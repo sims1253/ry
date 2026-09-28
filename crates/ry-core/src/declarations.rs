@@ -836,11 +836,18 @@ pub fn convert_inferred(ty: &RType, site: ExportSite) -> Conversion {
         }
         _ => {}
     }
-    match convert_type(ty, &mut reasons, 0) {
-        Ok(constraint) if reasons.is_empty() => Conversion::Exact(constraint),
-        Ok(constraint) => Conversion::Proposed {
-            constraint,
-            reasons,
+    let mut inspected_nodes = 0;
+    match convert_type(ty, &mut reasons, 0, &mut inspected_nodes) {
+        Ok(constraint) => match constraint.canonical() {
+            Ok(_) if reasons.is_empty() => Conversion::Exact(constraint),
+            Ok(_) => Conversion::Proposed {
+                constraint,
+                reasons,
+            },
+            Err(error) => {
+                reasons.push(format!("converted constraint cannot be exported: {error}"));
+                Conversion::Refused { reasons }
+            }
         },
         Err(reason) => {
             reasons.push(reason);
@@ -849,7 +856,16 @@ pub fn convert_inferred(ty: &RType, site: ExportSite) -> Conversion {
     }
 }
 
-fn convert_type(ty: &RType, reasons: &mut Vec<String>, depth: usize) -> Result<TypeExpr, String> {
+fn convert_type(
+    ty: &RType,
+    reasons: &mut Vec<String>,
+    depth: usize,
+    inspected_nodes: &mut usize,
+) -> Result<TypeExpr, String> {
+    *inspected_nodes += 1;
+    if *inspected_nodes > MAX_DECLARATION_NODES {
+        return Err("inferred type traversal exceeds declaration node budget".into());
+    }
     if depth >= MAX_DECLARATION_DEPTH {
         return Err("inferred type nesting exceeds declaration budget".into());
     }
@@ -862,17 +878,17 @@ fn convert_type(ty: &RType, reasons: &mut Vec<String>, depth: usize) -> Result<T
         reasons.push("known class constraint is outside the initial declaration vocabulary".into());
     }
     if let Some(schema) = &ty.columns {
-        reasons.push(
-            if schema
-                .columns
-                .iter()
-                .any(|(name, _)| name.starts_with("[["))
-            {
-                "schema keys may be synthetic; field identity cannot be exported".into()
-            } else {
-                "known schema fields are outside the initial declaration vocabulary".into()
-            },
-        );
+        reasons.push(if schema.columns.len() > MAX_DECLARATION_NODES {
+            "schema exceeds conversion inspection budget; field identity cannot be exported".into()
+        } else if schema
+            .columns
+            .iter()
+            .any(|(name, _)| name.starts_with("[["))
+        {
+            "schema keys may be synthetic; field identity cannot be exported".into()
+        } else {
+            "known schema fields are outside the initial declaration vocabulary".into()
+        });
     }
     if ty.fn_sig.is_some() || ty.mode == Mode::Function {
         return Err("callable parameter information is incomplete".into());
@@ -890,21 +906,35 @@ fn convert_type(ty: &RType, reasons: &mut Vec<String>, depth: usize) -> Result<T
         }
         let converted = members
             .iter()
-            .map(|member| convert_type(member, reasons, depth + 1))
+            .map(|member| convert_type(member, reasons, depth + 1, inspected_nodes))
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(outer_length) = convert_length(ty.length)
+            && members
+                .iter()
+                .any(|member| convert_length(member.length) != Some(outer_length))
+        {
+            reasons.push(
+                "union-level length is not represented by its member constraints; that length evidence would be omitted"
+                    .into(),
+            );
+        }
         return TypeExpr::Union(converted)
             .normalized()
             .map_err(|error| error.to_string());
     }
     let mode = AtomicMode::from_inferred(ty.mode).ok_or("unsupported storage mode")?;
-    let length = match ty.length {
+    let length = convert_length(ty.length);
+    Ok(TypeExpr::Atomic { mode, length })
+}
+
+fn convert_length(length: Length) -> Option<DeclaredLength> {
+    match length {
         Length::Zero => Some(DeclaredLength::Exact(0)),
         Length::One => Some(DeclaredLength::Exact(1)),
         Length::Known(value) => Some(DeclaredLength::Exact(value)),
         Length::Nonempty => Some(DeclaredLength::Nonempty),
         Length::Unknown => None,
-    };
-    Ok(TypeExpr::Atomic { mode, length })
+    }
 }
 
 #[cfg(test)]
@@ -1139,5 +1169,107 @@ mod tests {
             panic!("field-name ambiguity must be visible");
         };
         assert!(reasons.iter().any(|reason| reason.contains("synthetic")));
+    }
+
+    #[test]
+    fn conversion_bounds_total_nodes_even_when_unions_share_subgraphs() {
+        fn distinct_tree(depth: usize, next: &mut usize) -> RType {
+            if depth == 0 {
+                *next += 1;
+                return RType::new(Mode::Integer, Length::Known(*next));
+            }
+            RType::union(
+                (0..4)
+                    .map(|_| distinct_tree(depth - 1, next))
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        }
+        let mut next = 0;
+        let eighty_five_nodes = distinct_tree(3, &mut next);
+        let Conversion::Refused { reasons } =
+            convert_inferred(&eighty_five_nodes, ExportSite::ValueAtAssignment)
+        else {
+            panic!("85-node tree must exceed the global declaration budget");
+        };
+        assert!(reasons.iter().any(|reason| reason.contains("node budget")));
+
+        let mut shared = RType::scalar(Mode::Integer);
+        for _ in 0..10 {
+            shared = RType::union(vec![shared.clone(); 4].into());
+        }
+        let Conversion::Refused { reasons } =
+            convert_inferred(&shared, ExportSite::ValueAtAssignment)
+        else {
+            panic!("shared DAG must be refused after bounded input work");
+        };
+        assert!(reasons.iter().any(|reason| reason.contains("node budget")));
+    }
+
+    #[test]
+    fn successful_conversion_is_always_canonical_and_schema_scan_is_bounded() {
+        let compatible =
+            RType::union(vec![RType::scalar(Mode::Integer), RType::scalar(Mode::Character)].into());
+        let Conversion::Exact(constraint) =
+            convert_inferred(&compatible, ExportSite::ValueAtAssignment)
+        else {
+            panic!("small union should convert exactly");
+        };
+        assert!(constraint.canonical().is_ok());
+
+        let mut narrowed = RType::union(
+            vec![
+                RType::new(Mode::Integer, Length::Unknown),
+                RType::new(Mode::Character, Length::Unknown),
+            ]
+            .into(),
+        );
+        narrowed.length = Length::One;
+        let Conversion::Proposed {
+            constraint,
+            reasons,
+        } = convert_inferred(&narrowed, ExportSite::ValueAtAssignment)
+        else {
+            panic!("narrowed union must not silently discard its outer length");
+        };
+        assert!(constraint.canonical().is_ok());
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("union-level length"))
+        );
+
+        let impossible_null = RType::new(Mode::Null, Length::One);
+        let Conversion::Refused { reasons } =
+            convert_inferred(&impossible_null, ExportSite::ValueAtAssignment)
+        else {
+            panic!("an invalid final constraint must not be exported");
+        };
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("cannot be exported"))
+        );
+
+        let schema = RType::new(Mode::List, Length::Unknown).with_columns(Arc::new(ColumnSchema {
+            columns: (0..100_000)
+                .map(|index| (format!("field{index}"), RType::scalar(Mode::Integer)))
+                .collect(),
+            complete: true,
+            locally_constructed: true,
+        }));
+        let Conversion::Proposed {
+            constraint,
+            reasons,
+        } = convert_inferred(&schema, ExportSite::ValueAtAssignment)
+        else {
+            panic!("unrepresented schema must need an explicit proposal");
+        };
+        assert!(constraint.canonical().is_ok());
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.contains("inspection budget"))
+        );
     }
 }

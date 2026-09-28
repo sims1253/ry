@@ -229,6 +229,21 @@ fn inlay_hints_for_basic_assignments() {
 }
 
 #[test]
+fn inlay_hint_summary_and_detail_keep_schema_meanings_separate() {
+    let hints = inlay_hints("x <- list(a = 1L, b = 2L, c = 3L, d = 4L)\n");
+    assert_eq!(hints.len(), 1);
+    let InlayHintLabel::String(label) = &hints[0].label else {
+        panic!("expected string label");
+    };
+    assert!(label.contains("+1 known fields; complete"), "{label}");
+    let Some(InlayHintTooltip::String(detail)) = &hints[0].tooltip else {
+        panic!("expected expanded detail");
+    };
+    assert!(detail.contains("\"d\": integer"), "{detail}");
+    assert!(detail.contains("locally constructed: true"), "{detail}");
+}
+
+#[test]
 fn inlay_hints_skip_opaque_types() {
     // A call to an unknown function resolves to `Mode::Opaque`
     // ("we don't know"), so `result` must NOT get a hint: showing

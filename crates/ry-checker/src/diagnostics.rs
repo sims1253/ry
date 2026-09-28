@@ -603,7 +603,8 @@ impl SeverityFilter {
     }
 
     /// Returns the effective severity for a code, or None to suppress it.
-    /// Precedence (highest to lowest): ignore > error > warn > default.
+    /// Precedence (highest to lowest): global ignore, protected explicit
+    /// choice, path-scoped choice, global error, global warn, default.
     pub fn effective(&self, code: &str, default: Severity) -> Option<Severity> {
         if self.expanded_ignores.contains(&code) {
             return None;

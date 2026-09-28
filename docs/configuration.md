@@ -133,6 +133,11 @@ For an unsaved file, the deepest existing ancestor resolves first and the
 remaining ordinary path components keep their names. A `..` after a missing
 ancestor cannot be resolved and does not match. A symlink that points outside
 the config root is scoped by its target location, not its textual alias.
+On Unix, a backslash in a pattern is a literal filename character; use
+forward slashes to separate directories.
+Path scopes do not match filenames that cannot be represented as UTF-8;
+those files keep the global rule settings even if their displayed names
+contain a replacement character.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global

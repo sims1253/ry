@@ -127,6 +127,108 @@ fn ry_check_in(cwd: &std::path::Path, arg: &std::path::Path) -> std::process::Ou
         .expect("failed to invoke ry binary")
 }
 
+#[cfg(unix)]
+#[test]
+fn scoped_severity_does_not_match_lossy_non_utf8_filename() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['bad\u{fffd}.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+    let unicode = temp.path().join("bad\u{fffd}.R");
+    for (path, expected, exit) in [(&raw, "warning", 0), (&unicode, "error", 1)] {
+        fs::write(path, "\"text\" + 1L\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .arg("check")
+            .arg(path)
+            .args(["--output-format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(exit), "{output:?}");
+        let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let findings = diagnostics.as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["code"], "RY040");
+        assert_eq!(findings[0]["severity"], expected, "{findings:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_severity_keeps_raw_and_replacement_character_neighbors_separate() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['bad\u{fffd}.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+    let unicode = temp.path().join("bad\u{fffd}.R");
+    fs::write(&raw, "\"text\" + 1L\n").unwrap();
+    fs::write(&unicode, "1L + \"text\"\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("check")
+        .args([&raw, &unicode])
+        .args(["--output-format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let findings = diagnostics.as_array().unwrap();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for (operation, severity) in [
+        ("`character` and `integer`", "warning"),
+        ("`integer` and `character`", "error"),
+    ] {
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(operation))
+            })
+            .unwrap_or_else(|| panic!("missing {operation}: {findings:?}"));
+        assert_eq!(finding["severity"], severity, "{findings:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_severity_keeps_unix_backslash_distinct_from_separator() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("back")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['back\\slash.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let backslash = temp.path().join("back\\slash.R");
+    let slash = temp.path().join("back/slash.R");
+    for (path, expected, exit) in [(&backslash, "error", 1), (&slash, "warning", 0)] {
+        fs::write(path, "\"text\" + 1L\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .arg("check")
+            .arg(path)
+            .args(["--output-format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(exit), "{output:?}");
+        let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let findings = diagnostics.as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["code"], "RY040");
+        assert_eq!(findings[0]["severity"], expected, "{findings:?}");
+    }
+}
+
 #[test]
 fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     let temp = tempfile::tempdir().unwrap();

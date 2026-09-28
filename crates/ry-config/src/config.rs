@@ -111,7 +111,8 @@ impl ScopedPaths {
     pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
         let patterns = patterns
             .iter()
-            .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+            .map(String::as_str)
+            .map(compile_scoped_pattern)
             .collect::<Result<Vec<_>, _>>()?;
         let root = scoped_path_identity(root);
         Ok(Self { root, patterns })
@@ -127,9 +128,12 @@ impl ScopedPaths {
         let Ok(relative) = source.strip_prefix(root) else {
             return false;
         };
-        let relative = relative
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
+        // A lossy replacement character can collide with a real Unicode
+        // filename, so an unrepresentable native path cannot match a scope.
+        let Some(relative) = relative.to_str() else {
+            return false;
+        };
+        let relative = relative.replace(std::path::MAIN_SEPARATOR, "/");
         self.patterns.iter().any(|pattern| {
             pattern.matches_with(
                 &relative,
@@ -140,6 +144,15 @@ impl ScopedPaths {
             )
         })
     }
+}
+
+fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
+    let pattern = if cfg!(windows) {
+        pattern.replace('\\', "/")
+    } else {
+        pattern.to_owned()
+    };
+    glob::Pattern::new(&pattern)
 }
 
 /// Resolve the longest existing prefix with filesystem semantics. This
@@ -343,7 +356,7 @@ impl Config {
                 });
             }
             for pattern in &override_config.paths {
-                glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                compile_scoped_pattern(pattern).map_err(|source| {
                     ConfigError::InvalidRuleOverridePattern {
                         path: path.to_path_buf(),
                         index: index + 1,
@@ -831,6 +844,44 @@ paths = ["inst/shiny/**"]
         symlink(outside.path().join("missing.R"), real.join("R/dangling.R")).unwrap();
         assert!(!in_r.matches(&alias.join("R/dangling.R")));
         assert!(!in_r.matches(&alias.join("R/a.R/child.R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_do_not_replace_non_utf8_filename_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+        let unicode = temp.path().join("bad\u{fffd}.R");
+        fs::write(&raw, "x <- 1L\n").unwrap();
+        fs::write(&unicode, "x <- 1L\n").unwrap();
+        let paths = ScopedPaths::new(temp.path(), &["bad\u{fffd}.R".into()]).unwrap();
+        assert!(!paths.matches(&raw));
+        assert!(paths.matches(&unicode));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_keep_unix_backslash_as_a_literal_filename_byte() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("back")).unwrap();
+        let backslash = root.join("back\\slash.R");
+        let slash = root.join("back/slash.R");
+        fs::write(&backslash, "x <- 1L\n").unwrap();
+        fs::write(&slash, "x <- 1L\n").unwrap();
+        let config_path = root.join("ry.toml");
+        fs::write(
+            &config_path,
+            "[[rule-overrides]]\npaths = ['back\\slash.R']\nerror = ['RY040']\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&config_path).unwrap();
+        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        assert!(paths.matches(&backslash));
+        assert!(!paths.matches(&slash));
     }
 
     #[test]

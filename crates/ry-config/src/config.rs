@@ -85,6 +85,27 @@ pub struct EnvironmentConfig {
     pub root: Option<PathBuf>,
 }
 
+/// Static readers for existing annotation conventions. Each reader is
+/// disabled unless a project explicitly adopts it for named source paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AnnotationsConfig {
+    pub typehint: TypehintConfig,
+}
+
+/// The audited `typehint` 0.1.0 comment convention. Path patterns use the
+/// same config-root-relative spelling as `exclude`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypehintConfig {
+    pub adopt: bool,
+    pub version: Option<String>,
+    pub paths: Vec<String>,
+    /// Directory containing the configuration, assigned when loaded.
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
+}
+
 /// Parsed contents of a `ry.toml` project config file.
 ///
 /// The schema is intentionally minimal and conservative; we can add
@@ -146,6 +167,8 @@ pub struct Config {
     #[serde(alias = "max-serialized-bytes")]
     pub max_serialized_bytes: u64,
     pub environments: Vec<EnvironmentConfig>,
+    /// Explicit adoption of source annotation conventions.
+    pub annotations: AnnotationsConfig,
     /// Runtime typeshed directories. Relative entries are anchored at the
     /// directory containing this configuration file.
     pub typeshed: Vec<PathBuf>,
@@ -176,6 +199,7 @@ impl Default for Config {
             globals: Vec::new(),
             max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
             environments: Vec::new(),
+            annotations: AnnotationsConfig::default(),
             typeshed: Vec::new(),
             baseline: None,
             index: IndexConfig::default(),
@@ -245,6 +269,29 @@ impl Config {
                     source,
                 }
             })?;
+        }
+        cfg.annotations.typehint.root = Some(
+            std::path::absolute(root).map_err(|source| ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?,
+        );
+        for pattern in &cfg.annotations.typehint.paths {
+            glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                ConfigError::InvalidAnnotationPattern {
+                    path: path.to_path_buf(),
+                    pattern: pattern.clone(),
+                    source,
+                }
+            })?;
+        }
+        if cfg.annotations.typehint.adopt
+            && (cfg.annotations.typehint.version.as_deref() != Some("0.1.0")
+                || cfg.annotations.typehint.paths.is_empty())
+        {
+            return Err(ConfigError::InvalidTypehintAdoption {
+                path: path.to_path_buf(),
+            });
         }
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
@@ -408,6 +455,7 @@ impl Config {
             globals: self.globals,
             max_serialized_bytes: self.max_serialized_bytes,
             environments: self.environments,
+            annotations: self.annotations,
             typeshed,
             baseline,
             index: self.index,
@@ -499,6 +547,14 @@ pub enum ConfigError {
         pattern: String,
         source: glob::PatternError,
     },
+    #[error("config file {path} has invalid typehint path pattern `{pattern}`: {source}")]
+    InvalidAnnotationPattern {
+        path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
+    #[error("config file {path} must set typehint version = '0.1.0' and nonempty paths when adopt = true")]
+    InvalidTypehintAdoption { path: PathBuf },
 }
 
 #[cfg(test)]
@@ -527,6 +583,36 @@ mod tests {
             Config::load_file(&path),
             Err(ConfigError::InvalidEnvironmentPattern { .. })
         ));
+    }
+
+    #[test]
+    fn typehint_adoption_requires_an_audited_version_and_path_scope() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ry.toml");
+        fs::write(&path, "[annotations.typehint]\nadopt = true\npaths = ['R/**']\n")
+            .unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidTypehintAdoption { .. })
+        ));
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['[']\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidAnnotationPattern { .. })
+        ));
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&path).unwrap();
+        assert!(config.annotations.typehint.adopt);
+        assert_eq!(config.annotations.typehint.version.as_deref(), Some("0.1.0"));
+        assert_eq!(config.annotations.typehint.root.as_deref(), Some(dir.path()));
     }
 
     #[test]

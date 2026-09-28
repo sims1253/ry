@@ -577,6 +577,15 @@ impl Checker {
                             && !ops_chooser::operator_rebound(self, "=", scope)
                     })
                     .map(Arc::<str>::from);
+                // A plain identifier assignment copies the current value,
+                // including a proven vector alternative retained after a
+                // loop join. Capture this before assigning the target:
+                // Scope::insert correctly clears the target's old facts.
+                let loop_vector_alias = matches!(value, Expr::Ident { name, .. }
+                    if scope.loop_vector_bindings.contains(name))
+                    && ops_chooser::ordinary_assignment(self, target, value)
+                    && !ops_chooser::operator_rebound(self, "<-", scope)
+                    && !ops_chooser::operator_rebound(self, "=", scope);
                 let function_alias = self.function_alias_target(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
@@ -611,6 +620,9 @@ impl Checker {
                     }
                     if value_has_list_origin {
                         scope.mark_list_origin(name.to_string());
+                    }
+                    if loop_vector_alias {
+                        scope.mark_loop_vector(name);
                     }
                     if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
                     {

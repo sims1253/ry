@@ -2054,6 +2054,32 @@ fn successful_stopifnot_scalar_guard_carries_to_later_short_circuit() {
 }
 
 #[test]
+fn scalar_assertion_rejects_effectful_rhs_before_carrying_a_fact() {
+    for source in [
+        "f <- function(x) { stopifnot(is.null(x) || (x > 0 && { assign('x', c(1L, 2L)); TRUE })); if (is.null(x) || x == 1L) TRUE else FALSE }",
+        "f <- function(x, mutate) { stopifnot(is.null(x) || (x > 0 && mutate())); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "an effectful assertion RHS cannot validate the continuation: {source}: {diagnostics:?}"
+        );
+    }
+    let pure = check(
+        "f <- function(x) { stopifnot(is.null(x) || (x > 0 && x <= 3)); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(pure.iter().all(|d| d.code != "RY032"), "{pure:?}");
+
+    // A helper that can write through the enclosing frame must not install
+    // the new scalar assertion fact. Reporting its value at the later `if`
+    // also requires the local-call effect model (#568).
+    let (_, scope) = check_with_scope(
+        "x <- 1L; mutate <- function() { x <<- c(1L, 2L); TRUE }; stopifnot(is.null(x) || (x > 0 && mutate())); if (is.null(x) || x == 1L) TRUE else FALSE",
+    );
+    assert!(!scope.scalar_asserted_bindings.contains("x"));
+}
+
+#[test]
 fn parameter_guards_respect_scalar_membership_and_exact_length() {
     for source in [
         "f <- function(x) is.null(x) || 'value' %in% x",
@@ -2174,6 +2200,33 @@ fn loop_carried_alias_keeps_a_proven_vector_path_for_ry032() {
         assert!(
             diagnostics.iter().all(|d| d.code != "RY032"),
             "a scalar path must not inherit the vector alternative: {source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn loop_vector_fact_flows_through_simple_aliases_but_not_safe_overwrites() {
+    for source in [
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L && TRUE) i; x <- 1L } }",
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) x <- 1L; y <- x; if (y == 1L && TRUE) y }",
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; z <- y; if (z == 1L && TRUE) i; x <- 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "a proven vector path reaches the aliased operand: {source}: {diagnostics:?}"
+        );
+    }
+    for source in [
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { x <- 1L; y <- x; if (y == 1L && TRUE) i } }",
+        "f <- function() { x <- c(1L, 2L); for (i in 1L) x <- 1L; y <- x; if (y == 1L && TRUE) y }",
+        "`&&` <- function(x, y) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L && TRUE) i; x <- 1L } }",
+        "`||` <- function(x, y) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L || FALSE) i; x <- 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "a safe overwrite or masked operator must stay quiet: {source}: {diagnostics:?}"
         );
     }
 }

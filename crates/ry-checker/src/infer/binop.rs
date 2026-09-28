@@ -467,6 +467,7 @@ impl Checker {
             self.emit(Severity::Warning, span, "RY032", message);
         }
         if (lhs_loop_vector || rhs_loop_vector)
+            && !ops_chooser::operator_rebound(self, op_symbol(op), scope)
             && !self.diagnostics[before..]
                 .iter()
                 .any(|diagnostic| diagnostic.code == "RY032")
@@ -720,9 +721,12 @@ impl Checker {
             Expr::BinOp {
                 op: BinOpKind::AndAnd,
                 lhs,
+                rhs,
                 ..
             } => {
-                if ops_chooser::operator_rebound(self, "&&", scope) {
+                if ops_chooser::operator_rebound(self, "&&", scope)
+                    || !self.scalar_assertion_pure_rhs(rhs, scope)
+                {
                     return None;
                 }
                 // R 4.2+ requires a length-one logical LHS of `&&`. For
@@ -781,6 +785,37 @@ impl Checker {
                     .then(|| name.clone())
             }
             _ => None,
+        }
+    }
+
+    /// The first operand of `&&` proves its subject scalar only if evaluating
+    /// the rest of that assertion cannot replace it. Admit ordinary literal
+    /// and comparison expressions; a call, assignment, block, or overloaded
+    /// comparison can run arbitrary R code before `stopifnot` returns.
+    fn scalar_assertion_pure_rhs(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Ident { .. }
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::Logical(..)
+            | Expr::String(..)
+            | Expr::Null(..) => true,
+            Expr::BinOp { op, lhs, rhs, .. }
+                if matches!(
+                    op,
+                    BinOpKind::Lt
+                        | BinOpKind::Le
+                        | BinOpKind::Gt
+                        | BinOpKind::Ge
+                        | BinOpKind::Eq
+                        | BinOpKind::Ne
+                ) && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    && !self.project_defines_comparison_method() =>
+            {
+                self.scalar_assertion_pure_rhs(lhs, scope)
+                    && self.scalar_assertion_pure_rhs(rhs, scope)
+            }
+            _ => false,
         }
     }
 

@@ -698,6 +698,26 @@ fn code_action_ignore_line_handles_missing_code() {
 }
 
 #[test]
+fn code_action_missing_code_withholds_still_malformed_replacement() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let mut diag = lsp_diag(0, 0, 1, "RY040");
+    diag.code = None;
+    for marker in ["ry: ignore[RY040]]", "ry: ignore[RY040] ]", "noqa[RY040]]"] {
+        let src = format!("\"a\" + 1L # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &src)).is_none(),
+            "{marker}: a code-less action must not leave an invalid directive"
+        );
+    }
+
+    let src = "\"a\" + 1L # ry: ignore[RY010] reason\n";
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", src)).is_some(),
+        "a valid bracketed directive must still be replaceable by a bare ignore"
+    );
+}
+
+#[test]
 fn code_action_ignore_file_inserts_at_line_zero() {
     // The file-level action inserts `# ry: ignore-file\n` at the
     // very top of the document (a zero-width insert at (0, 0)).

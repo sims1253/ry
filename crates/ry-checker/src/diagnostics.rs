@@ -4,6 +4,8 @@
 //! This module is self-contained: it depends only on `ry_core::Span`,
 //! `ry_core::ast::Comment`, and the rule registry (`crate::rules`).
 
+use std::borrow::Cow;
+
 use ry_core::Span;
 
 use crate::rules;
@@ -323,25 +325,38 @@ fn parse_native_codes(text: &str) -> SuppressionKind {
     if text.is_empty() {
         return SuppressionKind::All;
     }
-    let list = if let Some(after) = text.strip_prefix('[') {
+    let list: Cow<'_, str> = if let Some(after) = text.strip_prefix('[') {
         let Some(close) = after.find(']') else {
             return SuppressionKind::Invalid("missing `]` in ignore list".into());
         };
         if !bracket_suffix_is_prose(&after[close + 1..]) {
             return SuppressionKind::Invalid("malformed suffix after ignore list".into());
         }
-        &after[..close]
+        Cow::Borrowed(&after[..close])
     } else if let Some(after) = text.strip_prefix(':') {
-        after.trim()
+        Cow::Borrowed(after.trim())
     } else {
         // Historic bare ignores may carry prose. A code-like first word
         // indicates an intended selective list, including a misspelling.
+        // Continue through adjacent code-like groups, then retain the
+        // explanation after the first ordinary word. That prose can itself
+        // mention a rule code without starting another selective entry.
         let first_group = text.split_whitespace().next().unwrap_or("");
         let first = first_group.split(',').next().unwrap_or("");
         if !looks_like_rule_code(first) {
             return SuppressionKind::All;
         }
-        first_group
+        let mut codes = Vec::new();
+        let mut prose_started = false;
+        for group in text.split_whitespace() {
+            let code_like = group.split(',').next().is_some_and(looks_like_rule_code);
+            if code_like && !prose_started {
+                codes.push(group);
+            } else {
+                prose_started = true;
+            }
+        }
+        Cow::Owned(codes.join(" "))
     };
     if list.trim().is_empty() {
         return if text.starts_with('[') {

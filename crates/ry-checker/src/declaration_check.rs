@@ -299,6 +299,30 @@ pub(crate) enum Evidence {
 /// This is a comparison of independently inferred facts with an authored
 /// predicate. A mixed union or an unknown fact is never a proven violation.
 pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
+    if let TypeExpr::ExactClass(expected) = constraint {
+        if ty.mode == Mode::Union {
+            return ty
+                .members
+                .as_ref()
+                .map_or(Evidence::Insufficient, |members| {
+                    combine_all(members.iter().map(|member| compare(member, constraint)))
+                });
+        }
+        // `RType::class` describes an explicit class attribute. An empty
+        // attribute does not establish effective `class(x)`: dimensions and
+        // implicit atomic classes may still determine that result.
+        return if !ty.class.known || ty.class.len == 0 || ty.class.len >= 4 {
+            Evidence::Insufficient
+        } else if ty.class.len == 1
+            && ty.class.names[0]
+                .as_deref()
+                .is_some_and(|name| name == expected)
+        {
+            Evidence::Compatible
+        } else {
+            Evidence::Incompatible
+        };
+    }
     if ty.mode == Mode::Opaque {
         return Evidence::Insufficient;
     }
@@ -310,6 +334,7 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
     }
     match constraint {
         TypeExpr::Unknown => Evidence::Insufficient,
+        TypeExpr::ExactClass(_) => unreachable!("handled before mode comparison"),
         TypeExpr::Union(alternatives) => {
             if alternatives.is_empty() {
                 return Evidence::Insufficient;
@@ -350,6 +375,65 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
     }
 }
 
+/// Direct literal syntax proves the default implicit class without relying
+/// on RType's empty explicit-class attribute (which may hide dimensions).
+fn direct_literal_class(expr: &ry_core::ast::Expr) -> Option<&'static str> {
+    use ry_core::ast::Expr;
+    match expr {
+        Expr::Logical(..) => Some("logical"),
+        Expr::Integer(..) => Some("integer"),
+        Expr::Double(..) => Some("numeric"),
+        Expr::String(..) => Some("character"),
+        Expr::Null(..) => Some("NULL"),
+        Expr::Na(ty, _) => match ty.mode {
+            Mode::Logical => Some("logical"),
+            Mode::Integer => Some("integer"),
+            Mode::Double => Some("numeric"),
+            Mode::Complex => Some("complex"),
+            Mode::Character => Some("character"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn compare_actual(ty: &RType, expression: &ry_core::ast::Expr, constraint: &TypeExpr) -> Evidence {
+    match constraint {
+        TypeExpr::ExactClass(expected) => {
+            let known = compare(ty, constraint);
+            if known != Evidence::Insufficient {
+                known
+            } else {
+                direct_literal_class(expression).map_or(Evidence::Insufficient, |actual| {
+                    if actual == expected {
+                        Evidence::Compatible
+                    } else {
+                        Evidence::Incompatible
+                    }
+                })
+            }
+        }
+        TypeExpr::Union(alternatives) => {
+            let results: Vec<_> = alternatives
+                .iter()
+                .map(|part| compare_actual(ty, expression, part))
+                .collect();
+            if results.contains(&Evidence::Compatible) {
+                Evidence::Compatible
+            } else if !results.is_empty()
+                && results
+                    .iter()
+                    .all(|result| *result == Evidence::Incompatible)
+            {
+                Evidence::Incompatible
+            } else {
+                Evidence::Insufficient
+            }
+        }
+        _ => compare(ty, constraint),
+    }
+}
+
 fn combine_all(results: impl Iterator<Item = Evidence>) -> Evidence {
     let mut any = false;
     let mut all_compatible = true;
@@ -386,6 +470,7 @@ fn atomic_mode(mode: AtomicMode) -> Mode {
 pub(crate) fn body_entry_type(constraint: &TypeExpr) -> Option<RType> {
     match constraint {
         TypeExpr::Unknown => Some(RType::unknown()),
+        TypeExpr::ExactClass(_) => None,
         TypeExpr::Atomic { mode, length } => {
             let length = match length {
                 Some(DeclaredLength::Exact(0)) => Length::Zero,
@@ -465,9 +550,9 @@ impl crate::Checker {
             })?
             .constraint
             .as_ref()?;
-        if parameter.default.is_some()
-            && compare(independent_default, declared) == Evidence::Incompatible
-        {
+        if parameter.default.as_ref().is_some_and(|default| {
+            compare_actual(independent_default, default, declared) == Evidence::Incompatible
+        }) {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Mismatch,
                 &self.path,
@@ -483,14 +568,16 @@ impl crate::Checker {
         }
         let entry = body_entry_type(declared);
         if entry.is_none() {
+            let reason = if matches!(declared, TypeExpr::ExactClass(_)) {
+                "effective class does not establish a storage mode; no body entry type is assumed"
+            } else {
+                "constraint cannot be represented by body inference; no entry type is assumed"
+            };
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
                 parameter.span,
-                format!(
-                    "constraint for `{}` has more alternatives than body inference can represent; no entry type is assumed",
-                    parameter.name
-                ),
+                format!("constraint for `{}`: {reason}", parameter.name),
             ));
         }
         entry
@@ -611,7 +698,7 @@ impl crate::Checker {
             else {
                 continue;
             };
-            if compare(actual, constraint) == Evidence::Incompatible {
+            if compare_actual(actual, &argument.value, constraint) == Evidence::Incompatible {
                 mismatches.push((argument.span, formal.name.clone(), constraint.clone()));
             }
         }

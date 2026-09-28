@@ -338,25 +338,49 @@ fn parse_native_codes(text: &str) -> SuppressionKind {
     } else {
         // Historic bare ignores may carry prose. A code-like first word
         // indicates an intended selective list, including a misspelling.
-        // Continue through adjacent code-like groups, then retain the
-        // explanation after the first ordinary word. That prose can itself
-        // mention a rule code without starting another selective entry.
+        // Continue through adjacent code-like groups and comma separators
+        // (including a comma with whitespace on either side), then retain
+        // the explanation after the first ordinary word. That prose can
+        // itself mention a rule code without starting another entry.
         let first_group = text.split_whitespace().next().unwrap_or("");
         let first = first_group.split(',').next().unwrap_or("");
+        if first_group.starts_with(',') {
+            return SuppressionKind::Invalid("empty entry in ignore list".into());
+        }
         if !looks_like_rule_code(first) {
             return SuppressionKind::All;
         }
-        let mut codes = Vec::new();
-        let mut prose_started = false;
+        let mut list = String::new();
+        let mut comma_pending = false;
         for group in text.split_whitespace() {
-            let code_like = group.split(',').next().is_some_and(looks_like_rule_code);
-            if code_like && !prose_started {
-                codes.push(group);
-            } else {
-                prose_started = true;
+            let mut word = group;
+            if let Some(after_comma) = word.strip_prefix(',') {
+                if list.is_empty() || comma_pending {
+                    return SuppressionKind::Invalid("empty entry in ignore list".into());
+                }
+                list.push(',');
+                comma_pending = true;
+                word = after_comma;
+                if word.is_empty() {
+                    continue;
+                }
             }
+            if !word.split(',').next().is_some_and(looks_like_rule_code) {
+                if comma_pending {
+                    return SuppressionKind::Invalid("expected rule code after `,`".into());
+                }
+                break;
+            }
+            if !list.is_empty() && !comma_pending {
+                list.push(' ');
+            }
+            list.push_str(word);
+            comma_pending = word.ends_with(',');
         }
-        Cow::Owned(codes.join(" "))
+        if comma_pending {
+            return SuppressionKind::Invalid("empty entry in ignore list".into());
+        }
+        Cow::Owned(list)
     };
     if list.trim().is_empty() {
         return if text.starts_with('[') {

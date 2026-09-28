@@ -34,16 +34,35 @@ fn parse_multiple_rules() {
 
 #[test]
 fn unbracketed_code_like_list_validates_every_token() {
-    let src = "x <- bad  # ry: ignore RY040 RY010\n";
-    let supps = parse_suppressions_from_comments(&scan_comments(src), src);
-    assert_eq!(supps.len(), 1);
-    assert_eq!(supps[0].valid_rules().unwrap(), &["RY040", "RY010"]);
+    for directive in [
+        "ry: ignore RY040 RY010",
+        "ry: ignore RY040, RY010",
+        "ry: ignore RY040 , RY010",
+        "ry: ignore RY040 ,RY010",
+        "ry: ignore RY040,RY010",
+    ] {
+        let src = format!("x <- bad  # {directive}\n");
+        let supps = parse_suppressions_from_comments(&scan_comments(&src), &src);
+        assert_eq!(supps.len(), 1, "{directive}");
+        assert_eq!(
+            supps[0].valid_rules().unwrap(),
+            &["RY040", "RY010"],
+            "{directive}"
+        );
+    }
 
     let prose = "x <- bad  # ry: ignore RY040 reason documented under RY010\n";
     let supps = parse_suppressions_from_comments(&scan_comments(prose), prose);
     assert_eq!(supps[0].valid_rules().unwrap(), &["RY040"]);
 
-    for directive in ["ry: ignore RY040 RX010", "ry: ignore RY040, RX010"] {
+    for directive in [
+        "ry: ignore RY040 RX010",
+        "ry: ignore RY040, RX010",
+        "ry: ignore RY040 , RX010",
+        "ry: ignore RY040 ,RX010",
+        "ry: ignore RY040 ,",
+        "ry: ignore RY040 ,, RY010",
+    ] {
         let src = format!("\"a\" + 1L # {directive}\n");
         let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
         assert!(filtered.iter().any(|d| d.code == "RY040"), "{directive}");

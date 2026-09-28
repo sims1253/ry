@@ -149,9 +149,10 @@ x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 
 Selective `ry: ignore[...]` lists must contain registered `RY` codes.
 The older unbracketed code-list form (`ry: ignore RY040 RY010`) is also
-selective when its first word resembles a rule code. Code-like words before
-trailing prose must name registered rules; after the first ordinary word,
-the rest is explanation and may itself mention rule codes. The colon form
+selective when its first word resembles a rule code. Commas may have spaces
+on either side. Code-like words before trailing prose must name registered
+rules; after the first ordinary word, the rest is explanation and may itself
+mention rule codes. The colon form
 requires only code tokens. Brackets make the boundary between codes and an
 explanation explicit.
 Unknown codes and malformed brackets produce RY112 at the comment and do

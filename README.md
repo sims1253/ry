@@ -26,6 +26,10 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/sims1253/ry/releases/latest/download/ry-cli-installer.sh | sh
 ```
 
+On Arch Linux, you can also install a community-maintained AUR package:
+[`ry-bin`](https://aur.archlinux.org/packages/ry-bin) uses the release binary,
+while [`ry`](https://aur.archlinux.org/packages/ry) builds from source.
+
 On Windows PowerShell:
 
 ``` powershell

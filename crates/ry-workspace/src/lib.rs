@@ -16,7 +16,7 @@ use discovery::{is_r_source_name, is_testthat_code_name};
 pub mod packages;
 mod serialized;
 
-use serialized::serialized_inventory;
+use serialized::{InventoryFailure, InventoryStatus, serialized_inventory};
 
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
@@ -110,11 +110,11 @@ pub enum ResolveError {
 
 /// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
 /// `bindings` aggregates the per-file object names (or file-stem
-/// fallbacks); `degraded` lists files that exceeded the byte cap.
+/// fallbacks); `degraded` lists files whose inventories were unavailable.
 #[derive(Clone, Default)]
 struct DataInventory {
     bindings: HashSet<String>,
-    degraded: Vec<PathBuf>,
+    degraded: Vec<(PathBuf, InventoryFailure)>,
 }
 
 /// A single file-stem binding, used as the conservative fallback when a
@@ -464,15 +464,23 @@ pub fn resolve_workspace_context<'a>(
                     .or_insert_with(|| source_package_datasets(&root, max_serialized_bytes))
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
-                for path in &datasets.degraded {
-                    degraded.insert((path.clone(), "oversized dataset in data/"));
+                for (path, reason) in &datasets.degraded {
+                    degraded.insert((path.clone(), reason.description()));
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
-            let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
-            file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
-            if sysdata_inventory.degraded {
-                degraded.insert((sysdata, "oversized R/sysdata.rda"));
+            // R/sysdata.rda is optional. Absence is normal, but a file
+            // requested by load() (or one that disappears after discovery)
+            // must not be described as a successfully empty inventory.
+            if !matches!(
+                std::fs::metadata(&sysdata),
+                Err(ref error) if error.kind() == std::io::ErrorKind::NotFound
+            ) {
+                let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
+                file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
+                if let InventoryStatus::Unavailable(reason) = sysdata_inventory.status {
+                    degraded.insert((sysdata, reason.description()));
+                }
             }
             let loaded = loaded_serialized_bindings(
                 file,
@@ -481,8 +489,8 @@ pub fn resolve_workspace_context<'a>(
                 user_stubs,
                 max_serialized_bytes,
             );
-            for path in &loaded.degraded {
-                degraded.insert((path.clone(), "oversized load() target"));
+            for (path, reason) in &loaded.degraded {
+                degraded.insert((path.clone(), reason.description()));
             }
             load_bindings.insert(file.path.clone(), loaded.per_span);
 
@@ -859,8 +867,8 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                 } else {
                     out.bindings.extend(inventory.bindings);
                 }
-                if inventory.degraded {
-                    out.degraded.push(path);
+                if let InventoryStatus::Unavailable(reason) = inventory.status {
+                    out.degraded.push((path, reason));
                 }
             }
             "rds" => {
@@ -895,10 +903,10 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
 
 /// Per-file `load()` resolution result. `per_span` maps each `load()`
 /// call's start span to the bindings it introduces; `degraded` lists any
-/// target workspaces that exceeded the byte cap.
+/// target workspaces whose inventories were unavailable.
 struct LoadedInventory {
     per_span: HashMap<usize, HashSet<String>>,
-    degraded: Vec<PathBuf>,
+    degraded: Vec<(PathBuf, InventoryFailure)>,
 }
 
 fn loaded_serialized_bindings(
@@ -982,8 +990,8 @@ fn loaded_serialized_bindings(
             )
         }) {
             let inventory = serialized_inventory(&path, max_serialized_bytes);
-            if inventory.degraded {
-                out.degraded.push(path);
+            if let InventoryStatus::Unavailable(reason) = inventory.status {
+                out.degraded.push((path, reason));
             }
             out.per_span.insert(span.start, inventory.bindings);
         }

@@ -109,7 +109,7 @@ fn custom_typeshed_value(stubs: &BTreeMap<String, ry_typeshed::Typeshed>) -> Val
     json!(packages)
 }
 
-fn source_span(source: &str, span: Span) -> Value {
+pub(crate) fn source_span(source: &str, span: Span) -> Value {
     if span.start > span.end
         || span.end > source.len()
         || !source.is_char_boundary(span.start)

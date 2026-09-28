@@ -639,6 +639,18 @@ fn code_action_uses_checker_parser_for_invalid_and_foreign_directives() {
     }
     let text = "\"a\" + 1L  # noqa: E501, RY040\n";
     assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
+    for marker in [
+        "ry: ignore[RY040]]",
+        "ry: ignore[RY040] ]",
+        "ry: ignore[RY040][RX040]",
+        "noqa[RY040]]",
+    ] {
+        let text = format!("\"a\" + 1L  # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_none(),
+            "{marker}"
+        );
+    }
 }
 
 #[test]

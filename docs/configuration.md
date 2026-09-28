@@ -151,8 +151,9 @@ Selective `ry: ignore[...]` lists must contain registered `RY` codes.
 Unknown codes and malformed brackets produce RY112 at the comment and do
 not suppress findings. A `noqa` list can also name another tool's codes;
 ry uses only its registered `RY` entries. A foreign-only list suppresses
-nothing in ry. Bare `ry: ignore` and `noqa` still suppress all rules on
-their target line. Use `--ignore RY112` or the corresponding severity
+nothing in ry. Bare `ry: ignore` (including explanatory prose) and `noqa`
+still suppress all rules on their target line. `ignore[ ]` is an alias for
+`ignore[]`. Use `--ignore RY112` or the corresponding severity
 configuration to disable directive validation; a bare ignore cannot hide
 its own RY112 finding.
 

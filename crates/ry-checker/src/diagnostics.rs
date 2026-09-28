@@ -171,12 +171,18 @@ pub fn parse_suppressions_from_comments(
     src: &str,
 ) -> Vec<Suppression> {
     let src_lines: Vec<&str> = src.lines().collect();
+    let mut line_starts = Vec::with_capacity(src_lines.len());
+    let mut offset = 0;
+    for line in src.split_inclusive('\n') {
+        line_starts.push(offset);
+        offset += line.len();
+    }
     let mut suppressions = Vec::new();
     for c in comments {
         let Some(ParsedDirective::Line(kind, origin)) = parse_ignore_comment_body(&c.body) else {
             continue;
         };
-        let span = comment_span(c, src);
+        let span = comment_span(c, src, &line_starts);
         if c.col == 0 || is_whitespace_only_prefix(&src_lines, c) {
             // Standalone: applies to the next non-comment, non-blank
             // line after this comment. If there is no such line (e.g.
@@ -320,8 +326,8 @@ fn parse_native_codes(text: &str) -> SuppressionKind {
         let Some(close) = after.find(']') else {
             return SuppressionKind::Invalid("missing `]` in ignore list".into());
         };
-        if after[close + 1..].starts_with(']') {
-            return SuppressionKind::Invalid("extra `]` in ignore list".into());
+        if !bracket_suffix_is_prose(&after[close + 1..]) {
+            return SuppressionKind::Invalid("malformed suffix after ignore list".into());
         }
         &after[..close]
     } else if let Some(after) = text.strip_prefix(':') {
@@ -329,14 +335,15 @@ fn parse_native_codes(text: &str) -> SuppressionKind {
     } else {
         // Historic bare ignores may carry prose. A code-like first word
         // indicates an intended selective list, including a misspelling.
-        let first = text.split_whitespace().next().unwrap_or("");
-        if !first.to_ascii_uppercase().starts_with(['R', 'X']) {
+        let first_group = text.split_whitespace().next().unwrap_or("");
+        let first = first_group.split(',').next().unwrap_or("");
+        if !looks_like_rule_code(first) {
             return SuppressionKind::All;
         }
-        first
+        first_group
     };
     if list.trim().is_empty() {
-        return if text.starts_with("[]") {
+        return if text.starts_with('[') {
             SuppressionKind::All
         } else {
             SuppressionKind::Invalid("empty ignore list".into())
@@ -370,6 +377,9 @@ fn parse_noqa_codes(text: &str) -> SuppressionKind {
         let Some(close) = after.find(']') else {
             return SuppressionKind::Foreign;
         };
+        if !bracket_suffix_is_prose(&after[close + 1..]) {
+            return SuppressionKind::Foreign;
+        }
         &after[..close]
     } else {
         text.strip_prefix(':').unwrap_or(text).trim()
@@ -387,13 +397,22 @@ fn parse_noqa_codes(text: &str) -> SuppressionKind {
     }
 }
 
-fn comment_span(comment: &ry_core::ast::Comment, src: &str) -> Span {
-    let start = src
-        .split_inclusive('\n')
-        .take(comment.line)
-        .map(str::len)
-        .sum::<usize>()
-        + comment.col;
+fn looks_like_rule_code(token: &str) -> bool {
+    let upper = token.to_ascii_uppercase();
+    (upper.starts_with("RY") || upper.starts_with("RX"))
+        && upper.bytes().any(|byte| byte.is_ascii_digit())
+        && upper.bytes().all(|byte| byte.is_ascii_alphanumeric())
+}
+
+/// A bracketed list may be followed by ordinary explanatory text, separated
+/// by whitespace. Another bracket is a second (malformed) list, not prose.
+fn bracket_suffix_is_prose(suffix: &str) -> bool {
+    suffix.is_empty()
+        || (suffix.starts_with(char::is_whitespace) && !suffix.trim_start().starts_with(['[', ']']))
+}
+
+fn comment_span(comment: &ry_core::ast::Comment, src: &str, line_starts: &[usize]) -> Span {
+    let start = line_starts.get(comment.line).copied().unwrap_or(src.len()) + comment.col;
     Span {
         start,
         end: (start + 1 + comment.body.len()).min(src.len()),

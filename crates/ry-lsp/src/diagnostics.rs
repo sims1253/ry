@@ -195,6 +195,16 @@ pub(super) fn make_ignore_action(
     {
         return None;
     }
+    // A malformed suffix can survive a textual replacement and leave the
+    // proposed ignore invalid. Ask the checker's parser whether this edit
+    // actually suppresses the requested code before offering the action.
+    if !code.is_empty()
+        && !ry_checker::parse_suppressions_from_comments(&edited_file.comments, &edited)
+            .iter()
+            .any(|suppression| suppression.line == line && suppression.suppresses(&code))
+    {
+        return None;
+    }
 
     let mut changes = HashMap::new();
     changes.insert(

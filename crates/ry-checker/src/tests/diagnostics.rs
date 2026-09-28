@@ -242,6 +242,8 @@ fn invalid_native_ignores_report_and_leave_errors_visible() {
         "ry: ignore[RY999999]",
         "ry: ignore[RY040",
         "ry: ignore[RY040]]",
+        "ry: ignore[RY040] ]",
+        "ry: ignore[RY040][RX040]",
         "ry: ignore[RY040,]",
         "ry: ignore[RY040, RX040]",
     ] {
@@ -263,6 +265,9 @@ fn invalid_native_ignores_report_and_leave_errors_visible() {
 fn foreign_noqa_and_marker_prefixes_do_not_suppress() {
     for directive in [
         "noqa: E501",
+        "noqa[RY040]]",
+        "noqa[RY040] ]",
+        "noqa[RY040][RX040]",
         "noqa-ish note",
         "noquality",
         "ry: ignored by upstream",
@@ -299,7 +304,14 @@ fn selective_and_bare_ignores_remain_distinct() {
             "{directive}: {filtered:?}"
         );
     }
-    for directive in ["ry: ignore", "ry: ignore[]", "noqa", "RY:IGNORE"] {
+    for directive in [
+        "ry: ignore",
+        "ry: ignore[]",
+        "ry: ignore[ ]",
+        "ry: ignore reason documented elsewhere",
+        "noqa",
+        "RY:IGNORE",
+    ] {
         let src = format!("\"a\" + 1L  # {directive}\n");
         let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
         assert!(

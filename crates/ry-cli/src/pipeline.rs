@@ -198,6 +198,7 @@ pub(crate) fn parse_files(
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     parse_files_with_overlay(paths, None, on_failure)
+        .map(|files| files.into_iter().map(|(_, parsed)| parsed).collect())
 }
 
 /// One in-memory source substituted at its logical path. The same parser,
@@ -207,17 +208,20 @@ pub(crate) struct SourceOverlay {
     pub bytes: Vec<u8>,
 }
 
+/// Retain each native filesystem path beside its parsed, displayable source.
+/// A lossy display path can collide with a real Unicode filename; check's
+/// per-file policy must use the native path even when diagnostics use text.
 pub(crate) fn parse_files_with_overlay(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
-) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
+) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path, overlay) {
-            Ok(file) => Some(Ok(file)),
+            Ok(file) => Some(Ok((path.clone(), file))),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
                 FailureAction::Abort => Some(Err(failure)),
@@ -286,6 +290,8 @@ fn parse_one(
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
+    /// Indices into the parsed input, in the same order as check output.
+    pub source_indices: Vec<usize>,
     pub check_input: CheckInput,
     pub degraded_scopes: Vec<(PathBuf, &'static str)>,
 }
@@ -352,6 +358,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         resolved.push(ResolvedGroup {
             resolution_root,
+            source_indices: indices.clone(),
             check_input: CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),

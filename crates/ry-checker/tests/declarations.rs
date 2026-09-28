@@ -732,6 +732,65 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
 }
 
 #[test]
+fn loop_carried_widening_never_borrows_flat_contract_before_rebinding() {
+    for loop_body in [
+        "for (i in 1L) { inner(1L); inner <- function(x) { x } }",
+        "while (flag) { inner(1L); inner <- function(x) { x }; break }",
+        "repeat { inner(1L); inner <- function(x) { x }; break }",
+    ] {
+        let source = format!(
+            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body} }}\nouter(TRUE)\n"
+        );
+        let file = parse("loop-entry.R", &source);
+        let top = record(
+            &file,
+            "inner",
+            ("x", AtomicMode::Character, SupplyStatus::Required),
+            None,
+        );
+        let mut nested = top.clone();
+        nested.source.target = DeclarationTarget::LocalFunction {
+            path: file.path.clone(),
+            definition: nested_function_span(&file, "outer", "inner"),
+            display_name: Some("inner".into()),
+        };
+        if let Translation::Exact(signature) = &mut nested.translation {
+            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
+        }
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![top, nested]);
+        checker.check(&file);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "loop: {loop_body}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn iterator_binding_shadows_flat_contract_only_when_callable_is_possible() {
+    for (iter, expected) in [
+        ("list(function(x) { x })", Vec::new()),
+        ("1L", vec![DeclarationFindingKind::Mismatch]),
+    ] {
+        let source = format!(
+            "inner <- function(x) {{ x }}\nouter <- function() {{ for (inner in {iter}) {{ inner(1L) }} }}\nouter()\n"
+        );
+        let file = parse("loop-iterator.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "inner",
+            ("x", AtomicMode::Character, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(kinds(&checker), expected, "iterator: {iter}");
+    }
+}
+
+#[test]
 fn shadowed_definition_does_not_borrow_another_return_slot() {
     let file = parse(
         "shadowed.R",

@@ -726,7 +726,17 @@ impl Checker {
             } => {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
-                inner.insert(name.clone(), iter_t.element());
+                let element = iter_t.element();
+                // The loop variable is a real assignment, not the
+                // loop-carried widening below. Its exact old identity is
+                // gone, but an uncertain/function value can shadow a flat
+                // same-spelled function table entry at a call site.
+                let may_be_function =
+                    matches!(element.mode, Mode::Function | Mode::Opaque | Mode::Union);
+                inner.insert(name.clone(), element);
+                if may_be_function {
+                    inner.mark_lexical_callable(name.clone());
+                }
                 // The loop variable rebinds `name` for the whole body and
                 // holds the final iterated value afterwards, so an armed
                 // vacuous-all guard over the same name no longer
@@ -1208,7 +1218,12 @@ impl Checker {
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in self.reachable_loop_assignments(body, scope) {
             // The pre-loop value need not survive a later iteration.
-            scope.insert(name, RType::unknown());
+            // Widening is not an executed assignment at the current source
+            // position. A previous/current iteration may still hold a
+            // lexical function here, so preserve possible shadowing while
+            // dropping its exact declaration identity.
+            scope.insert(name.clone(), RType::unknown());
+            scope.mark_lexical_callable(name);
         }
     }
 

@@ -1014,21 +1014,25 @@ impl Project {
                 .collect();
 
         let mut declaration_findings = Vec::with_capacity(self.files.len());
+        // Reuse warm results by path in one pass. Repeated linear scans here
+        // would make an unchanged project check quadratic in its file count.
+        let mut cached_diagnostics: HashMap<_, _> =
+            std::mem::take(&mut self.diagnostics).into_iter().collect();
+        let mut cached_findings: HashMap<_, _> = std::mem::take(&mut self.declaration_findings)
+            .into_iter()
+            .collect();
 
         for (i, (path, _)) in self.files.iter().enumerate() {
             if let Some((p, d, findings)) = emitted_map.remove(&i) {
                 declaration_findings.push((p.clone(), findings));
                 result.push((p, d));
-            } else if let Some(idx) = self.diagnostics.iter().position(|(dp, _)| dp == path) {
-                // Clone cached diagnostics (they're unchanged).
-                result.push(self.diagnostics[idx].clone());
-                declaration_findings.push(
-                    self.declaration_findings
-                        .iter()
-                        .find(|(stored_path, _)| stored_path == path)
-                        .cloned()
-                        .unwrap_or_else(|| (path.clone(), Vec::new())),
-                );
+            } else if let Some(diagnostics) = cached_diagnostics.remove(path) {
+                // The unchanged file reuses its previous emissions.
+                result.push((path.clone(), diagnostics));
+                declaration_findings.push((
+                    path.clone(),
+                    cached_findings.remove(path).unwrap_or_default(),
+                ));
             } else {
                 // No cached diagnostics and not emitted (shouldn't happen
                 // after the first check, but handle gracefully).

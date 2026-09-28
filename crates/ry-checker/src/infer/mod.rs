@@ -612,9 +612,10 @@ impl Checker {
                     if value_has_list_origin {
                         scope.mark_list_origin(name.to_string());
                     }
-                    if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
+                    if let Expr::Function { span, .. } = value
+                        && !self.enclosing_formals.is_empty()
                     {
-                        scope.mark_lexical_function(name.to_string());
+                        scope.mark_lexical_function(name.to_string(), *span);
                     }
                     if plain_vector {
                         scope.mark_plain_ops_vector(semantic_argument_name(name).to_string());
@@ -1243,6 +1244,21 @@ impl Checker {
         let has_else = else_.is_some();
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
+        // Equal inferred function types do not prove equal lexical targets.
+        // Drop an adopted declaration identity if any reaching branch may
+        // bind the name to a different definition, even when its RType is
+        // unchanged and the ordinary type merge skips that binding.
+        let lexical_names: Vec<_> = scope.lexical_definitions.keys().cloned().collect();
+        for name in lexical_names {
+            let original = scope.lexical_definition(&name);
+            let then_agrees =
+                !then_reaches || then_delta.lexical_definition(scope, &name) == original;
+            let else_agrees =
+                !else_reaches || else_delta.lexical_definition(scope, &name) == original;
+            if !then_agrees || !else_agrees {
+                scope.forget_lexical_definition(&name);
+            }
+        }
         let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
         let else_diverges_in_loop = scope.loop_frame.is_some() && else_delta.unreachable;
         // Continuation lookups may fall back to the original scope. Capture

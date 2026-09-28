@@ -30,6 +30,31 @@ fn named_function_span(file: &SourceFile, name: &str) -> Span {
         .expect("fixture has named top-level function")
 }
 
+fn nested_function_span(file: &SourceFile, outer: &str, inner: &str) -> Span {
+    let body = file
+        .stmts
+        .iter()
+        .find_map(|statement| match statement {
+            Stmt::Assign {
+                target: Expr::Ident { name, .. },
+                value: Expr::Function { body, .. },
+                ..
+            } if name == outer => Some(body),
+            _ => None,
+        })
+        .expect("fixture has outer function");
+    body.iter()
+        .find_map(|statement| match statement {
+            Stmt::Assign {
+                target: Expr::Ident { name, .. },
+                value: Expr::Function { span, .. },
+                ..
+            } if name == inner => Some(*span),
+            _ => None,
+        })
+        .expect("fixture has named nested function")
+}
+
 fn record(
     file: &SourceFile,
     function: &str,
@@ -271,6 +296,7 @@ fn equivalent_provenance_conflicts_and_unadopted_records_stay_distinct() {
         signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
     }
     checker.set_declaration_records(vec![one.clone(), different]);
+    assert!(checker.declaration_findings().is_empty());
     checker.check(&file);
     assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Conflict]);
 
@@ -460,6 +486,166 @@ fn declaration_union_above_inference_cap_is_visible_without_inventing_body_type(
             DeclarationFindingKind::Mismatch
         ]
     );
+}
+
+#[test]
+fn canonical_equivalents_have_order_independent_body_entry() {
+    let file = parse("canonical-order.R", "f <- function(x) { x }\n");
+    let plain = record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut repeated = plain.clone();
+    repeated.source.provider = "repeated".into();
+    if let Translation::Exact(signature) = &mut repeated.translation {
+        signature.parameters[0].constraint =
+            Some(TypeExpr::Union(vec![
+                TypeExpr::atomic(AtomicMode::Integer);
+                5
+            ]));
+    }
+    let mut results = Vec::new();
+    for declarations in [
+        vec![plain.clone(), repeated.clone()],
+        vec![repeated.clone(), plain.clone()],
+    ] {
+        let mut checker = Checker::new(&file.path);
+        checker.enable_scope_capture();
+        checker.set_declaration_records(declarations.clone());
+        checker.check(&file);
+        let scope = checker
+            .take_scope_records()
+            .into_iter()
+            .find(|scope| scope.name.as_deref() == Some("f"))
+            .unwrap();
+        assert_eq!(checker.declaration_records(), declarations);
+        results.push((scope.scope.bindings["x"].mode, kinds(&checker)));
+    }
+    assert_eq!(results, vec![(Mode::Integer, vec![]); 2]);
+}
+
+#[test]
+fn flattened_wide_union_stays_out_of_body_in_any_form_or_order() {
+    let file = parse("flat-cap.R", "f <- function(x) { x }\n");
+    let mut flat = record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let five = TypeExpr::parse("union[character, complex, double, integer, raw]").unwrap();
+    if let Translation::Exact(signature) = &mut flat.translation {
+        signature.parameters[0].constraint = Some(five);
+    }
+    let mut nested = flat.clone();
+    nested.source.provider = "nested".into();
+    if let Translation::Exact(signature) = &mut nested.translation {
+        signature.parameters[0].constraint = Some(TypeExpr::Union(vec![
+            TypeExpr::atomic(AtomicMode::Integer),
+            TypeExpr::Union(vec![
+                TypeExpr::atomic(AtomicMode::Character),
+                TypeExpr::atomic(AtomicMode::Double),
+                TypeExpr::atomic(AtomicMode::Complex),
+                TypeExpr::atomic(AtomicMode::Raw),
+            ]),
+        ]));
+    }
+    for declarations in [
+        vec![flat.clone()],
+        vec![nested.clone()],
+        vec![flat.clone(), nested.clone()],
+        vec![nested.clone(), flat.clone()],
+    ] {
+        let mut checker = Checker::new(&file.path);
+        checker.enable_scope_capture();
+        checker.set_declaration_records(declarations);
+        checker.check(&file);
+        let scope = checker
+            .take_scope_records()
+            .into_iter()
+            .find(|scope| scope.name.as_deref() == Some("f"))
+            .unwrap();
+        assert_eq!(scope.scope.bindings["x"].mode, Mode::Opaque);
+        assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Partial]);
+    }
+}
+
+#[test]
+fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebinding() {
+    let file = parse(
+        "nested-calls.R",
+        "first <- function() { inner <- function(x) { x }; inner(\"bad\") }\nsecond <- function() { inner <- function(x) { x }; inner(\"good\") }\nfirst()\nsecond()\n",
+    );
+    let mut integer = record(
+        &file,
+        "first",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut character = integer.clone();
+    for (declaration, outer, provider) in [
+        (&mut integer, "first", "integer-nested"),
+        (&mut character, "second", "character-nested"),
+    ] {
+        declaration.source.provider = provider.into();
+        declaration.source.target = DeclarationTarget::LocalFunction {
+            path: file.path.clone(),
+            definition: nested_function_span(&file, outer, "inner"),
+            display_name: Some("inner".into()),
+        };
+    }
+    if let Translation::Exact(signature) = &mut character.translation {
+        signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
+    }
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![integer, character]);
+    checker.check(&file);
+    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    let mismatch = &checker.declaration_findings()[0];
+    assert_eq!(
+        &file.source[mismatch.span.start..mismatch.span.end],
+        "\"bad\""
+    );
+
+    let rebound = parse(
+        "rebound-nested.R",
+        "outer <- function() { inner <- function(x) { x }; inner <- function(x) { x }; inner(\"bad\") }\nouter()\n",
+    );
+    let mut stale = record(
+        &rebound,
+        "outer",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    stale.source.target = DeclarationTarget::LocalFunction {
+        path: rebound.path.clone(),
+        definition: nested_function_span(&rebound, "outer", "inner"),
+        display_name: Some("inner".into()),
+    };
+    checker.set_declaration_records(vec![stale]);
+    checker.check(&rebound);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+
+    let conditional = parse(
+        "conditional-nested.R",
+        "outer <- function(flag) { inner <- function(x) { x }; if (flag) inner <- function(x) { x }; inner(\"bad\") }\nouter(TRUE)\n",
+    );
+    let mut conditional_record = record(
+        &conditional,
+        "outer",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    conditional_record.source.target = DeclarationTarget::LocalFunction {
+        path: conditional.path.clone(),
+        definition: nested_function_span(&conditional, "outer", "inner"),
+        display_name: Some("inner".into()),
+    };
+    checker.set_declaration_records(vec![conditional_record]);
+    checker.check(&conditional);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }
 
 #[test]

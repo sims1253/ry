@@ -155,7 +155,13 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                             ),
                         ));
                     } else {
-                        exact.entry(canonical).or_insert_with(|| signature.clone());
+                        // Canonical spelling is also the checking identity. Keep the
+                        // authored record untouched for provenance, but never let
+                        // record order choose a differently shaped equivalent tree.
+                        exact.entry(canonical.clone()).or_insert_with(|| {
+                            DeclaredSignature::parse(&canonical)
+                                .expect("canonical signature parses within validated budgets")
+                        });
                     }
                 }
                 Ok(_) => {
@@ -525,11 +531,10 @@ impl crate::Checker {
         original_name: &str,
         lookup_name: &str,
         function: Option<&crate::UserFn>,
-        lexical_callable: bool,
         args: &[ry_core::ast::Arg],
         arg_types: &[RType],
     ) {
-        if self.discarding || original_name.contains("::") || lexical_callable {
+        if self.discarding || original_name.contains("::") {
             return;
         }
         let Some(function) = function else {

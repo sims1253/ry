@@ -401,6 +401,9 @@ pub struct Scope {
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
+    /// Exact source identity for a directly bound nested function. A name
+    /// alone cannot select among same-spelled functions in different frames.
+    pub(crate) lexical_definitions: FxMap<String, Span>,
     pub data_mask_unknown: bool,
     pub(crate) tidy_injection: Option<InjectionMode>,
     /// The `[` subscript argument currently being inferred, if any.
@@ -432,6 +435,7 @@ impl Clone for Scope {
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
             lexical_functions: self.lexical_functions.clone(),
+            lexical_definitions: self.lexical_definitions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
             select_subscript: self.select_subscript.clone(),
@@ -504,6 +508,7 @@ impl Scope {
                 .chain(self.default_parameter_bindings.iter())
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
+                .chain(self.lexical_definitions.keys())
                 .chain(self.function_aliases.keys())
                 .cloned()
                 .collect();
@@ -521,6 +526,7 @@ impl Scope {
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
         self.lexical_functions.clear();
+        self.lexical_definitions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
         }
@@ -564,6 +570,7 @@ impl Scope {
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
+        self.lexical_definitions.remove(&name);
         if !self.list_origin_bindings.is_empty() {
             self.list_origin_bindings.remove(&name);
         }
@@ -593,6 +600,7 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
+        self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.narrowed_bindings.insert(name);
@@ -619,6 +627,9 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
+        // A parameter default may install a different function value even
+        // when the lexical-callable marker is deliberately retained.
+        self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.parameter_bindings.insert(name.clone());
@@ -649,14 +660,25 @@ impl Scope {
         self.function_aliases.insert(name, target);
     }
 
-    pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
+    pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>, definition: Span) {
         let name = name.into();
         self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
-        self.lexical_functions.insert(name);
+        self.journal_lexical_definition(&name);
+        self.lexical_functions.insert(name.clone());
+        self.lexical_definitions.insert(name, definition);
     }
 
     pub(crate) fn is_lexical_function(&self, name: &str) -> bool {
         self.lexical_functions.contains(name)
+    }
+
+    pub(crate) fn lexical_definition(&self, name: &str) -> Option<Span> {
+        self.lexical_definitions.get(name).copied()
+    }
+
+    pub(crate) fn forget_lexical_definition(&mut self, name: &str) {
+        self.journal_lexical_definition(name);
+        self.lexical_definitions.remove(name);
     }
 
     pub(crate) fn function_alias(&self, name: &str) -> Option<&str> {
@@ -1503,6 +1525,7 @@ impl Checker {
         records: Vec<ry_core::declarations::DeclarationRecord>,
     ) {
         self.declarations = Arc::new(declaration_check::DeclarationSet::new(records));
+        self.declaration_findings.clear();
     }
 
     pub(crate) fn set_shared_declarations(

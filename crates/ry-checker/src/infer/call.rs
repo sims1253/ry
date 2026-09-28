@@ -1303,6 +1303,30 @@ impl Checker {
         // may contain a same-named nested/top-level definition from elsewhere;
         // using that signature here produces bogus RY090/RY091 diagnostics.
         let lexical_callable = !name.contains("::") && scope.is_lexical_function(lookup_name);
+        // The flat function table is name-indexed, so it cannot resolve a
+        // lexical call in general. A direct literal binding does retain its
+        // exact definition span; use that identity only for its declaration.
+        let lexical_declaration_function = if lexical_callable {
+            scope
+                .lexical_definition(lookup_name)
+                .filter(|definition| {
+                    self.declarations
+                        .target(&self.path, *definition)
+                        .is_some_and(|decision| decision.signature.is_some())
+                })
+                .and_then(|definition| {
+                    self.fn_table
+                        .fns
+                        .values()
+                        .find(|function| {
+                            function.source_path == self.path
+                                && function.definition_span == definition
+                        })
+                        .cloned()
+                })
+        } else {
+            None
+        };
         let user_function = if lexical_callable {
             None
         } else {
@@ -1450,6 +1474,7 @@ impl Checker {
             arg_types,
             resolved_sig,
             user_function,
+            lexical_declaration_function,
             lexical_callable,
             locally_shadows_stub: false,
         }
@@ -1508,8 +1533,10 @@ impl Checker {
         self.check_declaration_call(
             original_name,
             lookup_name,
-            resolution.user_function.as_ref(),
-            resolution.lexical_callable,
+            resolution
+                .user_function
+                .as_ref()
+                .or(resolution.lexical_declaration_function.as_ref()),
             args,
             &resolution.arg_types,
         );
@@ -2069,6 +2096,8 @@ struct CallResolution {
     /// The project FnTable entry for the call, unless a lexical callable
     /// shadows it.
     user_function: Option<UserFn>,
+    /// Exact direct lexical binding, used only for adopted declarations.
+    lexical_declaration_function: Option<UserFn>,
     /// Whether a lexical function binding shadows every table lookup.
     lexical_callable: bool,
     /// Whether a local non-alias binding shadows a same-named stub; the

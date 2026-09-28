@@ -2187,15 +2187,6 @@
       "severity": "warning",
       "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
-    "purrr::RY032::R/deprec-prepend.R:34:7": {
-      "package": "purrr",
-      "code": "RY032",
-      "path": "R/deprec-prepend.R",
-      "line": 34,
-      "column": 7,
-      "severity": "warning",
-      "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
     "purrr::RY080::tests/testthat/test-map.R:82:20": {
       "package": "purrr",
       "code": "RY080",

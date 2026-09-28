@@ -678,7 +678,10 @@ impl Checker {
         // or an arbitrary call that static assignment collection cannot see.
         // The final predicate is the only one whose fact cannot be spoiled
         // by another assertion argument after it.
-        if let Some(last) = args.last() {
+        // Named arguments can bind `local`, `exprs`, or `exprObject` rather
+        // than an assertion predicate. Keep the proof to an unambiguously
+        // positional final argument.
+        if let Some(last) = args.last().filter(|arg| arg.name.is_none()) {
             let mut assigned = HashSet::new();
             collect_condition_assignment_names(&last.value, &mut assigned);
             if let Some(name) = self.scalar_assertion_subject(&last.value, scope)

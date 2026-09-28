@@ -2102,6 +2102,31 @@ fn scalar_assertion_does_not_force_another_formals_default_as_pure() {
 }
 
 #[test]
+fn stopifnot_named_controls_do_not_validate_the_continuation() {
+    let parameter = check(
+        "f <- function(x) { stopifnot(local = is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        parameter.iter().any(|d| d.code == "RY032"),
+        "a FALSE `local` control is not a failed assertion: {parameter:?}"
+    );
+    let loop_value = check(
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { stopifnot(local = length(x) == 1L); if (x == 1L && TRUE) i; x <- 1L } }",
+    );
+    assert!(
+        loop_value.iter().any(|d| d.code == "RY032"),
+        "a named control cannot clear the proven vector path: {loop_value:?}"
+    );
+    let positional = check(
+        "f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        positional.iter().all(|d| d.code != "RY032"),
+        "a genuine final positional assertion still proves scalar or NULL: {positional:?}"
+    );
+}
+
+#[test]
 fn parameter_guards_respect_scalar_membership_and_exact_length() {
     for source in [
         "f <- function(x) is.null(x) || 'value' %in% x",

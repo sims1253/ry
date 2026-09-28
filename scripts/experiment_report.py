@@ -71,6 +71,8 @@ def identity_dict(key):
 
 
 def validate_manifest(manifest):
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest root must be a JSON object")
     if manifest.get("schema_version") != 1:
         raise ValueError("manifest schema_version must be 1")
     for key in ("hypothesis", "expected_change", "reference", "candidate"):
@@ -103,7 +105,11 @@ def validate_manifest(manifest):
             raise ValueError("first increment accepts R files as fixtures")
         workload = fixture.get("workload")
         if workload is not None:
-            if not isinstance(workload, dict) or not isinstance(workload.get("repository"), str) or not Path(workload["repository"]).is_absolute() or not re.fullmatch(r"[0-9a-f]{40}", workload.get("revision", "")):
+            if (not isinstance(workload, dict)
+                    or not isinstance(workload.get("repository"), str)
+                    or not Path(workload["repository"]).is_absolute()
+                    or not isinstance(workload.get("revision"), str)
+                    or not re.fullmatch(r"[0-9a-f]{40}", workload["revision"])):
                 raise ValueError("workload needs a local absolute repository path and full commit pin")
         for change in ("expected_additions", "expected_removals"):
             if not isinstance(fixture.get(change, []), list):
@@ -280,7 +286,11 @@ class Experiment:
             try:
                 out, err = proc.communicate(timeout=timeout)
             except (Cancelled, KeyboardInterrupt, subprocess.TimeoutExpired) as error:
-                os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    # The child can exit after communicate reports timeout.
+                    pass
                 out, err = proc.communicate()
                 path.with_suffix(".stdout").write_bytes(out)
                 path.with_suffix(".stderr").write_bytes(err)
@@ -292,7 +302,7 @@ class Experiment:
             path.with_suffix(".stderr").write_bytes(err)
             return self.stage(name, "passed" if proc.returncode == 0 else "failed",
                               exit_code=proc.returncode, **record)
-        except FileNotFoundError as error:
+        except OSError as error:
             return self.stage(name, "unavailable", reason=str(error), **record)
 
     def setup(self):
@@ -495,9 +505,6 @@ class Experiment:
             if side not in ledgers:
                 self.stage("instructions", "failed", reason=f"measure exited successfully without ledger: {ledger}")
                 return
-        if set(ledgers) != {"reference", "candidate"}:
-            self.stage("instructions", "failed", reason="reference or candidate ledger missing")
-            return
         state, reason = compare_instructions(ledgers["reference"], ledgers["candidate"])
         row = self.command("instructions-compare", [sys.executable, str(harness), "compare",
                            str(self.output / "instructions-reference.json"), str(self.output / "instructions-candidate.json")],

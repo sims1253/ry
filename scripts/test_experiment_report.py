@@ -98,6 +98,60 @@ class RunStatusTests(unittest.TestCase):
             self.assertEqual(experiment.finish(), 1)
             self.assertFalse(json.loads((experiment.output / "report.json").read_text())["fully_validated"])
 
+    def test_nonexecutable_command_records_unavailable_stage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(report.subprocess, "Popen", side_effect=PermissionError("not executable")):
+                row = experiment.command("blocked", ["/path/to/tool"], Path(directory))
+            self.assertEqual(row["status"], "unavailable")
+            self.assertIn("not executable", row["reason"])
+            experiment.finish()
+            self.assertTrue((experiment.output / "report.json").exists())
+
+    def test_child_exit_during_cancel_keeps_cancelled_stage(self):
+        class ExitedChild:
+            pid = 123456
+
+            def communicate(self, timeout=None):
+                if timeout is not None:
+                    raise report.Cancelled("interrupted")
+                return b"", b""
+
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(report.subprocess, "Popen", return_value=ExitedChild()), \
+                 mock.patch.object(report.os, "killpg", side_effect=ProcessLookupError):
+                with self.assertRaises(report.Cancelled):
+                    experiment.command("cancelled", ["python3"], Path(directory))
+            stage = experiment.report["stages"][-1]
+            self.assertEqual(stage["status"], "cancelled")
+            self.assertEqual(Path(stage["stdout"]).read_bytes(), b"")
+            self.assertEqual(Path(stage["stderr"]).read_bytes(), b"")
+            experiment.finish()
+            self.assertEqual(experiment.report["status"], "cancelled")
+            saved = json.loads((experiment.output / "report.json").read_text())
+            self.assertEqual(saved["status"], "cancelled")
+
+    def test_child_exit_during_timeout_remains_failed(self):
+        class ExitedChild:
+            pid = 123456
+
+            def communicate(self, timeout=None):
+                if timeout is not None:
+                    raise subprocess.TimeoutExpired("probe", timeout)
+                return b"partial", b"timeout"
+
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(report.subprocess, "Popen", return_value=ExitedChild()), \
+                 mock.patch.object(report.os, "killpg", side_effect=ProcessLookupError):
+                row = experiment.command("timed-out", ["python3"], Path(directory), timeout=1)
+            self.assertEqual(row["status"], "failed")
+            self.assertEqual(Path(row["stdout"]).read_bytes(), b"partial")
+            self.assertEqual(Path(row["stderr"]).read_bytes(), b"timeout")
+            experiment.finish()
+            self.assertEqual(experiment.report["status"], "failed")
+
     def test_instruction_adapter_does_not_inject_distinct_cargo_target_dir(self):
         with tempfile.TemporaryDirectory() as directory:
             experiment = self.make_experiment(Path(directory))
@@ -265,6 +319,25 @@ class RunStatusTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("experiment:", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_nonobject_manifest_and_nonstring_workload_revision_exit_two(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            experiment = self.make_experiment(root)
+            invalid = [[], None]
+            with_bad_workload = json.loads(json.dumps(experiment.manifest))
+            with_bad_workload["fixtures"][0]["workload"] = {
+                "repository": str(root), "revision": 42}
+            invalid.append(with_bad_workload)
+            for index, manifest in enumerate(invalid):
+                path = root / f"invalid-{index}.json"
+                path.write_text(json.dumps(manifest))
+                result = subprocess.run([sys.executable, str(Path(report.__file__)), str(path),
+                                         "--profile", "targeted", "--output", str(root / f"unused-{index}")],
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("experiment:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
 
     def test_timed_out_r_package_metadata_stays_in_report(self):
         with tempfile.TemporaryDirectory() as directory:

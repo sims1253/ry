@@ -22,9 +22,34 @@ ry check R/analysis.R R/helpers.R
 ry check --watch .
 ```
 
+To check an unsaved source buffer, pass `-` explicitly and give its logical
+filename:
+
+```sh
+printf '%s\n' '"a" + 1L' | ry check - --stdin-filename R/example.R --output-format json
+```
+
+ry uses `R/example.R` for config discovery, package context, baselines, and
+diagnostic paths. The buffer replaces a disk file at that path if one exists;
+it also works before the file is saved. Other named files or directories are
+checked normally. An explicit stdin source is checked even if a directory
+walk would exclude that path, just as `ry check R/example.R` checks an
+explicitly named file. `--explain-files` identifies the overlay on stderr.
+The logical filename's parent directory must exist; its final file need not.
+
+`-` requires `--stdin-filename`; the flag without `-`, repeated `-` operands,
+and `--watch` with stdin are errors. Redirecting stdin without `-` does not
+change a normal check. Input uses the same UTF-8/Latin-1 decoding and
+diagnostics as a disk file and is limited by `index.max-file-bytes` before
+parsing. A read failure or oversized buffer is named on stderr and fails the
+check, with an empty report for machine formats; `--exit-zero` still applies.
+`--baseline` and `--write-baseline` use the logical diagnostic path exactly
+as they do for a disk file. The buffer is never written to a source file.
+
 The exit status is nonzero when an error remains after filtering.
 `--error-on-warning` also fails on warnings; `--exit-zero` lets the check
-succeed despite findings. Usage and I/O failures still return a nonzero status.
+succeed despite findings. Usage failures return nonzero; check read and
+discovery failures follow the `--exit-zero` policy.
 Human-readable diagnostics use ANSI color on terminals; select the
 color policy with `--color auto|always|never`. Automatic color respects
 `NO_COLOR`, and machine-readable formats never contain ANSI escapes.

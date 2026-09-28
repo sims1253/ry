@@ -197,11 +197,26 @@ pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
+    parse_files_with_overlay(paths, None, on_failure)
+}
+
+/// One in-memory source substituted at its logical path. The same parser,
+/// decoder, and downstream project analysis are used as for disk sources.
+pub(crate) struct SourceOverlay {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+pub(crate) fn parse_files_with_overlay(
+    paths: &[PathBuf],
+    overlay: Option<&SourceOverlay>,
+    on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
+) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
-        .map(|path| match parse_one(path) {
+        .map(|path| match parse_one(path, overlay) {
             Ok(file) => Some(Ok(file)),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
@@ -214,12 +229,19 @@ pub(crate) fn parse_files(
 
 /// Read and parse one file on the calling thread, using that thread's
 /// parser from the pool (see [`parse_files`]).
-fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
+fn parse_one(
+    path: &Path,
+    overlay: Option<&SourceOverlay>,
+) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     thread_local! {
         static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
             const { std::cell::RefCell::new(None) };
     }
-    let decoded = match ry_workspace::read_r_source_decoded(path) {
+    let source = match overlay.filter(|source| source.path == path) {
+        Some(source) => Ok(ry_workspace::decode_r_source(&source.bytes)),
+        None => ry_workspace::read_r_source_decoded(path),
+    };
+    let decoded = match source {
         Ok(decoded) => decoded,
         Err(error) => {
             return Err(ParseFailure {

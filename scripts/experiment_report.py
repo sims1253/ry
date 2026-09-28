@@ -6,6 +6,7 @@ from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -58,6 +59,10 @@ def relative_file(value):
 
 
 def identity(row):
+    if not isinstance(row, dict) or any(key not in row for key in IDENTITY_FIELDS):
+        raise ValueError("finding identity needs code, line, and column")
+    if not isinstance(row["code"], str) or type(row["line"]) is not int or type(row["column"]) is not int:
+        raise ValueError("finding identity needs a string code and integer line/column")
     return tuple(row[key] for key in IDENTITY_FIELDS)
 
 
@@ -76,12 +81,17 @@ def validate_manifest(manifest):
         raise ValueError("manifest needs correctness invariants")
     if not isinstance(manifest.get("r_packages", []), list):
         raise ValueError("r_packages must be a list")
+    if not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9.]*", name)
+               for name in manifest.get("r_packages", [])):
+        raise ValueError("r_packages must contain package names")
     fixtures = manifest.get("fixtures")
     if not isinstance(fixtures, list) or not fixtures:
         raise ValueError("manifest needs selected fixtures")
     roles = set()
     names = set()
     for fixture in fixtures:
+        if not isinstance(fixture, dict):
+            raise ValueError("fixtures must be objects")
         if fixture.get("role") not in ("witness", "quiet_control"):
             raise ValueError("fixture role must be witness or quiet_control")
         roles.add(fixture["role"])
@@ -102,13 +112,16 @@ def validate_manifest(manifest):
                 identity(row)
         if "triage" in fixture:
             triage = fixture["triage"]
-            relative_file(triage["ledger"])
-            if not triage.get("package") or not triage.get("path"):
+            if not isinstance(triage, dict) or not triage.get("package") or not triage.get("path"):
                 raise ValueError("triage needs ledger, package and package-relative path")
+            relative_file(triage.get("ledger"))
+            relative_file(triage["path"])
             if workload is None or triage["path"] != fixture["path"]:
                 raise ValueError("triage labels require the pinned workload file at the ledger path")
     if roles != {"witness", "quiet_control"}:
         raise ValueError("select a witness and an adjacent quiet control")
+    if not isinstance(manifest.get("targeted_checks", []), list):
+        raise ValueError("targeted_checks must be a list")
     for check in manifest.get("targeted_checks", []):
         if not isinstance(check, dict):
             raise ValueError("targeted checks must be objects")
@@ -130,13 +143,23 @@ def labels_for(fixture, source):
     if not triage:
         return {}, None
     path = source / triage["ledger"]
+    if not path.resolve().is_relative_to(source.resolve()):
+        raise ValueError("triage ledger must remain inside the candidate source")
     ledger = json.loads(path.read_text())
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("packages"), list) or not isinstance(ledger.get("findings"), list):
+        raise ValueError(f"malformed triage ledger: {path}")
+    if any(not isinstance(row, dict) or "name" not in row or "commit" not in row for row in ledger["packages"]):
+        raise ValueError(f"malformed triage package rows: {path}")
     package = next((row for row in ledger["packages"] if row["name"] == triage["package"]), None)
     if package is None or package["commit"] != fixture["workload"]["revision"]:
         raise ValueError("triage ledger package pin differs from the selected workload")
     labels = {}
     for row in ledger["findings"]:
+        if not isinstance(row, dict) or "package" not in row or "path" not in row:
+            raise ValueError(f"malformed triage finding rows: {path}")
         if row["package"] == triage["package"] and row["path"] == triage["path"]:
+            if not isinstance(row.get("label"), str):
+                raise ValueError(f"triage finding has no label: {path}")
             key = identity(row)
             if key in labels and labels[key] != row["label"]:
                 raise ValueError(f"conflicting triage labels: {key}")
@@ -193,6 +216,25 @@ def compare_instructions(old, new):
     return "passed", "comparable counts; inspect raw samples and uncertainty"
 
 
+def load_instruction_ledger(path):
+    try:
+        ledger = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError(f"instruction ledger missing or invalid: {path}: {error}") from error
+    if not isinstance(ledger, dict) or not isinstance(ledger.get("metadata"), dict) or not isinstance(ledger.get("packages"), list):
+        raise ValueError(f"instruction ledger has no metadata/package rows: {path}")
+    for row in ledger["packages"]:
+        if not isinstance(row, dict) or not isinstance(row.get("package"), str) or row.get("status") not in ("measured", "unavailable"):
+            raise ValueError(f"malformed instruction package row: {path}")
+        if row["status"] == "measured":
+            if any(not isinstance(row.get(key), str) for key in ("revision", "tree", "url")) or (
+                type(row.get("instructions")) not in (int, float) or not math.isfinite(row["instructions"])
+                or row["instructions"] <= 0
+            ):
+                raise ValueError(f"invalid measured instruction row: {path}")
+    return ledger
+
+
 class Experiment:
     def __init__(self, manifest_path, output, profile):
         self.manifest_path = manifest_path.resolve()
@@ -211,7 +253,7 @@ class Experiment:
         self.env = {key: os.environ[key] for key in inherited if key in os.environ}
         self.env.update(LC_ALL="C", TZ="UTC", RAYON_NUM_THREADS="1",
                         RY_NO_INSTALLED_LIBRARIES="1", CARGO_PROFILE_DEV_DEBUG="0",
-                        CARGO_PROFILE_TEST_DEBUG="0", CARGO_BUILD_JOBS="4",
+                        CARGO_PROFILE_TEST_DEBUG="0", CARGO_BUILD_JOBS="4", CARGO_INCREMENTAL="0",
                         GIT_TERMINAL_PROMPT="0")
 
     def stage(self, name, status, **details):
@@ -280,22 +322,43 @@ class Experiment:
                 "revision": revision, "tree": git("rev-parse", "HEAD^{tree}", cwd=path),
                 "source_repository": str(repository), "checkout": str(path),
             }
+        self.record_metadata()
+
+    def record_metadata(self):
         self.report["metadata"]["environment"] = {key: self.env[key] for key in sorted(self.env)}
         self.report["metadata"]["toolchain"] = {}
         for name, argv in (("rustc", ["rustc", "-vV"]), ("cargo", ["cargo", "--version"]),
                            ("R", ["Rscript", "--version"])):
             if shutil.which(argv[0]):
-                result = subprocess.run(argv, capture_output=True, text=True)
-                self.report["metadata"]["toolchain"][name] = (result.stdout or result.stderr).strip()
+                try:
+                    result = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=self.env)
+                    if result.returncode == 0:
+                        self.report["metadata"]["toolchain"][name] = (result.stdout or result.stderr).strip()
+                    else:
+                        self.report["metadata"]["toolchain"][name] = None
+                        self.stage(f"metadata-{name}", "unavailable", reason=f"version probe exited {result.returncode}")
+                except subprocess.TimeoutExpired:
+                    self.report["metadata"]["toolchain"][name] = None
+                    self.stage(f"metadata-{name}", "unavailable", reason="version probe timed out")
             else:
                 self.report["metadata"]["toolchain"][name] = None
         packages = self.manifest.get("r_packages", [])
-        if packages and shutil.which("Rscript"):
-            if not all(re.fullmatch(r"[A-Za-z][A-Za-z0-9.]*", name) for name in packages):
-                raise ValueError("r_packages must contain package names")
+        if packages and not shutil.which("Rscript"):
+            self.report["metadata"]["r_packages"] = ["unavailable: Rscript is not installed"]
+            self.stage("metadata-r-packages", "unavailable", reason="Rscript is not installed")
+        elif packages:
             expression = "for (p in c(" + ",".join(json.dumps(p) for p in packages) + ")) cat(p, if (requireNamespace(p, quietly=TRUE)) as.character(packageVersion(p)) else 'unavailable', '\\n')"
-            result = subprocess.run(["Rscript", "-e", expression], capture_output=True, text=True, timeout=30)
-            self.report["metadata"]["r_packages"] = result.stdout.splitlines() if result.returncode == 0 else ["unavailable"]
+            try:
+                result = subprocess.run(["Rscript", "-e", expression], capture_output=True, text=True,
+                                        timeout=30, env=self.env)
+                if result.returncode == 0:
+                    self.report["metadata"]["r_packages"] = result.stdout.splitlines()
+                else:
+                    self.report["metadata"]["r_packages"] = ["unavailable"]
+                    self.stage("metadata-r-packages", "unavailable", reason=f"R package probe exited {result.returncode}")
+            except subprocess.TimeoutExpired:
+                self.report["metadata"]["r_packages"] = ["unavailable"]
+                self.stage("metadata-r-packages", "unavailable", reason="R package probe timed out")
 
     def run_checks(self):
         if self.profile == "full":
@@ -312,45 +375,76 @@ class Experiment:
                              side=side, requires_r=check.get("requires_r", False))
 
     def run_fixtures(self):
+        self.report["fixtures"] = [
+            {"name": fixture["name"], "role": fixture["role"], "path": fixture["path"],
+             "status": "skipped", "reference": [], "candidate": []}
+            for fixture in self.manifest["fixtures"]
+        ]
+
+        def skip_diffs(start, reason):
+            for fixture in self.manifest["fixtures"][start:]:
+                self.stage(f"fixture-diff-{fixture['name']}", "skipped", reason=reason)
+
         builds = {}
         for side in ("reference", "candidate"):
             source = self.output / side
             row = self.command(f"build-{side}", ["cargo", "build", "--locked", "-p", "ry-cli", "--bin", "ry"], source, side=side)
             if row["status"] != "passed":
                 self.stage(f"fixtures-{side}", "skipped", reason="checker build failed")
+                skip_diffs(0, "checker build failed")
                 return
             binary = self.output / f"target-{side}" / "debug" / "ry"
             builds[side] = binary
             self.report["metadata"][side]["binary_sha256"] = sha256(binary)
-        for fixture in self.manifest["fixtures"]:
+        for index, fixture in enumerate(self.manifest["fixtures"]):
             name = fixture["name"]
-            labels, ledger_hash = labels_for(fixture, self.output / "candidate")
-            item = {"name": name, "role": fixture["role"], "path": fixture["path"],
-                    "triage_ledger_sha256": ledger_hash, "reference": [], "candidate": []}
-            self.report["fixtures"].append(item)
+            item = self.report["fixtures"][index]
+            try:
+                labels, ledger_hash = labels_for(fixture, self.output / "candidate")
+            except (OSError, ValueError) as error:
+                item["status"] = "failed"
+                self.stage(f"fixture-triage-{name}", "failed", reason=str(error))
+                skip_diffs(index, "triage ledger unavailable or malformed")
+                return
+            item["triage_ledger_sha256"] = ledger_hash
             for side in ("reference", "candidate"):
                 source = self.output / side
                 fixture_root = self.output / "workloads" / name if "workload" in fixture else source
                 file = fixture_root / fixture["path"]
                 if not file.is_file() or not file.resolve().is_relative_to(fixture_root.resolve()):
+                    item["status"] = "unavailable"
                     self.stage(f"fixture-{name}-{side}", "unavailable", reason="fixture missing from source")
+                    if side == "reference":
+                        self.stage(f"fixture-{name}-candidate", "skipped", reason="reference fixture unavailable")
+                    skip_diffs(index, "fixture unavailable")
                     return
                 item[f"{side}_sha256"] = sha256(file)
                 argument = str(file) if "workload" in fixture else fixture["path"]
                 row = self.command(f"fixture-{name}-{side}", [str(builds[side]), "check", "--exit-zero", "--output-format", "json", argument],
                                    source, side=side)
                 if row["status"] != "passed":
+                    item["status"] = row["status"]
+                    if side == "reference":
+                        self.stage(f"fixture-{name}-candidate", "skipped", reason="reference check did not pass")
+                    skip_diffs(index, "fixture check did not pass")
                     return
                 try:
                     findings = json.loads(Path(row["stdout"]).read_text())
-                    if not isinstance(findings, list) or not all(all(key in finding for key in IDENTITY_FIELDS) for finding in findings):
+                    if not isinstance(findings, list):
                         raise ValueError("invalid diagnostic JSON")
+                    for finding in findings:
+                        identity(finding)
                     item[side] = findings
                 except (ValueError, TypeError) as error:
+                    item["status"] = "failed"
                     self.stage(f"fixture-json-{name}-{side}", "failed", reason=str(error))
+                    if side == "reference":
+                        self.stage(f"fixture-{name}-candidate", "skipped", reason="reference JSON invalid")
+                    skip_diffs(index, "fixture JSON invalid")
                     return
             added, removed, status, reason = evaluate_fixture(fixture, item["reference"], item["candidate"], labels)
             item["added"], item["removed"] = added, removed
+            item["status"] = status
             self.stage(f"fixture-diff-{name}", status, reason=reason)
 
     def run_instructions(self):
@@ -360,10 +454,15 @@ class Experiment:
             return
         harness = self.output / "candidate" / "ecosystem" / "instructions.py"
         packages = self.output / "candidate" / "ecosystem" / "instruction-packages.txt"
-        self.report["metadata"]["instruction_harness_sha256"] = sha256(harness)
-        self.report["metadata"]["instruction_packages_sha256"] = sha256(packages)
         reference_packages = self.output / "reference" / "ecosystem" / "instruction-packages.txt"
-        if sha256(reference_packages) != sha256(packages):
+        try:
+            self.report["metadata"]["instruction_harness_sha256"] = sha256(harness)
+            self.report["metadata"]["instruction_packages_sha256"] = sha256(packages)
+            reference_pin = sha256(reference_packages)
+        except OSError as error:
+            self.stage("instructions", "unavailable", reason=f"instruction harness or pins missing: {error}")
+            return
+        if reference_pin != self.report["metadata"]["instruction_packages_sha256"]:
             self.stage("instructions", "incomparable", reason="reference and candidate workload pins differ")
             return
         ledgers = {}
@@ -378,7 +477,11 @@ class Experiment:
             row = self.command(f"instructions-measure-{side}", command, self.output / side, side=side,
                                timeout=900, cargo_target=False)
             if ledger.exists():
-                ledgers[side] = json.loads(ledger.read_text())
+                try:
+                    ledgers[side] = load_instruction_ledger(ledger)
+                except ValueError as error:
+                    self.stage("instructions", "failed", reason=str(error))
+                    return
             if row["status"] != "passed":
                 reason = ledgers.get(side, {}).get("reason", "measurement command failed")
                 unavailable_rows = [item for item in ledgers.get(side, {}).get("packages", [])
@@ -387,10 +490,14 @@ class Experiment:
                     unavailable_rows and not ledgers.get(side, {}).get("reason")) else row["status"]
                 if unavailable_rows and reason == "measurement command failed":
                     reason = "; ".join(f"{item['package']}: {item.get('reason', 'unavailable')}" for item in unavailable_rows)
-                row["status"] = state
-                row["reason"] = reason
                 self.stage("instructions", state, reason=reason)
                 return
+            if side not in ledgers:
+                self.stage("instructions", "failed", reason=f"measure exited successfully without ledger: {ledger}")
+                return
+        if set(ledgers) != {"reference", "candidate"}:
+            self.stage("instructions", "failed", reason="reference or candidate ledger missing")
+            return
         state, reason = compare_instructions(ledgers["reference"], ledgers["candidate"])
         row = self.command("instructions-compare", [sys.executable, str(harness), "compare",
                            str(self.output / "instructions-reference.json"), str(self.output / "instructions-candidate.json")],
@@ -430,7 +537,10 @@ class Experiment:
         lines += ["", "## Selected findings", ""]
         for fixture in self.report["fixtures"]:
             lines.append(f"### {fixture['name']} ({fixture['role']})")
-            lines.append(f"Reference: {len(fixture['reference'])}; candidate: {len(fixture['candidate'])}.")
+            if fixture["status"] in ("skipped", "unavailable"):
+                lines.append(f"Comparison {fixture['status']}.")
+            else:
+                lines.append(f"Reference: {len(fixture['reference'])}; candidate: {len(fixture['candidate'])}.")
             for direction in ("removed", "added"):
                 for finding in fixture.get(direction, []):
                     lines.append(f"- {direction}: `{finding['code']}:{finding['line']}:{finding['column']}` — {finding['label']}")
@@ -448,8 +558,10 @@ class Experiment:
             self.run_instructions()
         except (Cancelled, KeyboardInterrupt):
             self.stage("run", "cancelled", reason="interrupted")
-        except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
-            self.stage("run", "failed", reason=str(error))
+        except Exception as error:
+            # A plugin, tool, or malformed artifact must not erase the run's
+            # completed stages and raw output. Cancellation is handled above.
+            self.stage("run", "failed", reason=f"{type(error).__name__}: {error}")
         return self.finish()
 
 

@@ -3,6 +3,8 @@
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -51,6 +53,9 @@ class FindingDiffTests(unittest.TestCase):
             self.assertEqual(digest, report.sha256(ledger))
             fixture["workload"]["revision"] = "b" * 40
             with self.assertRaisesRegex(ValueError, "pin differs"):
+                report.labels_for(fixture, source)
+            ledger.write_text(json.dumps({"packages": [{"name": "pkg"}], "findings": []}))
+            with self.assertRaisesRegex(ValueError, "malformed triage package"):
                 report.labels_for(fixture, source)
 
 
@@ -157,6 +162,125 @@ class RunStatusTests(unittest.TestCase):
             self.assertEqual(experiment.report["stages"][-1]["status"], "incomparable")
             experiment.finish()
             self.assertFalse(experiment.report["fully_validated"])
+
+    def prepare_instruction_files(self, experiment):
+        for side in ("reference", "candidate"):
+            ecosystem = experiment.output / side / "ecosystem"
+            ecosystem.mkdir(parents=True)
+            (ecosystem / "instruction-packages.txt").write_text("same pins")
+        (experiment.output / "candidate" / "ecosystem" / "instructions.py").write_text("harness")
+
+    def test_missing_ledger_after_successful_measure_has_failed_stage_and_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.manifest["instructions"] = {"enabled": True}
+            self.prepare_instruction_files(experiment)
+            with mock.patch.object(experiment, "command", side_effect=lambda name, *args, **kwargs: experiment.stage(name, "passed")):
+                experiment.run_instructions()
+            self.assertEqual(experiment.report["stages"][-1]["status"], "failed")
+            self.assertIn("without ledger", experiment.report["stages"][-1]["reason"])
+            self.assertEqual(experiment.finish(), 1)
+            self.assertTrue((experiment.output / "report.json").exists())
+
+    def test_malformed_measurement_ledger_has_failed_stage_and_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.manifest["instructions"] = {"enabled": True}
+            self.prepare_instruction_files(experiment)
+            (experiment.output / "instructions-reference.json").write_text("not JSON")
+            with mock.patch.object(experiment, "command", side_effect=lambda name, *args, **kwargs: experiment.stage(name, "passed")):
+                experiment.run_instructions()
+            self.assertEqual(experiment.report["stages"][-1]["status"], "failed")
+            self.assertIn("ledger missing or invalid", experiment.report["stages"][-1]["reason"])
+            experiment.finish()
+            self.assertTrue((experiment.output / "report.md").exists())
+
+    def test_unavailable_counter_keeps_raw_failed_exit_and_layer_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.manifest["instructions"] = {"enabled": True}
+            self.prepare_instruction_files(experiment)
+            (experiment.output / "instructions-reference.json").write_text(json.dumps({
+                "schema_version": 1, "metadata": {"backend": "unavailable"},
+                "reason": "No usable instruction counter", "packages": []}))
+            with mock.patch.object(experiment, "command", side_effect=lambda name, *args, **kwargs:
+                                   experiment.stage(name, "failed", exit_code=1)):
+                experiment.run_instructions()
+            self.assertEqual(experiment.report["stages"][0]["status"], "failed")
+            self.assertEqual(experiment.report["stages"][0]["exit_code"], 1)
+            self.assertEqual(experiment.report["stages"][1]["status"], "unavailable")
+            experiment.finish()
+            self.assertFalse(experiment.report["fully_validated"])
+
+    def test_failed_build_marks_every_selected_fixture_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            with mock.patch.object(experiment, "command", side_effect=lambda name, *args, **kwargs:
+                                   experiment.stage(name, "failed", exit_code=42)):
+                experiment.run_fixtures()
+            self.assertEqual([item["status"] for item in experiment.report["fixtures"]], ["skipped", "skipped"])
+            self.assertEqual([row["status"] for row in experiment.report["stages"] if row["name"].startswith("fixture-diff-")],
+                             ["skipped", "skipped"])
+
+    def test_malformed_triage_ledger_finalizes_with_later_fixture_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            fixture = experiment.manifest["fixtures"][0]
+            fixture["workload"] = {"repository": str(Path(directory)), "revision": "a" * 40}
+            fixture["triage"] = {"ledger": "ledger.json", "package": "pkg", "path": fixture["path"]}
+            candidate = experiment.output / "candidate"
+            candidate.mkdir()
+            (candidate / "ledger.json").write_text("{}")
+            for side in ("reference", "candidate"):
+                binary = experiment.output / f"target-{side}" / "debug" / "ry"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"binary")
+                experiment.report["metadata"][side] = {}
+            with mock.patch.object(experiment, "command", side_effect=lambda name, *args, **kwargs: experiment.stage(name, "passed")):
+                experiment.run_fixtures()
+            self.assertEqual(experiment.report["fixtures"][0]["status"], "failed")
+            self.assertEqual(experiment.report["fixtures"][1]["status"], "skipped")
+            self.assertEqual([row["status"] for row in experiment.report["stages"] if row["name"].startswith("fixture-diff-")],
+                             ["skipped", "skipped"])
+            self.assertEqual(experiment.finish(), 1)
+            self.assertTrue((experiment.output / "report.json").exists())
+
+    def test_malformed_manifest_finding_and_triage_fail_cleanly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            fixture = experiment.manifest["fixtures"][0]
+            fixture["expected_additions"] = [{"code": "RY106"}]
+            with self.assertRaisesRegex(ValueError, "identity needs"):
+                report.validate_manifest(experiment.manifest)
+            fixture["expected_additions"] = []
+            fixture["triage"] = {"package": "pkg", "path": fixture["path"]}
+            with self.assertRaisesRegex(ValueError, "repository-relative file"):
+                report.validate_manifest(experiment.manifest)
+
+            path = Path(directory) / "bad.json"
+            path.write_text(json.dumps(experiment.manifest))
+            result = subprocess.run([sys.executable, str(Path(report.__file__)), str(path),
+                                     "--profile", "targeted", "--output", str(Path(directory) / "unused")],
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("experiment:", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_timed_out_r_package_metadata_stays_in_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.manifest["r_packages"] = ["rlang"]
+            def probe(argv, **_kwargs):
+                if argv[:2] == ["Rscript", "-e"]:
+                    raise subprocess.TimeoutExpired(argv, 30)
+                return mock.Mock(returncode=0, stdout="version", stderr="")
+            with mock.patch.object(report.shutil, "which", side_effect=lambda name, **kwargs: name), \
+                 mock.patch.object(report.subprocess, "run", side_effect=probe):
+                experiment.record_metadata()
+            self.assertEqual(experiment.report["stages"][-1]["status"], "unavailable")
+            self.assertIn("timed out", experiment.report["stages"][-1]["reason"])
+            experiment.finish()
+            self.assertTrue((experiment.output / "report.json").exists())
 
 
 if __name__ == "__main__":

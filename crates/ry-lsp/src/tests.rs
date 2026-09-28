@@ -622,6 +622,26 @@ fn code_action_ignore_line_not_blocked_by_prose_mention() {
 }
 
 #[test]
+fn code_action_uses_checker_parser_for_invalid_and_foreign_directives() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    for marker in [
+        "ry: ignore[RX040]",
+        "ry: ignore[RY999999]",
+        "noqa: E501",
+        "noqa-ish note",
+    ] {
+        let text = format!("\"a\" + 1L  # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_some(),
+            "{marker}"
+        );
+    }
+    let text = "\"a\" + 1L  # noqa: E501, RY040\n";
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
+}
+
+#[test]
 fn code_action_ignore_line_marker_is_case_insensitive() {
     // The checker's parser matches `ry:` / `noqa` markers
     // case-insensitively; the quick-fix availability follows it.

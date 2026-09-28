@@ -152,6 +152,9 @@ impl TypeExpr {
     fn normalized(self) -> Result<Self, DeclarationError> {
         match self {
             Self::Union(members) => {
+                if members.is_empty() {
+                    return Err(DeclarationError::InvalidSyntax("empty union".into()));
+                }
                 if members.len() > MAX_UNION_ALTERNATIVES {
                     return Err(DeclarationError::ResourceLimit(format!(
                         "union has more than {MAX_UNION_ALTERNATIVES} alternatives"
@@ -1095,6 +1098,41 @@ mod tests {
             many_duplicates.canonical(),
             Err(DeclarationError::ResourceLimit(_))
         ));
+    }
+
+    #[test]
+    fn nested_empty_union_is_invalid_even_when_flattening_would_hide_it() {
+        let invalid = TypeExpr::Union(vec![
+            TypeExpr::atomic(AtomicMode::Integer),
+            TypeExpr::Union(vec![]),
+        ]);
+        for expression in [TypeExpr::Union(vec![]), invalid.clone()] {
+            assert!(matches!(
+                expression.canonical(),
+                Err(DeclarationError::InvalidSyntax(reason)) if reason == "empty union"
+            ));
+        }
+        let signature = DeclaredSignature {
+            parameters: vec![DeclaredParameter {
+                name: "x".into(),
+                form: ParameterForm::Ordinary,
+                supplied: SupplyStatus::Required,
+                evaluation: EvaluationSemantics::Value,
+                constraint: Some(invalid),
+            }],
+            return_constraint: None,
+            assignment: AssignmentSemantics::EntryOnly,
+        };
+        assert!(matches!(
+            signature.canonical(),
+            Err(DeclarationError::InvalidSyntax(reason)) if reason == "empty union"
+        ));
+        assert_eq!(
+            TypeExpr::Union(vec![TypeExpr::atomic(AtomicMode::Integer)])
+                .canonical()
+                .unwrap(),
+            "integer"
+        );
     }
 
     #[test]

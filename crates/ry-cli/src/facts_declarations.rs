@@ -233,6 +233,20 @@ mod tests {
         assert_eq!(exact_value[0]["translation"]["residuals"], json!([]));
         assert_eq!(exact_value[0]["evidence_use"], "adopted_contract");
 
+        let mut malformed = record.clone();
+        let mut malformed_signature = supported.clone();
+        malformed_signature.parameters[0].constraint = Some(TypeExpr::Union(vec![
+            TypeExpr::atomic(AtomicMode::Integer),
+            TypeExpr::Union(vec![]),
+        ]));
+        malformed.translation = Translation::Exact(malformed_signature);
+        assert!(
+            export_records(&file, &[malformed])
+                .unwrap_err()
+                .to_string()
+                .contains("empty union")
+        );
+
         let mut stale = record.clone();
         if let Translation::Partial { residuals, .. } = &mut stale.translation {
             residuals[0].span.start += 1;

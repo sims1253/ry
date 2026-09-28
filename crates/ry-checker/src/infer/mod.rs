@@ -1198,8 +1198,14 @@ impl Checker {
     /// assignment is textually later than its use in the body.
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in self.reachable_loop_assignments(body, scope) {
+            let vector_path = !scope.scalar_asserted_bindings.contains(&name)
+                && (scope.loop_vector_bindings.contains(&name)
+                    || scope.get(&name).is_some_and(loops::known_unclassed_vector));
             // The pre-loop value need not survive a later iteration.
-            scope.insert(name, RType::unknown());
+            scope.insert(name.clone(), RType::unknown());
+            if vector_path {
+                scope.mark_loop_vector(&name);
+            }
         }
     }
 
@@ -1233,6 +1239,28 @@ impl Checker {
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
+        // Assertions before this `if` remain valid only if neither arm can
+        // replace their binding. A same-typed assignment still invalidates
+        // the proof, even though ordinary type merging would see no change.
+        let lost_scalar_assertions: Vec<_> = scope
+            .scalar_asserted_bindings
+            .iter()
+            .filter(|name| {
+                !then_delta
+                    .changed
+                    .get(*name)
+                    .is_none_or(|state| state.scalar_asserted)
+                    || (has_else
+                        && !else_delta
+                            .changed
+                            .get(*name)
+                            .is_none_or(|state| state.scalar_asserted))
+            })
+            .cloned()
+            .collect();
+        for name in lost_scalar_assertions {
+            scope.clear_scalar_asserted(&name);
+        }
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
         let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
@@ -1244,6 +1272,36 @@ impl Checker {
         let then_diverges = then_diverges_in_loop || self.block_diverges_for_continuation(then);
         let else_diverges = else_diverges_in_loop
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        let mut vector_candidates: HashSet<String> =
+            scope.loop_vector_bindings.iter().cloned().collect();
+        for delta in [&then_delta, &else_delta] {
+            vector_candidates.extend(
+                delta
+                    .changed
+                    .iter()
+                    .filter(|(_, state)| state.loop_vector)
+                    .map(|(name, _)| name.clone()),
+            );
+        }
+        let loop_vectors_after: HashSet<String> = vector_candidates
+            .into_iter()
+            .filter(|name| {
+                let original = scope.loop_vector_bindings.contains(name);
+                let then = then_delta
+                    .changed
+                    .get(name)
+                    .map_or(original, |state| state.loop_vector);
+                let else_path = if has_else {
+                    else_delta
+                        .changed
+                        .get(name)
+                        .map_or(original, |state| state.loop_vector)
+                } else {
+                    original
+                };
+                (!then_diverges && then) || (!else_diverges && else_path)
+            })
+            .collect();
         let continuation = match (then_diverges, has_else, else_diverges) {
             (true, true, false) | (true, false, _) => Some(&else_delta),
             (false, true, true) => Some(&then_delta),
@@ -1474,6 +1532,15 @@ impl Checker {
         }
         for (name, refined) in union_guard_facts {
             scope.insert_narrowed(name, refined);
+        }
+        let old_loop_vectors: Vec<_> = scope.loop_vector_bindings.iter().cloned().collect();
+        for name in old_loop_vectors {
+            if !loop_vectors_after.contains(&name) {
+                scope.clear_loop_vector(&name);
+            }
+        }
+        for name in loop_vectors_after {
+            scope.mark_loop_vector(&name);
         }
         if has_else && then_delta.unreachable && else_delta.unreachable {
             scope.unreachable = true;

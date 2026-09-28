@@ -415,9 +415,11 @@ impl Checker {
         // than recursing from the enclosing `if`) reports each site exactly
         // once no matter how the operators nest.
         self.check_class_equality_operand(lhs, scope);
+        let lhs_loop_vector = self.loop_vector_operand(lhs, scope);
         let lt = self.infer_boolean_operand(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
+        let mut rhs_loop_vector = false;
         let rt = match op {
             BinOpKind::AndAnd | BinOpKind::OrOr => {
                 let branch = if matches!(op, BinOpKind::AndAnd) {
@@ -428,6 +430,7 @@ impl Checker {
                 let mut rhs_scope = scope.clone();
                 apply_narrowing_branch(&mut rhs_scope, &narrowing, branch);
                 self.check_class_equality_operand(rhs, &rhs_scope);
+                rhs_loop_vector = self.loop_vector_operand(rhs, &rhs_scope);
                 let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
@@ -463,7 +466,50 @@ impl Checker {
             );
             self.emit(Severity::Warning, span, "RY032", message);
         }
+        if (lhs_loop_vector || rhs_loop_vector)
+            && !self.diagnostics[before..]
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+        {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY032",
+                format!(
+                    "`{}` may receive an unclassed vector retained across a loop; R requires a single logical value",
+                    op_symbol(op)
+                ),
+            );
+        }
         result
+    }
+
+    fn loop_vector_operand(&self, expr: &Expr, scope: &Scope) -> bool {
+        let subject = match expr {
+            Expr::Ident { name, .. } => Some(name.as_str()),
+            Expr::BinOp { op, lhs, rhs, .. }
+                if matches!(
+                    op,
+                    BinOpKind::Lt
+                        | BinOpKind::Le
+                        | BinOpKind::Gt
+                        | BinOpKind::Ge
+                        | BinOpKind::Eq
+                        | BinOpKind::Ne
+                ) && matches!(rhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope) =>
+            {
+                match lhs.as_ref() {
+                    Expr::Ident { name, .. } => Some(name.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        subject.is_some_and(|name| {
+            scope.loop_vector_bindings.contains(name)
+                && !scope.scalar_asserted_bindings.contains(name)
+        })
     }
 
     /// Infer one direct `&&`/`||` operand while retaining its exact syntax
@@ -615,7 +661,155 @@ impl Checker {
         // return it, making the separate `is_parameter` check redundant.
         guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
+            .filter(|parameter| !scope.scalar_asserted_bindings.contains(*parameter))
             .is_some()
+    }
+
+    /// A successful `stopifnot` may establish a scalar-length fact that a
+    /// later short-circuit guard can reuse. Keep it separate from RType:
+    /// `is.null(x) || ...` also admits NULL, which other rules must still see.
+    pub(crate) fn mark_scalar_assertions(&self, args: &[Arg], scope: &mut Scope) {
+        if !self.resolves_to_base_lenient("stopifnot", scope)
+            || self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope)
+        {
+            return;
+        }
+        // Arguments run from left to right. A later argument can replace a
+        // binding validated by an earlier one, including through `assign()`
+        // or an arbitrary call that static assignment collection cannot see.
+        // The final predicate is the only one whose fact cannot be spoiled
+        // by another assertion argument after it.
+        if let Some(last) = args.last() {
+            let mut assigned = HashSet::new();
+            collect_condition_assignment_names(&last.value, &mut assigned);
+            if let Some(name) = self.scalar_assertion_subject(&last.value, scope)
+                && !assigned.contains(name.as_str())
+            {
+                scope.mark_scalar_asserted(&name);
+            }
+        }
+    }
+
+    pub(crate) fn scalar_assertion_subject(&self, expr: &Expr, scope: &Scope) -> Option<String> {
+        match expr {
+            Expr::BinOp {
+                op: BinOpKind::OrOr,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "||", scope) {
+                    return None;
+                }
+                let Expr::Call { func, args, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                let name = ident_name(func)?;
+                if crate::semantic_lists::bare_name(name) != "is.null"
+                    || !self.resolves_to_base_lenient(name, scope)
+                    || args.len() != 1
+                {
+                    return None;
+                }
+                let Expr::Ident { name: subject, .. } = &args[0].value else {
+                    return None;
+                };
+                (self.scalar_assertion_subject(rhs, scope).as_deref() == Some(subject.as_str()))
+                    .then(|| subject.clone())
+            }
+            Expr::BinOp {
+                op: BinOpKind::AndAnd,
+                lhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "&&", scope) {
+                    return None;
+                }
+                // R 4.2+ requires a length-one logical LHS of `&&`. For
+                // an unclassed value, a base comparison with a scalar
+                // literal has that same length as its subject.
+                let Expr::BinOp { op, lhs, rhs, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                if !matches!(
+                    op,
+                    BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
+                ) || !matches!(rhs.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                    || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    || self.project_defines_comparison_method()
+                {
+                    return None;
+                }
+                let Expr::Ident { name, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                self.scalar_assertion_class_safe(name, scope)
+                    .then(|| name.clone())
+            }
+            Expr::BinOp {
+                op: BinOpKind::Eq,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "==", scope) {
+                    return None;
+                }
+                let (length_call, literal) =
+                    if matches!(rhs.as_ref(), Expr::Integer(1, _) | Expr::Double(1.0, _)) {
+                        (lhs.as_ref(), rhs.as_ref())
+                    } else {
+                        (rhs.as_ref(), lhs.as_ref())
+                    };
+                if !matches!(literal, Expr::Integer(1, _) | Expr::Double(1.0, _)) {
+                    return None;
+                }
+                let Expr::Call { func, args, .. } = length_call else {
+                    return None;
+                };
+                let callee = ident_name(func)?;
+                if crate::semantic_lists::bare_name(callee) != "length"
+                    || !self.resolves_to_base_lenient(callee, scope)
+                    || args.len() != 1
+                {
+                    return None;
+                }
+                let Expr::Ident { name, .. } = &args[0].value else {
+                    return None;
+                };
+                self.equality_length_guard_proves_scalar(name, expr, scope)
+                    .then(|| name.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn scalar_assertion_class_safe(&self, name: &str, scope: &Scope) -> bool {
+        match scope.get(name).map(|ty| (ty.class.known, ty.class.len)) {
+            Some((true, n)) if n > 0 => false,
+            Some((true, 0)) if !scope.is_default_parameter(name) => true,
+            _ => !self.project_defines_comparison_method(),
+        }
+    }
+
+    fn project_defines_comparison_method(&self) -> bool {
+        let comparison =
+            |generic: &str| matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=");
+        let named = |name: &str| {
+            name.rsplit_once('.')
+                .is_some_and(|(generic, class)| !class.is_empty() && comparison(generic))
+        };
+        self.fn_table
+            .s3_methods
+            .keys()
+            .any(|(generic, _)| comparison(generic))
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(generic, _)| comparison(generic))
+            || self.fn_table.fns.keys().any(|name| named(name))
+            || self.imported_from.keys().any(|name| named(name))
+            || self.external_bindings.iter().any(|name| named(name))
     }
 
     /// Whether the `length(x) == 1` guard on `parameter` proves the value

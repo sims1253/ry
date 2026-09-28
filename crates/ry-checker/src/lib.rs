@@ -385,6 +385,14 @@ pub struct Scope {
     /// Bindings that still refer directly to function parameters. Assigning
     /// to the name clears this marker; flow narrowing preserves it.
     pub parameter_bindings: FxSet<String>,
+    /// Current bindings whose successful assertion established that the value
+    /// is NULL or has length one. This is narrower than changing RType's
+    /// length: the NULL alternative must remain visible to other rules.
+    pub(crate) scalar_asserted_bindings: FxSet<String>,
+    /// A path into the current loop carries an unclassed vector of proven
+    /// length greater than one. This existential fact survives type joins
+    /// that collapse a vector/scalar alternative to unknown length.
+    pub(crate) loop_vector_bindings: FxSet<String>,
     /// Bindings derived from list-valued expressions even when later subset
     /// inference loses the concrete mode. Used by container-shape rules.
     pub list_origin_bindings: FxSet<String>,
@@ -426,6 +434,8 @@ impl Clone for Scope {
             bindings: self.bindings.clone(),
             narrowed_bindings: self.narrowed_bindings.clone(),
             parameter_bindings: self.parameter_bindings.clone(),
+            scalar_asserted_bindings: self.scalar_asserted_bindings.clone(),
+            loop_vector_bindings: self.loop_vector_bindings.clone(),
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
@@ -461,6 +471,9 @@ impl Scope {
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
+        // A closure may run after its enclosing binding changes.
+        scope.scalar_asserted_bindings.clear();
+        scope.loop_vector_bindings.clear();
         let possible_functions = self
             .bindings
             .iter()
@@ -499,6 +512,8 @@ impl Scope {
                 .keys()
                 .chain(self.narrowed_bindings.iter())
                 .chain(self.parameter_bindings.iter())
+                .chain(self.scalar_asserted_bindings.iter())
+                .chain(self.loop_vector_bindings.iter())
                 .chain(self.default_parameter_bindings.iter())
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
@@ -515,6 +530,8 @@ impl Scope {
         }
         self.narrowed_bindings.clear();
         self.parameter_bindings.clear();
+        self.scalar_asserted_bindings.clear();
+        self.loop_vector_bindings.clear();
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
@@ -568,6 +585,12 @@ impl Scope {
         if !self.parameter_bindings.is_empty() {
             self.parameter_bindings.remove(&name);
         }
+        if !self.scalar_asserted_bindings.is_empty() {
+            self.scalar_asserted_bindings.remove(&name);
+        }
+        if !self.loop_vector_bindings.is_empty() {
+            self.loop_vector_bindings.remove(&name);
+        }
         if !self.default_parameter_bindings.is_empty() {
             self.default_parameter_bindings.remove(&name);
         }
@@ -581,6 +604,8 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        let excludes_unclassed_vector =
+            t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
         }
@@ -591,6 +616,9 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.lexical_functions.remove(&name);
+        if excludes_unclassed_vector {
+            self.loop_vector_bindings.remove(&name);
+        }
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.narrowed_bindings.insert(name);
@@ -617,6 +645,8 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
+        self.scalar_asserted_bindings.remove(&name);
+        self.loop_vector_bindings.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.parameter_bindings.insert(name.clone());
@@ -635,6 +665,32 @@ impl Scope {
 
     pub(crate) fn is_parameter(&self, name: &str) -> bool {
         self.parameter_bindings.contains(name)
+    }
+
+    pub(crate) fn mark_scalar_asserted(&mut self, name: &str) {
+        self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
+        self.scalar_asserted_bindings.insert(name.to_string());
+    }
+
+    pub(crate) fn clear_scalar_asserted(&mut self, name: &str) {
+        if self.scalar_asserted_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
+            self.scalar_asserted_bindings.remove(name);
+        }
+    }
+
+    pub(crate) fn mark_loop_vector(&mut self, name: &str) {
+        if !self.loop_vector_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::LoopVector);
+            self.loop_vector_bindings.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn clear_loop_vector(&mut self, name: &str) {
+        if self.loop_vector_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::LoopVector);
+            self.loop_vector_bindings.remove(name);
+        }
     }
 
     pub(crate) fn is_default_parameter(&self, name: &str) -> bool {

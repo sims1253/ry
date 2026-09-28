@@ -1,5 +1,9 @@
 use super::*;
 
+pub(super) fn known_unclassed_vector(ty: &RType) -> bool {
+    matches!(ty.length, Length::Known(n) if n > 1) && ty.class.known && ty.class.len == 0
+}
+
 #[derive(Default)]
 pub(crate) struct LoopExitFrame {
     breaks: Option<Box<Scope>>,
@@ -27,6 +31,12 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     joined
         .list_origin_bindings
         .retain(|name| incoming.has_list_origin(name));
+    joined
+        .scalar_asserted_bindings
+        .retain(|name| incoming.scalar_asserted_bindings.contains(name));
+    joined
+        .loop_vector_bindings
+        .extend(incoming.loop_vector_bindings.iter().cloned());
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
     joined.literal_values_unknown |= incoming.literal_values_unknown;
@@ -148,15 +158,29 @@ impl Checker {
         };
         let reaches = exits.is_some() && !(always_true && !has_transfer && body_unreachable);
         if let Some(exit) = exits {
+            let scalar_before = scope.scalar_asserted_bindings.clone();
+            let vector_before = scope.loop_vector_bindings.clone();
             scope.ops_environment_unknown |= exit.ops_environment_unknown;
             scope.effects_unknown |= exit.effects_unknown;
             scope.literal_values_unknown |= exit.literal_values_unknown;
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
+                let scalar_asserted = scalar_before.contains(&binding)
+                    && exit.scalar_asserted_bindings.contains(&binding);
+                let loop_vector = exit.loop_vector_bindings.contains(&binding)
+                    || (!entered
+                        && (vector_before.contains(&binding)
+                            || scope.get(&binding).is_some_and(known_unclassed_vector)));
                 scope.insert(binding.clone(), ty);
                 if list_origin {
-                    scope.mark_list_origin(binding);
+                    scope.mark_list_origin(binding.clone());
+                }
+                if scalar_asserted {
+                    scope.mark_scalar_asserted(&binding);
+                }
+                if loop_vector {
+                    scope.mark_loop_vector(&binding);
                 }
             }
         }

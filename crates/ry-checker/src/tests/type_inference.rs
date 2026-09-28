@@ -2010,6 +2010,50 @@ fn guarded_unknown_parameter_vector_emits_ry032_without_other_vector_intent() {
 }
 
 #[test]
+fn successful_stopifnot_scalar_guard_carries_to_later_short_circuit() {
+    let pinned_purrr_shape = "prepend <- function(x, values, before = NULL) {\n\
+        n <- length(x)\n\
+        stopifnot(is.null(before) || (before > 0 && before <= n))\n\
+        if (is.null(before) || before == 1) c(values, x) else c(x, values)\n\
+        }\n";
+    let diagnostics = check(pinned_purrr_shape);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY032"),
+        "the assertion rejects non-scalar before before its later use: {diagnostics:?}"
+    );
+
+    let exact_length = check(
+        "f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        exact_length.iter().all(|d| d.code != "RY032"),
+        "{exact_length:?}"
+    );
+
+    for source in [
+        // stopifnot accepts a vector of TRUE values; this does not prove
+        // that its subject has scalar length.
+        "f <- function(x) { stopifnot(is.null(x) || x > 0); if (is.null(x) || x == 1L) TRUE else FALSE }",
+        // A local replacement of the assertion function cannot validate x.
+        "stopifnot <- function(...) TRUE; f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+        // An S3 length method may report one for a longer vector.
+        "length.foo <- function(x) 1L; f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+        // The validation comparison may dispatch independently of the
+        // later equality comparison.
+        "`>.foo` <- function(e1, e2) TRUE; f <- function(x) { stopifnot(is.null(x) || (x > 0 && x <= 3)); if (is.null(x) || x == 1L) TRUE else FALSE }",
+        // A later assertion argument can replace the value validated by
+        // an earlier one before the following condition executes.
+        "f <- function(x) { stopifnot(is.null(x) || length(x) == 1L, { x <- c(1L, 2L); TRUE }); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "unproved scalar path must retain the existing warning: {source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn parameter_guards_respect_scalar_membership_and_exact_length() {
     for source in [
         "f <- function(x) is.null(x) || 'value' %in% x",
@@ -2084,6 +2128,54 @@ fn equality_length_guards_refuse_dispatch_risk_and_reassignment() {
 fn loop_carried_values_do_not_keep_the_initial_empty_length() {
     let source = "quote <- raw()\nfor (x in as.raw(c(1, 2))) {\nif (length(quote)) { if (x == quote) print(x) }\nquote <- x\n}";
     assert!(check(source).is_empty(), "{:?}", check(source));
+}
+
+#[test]
+fn loop_carried_alias_keeps_a_proven_vector_path_for_ry032() {
+    let source = "f <- function(xs) {\n\
+        original <- c(1L, 2L)\n\
+        alias <- original\n\
+        for (i in xs) {\n\
+          if (alias == 1L && TRUE) i\n\
+          alias <- 1L\n\
+        }\n\
+        }\n";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY032"),
+        "the first iteration receives a proven vector through the alias: {diagnostics:?}"
+    );
+
+    let zero_iteration = check(
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) x <- 1L; if (x == 1L && TRUE) x }",
+    );
+    assert!(
+        zero_iteration.iter().any(|d| d.code == "RY032"),
+        "an empty iterator leaves the original vector at the later condition: {zero_iteration:?}"
+    );
+
+    let partial_rebind = check(
+        "f <- function(xs, flag) { x <- c(1L, 2L); for (i in xs) { if (flag) x <- 1L; if (x == 1L && TRUE) i } }",
+    );
+    assert!(
+        partial_rebind.iter().any(|d| d.code == "RY032"),
+        "the branch that did not rebind x keeps the vector path: {partial_rebind:?}"
+    );
+
+    for source in [
+        "f <- function(xs) { original <- 1L; alias <- original; for (i in xs) { if (alias == 1L && TRUE) i; alias <- 1L } }",
+        "f <- function(xs) { original <- c(1L, 2L); alias <- original; for (i in xs) { alias <- 1L; if (alias == 1L && TRUE) i } }",
+        "f <- function(xs) { original <- c(1L, 2L); alias <- original; for (i in xs) { if (length(alias) == 1L) { if (alias == 1L && TRUE) i }; alias <- 1L } }",
+        "f <- function(xs, flag) { x <- c(1L, 2L); for (i in xs) { if (flag) x <- 1L else x <- 1L; if (x == 1L && TRUE) i } }",
+        "f <- function() { x <- c(1L, 2L); for (i in 1L) x <- 1L; if (x == 1L && TRUE) x }",
+        "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { stopifnot(length(x) == 1L); if (x == 1L && TRUE) i; x <- 1L } }",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "a scalar path must not inherit the vector alternative: {source}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

@@ -68,5 +68,5 @@ project-defined name without provenance would also credit a test-local
 
 RY032 also has a parameter-pattern heuristic. See
 [scalar guards](scalar-guards.md) for its package, assertion, and alias/loop
-limits, and for the distinction
+flow behavior, and for the distinction
 between a possible vector input and a failure on a valid scalar input.

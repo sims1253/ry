@@ -11,6 +11,7 @@ impl Checker {
         mut returns: Option<&mut Vec<RType>>,
     ) {
         let has_else = else_.is_some();
+        let base_loop_vectors = scope.loop_vector_bindings.clone();
         let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, narrowing);
         // Pre-`if` views of the guard-narrowed names, captured before the
         // merge below replaces them: the union-guard refinement compares
@@ -48,6 +49,17 @@ impl Checker {
             || self.block_diverges_for_continuation(then);
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        let mut loop_vectors_after = FxSet::default();
+        if !then_diverges {
+            loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
+        }
+        if !else_diverges {
+            loop_vectors_after.extend(if has_else {
+                else_scope.loop_vector_bindings.iter().cloned()
+            } else {
+                base_loop_vectors.iter().cloned()
+            });
+        }
         let continuation = match (then_diverges, else_, else_diverges) {
             (true, Some(_), false) | (true, None, _) => Some(&else_scope),
             (false, Some(_), true) => Some(&then_scope),
@@ -105,6 +117,7 @@ impl Checker {
             };
             scope.insert_narrowed(name, refined);
         }
+        scope.loop_vector_bindings = loop_vectors_after;
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {
@@ -131,6 +144,10 @@ impl Checker {
             then_scope.literal_values_unknown || else_scope.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
+        scope.scalar_asserted_bindings.retain(|name| {
+            then_scope.scalar_asserted_bindings.contains(name)
+                && (!has_else || else_scope.scalar_asserted_bindings.contains(name))
+        });
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

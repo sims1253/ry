@@ -1643,8 +1643,10 @@ impl Checker {
     /// The assertion-predicate stage: `stopifnot(...)` and `assert_that(...)`
     /// narrow the enclosing scope with each predicate's positive-path fact.
     fn apply_assertion_predicates(&mut self, name: &str, args: &[Arg], scope: &mut Scope) {
-        let assertion_predicates =
-            name == "stopifnot" || name == "assert_that" || name == "assertthat::assert_that";
+        let assertion_predicates = (name == "stopifnot"
+            && self.resolves_to_base_lenient("stopifnot", scope))
+            || name == "assert_that"
+            || name == "assertthat::assert_that";
         if assertion_predicates {
             for argument in args {
                 if name.ends_with("assert_that") && argument.name.as_deref() == Some("msg") {
@@ -1652,6 +1654,9 @@ impl Checker {
                 }
                 let narrowing = self.extract_type_narrowing(&argument.value, scope);
                 apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
+            }
+            if name == "stopifnot" {
+                self.mark_scalar_assertions(args, scope);
             }
         }
     }

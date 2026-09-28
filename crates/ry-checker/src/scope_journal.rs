@@ -7,6 +7,8 @@ pub(crate) struct BindingState {
     pub ty: Option<RType>,
     pub narrowed: bool,
     pub parameter: bool,
+    pub scalar_asserted: bool,
+    pub loop_vector: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
@@ -35,6 +37,8 @@ impl BindingState {
             ty: None,
             narrowed: scope.narrowed_bindings.contains(name),
             parameter: scope.parameter_bindings.contains(name),
+            scalar_asserted: scope.scalar_asserted_bindings.contains(name),
+            loop_vector: scope.loop_vector_bindings.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
@@ -55,6 +59,12 @@ impl BindingState {
         }
         marker(&mut scope.narrowed_bindings, &name, self.narrowed);
         marker(&mut scope.parameter_bindings, &name, self.parameter);
+        marker(
+            &mut scope.scalar_asserted_bindings,
+            &name,
+            self.scalar_asserted,
+        );
+        marker(&mut scope.loop_vector_bindings, &name, self.loop_vector);
         marker(&mut scope.list_origin_bindings, &name, self.list_origin);
         marker(
             &mut scope.default_parameter_bindings,
@@ -97,6 +107,8 @@ impl AssignmentUndo {
         let sets = [
             &mut scope.narrowed_bindings,
             &mut scope.parameter_bindings,
+            &mut scope.scalar_asserted_bindings,
+            &mut scope.loop_vector_bindings,
             &mut scope.list_origin_bindings,
             &mut scope.default_parameter_bindings,
             &mut scope.lexical_functions,
@@ -130,6 +142,8 @@ pub(crate) enum MarkerKind {
     ListOrigin,
     Lexical,
     Parameter,
+    ScalarAsserted,
+    LoopVector,
 }
 
 #[derive(Debug)]
@@ -265,6 +279,8 @@ impl Scope {
         let sets = [
             &mut self.narrowed_bindings,
             &mut self.parameter_bindings,
+            &mut self.scalar_asserted_bindings,
+            &mut self.loop_vector_bindings,
             &mut self.list_origin_bindings,
             &mut self.default_parameter_bindings,
             &mut self.lexical_functions,
@@ -344,6 +360,8 @@ impl Scope {
                 MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
                 MarkerKind::Lexical => self.lexical_functions.contains(name),
                 MarkerKind::Parameter => self.parameter_bindings.contains(name),
+                MarkerKind::ScalarAsserted => self.scalar_asserted_bindings.contains(name),
+                MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
@@ -473,6 +491,8 @@ impl Scope {
                         MarkerKind::ListOrigin => &mut self.list_origin_bindings,
                         MarkerKind::Lexical => &mut self.lexical_functions,
                         MarkerKind::Parameter => &mut self.parameter_bindings,
+                        MarkerKind::ScalarAsserted => &mut self.scalar_asserted_bindings,
+                        MarkerKind::LoopVector => &mut self.loop_vector_bindings,
                     };
                     if present {
                         set.insert(name);

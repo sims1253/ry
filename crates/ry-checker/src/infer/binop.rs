@@ -759,7 +759,8 @@ impl Checker {
                 let Expr::Ident { name, .. } = lhs.as_ref() else {
                     return None;
                 };
-                (self.scalar_assertion_class_safe(name, scope)
+                (self.scalar_assertion_subject_stable_on_force(name, scope)
+                    && self.scalar_assertion_class_safe(name, scope)
                     && self.scalar_assertion_pure_rhs(assertion_rhs, name, scope))
                 .then(|| name.clone())
             }
@@ -794,11 +795,25 @@ impl Checker {
                 let Expr::Ident { name, .. } = &args[0].value else {
                     return None;
                 };
-                self.equality_length_guard_proves_scalar(name, expr, scope)
-                    .then(|| name.clone())
+                (self.scalar_assertion_subject_stable_on_force(name, scope)
+                    && self.equality_length_guard_proves_scalar(name, expr, scope))
+                .then(|| name.clone())
             }
             _ => None,
         }
+    }
+
+    /// A default is a lazy promise. Its first read may return a scalar while
+    /// replacing the formal itself with a vector, as in
+    /// `x = { x <- c(1L, 2L); 1L }`. The comparison/length test sees the
+    /// scalar result, but a later read sees the vector. Only a literal
+    /// default is known to leave its own binding alone on first force.
+    fn scalar_assertion_subject_stable_on_force(&self, name: &str, scope: &Scope) -> bool {
+        !scope.is_default_parameter(name)
+            || self
+                .enclosing_formals
+                .last()
+                .is_some_and(|formals| formals.literal_defaults.contains(name))
     }
 
     /// The first operand of `&&` proves its subject scalar only if evaluating

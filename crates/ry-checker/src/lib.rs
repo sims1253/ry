@@ -970,6 +970,11 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 pub(crate) struct EnclosingFormals {
     pub(crate) names: FxSet<String>,
     pub(crate) has_dots: bool,
+    /// Defaults whose first force cannot execute user code or rebind their
+    /// own formal. Other defaults may return a scalar while changing the
+    /// formal's binding, so a scalar check of the returned value says
+    /// nothing about the binding read by a later expression.
+    pub(crate) literal_defaults: FxSet<String>,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,

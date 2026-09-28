@@ -3032,6 +3032,22 @@ impl Checker {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
             has_dots: params.iter().any(|parameter| parameter.name == "..."),
+            literal_defaults: params
+                .iter()
+                .filter(|parameter| {
+                    matches!(
+                        parameter.default.as_ref(),
+                        Some(
+                            Expr::Null(..)
+                                | Expr::Logical(..)
+                                | Expr::Integer(..)
+                                | Expr::Double(..)
+                                | Expr::String(..)
+                        )
+                    )
+                })
+                .map(|parameter| parameter.name.clone())
+                .collect(),
             function_span,
         });
     }

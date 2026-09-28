@@ -2102,6 +2102,34 @@ fn scalar_assertion_does_not_force_another_formals_default_as_pure() {
 }
 
 #[test]
+fn scalar_proof_rejects_a_subject_promise_that_rebinds_itself() {
+    for source in [
+        "f <- function(x = { x <- c(1L, 2L); 1L }) { stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "f <- function(x = { x <- c(1L, 2L); 1L }) { stopifnot(length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        // A loop-vector fact for another binding activates ScalarThen
+        // narrowing. It must use the same subject-promise provenance gate.
+        "f <- function(x = { x <- c(1L, 2L); 1L }, xs) { y <- c(1L, 2L); for (i in xs) { if (x > 0 && TRUE) { if (is.null(x) || x == 1L) TRUE else FALSE }; y <- 1L } }; f(xs = 1L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "the asserted value can differ from its now-vector binding: {source}: {diagnostics:?}"
+        );
+    }
+    for source in [
+        "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "f <- function(x = NULL) { stopifnot(is.null(x) || (x > 0 && x <= 3L)); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "f <- function(x) { stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f(1L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "a stable subject keeps the scalar proof: {source}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn stopifnot_named_controls_do_not_validate_the_continuation() {
     let parameter = check(
         "f <- function(x) { stopifnot(local = is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",

@@ -1,7 +1,5 @@
 //! Bounded presentation of inferred facts. These strings are not declarations.
 
-use std::fmt::{self, Write};
-
 use crate::types::{Length, Mode, RType};
 
 const HINT_BYTES: usize = 160;
@@ -61,10 +59,29 @@ impl Renderer {
     }
 
     fn escaped_name(&mut self, name: &str) {
-        // Debug escaping writes through the bounded formatter. Formatting a
-        // full name first would allocate and scan source-sized input even
-        // after the display budget had been exhausted.
-        let _ = write!(self, "{name:?}");
+        // `Debug for str` collects a run of printable characters before it
+        // writes to a formatter. Iterate ourselves so the output budget also
+        // bounds how much of an arbitrarily long name we inspect.
+        self.push("\"");
+        for character in name.chars() {
+            if self.truncated {
+                break;
+            }
+            // Rust's str Debug leaves apostrophes literal; char Debug escapes
+            // them. Its other character escapes match str Debug.
+            if character == '\'' {
+                self.push("'");
+            } else {
+                for escaped in character.escape_debug() {
+                    let mut bytes = [0; 4];
+                    self.push(escaped.encode_utf8(&mut bytes));
+                    if self.truncated {
+                        break;
+                    }
+                }
+            }
+        }
+        self.push("\"");
     }
 
     fn finish(mut self) -> TypeView {
@@ -223,20 +240,6 @@ impl Renderer {
     }
 }
 
-impl Write for Renderer {
-    fn write_str(&mut self, value: &str) -> fmt::Result {
-        if self.truncated {
-            return Err(fmt::Error);
-        }
-        self.push(value);
-        if self.truncated {
-            Err(fmt::Error)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 fn length(length: Length) -> String {
     match length {
         Length::Zero => "0".into(),
@@ -373,5 +376,47 @@ mod tests {
         assert!(view.text.len() <= DETAIL_BYTES);
         assert!(view.text.ends_with('…'));
         assert!(started.elapsed().as_secs() < 2);
+    }
+
+    #[test]
+    fn escaped_name_matches_str_debug_and_stops_on_plain_ascii_budget() {
+        let samples = [
+            "",
+            "plain",
+            "a'b",
+            "a\"b",
+            "a\\b",
+            "a\n\t\r\0",
+            "é",
+            "😀",
+            "a\u{0301}",
+            "\u{200d}",
+            "\u{7f}",
+        ];
+        for sample in samples {
+            let mut renderer = Renderer::new(8192, false);
+            renderer.escaped_name(sample);
+            assert_eq!(renderer.finish().text, format!("{sample:?}"));
+        }
+        for byte in 0u8..=127 {
+            let sample = (byte as char).to_string();
+            let mut renderer = Renderer::new(8192, false);
+            renderer.escaped_name(&sample);
+            assert_eq!(renderer.finish().text, format!("{sample:?}"));
+        }
+
+        let short = "x".repeat(10_000);
+        let long = "x".repeat(20_000_000);
+        let render = |name: &str| {
+            let mut renderer = Renderer::new(160, false);
+            renderer.escaped_name(name);
+            renderer.finish()
+        };
+        let started = std::time::Instant::now();
+        let long_view = render(&long);
+        assert!(started.elapsed().as_secs() < 2);
+        assert_eq!(long_view, render(&short));
+        assert!(long_view.truncated);
+        assert!(long_view.text.len() <= 160);
     }
 }

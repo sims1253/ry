@@ -161,13 +161,14 @@ run_harness --check >"$work_dir/partial-online.log" 2>&1
   fail "the partial clone did not check out its pin with origin available"
 
 # The cache change must preserve snapshot and strict labelled-ledger gates.
+cp "$reports_dir/$report_stem.root.txt" "$work_dir/original-report.txt"
 printf 'invented snapshot drift\n' >> "$reports_dir/$report_stem.root.txt"
 if run_harness --check >"$work_dir/snapshot-drift.log" 2>&1; then
   fail "snapshot drift passed"
 fi
 grep -F "ecosystem: report drift for $report_stem.root" "$work_dir/snapshot-drift.log" >/dev/null ||
   fail "snapshot drift was not attributed to the report"
-sed -i '$d' "$reports_dir/$report_stem.root.txt"
+cp "$work_dir/original-report.txt" "$reports_dir/$report_stem.root.txt"
 Rscript - "$ledger" "$work_dir/bad-ledger.json" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
 corpus <- jsonlite::fromJSON(args[[1]], simplifyVector = FALSE)

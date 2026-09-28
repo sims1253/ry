@@ -4,7 +4,7 @@
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
   "source_sha256": "1c408a3deaea7915f4b316bc416b30cca18eaf1c371652c0e5f6743433aac705",
-  "ry_commit": "66720b72e897ebf7bcc56b783232c63c4ce66686",
+  "ry_commit": "9d548438413d87cd9a15dc79935f0c92f0199cf4",
   "reconciliation": "hermetic",
   "packages": [
     {

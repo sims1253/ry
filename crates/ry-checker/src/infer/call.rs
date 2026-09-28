@@ -1306,7 +1306,7 @@ impl Checker {
         // The flat function table is name-indexed, so it cannot resolve a
         // lexical call in general. A direct literal binding does retain its
         // exact definition span; use that identity only for its declaration.
-        let lexical_declaration_function = if lexical_callable {
+        let lexical_declaration_function = if lexical_callable && !self.discarding {
             scope
                 .lexical_definition(lookup_name)
                 .filter(|definition| {

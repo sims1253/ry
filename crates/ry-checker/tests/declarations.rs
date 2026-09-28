@@ -649,6 +649,89 @@ fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebindin
 }
 
 #[test]
+fn loop_exits_keep_agreed_nested_identity_and_never_borrow_flat_name() {
+    for loop_body in [
+        "for (i in 1L) { 1L }",
+        "while (FALSE) { 1L }",
+        "repeat { 1L; break }",
+        "for (i in 1L) { next }",
+        "for (i in 1L) { break }",
+    ] {
+        for (actual, expected) in [
+            ("\"bad\"", vec![DeclarationFindingKind::Mismatch]),
+            ("1L", Vec::new()),
+        ] {
+            let source = format!(
+                "inner <- function(x) {{ x }}\nouter <- function() {{ inner <- function(x) {{ x }}; {loop_body}; inner({actual}) }}\nouter()\n"
+            );
+            let file = parse("loop-identity.R", &source);
+            let mut top = record(
+                &file,
+                "inner",
+                ("x", AtomicMode::Character, SupplyStatus::Required),
+                None,
+            );
+            let mut nested = top.clone();
+            nested.source.provider = "nested-provider".into();
+            nested.source.target = DeclarationTarget::LocalFunction {
+                path: file.path.clone(),
+                definition: nested_function_span(&file, "outer", "inner"),
+                display_name: Some("inner".into()),
+            };
+            if let Translation::Exact(signature) = &mut nested.translation {
+                signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
+            }
+            top.source.provider = "top-provider".into();
+            let mut checker = Checker::new(&file.path);
+            checker.set_declaration_records(vec![top, nested]);
+            checker.check(&file);
+            assert_eq!(
+                kinds(&checker),
+                expected,
+                "loop: {loop_body}, actual: {actual}"
+            );
+        }
+    }
+}
+
+#[test]
+fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
+    for loop_body in [
+        "for (i in 1L) { inner <- function(x) { x } }",
+        "while (flag) { inner <- function(x) { x }; break }",
+        "repeat { inner <- function(x) { x }; break }",
+    ] {
+        let source = format!(
+            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body}; inner(1L) }}\nouter(TRUE)\n"
+        );
+        let file = parse("loop-rebind.R", &source);
+        let top = record(
+            &file,
+            "inner",
+            ("x", AtomicMode::Character, SupplyStatus::Required),
+            None,
+        );
+        let mut nested = top.clone();
+        nested.source.target = DeclarationTarget::LocalFunction {
+            path: file.path.clone(),
+            definition: nested_function_span(&file, "outer", "inner"),
+            display_name: Some("inner".into()),
+        };
+        if let Translation::Exact(signature) = &mut nested.translation {
+            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
+        }
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![top, nested]);
+        checker.check(&file);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "loop: {loop_body}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
 fn shadowed_definition_does_not_borrow_another_return_slot() {
     let file = parse(
         "shadowed.R",

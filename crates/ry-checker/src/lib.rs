@@ -662,10 +662,17 @@ impl Scope {
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>, definition: Span) {
         let name = name.into();
-        self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
+        self.mark_lexical_callable(name.clone());
         self.journal_lexical_definition(&name);
-        self.lexical_functions.insert(name.clone());
         self.lexical_definitions.insert(name, definition);
+    }
+
+    /// Retain lexical shadowing after a join even when its exact source
+    /// definition is no longer common to every reachable path.
+    pub(crate) fn mark_lexical_callable(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
+        self.lexical_functions.insert(name);
     }
 
     pub(crate) fn is_lexical_function(&self, name: &str) -> bool {

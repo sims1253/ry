@@ -76,6 +76,17 @@ fn path_policy_matches_cli_and_reloads_in_editor() {
             .unwrap();
         assert_eq!(severity(&scratch, "RY040"), Some(2), "{scratch}");
 
+        let unsaved_uri = tower_lsp::lsp_types::Url::from_file_path(fixture.path("R/unsaved.R"))
+            .unwrap()
+            .to_string();
+        let mark = session.publication_mark();
+        session.open(&unsaved_uri, 1, source).await.unwrap();
+        let unsaved = session
+            .published_diagnostics_after(&unsaved_uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(severity(&unsaved, "RY040"), Some(1), "{unsaved}");
+
         fixture
             .write_file(
                 "ry.toml",
@@ -121,6 +132,38 @@ fn explicit_editor_rule_choice_wins_over_matching_path_table() {
         )
         .await;
         let uri = file_uri(&fixture.path("R/main.R")).unwrap();
+        let mark = session.publication_mark();
+        session.open(&uri, 1, source).await.unwrap();
+        let publish = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(severity(&publish, "RY040"), Some(1), "{publish}");
+        join_session(session, server).await;
+    })
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_workspace_config_root_keeps_scoped_editor_severity() {
+    use std::os::unix::fs::symlink;
+
+    run(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture
+            .write_file(
+                "ry.toml",
+                "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+            )
+            .unwrap();
+        let source = "x <- \"a\" + 1L\n";
+        fixture.write_file("R/a.R", source).unwrap();
+        let aliases = FixtureProject::empty().unwrap();
+        let linked_root = aliases.path("linked-root");
+        symlink(fixture.root(), &linked_root).unwrap();
+
+        let (mut session, server) = spawn_session(&[&linked_root], json!({}), None).await;
+        let uri = file_uri(&linked_root.join("R/a.R")).unwrap();
         let mark = session.publication_mark();
         session.open(&uri, 1, source).await.unwrap();
         let publish = session

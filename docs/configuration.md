@@ -126,10 +126,13 @@ Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
 elsewhere. Each table accepts `error`, `warn`, and `ignore` rule lists by code,
 name, or `"all"`; `paths` is required. Globs use forward slashes relative to
 the directory containing `ry.toml`, including when checking a nested package.
-`*` matches one path component, while `**` includes descendants. The same
-lexical path matcher is used by the CLI, watch mode, and editor, including for
-unsaved files. A path with unresolved `..` components outside the config root
-does not match.
+`*` matches one path component, while `**` includes descendants. The CLI,
+watch mode, and editor use the same filesystem identity for the config root
+and each source: existing symlinks and `..` components resolve before matching.
+For an unsaved file, the deepest existing ancestor resolves first and the
+remaining ordinary path components keep their names. A `..` after a missing
+ancestor cannot be resolved and does not match. A symlink that points outside
+the config root is scoped by its target location, not its textual alias.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global

@@ -275,6 +275,68 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     );
 }
 
+#[test]
+fn path_rule_overrides_normalize_equivalent_in_root_operands() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R/sub")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join("anchor.R"), "x <- 1L\n").unwrap();
+    fs::write(temp.path().join("R/a.R"), "\"bad\" + 1L\n").unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\noutput-format = \"json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+
+    let root = temp.path().to_str().unwrap();
+    let scripts = temp.path().join("scripts");
+    let absolute_anchor = temp.path().join("anchor.R");
+    let absolute_source = temp.path().join("R/a.R");
+    let cases = [
+        (
+            temp.path(),
+            vec!["anchor.R".to_string(), "R/a.R".to_string()],
+        ),
+        (
+            temp.path(),
+            vec!["anchor.R".to_string(), "R/sub/../a.R".to_string()],
+        ),
+        (temp.path(), vec!["anchor.R".to_string(), "R".to_string()]),
+        (
+            scripts.as_path(),
+            vec![
+                absolute_anchor.to_string_lossy().into_owned(),
+                "../R/a.R".to_string(),
+            ],
+        ),
+        (
+            scripts.as_path(),
+            vec![
+                "../anchor.R".to_string(),
+                absolute_source.to_string_lossy().into_owned(),
+            ],
+        ),
+    ];
+    for (cwd, args) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(cwd)
+            .arg("check")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{root} {args:?}: {output:?}");
+        let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            findings
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| { finding["code"] == "RY040" && finding["severity"] == "error" }),
+            "{args:?}: {findings}"
+        );
+    }
+}
+
 fn ry_check_with_r_lib(arg: &std::path::Path, r_lib: &std::path::Path) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_ry");
     Command::new(bin)

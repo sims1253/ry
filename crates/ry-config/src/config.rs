@@ -96,12 +96,14 @@ pub struct RuleOverrideConfig {
     pub ignore: Vec<String>,
 }
 
-/// A strict, reusable config-root-relative glob scope. Relative source paths
-/// are anchored at the process working directory. No filesystem reads or
-/// symlink resolution are required, so editor overlays match the CLI.
+/// A strict, reusable config-root-relative glob scope. Both the config root
+/// and source use physical filesystem identity: existing paths resolve their
+/// symlinks, while an unsaved path retains its unresolved normal suffix after
+/// the deepest existing ancestor. A `..` after a missing ancestor is
+/// ambiguous and does not match.
 #[derive(Debug, Clone)]
 pub struct ScopedPaths {
-    root: PathBuf,
+    root: Option<PathBuf>,
     patterns: Vec<glob::Pattern>,
 }
 
@@ -111,27 +113,20 @@ impl ScopedPaths {
             .iter()
             .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            root: std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf()),
-            patterns,
-        })
+        let root = scoped_path_identity(root);
+        Ok(Self { root, patterns })
     }
 
     pub fn matches(&self, source: &Path) -> bool {
-        let Ok(source) = std::path::absolute(source) else {
+        let Some(root) = &self.root else {
             return false;
         };
-        let Ok(relative) = source.strip_prefix(&self.root) else {
+        let Some(source) = scoped_path_identity(source) else {
             return false;
         };
-        // A lexical `..` after the root may escape its ownership. Decline
-        // ambiguous spellings instead of applying policy outside the config.
-        if relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
+        let Ok(relative) = source.strip_prefix(root) else {
             return false;
-        }
+        };
         let relative = relative
             .to_string_lossy()
             .replace(std::path::MAIN_SEPARATOR, "/");
@@ -145,6 +140,43 @@ impl ScopedPaths {
             )
         })
     }
+}
+
+/// Resolve the longest existing prefix with filesystem semantics. This
+/// preserves the meaning of `symlink/..` and of final symlink files while
+/// still matching unsaved files and virtual descendants under an existing
+/// folder. Parent components after a missing prefix cannot be resolved
+/// faithfully by the filesystem and are declined.
+fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut suffix = Vec::new();
+    for ancestor in absolute.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in suffix.into_iter().rev() {
+                    match component {
+                        std::path::Component::Normal(name) => resolved.push(name),
+                        std::path::Component::CurDir => {}
+                        _ => return None,
+                    }
+                }
+                return Some(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // A dangling symlink exists but its physical target does not.
+                // It is not an ordinary unsaved component to append.
+                if ancestor
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+        suffix.push(ancestor.components().next_back()?);
+    }
+    None
 }
 
 /// Parsed contents of a `ry.toml` project config file.
@@ -726,12 +758,79 @@ paths = ["inst/shiny/**"]
         .unwrap();
         let config = Config::load_file(&config_path).unwrap();
         assert_eq!(config.rule_overrides.len(), 1);
+        fs::create_dir_all(root.join("R/sub")).unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
         let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
         assert!(paths.matches(&root.join("R/a.R")));
+        assert!(paths.matches(&root.join("R/sub/../a.R")));
+        assert!(paths.matches(&root.join("R/sub/../unsaved.R")));
+        let dotted_root =
+            ScopedPaths::new(&root.join("scripts/.."), &config.rule_overrides[0].paths).unwrap();
+        assert!(dotted_root.matches(&root.join("R/a.R")));
         assert!(!paths.matches(&root.join("R/deep/a.R")));
         assert!(!paths.matches(&root.join("else/R/a.R")));
         assert!(!paths.matches(&root.join("R/../else/a.R")));
         assert!(!paths.matches(&root.join("../outside/R/a.R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_resolve_symlink_parent_before_dotdot() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("else/deep")).unwrap();
+        fs::create_dir_all(root.join("else/R")).unwrap();
+        fs::create_dir_all(root.join("R")).unwrap();
+        fs::write(root.join("else/R/a.R"), "x <- 1L\n").unwrap();
+        fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
+        symlink(root.join("else/deep"), root.join("link")).unwrap();
+
+        let r_only = ScopedPaths::new(root, &["R/**".into()]).unwrap();
+        let elsewhere = ScopedPaths::new(root, &["else/R/**".into()]).unwrap();
+        let through_link = root.join("link/../R/a.R");
+        assert!(!r_only.matches(&through_link));
+        assert!(elsewhere.matches(&through_link));
+        assert!(!r_only.matches(&root.join("link/../R/unsaved.R")));
+        assert!(elsewhere.matches(&root.join("link/../R/unsaved.R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_use_one_physical_identity_for_symlinked_root_and_file() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(real.join("R/sub")).unwrap();
+        fs::create_dir_all(real.join("else")).unwrap();
+        fs::write(real.join("else/target.R"), "x <- 1L\n").unwrap();
+        symlink(&real, &alias).unwrap();
+
+        let in_r = ScopedPaths::new(&alias, &["R/**".into()]).unwrap();
+        let elsewhere = ScopedPaths::new(&alias, &["else/**".into()]).unwrap();
+        // A config reached through its alias still owns the real R tree.
+        assert!(in_r.matches(&alias.join("R/unsaved.R")));
+        assert!(in_r.matches(&alias.join("R/sub/../unsaved.R")));
+        assert!(in_r.matches(&real.join("R/unsaved.R")));
+
+        symlink(real.join("else/target.R"), real.join("R/a.R")).unwrap();
+        for spelling in [alias.join("R/a.R"), alias.join("R/sub/../a.R")] {
+            assert!(!in_r.matches(&spelling));
+            assert!(elsewhere.matches(&spelling));
+        }
+
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("target.R"), "x <- 1L\n").unwrap();
+        symlink(outside.path().join("target.R"), real.join("R/external.R")).unwrap();
+        assert!(!in_r.matches(&alias.join("R/external.R")));
+        assert!(!elsewhere.matches(&alias.join("R/external.R")));
+        symlink(outside.path().join("missing.R"), real.join("R/dangling.R")).unwrap();
+        assert!(!in_r.matches(&alias.join("R/dangling.R")));
+        assert!(!in_r.matches(&alias.join("R/a.R/child.R")));
     }
 
     #[test]

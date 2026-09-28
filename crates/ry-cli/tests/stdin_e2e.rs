@@ -81,7 +81,7 @@ fn identical_buffer_matches_disk_with_package_and_neighbor() {
 #[test]
 fn stdin_logical_filename_uses_the_same_path_rule_policy_as_disk() {
     let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::create_dir_all(temp.path().join("R/sub")).unwrap();
     fs::write(
         temp.path().join("ry.toml"),
         "[[rule-overrides]]\npaths = [\"R/**\"]\nwarn = [\"RY040\"]\n",
@@ -120,6 +120,18 @@ fn stdin_logical_filename_uses_the_same_path_rule_policy_as_disk() {
         source,
     );
     assert_eq!(json(&unsaved)[0]["severity"], "warning");
+    let dotted_unsaved = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/sub/../new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&dotted_unsaved)[0]["severity"], "warning");
 }
 
 #[test]

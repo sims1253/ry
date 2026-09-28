@@ -37,6 +37,12 @@ pub(crate) fn join_all(mut types: impl Iterator<Item = RType>) -> RType {
     types.fold(first, RType::join)
 }
 
+/// Only these exact names bind controls after `...` in base `stopifnot`.
+/// Other named arguments are assertions; R reports their names on failure.
+pub(crate) fn stopifnot_predicate_arg(arg: &Arg) -> bool {
+    !matches!(arg.name.as_deref(), Some("local" | "exprs" | "exprObject"))
+}
+
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
 #[derive(Clone, Copy, PartialEq, Eq)]

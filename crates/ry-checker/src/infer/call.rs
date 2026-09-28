@@ -1645,10 +1645,9 @@ impl Checker {
     fn apply_assertion_predicates(&mut self, name: &str, args: &[Arg], scope: &mut Scope) {
         if name == "stopifnot" && self.resolves_to_base_lenient("stopifnot", scope) {
             // Earlier predicates can become stale while a later argument is
-            // evaluated. Named arguments may be `local`/`exprs`/`exprObject`
-            // controls rather than predicates. Only the final unambiguously
-            // positional predicate can narrow the continuation.
-            if let Some(last) = args.last().filter(|arg| arg.name.is_none()) {
+            // evaluated. The exact `local`/`exprs`/`exprObject` names bind
+            // controls; every other named argument is a predicate in `...`.
+            if let Some(last) = args.last().filter(|arg| stopifnot_predicate_arg(arg)) {
                 let narrowing = self.extract_type_narrowing(&last.value, scope);
                 apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
                 self.mark_scalar_assertions(args, scope);

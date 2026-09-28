@@ -2124,6 +2124,13 @@ fn stopifnot_named_controls_do_not_validate_the_continuation() {
         positional.iter().all(|d| d.code != "RY032"),
         "a genuine final positional assertion still proves scalar or NULL: {positional:?}"
     );
+    let named_predicate = check(
+        "f <- function(x) { stopifnot(named_condition = is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }",
+    );
+    assert!(
+        named_predicate.iter().all(|d| d.code != "RY032"),
+        "a named assertion in `...` still rejects vectors: {named_predicate:?}"
+    );
 }
 
 #[test]

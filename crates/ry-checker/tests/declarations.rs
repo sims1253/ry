@@ -531,6 +531,152 @@ fn nested_closure_reads_live_enclosing_environment() {
 }
 
 #[test]
+fn captured_global_contract_is_invalidated_by_executed_write_positions() {
+    for write in [
+        "invisible(f <- function(x) { x })",
+        "if ({ f <- function(x) { x }; TRUE }) 1L",
+        "for (f in list(function(x) { x })) 1L",
+        "(f <- function(x) { x })",
+        "{ f <- function(x) { x } }",
+    ] {
+        let source = format!(
+            "f <- function(x) {{ x }}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
+        );
+        let file = parse("capture-write-positions.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "write: {write}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn later_expression_write_does_not_erase_an_earlier_direct_known_call() {
+    let file = parse(
+        "ordered-expression-write.R",
+        "f <- function(x) { x }\nf(\"bad\")\ninvisible(f <- function(x) { x })\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    let mismatches = checker
+        .declaration_findings()
+        .iter()
+        .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+        .collect::<Vec<_>>();
+    assert_eq!(mismatches.len(), 1);
+    assert_eq!(
+        &file.source[mismatches[0].span.start..mismatches[0].span.end],
+        "\"bad\""
+    );
+}
+
+#[test]
+fn nested_local_write_does_not_invalidate_outer_but_superassignment_can() {
+    for (write, mismatch) in [
+        ("invisible(function() { f <- function(x) { x } })", true),
+        (
+            "mutate <- function() { f <- function(x) { x } }; mutate()",
+            true,
+        ),
+        (
+            "mutate <- function() { f <<- function(x) { x } }; mutate()",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "f <- function(x) {{ x }}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
+        );
+        let file = parse("nested-write-scope.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "write: {write}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn nested_capture_tracks_expression_writes_in_its_enclosing_frame() {
+    let file = parse(
+        "nested-expression-write.R",
+        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; if ({ f <- function(x) { x }; TRUE }) 1L; inner() }\nouter()\n",
+    );
+    let mut declaration = record(
+        &file,
+        "outer",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    declaration.source.target = DeclarationTarget::LocalFunction {
+        path: file.path.clone(),
+        definition: all_named_function_spans(&file, "f")[0],
+        display_name: Some("f".into()),
+    };
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![declaration]);
+    checker.check(&file);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+#[test]
+fn forced_default_superassignment_can_replace_an_outward_contract() {
+    let file = parse(
+        "default-superassign.R",
+        "f <- function(x) { x }\nouter <- function(z = (f <<- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+#[test]
+fn forced_default_local_assignment_can_shadow_an_outward_contract() {
+    let file = parse(
+        "default-local-assign.R",
+        "f <- function(x) { x }\nouter <- function(z = (f <- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+#[test]
 fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
     let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
     let mut checker = Checker::new(&eager.path);
@@ -1126,6 +1272,10 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
 fn zero_or_one_iteration_does_not_select_either_declared_literal() {
     for (loop_body, expected_integer_mismatch) in [
         ("while (flag) { inner <- function(x) { x }; break }", false),
+        (
+            "while (flag) { inner <- function(x) { x }; flag <- FALSE }",
+            false,
+        ),
         ("for (i in 1L) { inner <- function(x) { x } }", true),
     ] {
         for actual in ["1L", "\"text\""] {

@@ -1035,6 +1035,9 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 pub(crate) struct EnclosingFormals {
     pub(crate) names: FxSet<String>,
     pub(crate) has_dots: bool,
+    /// A forced default may install one of these names in this frame at
+    /// runtime; a same-named outward declaration is then not certain.
+    pub(crate) possible_default_writes: FxSet<String>,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,

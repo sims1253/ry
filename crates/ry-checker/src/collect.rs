@@ -4,9 +4,94 @@ use crate::semantic_lists::bare_name;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
+fn function_literal_span(value: &Expr) -> Option<Span> {
+    match value {
+        Expr::Function { span, .. } => Some(*span),
+        _ => None,
+    }
+}
+
+fn note_capture_write(
+    current: &mut FxMap<String, Span>,
+    name: &str,
+    literal: Option<Span>,
+    rebound: &mut FxSet<Span>,
+    literal_names: &mut FxMap<String, Vec<Span>>,
+) {
+    if let Some(previous) = current.remove(name) {
+        rebound.insert(previous);
+    }
+    if let Some(span) = literal {
+        current.insert(name.to_string(), span);
+        literal_names
+            .entry(name.to_string())
+            .or_default()
+            .push(span);
+    }
+}
+
+/// Defaults are promises evaluated in the called function's frame when
+/// forced. Return their ordinary local writes separately from outward `<<-`
+/// writes; neither is an unconditional effect at function definition time.
+pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<String>) {
+    let mut local = FxSet::default();
+    let mut outward = FxSet::default();
+    for parameter in params {
+        if let Some(default) = &parameter.default {
+            let _ = walk_expr(
+                default,
+                Walk {
+                    fn_bodies: false,
+                    dollar_args: false,
+                    ..Walk::ALL
+                },
+                |node, _| -> ControlFlow<(), Descend> {
+                    match node {
+                        AstNode::Stmt(Stmt::Assign {
+                            target,
+                            value,
+                            span,
+                        }) => {
+                            let wrapped_superassign = matches!(
+                                value,
+                                Expr::BinOp {
+                                    op: BinOpKind::SuperAssign,
+                                    span: operation_span,
+                                    ..
+                                } if operation_span == span
+                            );
+                            if !wrapped_superassign && let Some(name) = binding_name(target) {
+                                local.insert(name.to_string());
+                            }
+                        }
+                        AstNode::Stmt(Stmt::For { name, .. }) => {
+                            local.insert(name.clone());
+                        }
+                        AstNode::Expr(Expr::BinOp { op, lhs, .. }) => {
+                            if let Some(name) = binding_name(lhs) {
+                                match op {
+                                    BinOpKind::Assign => {
+                                        local.insert(name.to_string());
+                                    }
+                                    BinOpKind::SuperAssign => {
+                                        outward.insert(name.to_string());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    ControlFlow::Continue(Descend::Into)
+                },
+            );
+        }
+    }
+    (local, outward)
+}
+
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
-        let mut current_literals = FxMap::default();
         // Project refinement has no single source file; carry escaped local
         // names and formals through the collected table as well as emission.
         if custom_operator::has_escaped_names(stmts) {
@@ -37,7 +122,6 @@ impl Checker {
                 };
                 self.collect_declared_globals_stmt(statement);
                 if let Stmt::Assign { target, value, .. } = statement {
-                    self.note_later_environment_write(target, value, &mut current_literals);
                     self.collect_fns_assign(target, value);
                 }
                 ControlFlow::Continue(match statement {
@@ -46,28 +130,118 @@ impl Checker {
                 })
             },
         );
+        self.collect_capture_writes(stmts);
     }
 
-    /// A nested body may execute after later writes to its enclosing
-    /// environment. Preserve the definition for direct calls in source
-    /// order, but do not treat a captured pre-write value as immutable.
-    fn note_later_environment_write(
-        &mut self,
-        target: &Expr,
-        value: &Expr,
-        current_literals: &mut FxMap<String, Span>,
-    ) {
-        let Some(name) = binding_name(target) else {
-            return;
-        };
-        if let Some(previous) = current_literals.remove(name) {
-            Arc::make_mut(&mut self.fn_table)
-                .rebound_after_capture
-                .insert((self.path.clone(), previous.start, previous.end));
+    /// Inventory syntactically visible writes separately from the narrower
+    /// function-definition collector. A closure keeps its environment live:
+    /// a later write in that environment invalidates a captured literal even
+    /// when the write occurs in an expression, condition, or `for` binder.
+    /// Each function body gets its own frame; ordinary local writes there do
+    /// not affect an enclosing frame. A `<<-` can write outward, so its name
+    /// conservatively invalidates same-named captured literals in this file.
+    fn collect_capture_writes(&mut self, stmts: &[Stmt]) {
+        let mut frames = vec![FxMap::<String, Span>::default()];
+        let mut rebound = FxSet::<Span>::default();
+        let mut literal_names = FxMap::<String, Vec<Span>>::default();
+        let mut superassigned = FxSet::<String>::default();
+        let _ = walk_stmts(
+            stmts,
+            Walk {
+                dollar_args: false,
+                ..Walk::ALL
+            },
+            |node, function_depth| -> ControlFlow<(), Descend> {
+                // `walk_stmts` is preorder and increments the depth only
+                // inside a function body. Pop a completed sibling frame
+                // before visiting its next statement or expression.
+                frames.truncate(function_depth + 1);
+                match node {
+                    AstNode::Stmt(Stmt::Assign {
+                        target,
+                        value,
+                        span,
+                    }) => {
+                        // The parser represents statement `<<-` as an
+                        // assignment whose RHS repeats the actual operation.
+                        // Only the inner SuperAssign writes, and it targets
+                        // an enclosing environment, not this frame.
+                        let wrapped_superassign = matches!(
+                            value,
+                            Expr::BinOp {
+                                op: BinOpKind::SuperAssign,
+                                span: operation_span,
+                                ..
+                            } if operation_span == span
+                        );
+                        if !wrapped_superassign && let Some(name) = binding_name(target) {
+                            note_capture_write(
+                                frames.last_mut().expect("top-level frame"),
+                                name,
+                                function_literal_span(value),
+                                &mut rebound,
+                                &mut literal_names,
+                            );
+                        }
+                    }
+                    AstNode::Stmt(Stmt::For { name, .. }) => note_capture_write(
+                        frames.last_mut().expect("top-level frame"),
+                        name,
+                        None,
+                        &mut rebound,
+                        &mut literal_names,
+                    ),
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        rhs,
+                        ..
+                    }) => {
+                        if let Some(name) = binding_name(lhs) {
+                            note_capture_write(
+                                frames.last_mut().expect("top-level frame"),
+                                name,
+                                function_literal_span(rhs),
+                                &mut rebound,
+                                &mut literal_names,
+                            );
+                        }
+                    }
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        lhs,
+                        ..
+                    }) => {
+                        if let Some(name) = binding_name(lhs) {
+                            superassigned.insert(name.to_string());
+                        }
+                    }
+                    AstNode::Stmt(Stmt::FunctionDef { params, .. })
+                    | AstNode::Expr(Expr::Function { params, .. }) => {
+                        // Defaults are promises: a forced default can write
+                        // outward after the function was defined. The shared
+                        // walker deliberately omits parameter defaults, so
+                        // inspect explicit `<<-` there once at this node.
+                        superassigned.extend(collect_default_writes(params).1);
+                        frames.push(FxMap::default());
+                    }
+                    _ => {}
+                }
+                ControlFlow::Continue(Descend::Into)
+            },
+        );
+        for name in superassigned {
+            if let Some(spans) = literal_names.get(&name) {
+                rebound.extend(spans.iter().copied());
+            }
         }
-        if let Expr::Function { span, .. } = value {
-            current_literals.insert(name.to_string(), *span);
-        }
+        Arc::make_mut(&mut self.fn_table)
+            .rebound_after_capture
+            .extend(
+                rebound
+                    .into_iter()
+                    .map(|span| (self.path.clone(), span.start, span.end)),
+            );
     }
 
     // Records one identifier-bound assignment from the collection
@@ -273,7 +447,6 @@ impl Checker {
     // can appear — `if` branches and `for`/`while` bodies — never in
     // control tests or expression interiors.
     fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
-        let mut current_literals = FxMap::default();
         let _ = walk_stmts(
             body,
             Walk {
@@ -284,9 +457,6 @@ impl Checker {
                 let AstNode::Stmt(statement) = node else {
                     return ControlFlow::Continue(Descend::Skip);
                 };
-                if let Stmt::Assign { target, value, .. } = statement {
-                    self.note_later_environment_write(target, value, &mut current_literals);
-                }
                 if let Stmt::Assign { target, value, .. } = statement
                     && let (
                         Expr::Ident { name: inner, .. },

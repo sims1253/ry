@@ -2992,6 +2992,11 @@ impl Checker {
     }
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
+        let possible_default_writes = if self.discarding || self.declarations.records().is_empty() {
+            FxSet::default()
+        } else {
+            crate::collect::collect_default_writes(params).0
+        };
         self.enclosing_formals.push(EnclosingFormals {
             names: params
                 .iter()
@@ -2999,6 +3004,7 @@ impl Checker {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
             has_dots: params.iter().any(|parameter| parameter.name == "..."),
+            possible_default_writes,
             function_span,
         });
     }

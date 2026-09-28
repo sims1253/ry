@@ -1314,6 +1314,11 @@ impl Checker {
         let local_is_nonfunction = local_binding
             .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
         let outward = scope.outward_function_definition(lookup_name);
+        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
+            frame
+                .possible_default_writes
+                .contains(semantic_argument_name(lookup_name))
+        });
         let local_definition = scope.lexical_definition(lookup_name);
         // Function walks start with a copy of the captured scope. An exact
         // literal that is identical to the nearest enclosing frame is still
@@ -1332,10 +1337,11 @@ impl Checker {
         } else {
             exact_definition
                 .filter(|definition| {
-                    (!from_outward
-                        || !self
-                            .fn_table
-                            .was_rebound_after_capture(&self.path, *definition))
+                    !possible_default_shadow
+                        && (!from_outward
+                            || !self
+                                .fn_table
+                                .was_rebound_after_capture(&self.path, *definition))
                         && self
                             .declarations
                             .target(&self.path, *definition)
@@ -1362,7 +1368,7 @@ impl Checker {
         let declaration_user_function = user_function
             .as_ref()
             .filter(|function| {
-                if local_is_nonfunction || outward.is_some() {
+                if possible_default_shadow || local_is_nonfunction || outward.is_some() {
                     false
                 } else if local_binding.is_some() {
                     function.source_path == self.path

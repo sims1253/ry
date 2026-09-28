@@ -1276,8 +1276,9 @@ dependencies = [
 
 [[package]]
 name = "rds2rust"
-version = "0.2.1"
-source = "git+https://github.com/sims1253/rds2rust?rev=77c6b0f65ef76fcb0bb27a63ed09f37cc679b8ea#77c6b0f65ef76fcb0bb27a63ed09f37cc679b8ea"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebadbca127cdba33f55820d11ea01088613fce4285bf4b69bb6fb6089b3cde0d"
 dependencies = [
  "byteorder",
  "flate2",

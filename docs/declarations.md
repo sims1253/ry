@@ -23,7 +23,8 @@ constraint was supplied, distinct from an explicit `unknown` constraint.
 
 An atomic constraint can omit length, specify an exact nonnegative length, or
 specify `1+` for nonempty. `null` can only have length zero. Unions contain
-supported alternatives; canonical formatting sorts and deduplicates them.
+supported alternatives; canonical formatting flattens nested unions, then
+sorts and deduplicates their alternatives.
 
 ```text
 integer
@@ -51,7 +52,10 @@ remain explicit rather than being translated into a plain entry condition.
 
 Parsing and formatting cap a declaration at 4096 bytes, 16 type nesting
 levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
-parameter name. Exceeding a limit returns a resource-limit error. Invalid
+parameter name. The node limit applies to the original tree before union
+flattening. Each union allows at most 16 direct members, and the flattened,
+distinct union also allows at most 16 alternatives.
+Exceeding a limit returns a resource-limit error. Invalid
 syntax is a separate error; neither becomes an accepted `unknown` type.
 
 ## Provenance and translation

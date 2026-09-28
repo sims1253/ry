@@ -4,9 +4,8 @@
 use miette::{Result, miette};
 use ry_core::SourceFile;
 use ry_core::declarations::{
-    AssignmentSemantics, DeclarationRecord, DeclarationTarget, DeclaredParameter,
-    DeclaredSignature, EvaluationSemantics, EvidenceUse, ParameterForm, ResidualConstraint,
-    SupplyStatus, Translation, TypeExpr,
+    DeclarationRecord, DeclarationTarget, DeclaredParameter, DeclaredSignature, EvidenceUse,
+    ParameterForm, ResidualConstraint, Translation, TypeExpr,
 };
 use serde_json::{Value, json};
 
@@ -19,7 +18,7 @@ fn constraint(ty: &TypeExpr) -> Result<String> {
 
 fn signature(signature: &DeclaredSignature) -> Result<Value> {
     signature
-        .canonical()
+        .validate()
         .map_err(|error| miette!("cannot export declaration: {error}"))?;
     let parameters = signature
         .parameters
@@ -29,12 +28,7 @@ fn signature(signature: &DeclaredSignature) -> Result<Value> {
     Ok(json!({
         "parameters": parameters,
         "return_constraint": signature.return_constraint.as_ref().map(constraint).transpose()?,
-        "assignment_semantics": match signature.assignment {
-            AssignmentSemantics::EntryOnly => "entry_only",
-            AssignmentSemantics::PersistentBinding => "persistent_binding",
-            AssignmentSemantics::CoercesInput => "coerces_input",
-            AssignmentSemantics::Unknown => "unknown",
-        },
+        "assignment_semantics": signature.assignment.name(),
     }))
 }
 
@@ -45,17 +39,8 @@ fn parameter(parameter: &DeclaredParameter) -> Result<Value> {
             ParameterForm::Ordinary => "ordinary",
             ParameterForm::Variadic => "variadic",
         },
-        "supplied": match parameter.supplied {
-            SupplyStatus::Required => "required",
-            SupplyStatus::Defaulted => "defaulted",
-            SupplyStatus::Unknown => "unknown",
-        },
-        "evaluation": match parameter.evaluation {
-            EvaluationSemantics::Value => "value",
-            EvaluationSemantics::Promise => "promise",
-            EvaluationSemantics::Quoted => "quoted",
-            EvaluationSemantics::Unknown => "unknown",
-        },
+        "supplied": parameter.supplied.name(),
+        "evaluation": parameter.evaluation.name(),
         "constraint": parameter.constraint.as_ref().map(constraint).transpose()?,
     }))
 }
@@ -174,7 +159,8 @@ mod tests {
     use ry_core::RParser;
     use ry_core::Span;
     use ry_core::declarations::{
-        AtomicMode, DeclarationSource, DeclaredLength, EvaluationSemantics,
+        AssignmentSemantics, AtomicMode, DeclarationSource, DeclaredLength, EvaluationSemantics,
+        SupplyStatus,
     };
 
     #[test]

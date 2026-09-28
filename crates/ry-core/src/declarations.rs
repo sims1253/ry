@@ -140,8 +140,13 @@ impl TypeExpr {
     /// Programmatically supplied expressions obey the same budgets as parsed
     /// expressions, so adapters cannot silently overflow inference caps.
     pub fn canonical(&self) -> Result<String, DeclarationError> {
+        // Check the original tree before cloning or flattening it. Otherwise a
+        // large tree of duplicate alternatives could evade the node budget.
         let mut nodes = 0;
-        self.render(0, &mut nodes)
+        count_type_nodes(self, 0, &mut nodes)?;
+        let normalized = self.clone().normalized()?;
+        let mut rendered_nodes = 0;
+        normalized.render(0, &mut rendered_nodes)
     }
 
     fn normalized(self) -> Result<Self, DeclarationError> {
@@ -152,21 +157,32 @@ impl TypeExpr {
                         "union has more than {MAX_UNION_ALTERNATIVES} alternatives"
                     )));
                 }
-                let members = members
-                    .into_iter()
-                    .map(Self::normalized)
-                    .collect::<Result<Vec<_>, _>>()?;
-                if members.iter().any(|member| matches!(member, Self::Unknown)) {
+                let mut flattened = Vec::new();
+                for member in members {
+                    match member.normalized()? {
+                        Self::Union(inner) => flattened.extend(inner),
+                        other => flattened.push(other),
+                    }
+                }
+                if flattened
+                    .iter()
+                    .any(|member| matches!(member, Self::Unknown))
+                {
                     return Err(DeclarationError::InvalidSyntax(
                         "unknown cannot be a union alternative".into(),
                     ));
                 }
-                let mut keyed = members
+                let mut keyed = flattened
                     .into_iter()
                     .map(|member| Ok((member.canonical()?, member)))
                     .collect::<Result<Vec<_>, DeclarationError>>()?;
                 keyed.sort_by(|left, right| left.0.cmp(&right.0));
                 keyed.dedup_by(|left, right| left.0 == right.0);
+                if keyed.len() > MAX_UNION_ALTERNATIVES {
+                    return Err(DeclarationError::ResourceLimit(format!(
+                        "union has more than {MAX_UNION_ALTERNATIVES} alternatives"
+                    )));
+                }
                 let mut members = keyed
                     .into_iter()
                     .map(|(_, member)| member)
@@ -366,6 +382,12 @@ impl Parser<'_> {
         }
         if identifier == "unknown" {
             return Ok(TypeExpr::Unknown);
+        }
+        if identifier.is_empty() {
+            return Err(DeclarationError::InvalidSyntax(format!(
+                "expected a type name at byte {}",
+                self.cursor
+            )));
         }
         let mode = AtomicMode::parse(&identifier).ok_or_else(|| {
             DeclarationError::InvalidSyntax(format!(
@@ -588,7 +610,9 @@ impl DeclaredSignature {
         Ok(signature)
     }
 
-    fn validate(&self) -> Result<(), DeclarationError> {
+    /// Validate shared formal and type-tree budgets without formatting the
+    /// individual constraints. Serializers can then render each one once.
+    pub fn validate(&self) -> Result<(), DeclarationError> {
         if self.parameters.len() > MAX_SIGNATURE_PARAMETERS {
             return Err(DeclarationError::ResourceLimit(format!(
                 "signature has more than {MAX_SIGNATURE_PARAMETERS} parameters"
@@ -648,7 +672,7 @@ fn count_type_nodes(
 }
 
 impl SupplyStatus {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Required => "required",
             Self::Defaulted => "defaulted",
@@ -669,7 +693,7 @@ impl SupplyStatus {
 }
 
 impl EvaluationSemantics {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Value => "value",
             Self::Promise => "promise",
@@ -692,7 +716,7 @@ impl EvaluationSemantics {
 }
 
 impl AssignmentSemantics {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::EntryOnly => "entry_only",
             Self::PersistentBinding => "persistent_binding",
@@ -969,6 +993,111 @@ mod tests {
     }
 
     #[test]
+    fn nested_unions_have_one_canonical_form_for_parsed_and_programmatic_values() {
+        let expected = "union[character, double, integer]";
+        for source in [
+            "union[integer, union[character, double]]",
+            "union[union[integer, character], union[double, integer]]",
+            expected,
+        ] {
+            let parsed = TypeExpr::parse(source).unwrap();
+            assert_eq!(parsed.canonical().unwrap(), expected);
+            assert_eq!(parsed, TypeExpr::parse(expected).unwrap());
+        }
+
+        let programmatic = TypeExpr::Union(vec![
+            TypeExpr::atomic(AtomicMode::Integer),
+            TypeExpr::Union(vec![
+                TypeExpr::atomic(AtomicMode::Character),
+                TypeExpr::Union(vec![
+                    TypeExpr::atomic(AtomicMode::Double),
+                    TypeExpr::atomic(AtomicMode::Integer),
+                ]),
+            ]),
+        ]);
+        assert_eq!(programmatic.canonical().unwrap(), expected);
+        assert_eq!(
+            TypeExpr::parse(&programmatic.canonical().unwrap()).unwrap(),
+            TypeExpr::parse(expected).unwrap()
+        );
+
+        let nested_inferred = RType::union(
+            vec![
+                RType::scalar(Mode::Integer),
+                RType::union(
+                    vec![RType::scalar(Mode::Character), RType::scalar(Mode::Double)].into(),
+                ),
+            ]
+            .into(),
+        );
+        let Conversion::Exact(converted) =
+            convert_inferred(&nested_inferred, ExportSite::ValueAtAssignment)
+        else {
+            panic!("supported nested union should convert exactly");
+        };
+        assert_eq!(
+            converted.canonical().unwrap(),
+            "union[character<len=1>, double<len=1>, integer<len=1>]"
+        );
+    }
+
+    #[test]
+    fn flattened_unions_obey_unique_alternative_and_original_node_budgets() {
+        let atom = |length| TypeExpr::Atomic {
+            mode: AtomicMode::Integer,
+            length: Some(DeclaredLength::Exact(length)),
+        };
+        let nested = |last| {
+            TypeExpr::Union(vec![
+                TypeExpr::Union((0..8).map(atom).collect()),
+                TypeExpr::Union((8..last).map(atom).collect()),
+            ])
+        };
+        let sixteen = nested(16);
+        let canonical = sixteen.canonical().unwrap();
+        let repeated_across_levels = TypeExpr::Union(vec![
+            TypeExpr::Union((0..8).map(atom).collect()),
+            TypeExpr::Union((7..16).map(atom).collect()),
+        ]);
+        assert_eq!(repeated_across_levels.canonical().unwrap(), canonical);
+        assert_eq!(
+            TypeExpr::parse(&canonical).unwrap().canonical().unwrap(),
+            canonical
+        );
+        assert_eq!(
+            canonical.matches("integer<len=").count(),
+            MAX_UNION_ALTERNATIVES
+        );
+        assert!(matches!(
+            nested(17).canonical(),
+            Err(DeclarationError::ResourceLimit(_))
+        ));
+        let parsed_over_limit = format!(
+            "union[union[{}], union[{}]]",
+            (0..8)
+                .map(|n| format!("integer<len={n}>"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            (8..17)
+                .map(|n| format!("integer<len={n}>"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        assert!(matches!(
+            TypeExpr::parse(&parsed_over_limit),
+            Err(DeclarationError::ResourceLimit(_))
+        ));
+        // The flattened result has one alternative, but all 69 input nodes
+        // must still count against the original-tree traversal budget.
+        let many_duplicates =
+            TypeExpr::Union((0..4).map(|_| TypeExpr::Union(vec![atom(1); 16])).collect());
+        assert!(matches!(
+            many_duplicates.canonical(),
+            Err(DeclarationError::ResourceLimit(_))
+        ));
+    }
+
+    #[test]
     fn signature_round_trip_preserves_formal_and_effect_semantics() {
         let signature = DeclaredSignature {
             parameters: vec![
@@ -1102,7 +1231,7 @@ mod tests {
             "fn[entry_only](required/promise \"x\\\"y\": union[integer, null]) -> character",
         ] {
             for offset in 0..seed.len() {
-                for replacement in [b'[', b'\"', b'\\', b',', b'?', b'0'] {
+                for &replacement in b"[\"\\,?0" {
                     let mut mutated = seed.as_bytes().to_vec();
                     mutated[offset] = replacement;
                     let Ok(source) = std::str::from_utf8(&mutated) else {

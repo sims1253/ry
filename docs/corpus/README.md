@@ -135,3 +135,9 @@ manifest selects its corpus, and a `# === full tier` marker separates the
 fast-tier packages from the rest. Non-default manifests also namespace their
 committed reports (for example `posit.glue.root.txt`) so packages pinned at
 different commits never overwrite another corpus's baseline.
+
+The package cache skips a fetch when the exact pinned commit object is already
+present, but still forces checkout of that pin and removes untracked files.
+A cached partial clone may have the commit without its trees or blobs; checkout
+can still contact the origin for those promised objects. An offline run works
+only after all objects needed for the checkout are local.

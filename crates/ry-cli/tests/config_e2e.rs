@@ -127,6 +127,154 @@ fn ry_check_in(cwd: &std::path::Path, arg: &std::path::Path) -> std::process::Ou
         .expect("failed to invoke ry binary")
 }
 
+#[test]
+fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R/scratch")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: scoped\nVersion: 0.1\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("R/defs.R"), "shared <- 1L\n\"x\" + 1L\n").unwrap();
+    fs::write(temp.path().join("R/scratch/try.R"), "\"x\" + 1L\n").unwrap();
+    fs::write(temp.path().join("scripts/use.R"), "shared\n\"x\" + 1L\n").unwrap();
+
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(temp.path())
+            .arg("check")
+            .args(args)
+            .args([".", "--output-format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let result = run(&[]);
+    let findings = result.as_array().unwrap();
+    let scoped = findings
+        .iter()
+        .filter(|finding| finding["code"] == "RY040")
+        .map(|finding| {
+            (
+                finding["path"].as_str().unwrap().to_string(),
+                finding["severity"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scoped,
+        [
+            ("./R/defs.R".into(), "error".into()),
+            ("./R/scratch/try.R".into(), "warning".into()),
+            ("./scripts/use.R".into(), "warning".into()),
+        ]
+    );
+    assert!(
+        !findings.iter().any(|finding| finding["code"] == "RY010"),
+        "scripts/use.R must still resolve bindings from R/defs.R: {findings:?}"
+    );
+
+    // A direct file input from a different working directory must resolve
+    // the same owning ry.toml and report the same scoped severity.
+    let direct = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(temp.path().join("scripts"))
+        .args(["check", "../R/defs.R", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let direct: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
+    assert!(
+        direct
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "RY040" && finding["severity"] == "error")
+    );
+
+    let cli = run(&["--error", "RY040"]);
+    assert!(
+        cli.as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["code"] == "RY040")
+            .all(|finding| finding["severity"] == "error")
+    );
+
+    let high = run(&["--min-confidence", "high"]);
+    assert!(
+        high.as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["code"] != "RY040"),
+        "scoped errors must retain their original medium confidence: {high}"
+    );
+
+    let snapshot = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(temp.path())
+        .args(["check", ".", "--write-baseline", "baseline.json"])
+        .output()
+        .unwrap();
+    assert!(
+        matches!(snapshot.status.code(), Some(0 | 1)),
+        "{}",
+        String::from_utf8_lossy(&snapshot.stderr)
+    );
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\nbaseline = \"baseline.json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let accepted = run(&[]);
+    assert!(
+        accepted.as_array().unwrap().is_empty(),
+        "baseline subtraction must see scoped diagnostics: {accepted}"
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "ignore = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let sticky = run(&["--error", "RY040"]);
+    assert!(
+        sticky
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["code"] != "RY040"),
+        "global ignore must remain sticky even with a scoped rule and explicit CLI error: {sticky}"
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/defs.R\"]\nignore = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let suppressed = run(&[]);
+    let suppressed = suppressed.as_array().unwrap();
+    assert!(
+        suppressed.iter().all(|finding| {
+            finding["code"] != "RY040" || !finding["path"].as_str().unwrap().ends_with("R/defs.R")
+        }),
+        "source-local suppression must hide its own diagnostic: {suppressed:?}"
+    );
+    assert!(
+        suppressed.iter().all(|finding| finding["code"] != "RY010"),
+        "the suppressed defining file must still supply its binding: {suppressed:?}"
+    );
+}
+
 fn ry_check_with_r_lib(arg: &std::path::Path, r_lib: &std::path::Path) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_ry");
     Command::new(bin)

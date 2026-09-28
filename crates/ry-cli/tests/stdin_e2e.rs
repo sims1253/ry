@@ -79,6 +79,50 @@ fn identical_buffer_matches_disk_with_package_and_neighbor() {
 }
 
 #[test]
+fn stdin_logical_filename_uses_the_same_path_rule_policy_as_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let source = b"\"a\" + 1L\n";
+    fs::write(temp.path().join("R/new.R"), source).unwrap();
+    let disk = run(
+        temp.path(),
+        &["R/new.R", "--output-format", "json"],
+        b"unused",
+    );
+    let overlay = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&disk), json(&overlay));
+    assert_eq!(json(&overlay)[0]["severity"], "warning");
+    fs::remove_file(temp.path().join("R/new.R")).unwrap();
+    let unsaved = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&unsaved)[0]["severity"], "warning");
+}
+
+#[test]
 fn overlay_replaces_stale_disk_copy_in_directory_scan() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("R")).unwrap();

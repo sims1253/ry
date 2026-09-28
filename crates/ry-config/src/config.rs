@@ -85,6 +85,68 @@ pub struct EnvironmentConfig {
     pub root: Option<PathBuf>,
 }
 
+/// One ordered per-file rule policy. Later matching tables replace earlier
+/// choices for codes they mention; unmatched rules retain the global policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RuleOverrideConfig {
+    pub paths: Vec<String>,
+    pub error: Vec<String>,
+    pub warn: Vec<String>,
+    pub ignore: Vec<String>,
+}
+
+/// A strict, reusable config-root-relative glob scope. Relative source paths
+/// are anchored at the process working directory. No filesystem reads or
+/// symlink resolution are required, so editor overlays match the CLI.
+#[derive(Debug, Clone)]
+pub struct ScopedPaths {
+    root: PathBuf,
+    patterns: Vec<glob::Pattern>,
+}
+
+impl ScopedPaths {
+    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
+        let patterns = patterns
+            .iter()
+            .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            root: std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf()),
+            patterns,
+        })
+    }
+
+    pub fn matches(&self, source: &Path) -> bool {
+        let Ok(source) = std::path::absolute(source) else {
+            return false;
+        };
+        let Ok(relative) = source.strip_prefix(&self.root) else {
+            return false;
+        };
+        // A lexical `..` after the root may escape its ownership. Decline
+        // ambiguous spellings instead of applying policy outside the config.
+        if relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return false;
+        }
+        let relative = relative
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        self.patterns.iter().any(|pattern| {
+            pattern.matches_with(
+                &relative,
+                glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                },
+            )
+        })
+    }
+}
+
 /// Parsed contents of a `ry.toml` project config file.
 ///
 /// The schema is intentionally minimal and conservative; we can add
@@ -112,6 +174,9 @@ pub struct Config {
     pub warn: Vec<String>,
     /// Rules to suppress. Default: empty.
     pub ignore: Vec<String>,
+    /// Ordered config-root-relative rule severity overrides.
+    #[serde(alias = "rule-overrides")]
+    pub rule_overrides: Vec<RuleOverrideConfig>,
     /// Replace the default-enabled rule set. `Some([])` disables every rule;
     /// `None` retains the default-enabled set.
     pub select: Option<Vec<String>>,
@@ -164,6 +229,7 @@ impl Default for Config {
             error: Vec::new(),
             warn: Vec::new(),
             ignore: Vec::new(),
+            rule_overrides: Vec::new(),
             select: None,
             extend_select: Vec::new(),
             exclude: Vec::new(),
@@ -231,6 +297,24 @@ impl Config {
                 glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
                     ConfigError::InvalidEnvironmentPattern {
                         path: path.to_path_buf(),
+                        pattern: pattern.clone(),
+                        source,
+                    }
+                })?;
+            }
+        }
+        for (index, override_config) in cfg.rule_overrides.iter().enumerate() {
+            if override_config.paths.is_empty() {
+                return Err(ConfigError::EmptyRuleOverridePaths {
+                    path: path.to_path_buf(),
+                    index: index + 1,
+                });
+            }
+            for pattern in &override_config.paths {
+                glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+                    ConfigError::InvalidRuleOverridePattern {
+                        path: path.to_path_buf(),
+                        index: index + 1,
                         pattern: pattern.clone(),
                         source,
                     }
@@ -393,6 +477,7 @@ impl Config {
             error: errors,
             warn: warns,
             ignore: ignores,
+            rule_overrides: self.rule_overrides,
             select: self.select,
             extend_select: self.extend_select,
             exclude: self.exclude,
@@ -496,6 +581,17 @@ pub enum ConfigError {
     #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
     InvalidEnvironmentPattern {
         path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
+    #[error("config file {path} has rule-overrides table #{index} without paths")]
+    EmptyRuleOverridePaths { path: PathBuf, index: usize },
+    #[error(
+        "config file {path} has invalid rule-overrides table #{index} path pattern `{pattern}`: {source}"
+    )]
+    InvalidRuleOverridePattern {
+        path: PathBuf,
+        index: usize,
         pattern: String,
         source: glob::PatternError,
     },
@@ -616,6 +712,42 @@ paths = ["inst/shiny/**"]
         assert_eq!(cfg.environments[0].name, "shiny-server");
         assert_eq!(cfg.environments[0].bindings, ["input", "output", "session"]);
         assert_eq!(cfg.environments[0].paths, ["inst/shiny/**"]);
+    }
+
+    #[test]
+    fn rule_override_paths_are_config_root_relative_and_component_bounded() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let config_path = root.join("ry.toml");
+        fs::write(
+            &config_path,
+            "[[rule-overrides]]\npaths = [\"R/*.R\"]\nerror = [\"RY040\"]\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&config_path).unwrap();
+        assert_eq!(config.rule_overrides.len(), 1);
+        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        assert!(paths.matches(&root.join("R/a.R")));
+        assert!(!paths.matches(&root.join("R/deep/a.R")));
+        assert!(!paths.matches(&root.join("else/R/a.R")));
+        assert!(!paths.matches(&root.join("R/../else/a.R")));
+        assert!(!paths.matches(&root.join("../outside/R/a.R")));
+    }
+
+    #[test]
+    fn invalid_rule_override_scope_is_a_config_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ry.toml");
+        fs::write(&path, "[[rule-overrides]]\nerror = [\"RY040\"]\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::EmptyRuleOverridePaths { index: 1, .. })
+        ));
+        fs::write(&path, "[[rule-overrides]]\npaths = [\"[\"]\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidRuleOverridePattern { index: 1, .. })
+        ));
     }
 
     #[test]

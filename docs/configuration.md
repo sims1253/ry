@@ -107,6 +107,44 @@ pass `--error RY010`; remove the ignore entry to enable that rule.
 When multiple paths are checked, the first path anchors config discovery;
 that one configuration applies to the complete invocation.
 
+To change only the severity reported for selected source files, add ordered
+`[[rule-overrides]]` tables:
+
+```toml
+warn = ["RY040"]
+
+[[rule-overrides]]
+paths = ["R/**"]
+error = ["RY040"]
+
+[[rule-overrides]]
+paths = ["R/scratch/**"]
+warn = ["RY040"]
+```
+
+Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
+elsewhere. Each table accepts `error`, `warn`, and `ignore` rule lists by code,
+name, or `"all"`; `paths` is required. Globs use forward slashes relative to
+the directory containing `ry.toml`, including when checking a nested package.
+`*` matches one path component, while `**` includes descendants. The same
+lexical path matcher is used by the CLI, watch mode, and editor, including for
+unsaved files. A path with unresolved `..` components outside the config root
+does not match.
+
+The last matching table to mention a rule wins; within one table, `ignore`
+wins over `error`, which wins over `warn`. Unmentioned rules keep the global
+policy. A global `ignore` remains disabled even when a path table enables the
+rule. Explicit CLI `--error`/`--warn`/`--ignore` and editor `lint.error`/
+`lint.warn`/`lint.ignore` lists take priority over path tables for the rules
+they name, while retaining the existing global bucket precedence (`ignore` >
+`error` > `warn`). A path table can enable a rule disabled by `select`, unless
+a global ignore or explicit CLI/editor choice prevents it. The policy changes
+reported findings only: every discovered file still contributes bindings and
+types to project analysis. Inline suppression, severity, path confidence
+demotion, baseline subtraction, and minimum confidence filtering keep their
+existing order. A file's effective policy also controls whether the optional
+RY113 unused-ignore audit and its target rule are eligible.
+
 In the editor, open documents that are ineligible for analysis (excluded by
 `exclude` patterns, over `max-file-bytes`, or below a pruned `max-depth`)
 may still receive syntax highlighting and editor features, but they do not

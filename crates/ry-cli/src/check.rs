@@ -538,8 +538,21 @@ impl WatchState {
     /// Borrow the current inputs as one pass's context. Rebuilt per
     /// pass because a reload may have replaced everything it borrows.
     fn check_context(&self, min_confidence: ry_checker::Confidence) -> CheckContext<'_> {
+        let protected = self
+            .overrides
+            .error
+            .iter()
+            .chain(&self.overrides.warn)
+            .chain(&self.overrides.ignore)
+            .cloned()
+            .collect::<Vec<_>>();
         CheckContext {
             filter: &self.filter,
+            scoped_policy: ry_checker::ScopedRulePolicy::new(
+                &self.cfg,
+                self.config_root.as_deref(),
+                &protected,
+            ),
             format: self.format,
             resolution_config: &self.cfg,
             user_stubs: Arc::clone(&self.user_stubs),
@@ -1184,6 +1197,7 @@ impl CheckResult {
 /// of `run_check_once` because watch iterations change it.
 pub(crate) struct CheckContext<'a> {
     filter: &'a ry_checker::SeverityFilter,
+    scoped_policy: ry_checker::ScopedRulePolicy,
     format: ry_checker::format::OutputFormat,
     resolution_config: &'a config::Config,
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -1283,13 +1297,14 @@ fn run_check_once(
     // min-confidence threshold. The lexical (comment-based) suppression
     // filter keeps a `#` inside a string literal from being mistaken
     // for a directive.
-    let post = ry_checker::PostProcess {
-        filter: ctx.filter,
-        baseline: ctx.baseline,
-        min_confidence: ctx.min_confidence,
-        repo_root: ctx.repo_root,
-    };
     for (path, diags) in &mut per_file_diagnostics {
+        let filter = ctx.scoped_policy.filter_for_str(path, ctx.filter);
+        let post = ry_checker::PostProcess {
+            filter: &filter,
+            baseline: ctx.baseline,
+            min_confidence: ctx.min_confidence,
+            repo_root: ctx.repo_root,
+        };
         let comments: &[ry_core::ast::Comment] = comments.get(path).map_or(&[], Vec::as_slice);
         let src = srcs.get(path).map_or("", String::as_str);
         *diags = post.pre_demotion(
@@ -1302,7 +1317,19 @@ fn run_check_once(
     }
     // The synthesized not-R diagnostics have no suppression comments to
     // honor, so they enter the pipeline at the severity filter.
-    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, ctx.filter);
+    not_r_diagnostics.retain_mut(|diagnostic| {
+        let filter = ctx
+            .scoped_policy
+            .filter_for_str(&diagnostic.path, ctx.filter);
+        let mut one = vec![diagnostic.clone()];
+        ry_checker::apply_filter_to_diagnostics(&mut one, &filter);
+        if let Some(filtered) = one.pop() {
+            *diagnostic = filtered;
+            true
+        } else {
+            false
+        }
+    });
     all_diagnostics.append(&mut not_r_diagnostics);
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
@@ -1312,6 +1339,12 @@ fn run_check_once(
     // severity filter and the baseline, its documented position in the
     // shared order. The stage lives in the shared pipeline, so the LSP
     // demotes non-source paths exactly like the CLI (#492).
+    let post = ry_checker::PostProcess {
+        filter: ctx.filter,
+        baseline: ctx.baseline,
+        min_confidence: ctx.min_confidence,
+        repo_root: ctx.repo_root,
+    };
     post.demote_non_source_paths(&mut all_diagnostics);
     post.post_demotion(&mut all_diagnostics);
 
@@ -1616,6 +1649,7 @@ mod tests {
             None,
             &CheckContext {
                 filter: &filter,
+                scoped_policy: ry_checker::ScopedRulePolicy::default(),
                 format: ry_checker::format::OutputFormat::Json,
                 resolution_config: &resolution_config,
                 user_stubs: Arc::new(std::collections::BTreeMap::new()),
@@ -1681,6 +1715,7 @@ mod tests {
         let resolution_config = config::Config::default();
         let ctx = CheckContext {
             filter: &filter,
+            scoped_policy: ry_checker::ScopedRulePolicy::default(),
             format: ry_checker::format::OutputFormat::Json,
             resolution_config: &resolution_config,
             user_stubs: Arc::new(std::collections::BTreeMap::new()),

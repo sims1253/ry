@@ -497,14 +497,25 @@ fn code_action_ignore_line_bare_directive_withholds_any_code() {
 }
 
 #[test]
-fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
-    // A standalone directive applies to the next code line, not itself.
-    let text = "# ry: ignore\n";
+fn code_action_ignore_line_on_comment_only_line_has_no_effective_edit() {
+    // A synthetic diagnostic on a comment-only line has no expression the
+    // proposed action could suppress, even though the standalone directive
+    // targets the next code line. The shared-parser check rejects the no-op.
+    let text = "# ry: ignore\n\"a\" + 1L\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let file = parse_src("test.R", text);
+    let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
+    assert_eq!(suppressions.len(), 1);
+    assert_eq!(suppressions[0].line, 1);
     assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
-        "a standalone directive must not suppress its own line"
+        !suppressions
+            .iter()
+            .any(|s| s.line == 0 && s.suppresses("RY040"))
+    );
+    assert!(
+        make_ignore_action(&uri, &diag, &file).is_none(),
+        "an ignore action on a comment-only line would have no effect"
     );
 }
 

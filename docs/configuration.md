@@ -126,18 +126,23 @@ Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
 elsewhere. Each table accepts `error`, `warn`, and `ignore` rule lists by code,
 name, or `"all"`; `paths` is required. Globs use forward slashes relative to
 the directory containing `ry.toml`, including when checking a nested package.
-`*` matches one path component, while `**` includes descendants. The CLI,
-watch mode, and editor use the same filesystem identity for the config root
-and each source: existing symlinks and `..` components resolve before matching.
+`*` matches one path component, while `**` includes descendants. For paths
+representable as UTF-8, the CLI, watch mode, and editor use the same matcher
+and filesystem identity for the config root and each source: existing symlinks
+and `..` components resolve before matching.
 For an unsaved file, the deepest existing ancestor resolves first and the
 remaining ordinary path components keep their names. A `..` after a missing
 ancestor cannot be resolved and does not match. A symlink that points outside
 the config root is scoped by its target location, not its textual alias.
 On Unix, a backslash in a pattern is a literal filename character; use
 forward slashes to separate directories.
-Path scopes do not match filenames that cannot be represented as UTF-8;
-those files keep the global rule settings even if their displayed names
-contain a replacement character.
+The CLI and watch mode retain native paths when selecting rule policy. Path
+scopes do not match filenames that cannot be represented as UTF-8 in those
+modes; the files keep the global rule settings even if their displayed names
+contain a replacement character. The editor's existing document and index keys
+use Unicode display strings, which can lose a non-UTF-8 filename's original
+identity. That native-path guarantee does not extend to editor diagnostics for
+such filenames.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global

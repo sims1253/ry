@@ -166,7 +166,7 @@ pub(super) struct State {
     /// Notices already sent for the currently installed serialized scopes.
     /// A repaired scope leaves this set on the next context install, so a
     /// later failure can be reported again without repeating unchanged ones.
-    notified_degraded_scopes: std::collections::BTreeSet<(PathBuf, &'static str)>,
+    notified_degraded_scopes: std::collections::BTreeSet<(PathBuf, ry_workspace::InventoryFailure)>,
     /// On-disk `.R`/`.r` files discovered by the background indexer,
     /// keyed by absolute path. Open documents shadow these.
     disk_files: HashMap<String, Arc<SourceFile>>,
@@ -395,8 +395,21 @@ impl ProjectCache {
     }
 }
 
+fn serialized_inventory_notice(path: &Path, reason: ry_workspace::InventoryFailure) -> String {
+    let hint = if reason == ry_workspace::InventoryFailure::DecodedByteLimit {
+        " Raise max-serialized-bytes in ry.toml to enumerate it."
+    } else {
+        ""
+    };
+    format!(
+        "ry: {}: degraded scope ({}); serialized inventory unavailable.{hint}",
+        path.display(),
+        reason.description()
+    )
+}
+
 impl State {
-    fn newly_degraded_scopes(&mut self) -> Vec<(PathBuf, &'static str)> {
+    fn newly_degraded_scopes(&mut self) -> Vec<(PathBuf, ry_workspace::InventoryFailure)> {
         let current: std::collections::BTreeSet<_> = self
             .folder_contexts
             .iter()
@@ -1589,10 +1602,12 @@ impl Backend {
                 let newly_degraded = state.newly_degraded_scopes();
                 drop(state);
                 for (path, reason) in &newly_degraded {
-                    self.client.log_message(
-                        tower_lsp::lsp_types::MessageType::WARNING,
-                        format!("ry: {}: degraded scope ({reason}); serialized inventory unavailable.", path.display()),
-                    ).await;
+                    self.client
+                        .log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            serialized_inventory_notice(path, *reason),
+                        )
+                        .await;
                 }
                 if cap_hit {
                     let _ = self
@@ -2539,10 +2554,7 @@ impl Backend {
                 self.client
                     .log_message(
                         tower_lsp::lsp_types::MessageType::WARNING,
-                        format!(
-                            "ry: {}: degraded scope ({reason}); serialized inventory unavailable.",
-                            path.display()
-                        ),
+                        serialized_inventory_notice(path, *reason),
                     )
                     .await;
             }
@@ -3065,10 +3077,26 @@ mod degraded_notice_tests {
     use super::*;
 
     #[test]
+    fn byte_limit_notice_keeps_its_remediation_hint() {
+        let path = Path::new("/project/R/sysdata.rda");
+        let byte_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::DecodedByteLimit);
+        assert!(byte_limit.contains("R/sysdata.rda"));
+        assert!(byte_limit.contains("max-serialized-bytes in ry.toml"));
+        let parser_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::ParserResourceLimit);
+        assert!(parser_limit.contains("serialized parser resource limit exceeded"));
+        assert!(!parser_limit.contains("Raise max-serialized-bytes"));
+    }
+
+    #[test]
     fn unchanged_scope_does_not_repeat_and_repaired_scope_can_fail_again() {
         let path = PathBuf::from("/project/R/sysdata.rda");
         let failed = ry_workspace::WorkspaceContext {
-            degraded_scopes: vec![(path.clone(), "serialized parser resource limit exceeded")],
+            degraded_scopes: vec![(
+                path.clone(),
+                ry_workspace::InventoryFailure::ParserResourceLimit,
+            )],
             ..Default::default()
         };
         let mut folder = FolderAnalysisContext::default();
@@ -3088,7 +3116,7 @@ mod degraded_notice_tests {
         state.folder_contexts[0].workspace_contexts.insert(
             None,
             ry_workspace::WorkspaceContext {
-                degraded_scopes: vec![(path, "serialized parser resource limit exceeded")],
+                degraded_scopes: vec![(path, ry_workspace::InventoryFailure::ParserResourceLimit)],
                 ..Default::default()
             },
         );

@@ -16,7 +16,8 @@ use discovery::{is_r_source_name, is_testthat_code_name};
 pub mod packages;
 mod serialized;
 
-use serialized::{InventoryFailure, InventoryStatus, serialized_inventory};
+pub use serialized::InventoryFailure;
+use serialized::{InventoryStatus, serialized_inventory};
 
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
@@ -97,7 +98,7 @@ pub struct WorkspaceContext {
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
-    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+    pub degraded_scopes: Vec<(PathBuf, InventoryFailure)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -333,7 +334,7 @@ pub fn resolve_workspace_context<'a>(
     // A package root is visited once per file in it, so a single oversized
     // dataset would otherwise be reported once per file. Deduplicate on the
     // (path, reason) pair; the CLI prints one line per entry.
-    let mut degraded: BTreeSet<(PathBuf, &'static str)> = BTreeSet::new();
+    let mut degraded: BTreeSet<(PathBuf, InventoryFailure)> = BTreeSet::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -465,22 +466,16 @@ pub fn resolve_workspace_context<'a>(
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
                 for (path, reason) in &datasets.degraded {
-                    degraded.insert((path.clone(), reason.description()));
+                    degraded.insert((path.clone(), *reason));
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
-            // R/sysdata.rda is optional. Absence is normal, but a file
-            // requested by load() (or one that disappears after discovery)
-            // must not be described as a successfully empty inventory.
-            if !matches!(
-                std::fs::metadata(&sysdata),
-                Err(ref error) if error.kind() == std::io::ErrorKind::NotFound
-            ) {
-                let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
-                file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
-                if let InventoryStatus::Unavailable(reason) = sysdata_inventory.status {
-                    degraded.insert((sysdata, reason.description()));
-                }
+            // This file is optional. The inventory's single open decides
+            // absence; a separate existence probe would race that open.
+            let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
+            file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
+            if let InventoryStatus::Unavailable(reason) = sysdata_inventory.status {
+                degraded.insert((sysdata, reason));
             }
             let loaded = loaded_serialized_bindings(
                 file,
@@ -490,7 +485,7 @@ pub fn resolve_workspace_context<'a>(
                 max_serialized_bytes,
             );
             for (path, reason) in &loaded.degraded {
-                degraded.insert((path.clone(), reason.description()));
+                degraded.insert((path.clone(), *reason));
             }
             load_bindings.insert(file.path.clone(), loaded.per_span);
 
@@ -867,8 +862,12 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                 } else {
                     out.bindings.extend(inventory.bindings);
                 }
-                if let InventoryStatus::Unavailable(reason) = inventory.status {
-                    out.degraded.push((path, reason));
+                match inventory.status {
+                    InventoryStatus::Missing => {
+                        out.degraded.push((path, InventoryFailure::ReadFailure));
+                    }
+                    InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
+                    InventoryStatus::Complete => {}
                 }
             }
             "rds" => {
@@ -990,8 +989,12 @@ fn loaded_serialized_bindings(
             )
         }) {
             let inventory = serialized_inventory(&path, max_serialized_bytes);
-            if let InventoryStatus::Unavailable(reason) = inventory.status {
-                out.degraded.push((path, reason));
+            match inventory.status {
+                InventoryStatus::Missing => {
+                    out.degraded.push((path, InventoryFailure::ReadFailure));
+                }
+                InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
+                InventoryStatus::Complete => {}
             }
             out.per_span.insert(span.start, inventory.bindings);
         }

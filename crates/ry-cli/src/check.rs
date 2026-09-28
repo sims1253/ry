@@ -1138,7 +1138,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     for group in groups {
         per_file_diagnostics.extend(check_project(group.check_input));
         for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason));
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
     }
 

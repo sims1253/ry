@@ -2,6 +2,7 @@
 
 use super::file_stem_binding;
 use std::collections::HashSet;
+use std::fs::File;
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -9,8 +10,8 @@ use std::path::Path;
 
 /// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
 /// are the enumerated object names, or a conservative fallback when
-/// enumeration fails. The status distinguishes a known empty workspace
-/// from an inventory that could not be recovered.
+/// enumeration fails. The status distinguishes a known empty workspace,
+/// an absent path, and an inventory that could not be recovered.
 #[derive(Clone)]
 pub(super) struct SerializedInventory {
     pub(super) bindings: HashSet<String>,
@@ -20,22 +21,31 @@ pub(super) struct SerializedInventory {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum InventoryStatus {
     Complete,
+    /// The requested path did not exist when the single open was attempted.
+    Missing,
     Unavailable(InventoryFailure),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum InventoryFailure {
+/// Bounded cause of an unavailable serialized inventory. Adding a cause
+/// requires choosing its user message and whether a file-stem fallback is
+/// justified in `description` and `uses_file_stem` below.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum InventoryFailure {
     DecodedByteLimit,
     ParserResourceLimit,
+    /// The decoded bytes reached the parser but did not form valid input.
     MalformedInput,
     UnsupportedInput,
+    /// The serialized file could not be opened.
     ReadFailure,
+    /// The opened file could not be read or decompressed.
     DecodeFailure,
     ParserFailure,
 }
 
 impl InventoryFailure {
-    pub(super) fn description(self) -> &'static str {
+    pub fn description(self) -> &'static str {
         match self {
             Self::DecodedByteLimit => "decoded-byte limit exceeded",
             Self::ParserResourceLimit => "serialized parser resource limit exceeded",
@@ -62,20 +72,34 @@ impl InventoryFailure {
 /// and unreadable inputs keep the existing empty-binding fallback, but are
 /// explicitly reported as unavailable rather than known empty.
 pub(super) fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
-    let mut inventory =
-        cached_inventory(path, cap).unwrap_or_else(|| serialized_inventory_uncached(path, cap));
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return SerializedInventory {
+                bindings: HashSet::new(),
+                status: InventoryStatus::Missing,
+            };
+        }
+        Err(_) => {
+            return SerializedInventory {
+                bindings: HashSet::new(),
+                status: InventoryStatus::Unavailable(InventoryFailure::ReadFailure),
+            };
+        }
+    };
+    let mut inventory = cached_inventory(path, cap, file);
     if matches!(inventory.status, InventoryStatus::Unavailable(reason) if reason.uses_file_stem()) {
         inventory.bindings = file_stem_binding(path);
     }
     inventory
 }
 
-fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
+fn cached_inventory(path: &Path, cap: u64, file: File) -> SerializedInventory {
     // Without a change-time stamp, re-read rather than trust a preserved mtime.
     #[cfg(not(unix))]
     {
-        let _ = (path, cap);
-        None
+        let _ = path;
+        serialized_inventory_uncached(file, cap)
     }
     #[cfg(unix)]
     {
@@ -85,8 +109,12 @@ fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
         type Entry = (PathBuf, Stamp, SerializedInventory);
         static CACHE: std::sync::OnceLock<std::sync::Mutex<VecDeque<Entry>>> =
             std::sync::OnceLock::new();
-        let key = path.canonicalize().ok()?;
-        let metadata = std::fs::metadata(&key).ok()?;
+        let Ok(key) = path.canonicalize() else {
+            return serialized_inventory_uncached(file, cap);
+        };
+        let Ok(metadata) = file.metadata() else {
+            return serialized_inventory_uncached(file, cap);
+        };
         let stamp = (
             metadata.len(),
             metadata.ctime(),
@@ -104,33 +132,29 @@ fn cached_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
         {
             let mut entries = lock();
             if let Some(index) = entries.iter().position(|(path, _, _)| path == &key) {
-                let entry = entries.remove(index)?;
+                let entry = entries.remove(index).expect("located entry");
                 if entry.1 == stamp {
                     let inventory = entry.2.clone();
                     entries.push_back(entry);
-                    return Some(inventory);
+                    return inventory;
                 }
             }
         }
-        let inventory = serialized_inventory_uncached(&key, cap);
+        let inventory = serialized_inventory_uncached(file, cap);
         let mut entries = lock();
         entries.retain(|(path, _, _)| path != &key);
         if entries.len() == MAX_CACHED_INVENTORIES {
             entries.pop_front();
         }
         entries.push_back((key, stamp, inventory.clone()));
-        Some(inventory)
+        inventory
     }
 }
 
-fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
+fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
     let unavailable = |reason| SerializedInventory {
         bindings: HashSet::new(),
         status: InventoryStatus::Unavailable(reason),
-    };
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(_) => return unavailable(InventoryFailure::ReadFailure),
     };
     let bytes = match read_serialized(file, cap) {
         Decoded::Bytes(bytes) => bytes,
@@ -449,6 +473,68 @@ mod tests {
             InventoryStatus::Unavailable(InventoryFailure::MalformedInput)
         );
         assert!(inventory.bindings.is_empty());
+    }
+
+    #[test]
+    fn missing_path_is_distinct_from_empty_and_failed_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sysdata.rda");
+        let inventory = serialized_inventory(&path, 4096);
+        assert_eq!(inventory.status, InventoryStatus::Missing);
+        assert!(inventory.bindings.is_empty());
+
+        std::fs::write(
+            &path,
+            include_bytes!("../../../testdata/serialized/empty.rda"),
+        )
+        .unwrap();
+        let inventory = serialized_inventory(&path, 4096);
+        assert_eq!(inventory.status, InventoryStatus::Complete);
+        assert!(inventory.bindings.is_empty());
+    }
+
+    #[test]
+    fn parser_message_classifier_distinguishes_limits_from_truncation() {
+        // These are the InvalidFormat message families in rds2rust 0.3.0.
+        // The real nested-limit fixture separately proves one path through
+        // the upstream parser. Constructed messages protect this classifier,
+        // but cannot detect a future upstream reword on their own.
+        let limits = [
+            "Parser nesting limit 64 exceeded",
+            "Materialized allocation of 1 bytes exceeds limits while parsing x",
+            "Allocation of 1 bytes exceeds cap while parsing x",
+            "Length 1 exceeds safe limit 1 while parsing x",
+            "Allocation size overflow while parsing x",
+            "Length overflow while parsing x",
+        ];
+        for message in limits {
+            assert_eq!(
+                classify_parser_error(&rds2rust::Error::InvalidFormat(message.into())),
+                InventoryFailure::ParserResourceLimit,
+                "{message}"
+            );
+        }
+        for message in [
+            "Length 1 (1 bytes) exceeds remaining 1 bytes while parsing x",
+            "invalid R serialization header",
+        ] {
+            assert_eq!(
+                classify_parser_error(&rds2rust::Error::InvalidFormat(message.into())),
+                InventoryFailure::MalformedInput,
+                "{message}"
+            );
+        }
+        assert_eq!(
+            classify_parser_error(&rds2rust::Error::MemoryBudgetExceeded {
+                needed: 2,
+                available: 1,
+            }),
+            InventoryFailure::ParserResourceLimit
+        );
+        assert_eq!(
+            classify_parser_error(&rds2rust::Error::ParseError("opaque".into())),
+            InventoryFailure::ParserFailure
+        );
     }
 
     #[test]

@@ -399,7 +399,7 @@ pub(crate) fn run_dump_facts(
             "sources": context_sources,
             "workspace_hash": json_digest(&workspace_value(workspace)),
             "degraded_scopes": group.degraded_scopes.iter().map(|(path, reason)| {
-                Ok((utf8_path(path)?, reason))
+                Ok((utf8_path(path)?, reason.description()))
             }).collect::<Result<Vec<_>>>()?,
         });
         let context_id = json_digest(&context);

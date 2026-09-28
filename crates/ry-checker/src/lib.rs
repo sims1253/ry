@@ -299,6 +299,9 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 #[derive(Debug)]
 struct FunctionLookupFrame {
     possible_functions: FxSet<String>,
+    /// Exact literal bindings in this frame. A possible callable without an
+    /// exact identity blocks searching more distant frames for a contract.
+    definitions: FxMap<String, Span>,
     parent: Option<Arc<FunctionLookupFrame>>,
 }
 
@@ -467,7 +470,7 @@ impl Scope {
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
-        let possible_functions = self
+        let possible_functions: FxSet<String> = self
             .bindings
             .iter()
             .filter(|(name, ty)| {
@@ -476,8 +479,15 @@ impl Scope {
             })
             .map(|(name, _)| infer::semantic_argument_name(name).to_string())
             .collect();
+        let definitions = self
+            .lexical_definitions
+            .iter()
+            .filter(|(name, _)| possible_functions.contains(*name))
+            .map(|(name, span)| (name.clone(), *span))
+            .collect();
         scope.outward_functions = Some(Arc::new(FunctionLookupFrame {
             possible_functions,
+            definitions,
             parent: self.outward_functions.clone(),
         }));
         scope
@@ -493,6 +503,22 @@ impl Scope {
             frame = current.parent.as_deref();
         }
         false
+    }
+
+    /// `None`: no enclosing candidate; `Some(None)`: an enclosing candidate
+    /// whose identity is unknown; `Some(Some(span))`: an exact literal in the
+    /// nearest candidate frame. A nonfunction local is skipped by R's
+    /// function-position lookup before this search begins.
+    pub(crate) fn outward_function_definition(&self, name: &str) -> Option<Option<Span>> {
+        let name = infer::semantic_argument_name(name);
+        let mut frame = self.outward_functions.as_deref();
+        while let Some(current) = frame {
+            if current.possible_functions.contains(name) {
+                return Some(current.definitions.get(name).copied());
+            }
+            frame = current.parent.as_deref();
+        }
+        None
     }
 
     /// Unknown code may mutate values or install active bindings. Keep names,
@@ -853,6 +879,14 @@ impl ReturnSlots {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
     pub(crate) fns: FxMap<String, UserFn>,
+    /// Every direct literal, including definitions later replaced in `fns`.
+    /// Declaration checks address this map by source identity; ordinary
+    /// inference still uses the name-indexed last-definition table.
+    pub(crate) definition_fns: FxMap<(String, usize, usize), UserFn>,
+    /// A closure captures an environment, not a frozen binding value. If a
+    /// later assignment in that environment can replace a literal, its
+    /// captured identity cannot prove a deferred call contract.
+    pub(crate) rebound_after_capture: FxSet<(String, usize, usize)>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -885,6 +919,16 @@ pub(crate) struct FnTable {
 }
 
 impl FnTable {
+    pub(crate) fn definition(&self, path: &str, span: Span) -> Option<&UserFn> {
+        self.definition_fns
+            .get(&(path.to_string(), span.start, span.end))
+    }
+
+    pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
+        self.rebound_after_capture
+            .contains(&(path.to_string(), span.start, span.end))
+    }
+
     fn append_collected(
         &mut self,
         collected: &FnTable,
@@ -893,6 +937,29 @@ impl FnTable {
     ) {
         let slot_offset = return_slots.0.len();
         return_slots.0.extend_from_slice(&collected_slots.0);
+
+        // Project files share a global environment, but the inventory does
+        // not prove source execution order. A same-named write in another
+        // file makes either function's captured value uncertain. Direct
+        // source-ordered calls still use their exact local definition.
+        for (name, function) in &self.fns {
+            if collected.known_vars.contains(name) {
+                self.rebound_after_capture.insert((
+                    function.source_path.clone(),
+                    function.definition_span.start,
+                    function.definition_span.end,
+                ));
+            }
+        }
+        for (name, function) in &collected.fns {
+            if self.known_vars.contains(name) {
+                self.rebound_after_capture.insert((
+                    function.source_path.clone(),
+                    function.definition_span.start,
+                    function.definition_span.end,
+                ));
+            }
+        }
 
         let replaced: HashSet<_> = collected
             .fns
@@ -911,6 +978,14 @@ impl FnTable {
             f.return_slot += slot_offset;
             (name.clone(), f)
         }));
+        self.definition_fns
+            .extend(collected.definition_fns.iter().map(|(key, function)| {
+                let mut function = function.clone();
+                function.return_slot += slot_offset;
+                (key.clone(), function)
+            }));
+        self.rebound_after_capture
+            .extend(collected.rebound_after_capture.iter().cloned());
         self.s3_methods.extend(
             collected
                 .s3_methods

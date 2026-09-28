@@ -6,6 +6,7 @@ use std::ops::ControlFlow;
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
+        let mut current_literals = FxMap::default();
         // Project refinement has no single source file; carry escaped local
         // names and formals through the collected table as well as emission.
         if custom_operator::has_escaped_names(stmts) {
@@ -36,6 +37,7 @@ impl Checker {
                 };
                 self.collect_declared_globals_stmt(statement);
                 if let Stmt::Assign { target, value, .. } = statement {
+                    self.note_later_environment_write(target, value, &mut current_literals);
                     self.collect_fns_assign(target, value);
                 }
                 ControlFlow::Continue(match statement {
@@ -44,6 +46,28 @@ impl Checker {
                 })
             },
         );
+    }
+
+    /// A nested body may execute after later writes to its enclosing
+    /// environment. Preserve the definition for direct calls in source
+    /// order, but do not treat a captured pre-write value as immutable.
+    fn note_later_environment_write(
+        &mut self,
+        target: &Expr,
+        value: &Expr,
+        current_literals: &mut FxMap<String, Span>,
+    ) {
+        let Some(name) = binding_name(target) else {
+            return;
+        };
+        if let Some(previous) = current_literals.remove(name) {
+            Arc::make_mut(&mut self.fn_table)
+                .rebound_after_capture
+                .insert((self.path.clone(), previous.start, previous.end));
+        }
+        if let Expr::Function { span, .. } = value {
+            current_literals.insert(name.to_string(), *span);
+        }
     }
 
     // Records one identifier-bound assignment from the collection
@@ -249,6 +273,7 @@ impl Checker {
     // can appear — `if` branches and `for`/`while` bodies — never in
     // control tests or expression interiors.
     fn collect_nested_fns_in_body(&mut self, outer: &str, body: &[Stmt]) {
+        let mut current_literals = FxMap::default();
         let _ = walk_stmts(
             body,
             Walk {
@@ -259,6 +284,9 @@ impl Checker {
                 let AstNode::Stmt(statement) = node else {
                     return ControlFlow::Continue(Descend::Skip);
                 };
+                if let Stmt::Assign { target, value, .. } = statement {
+                    self.note_later_environment_write(target, value, &mut current_literals);
+                }
                 if let Stmt::Assign { target, value, .. } = statement
                     && let (
                         Expr::Ident { name: inner, .. },
@@ -329,16 +357,17 @@ impl Checker {
         fn_table.has_escaped_operator_names |=
             custom_operator::escaped_name_may_mask_operator(&name);
         fn_table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(&name);
-        let prev = fn_table.fns.insert(
-            name.clone(),
-            UserFn {
-                params,
-                source_path: self.path.clone(),
-                definition_span: span,
-                body,
-                return_slot: slot,
-            },
-        );
+        let function = UserFn {
+            params,
+            source_path: self.path.clone(),
+            definition_span: span,
+            body,
+            return_slot: slot,
+        };
+        fn_table
+            .definition_fns
+            .insert((self.path.clone(), span.start, span.end), function.clone());
+        let prev = fn_table.fns.insert(name.clone(), function);
         if let Some(prev) = prev {
             Arc::make_mut(&mut self.fn_table)
                 .forwarded_calls

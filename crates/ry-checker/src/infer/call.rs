@@ -1305,29 +1305,44 @@ impl Checker {
         // may contain a same-named nested/top-level definition from elsewhere;
         // using that signature here produces bogus RY090/RY091 diagnostics.
         let lexical_callable = !name.contains("::") && scope.is_lexical_function(lookup_name);
-        // The flat function table is name-indexed, so it cannot resolve a
-        // lexical call in general. A direct literal binding does retain its
-        // exact definition span; use that identity only for its declaration.
-        let lexical_declaration_function = if lexical_callable && !self.discarding {
-            scope
-                .lexical_definition(lookup_name)
-                .filter(|definition| {
-                    self.declarations
-                        .target(&self.path, *definition)
-                        .is_some_and(|decision| decision.signature.is_some())
-                })
-                .and_then(|definition| {
-                    self.fn_table
-                        .fns
-                        .values()
-                        .find(|function| {
-                            function.source_path == self.path
-                                && function.definition_span == definition
-                        })
-                        .cloned()
-                })
+        // R's function-position lookup skips a proven nonfunction local and
+        // searches enclosing environments. A current callable/unknown local
+        // instead masks those environments. Keep the nearest exact literal
+        // identity when one exists, regardless of which same-spelled entry
+        // survived in the flat inference table.
+        let local_binding = scope.get(lookup_name);
+        let local_is_nonfunction = local_binding
+            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
+        let outward = scope.outward_function_definition(lookup_name);
+        let local_definition = scope.lexical_definition(lookup_name);
+        // Function walks start with a copy of the captured scope. An exact
+        // literal that is identical to the nearest enclosing frame is still
+        // an outward binding, not a new local one: R's closure keeps the
+        // environment live after the literal is created.
+        let from_outward = local_is_nonfunction
+            || local_binding.is_none()
+            || (local_definition.is_some() && local_definition == outward.flatten());
+        let exact_definition = if from_outward {
+            outward.flatten()
         } else {
+            local_definition
+        };
+        let exact_declaration_function = if self.discarding {
             None
+        } else {
+            exact_definition
+                .filter(|definition| {
+                    (!from_outward
+                        || !self
+                            .fn_table
+                            .was_rebound_after_capture(&self.path, *definition))
+                        && self
+                            .declarations
+                            .target(&self.path, *definition)
+                            .is_some_and(|decision| decision.signature.is_some())
+                })
+                .and_then(|definition| self.fn_table.definition(&self.path, definition))
+                .cloned()
         };
         let user_function = if lexical_callable {
             None
@@ -1347,9 +1362,11 @@ impl Checker {
         let declaration_user_function = user_function
             .as_ref()
             .filter(|function| {
-                if scope.get(lookup_name).is_some() {
+                if local_is_nonfunction || outward.is_some() {
+                    false
+                } else if local_binding.is_some() {
                     function.source_path == self.path
-                        && scope.lexical_definition(lookup_name) == Some(function.definition_span)
+                        && exact_definition == Some(function.definition_span)
                 } else {
                     // A deferred call inside a function may resolve a later
                     // definition. An eager top-level call cannot use a function
@@ -1498,7 +1515,7 @@ impl Checker {
             resolved_sig,
             user_function,
             declaration_user_function,
-            lexical_declaration_function,
+            exact_declaration_function,
             lexical_callable,
             locally_shadows_stub: false,
         }
@@ -1558,9 +1575,9 @@ impl Checker {
             original_name,
             lookup_name,
             resolution
-                .declaration_user_function
+                .exact_declaration_function
                 .as_ref()
-                .or(resolution.lexical_declaration_function.as_ref()),
+                .or(resolution.declaration_user_function.as_ref()),
             args,
             &resolution.arg_types,
         );
@@ -2122,8 +2139,8 @@ struct CallResolution {
     user_function: Option<UserFn>,
     /// Flat entry only when source identity agrees with the current binding.
     declaration_user_function: Option<UserFn>,
-    /// Exact direct lexical binding, used only for adopted declarations.
-    lexical_declaration_function: Option<UserFn>,
+    /// Exact current or nearest enclosing literal, used only for declarations.
+    exact_declaration_function: Option<UserFn>,
     /// Whether a lexical function binding shadows every table lookup.
     lexical_callable: bool,
     /// Whether a local non-alias binding shadows a same-named stub; the

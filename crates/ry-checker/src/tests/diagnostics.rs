@@ -265,6 +265,7 @@ fn invalid_native_ignores_report_and_leave_errors_visible() {
 fn foreign_noqa_and_marker_prefixes_do_not_suppress() {
     for directive in [
         "noqa: E501",
+        "noqa reason documented elsewhere",
         "noqa[RY040]]",
         "noqa[RY040] ]",
         "noqa[RY040][RX040]",

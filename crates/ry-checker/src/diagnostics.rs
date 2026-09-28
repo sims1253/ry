@@ -131,8 +131,9 @@ pub enum SuppressionKind {
 
 impl Suppression {
     pub fn suppresses(&self, code: &str) -> bool {
-        // Directive audits must be controlled with a severity override, not
-        // with a blanket comment that can hide its own mistakes.
+        // Directive diagnostics use severity overrides, not comments that
+        // could hide their own mistakes. RY113 is reserved here for the
+        // stacked unused-ignore audit in #584 / PR #600.
         if matches!(code, "RY112" | "RY113") {
             return false;
         }

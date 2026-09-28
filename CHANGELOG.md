@@ -8,6 +8,9 @@ All notable changes to ry are documented in this file.
 
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
+- Validate selective `ry: ignore[...]` comments and report malformed or
+  unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
+  lists no longer suppress ry findings; bare ignores still do.
 
 ## [0.11.0] - 2026-09-22
 

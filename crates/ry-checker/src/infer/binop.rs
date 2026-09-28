@@ -733,7 +733,7 @@ impl Checker {
                 if ops_chooser::operator_rebound(self, "&&", scope) {
                     return None;
                 }
-                // R 4.2+ requires a length-one logical LHS of `&&`. For
+                // R 4.3+ errors on a non-scalar LHS of `&&`. For
                 // an unclassed value, a base comparison with a scalar
                 // literal has that same length as its subject.
                 let Expr::BinOp {

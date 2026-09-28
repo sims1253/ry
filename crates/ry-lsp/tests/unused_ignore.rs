@@ -32,6 +32,21 @@ fn unused_ignore_publication_tracks_fixes_moves_and_removal() {
                 (2, "1L == 1L # ry: ignore[RY034]\n", Some(0)),
                 (3, "# heading\n# ry: ignore[RY034]\n1L == 1L\n", Some(1)),
                 (4, "1L == 1L\n", None),
+                (
+                    5,
+                    "identity(function() {\n  1L == NA # ry: ignore[RY034]\n})\n",
+                    None,
+                ),
+                (
+                    6,
+                    "identity(function() {\n  list(\"a\" <- 1L) # ry: ignore[RY102]\n})\n",
+                    None,
+                ),
+                (
+                    7,
+                    "f <- function() {\n  1L == 1L # ry: ignore[RY034]\n}\n",
+                    Some(1),
+                ),
             ] {
                 let mark = session.publication_mark();
                 session

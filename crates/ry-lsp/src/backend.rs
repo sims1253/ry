@@ -1311,6 +1311,7 @@ impl Backend {
                     comments,
                     source_text.unwrap_or(""),
                     &diagnostic_path,
+                    checked_file.map(AsRef::as_ref),
                 );
                 post.demote_non_source_paths(&mut diagnostics);
                 post.post_demotion(&mut diagnostics);

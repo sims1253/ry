@@ -254,6 +254,31 @@ fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
 }
 
 #[test]
+fn unused_ignore_audit_skips_anonymous_bodies_without_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
+    let path = tmp.path().join("example.R");
+    for (code, expression) in [("RY034", "1L == NA"), ("RY102", "list(\"a\" <- 1L)")] {
+        let source = format!("identity(function() {{\n  {expression} # ry: ignore[{code}]\n}})\n");
+        fs::write(&path, source).unwrap();
+        let output = ry_check(&path);
+        let displayed = String::from_utf8_lossy(&output.stdout);
+        assert!(!displayed.contains("RY113"), "{code}: {displayed}");
+    }
+    fs::write(
+        &path,
+        "f <- function() {\n  1L == 1L # ry: ignore[RY034]\n}\n",
+    )
+    .unwrap();
+    let output = ry_check(&path);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("RY113"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
 fn ry_toml_exclude_patterns_skip_matched_files() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(

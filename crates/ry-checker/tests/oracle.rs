@@ -325,7 +325,7 @@ fn checker_diagnostics(
             min_confidence: Confidence::Low,
             repo_root: None,
         };
-        diags = post.pre_demotion(diags, &file.comments, &file.source, name);
+        diags = post.pre_demotion(diags, &file.comments, &file.source, name, Some(&file));
     }
     diags
         .into_iter()

@@ -40,6 +40,9 @@ can run:
 - run: ry check --output-format github .
 ```
 
+For a pinned release install, a project-wide pre-commit/prek hook, and a
+complete workflow, see the [project-check example](examples/project-check/README.md).
+
 ## Package awareness
 
 ry tracks `library()` and `require()` calls to resolve function names.

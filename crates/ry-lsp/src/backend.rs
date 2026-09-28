@@ -1591,7 +1591,7 @@ impl Backend {
                 for (path, reason) in &newly_degraded {
                     self.client.log_message(
                         tower_lsp::lsp_types::MessageType::WARNING,
-                        format!("ry: {}: degraded serialized scope ({reason}); inventory unavailable.", path.display()),
+                        format!("ry: {}: degraded scope ({reason}); serialized inventory unavailable.", path.display()),
                     ).await;
                 }
                 if cap_hit {
@@ -2540,7 +2540,7 @@ impl Backend {
                     .log_message(
                         tower_lsp::lsp_types::MessageType::WARNING,
                         format!(
-                            "ry: {}: degraded serialized scope ({reason}); inventory unavailable.",
+                            "ry: {}: degraded scope ({reason}); serialized inventory unavailable.",
                             path.display()
                         ),
                     )

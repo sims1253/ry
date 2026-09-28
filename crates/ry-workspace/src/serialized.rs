@@ -141,6 +141,18 @@ fn serialized_inventory_uncached(path: &Path, cap: u64) -> SerializedInventory {
         .strip_prefix(b"RDX2\n")
         .or_else(|| bytes.strip_prefix(b"RDX3\n"))
         .unwrap_or(&bytes);
+    // R's A/B envelopes are valid serialization formats, but the reader
+    // accepts XDR only. Classify the encoding from its explicit magic
+    // before the upstream parser's generic InvalidFormat("Expected X") can
+    // incorrectly call a valid ASCII workspace malformed.
+    if [b"RDA2\n".as_slice(), b"RDA3\n", b"RDB2\n", b"RDB3\n"]
+        .iter()
+        .any(|magic| bytes.starts_with(magic))
+        || payload.starts_with(b"A\n")
+        || payload.starts_with(b"B\n")
+    {
+        return unavailable(InventoryFailure::UnsupportedInput);
+    }
     let parsed = match rds2rust::read_rds_lazy(payload) {
         Ok(parsed) => parsed,
         Err(error) => return unavailable(classify_parser_error(&error)),
@@ -435,6 +447,21 @@ mod tests {
         assert_eq!(
             inventory.status,
             InventoryStatus::Unavailable(InventoryFailure::MalformedInput)
+        );
+        assert!(inventory.bindings.is_empty());
+    }
+
+    #[test]
+    fn valid_ascii_workspace_is_unsupported_not_malformed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sysdata.rda");
+        let ascii = include_bytes!("../../../testdata/serialized/empty-ascii.rda");
+        assert!(ascii.starts_with(b"RDA2\nA\n"));
+        std::fs::write(&path, ascii).unwrap();
+        let inventory = serialized_inventory(&path, 4096);
+        assert_eq!(
+            inventory.status,
+            InventoryStatus::Unavailable(InventoryFailure::UnsupportedInput)
         );
         assert!(inventory.bindings.is_empty());
     }

@@ -1292,6 +1292,27 @@ fn parser_limit_is_reported_and_repair_restores_a_known_empty_inventory() {
         repaired_facts["contexts"][0]["inputs"]["degraded_scopes"],
         serde_json::json!([])
     );
+
+    // This is a real R-produced empty workspace in ASCII serialization.
+    // Static XDR inventory cannot read it, but its valid envelope must not
+    // be mislabeled as corrupt by the upstream parser's generic error.
+    fs::write(
+        &serialized,
+        include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+    )
+    .unwrap();
+    let unsupported = run_check();
+    let notice = String::from_utf8_lossy(&unsupported.stderr);
+    assert!(
+        notice.contains("sysdata.rda (unsupported serialized input)"),
+        "{notice}"
+    );
+    assert!(!notice.contains("malformed serialized input"), "{notice}");
+    let unsupported_facts = run_facts();
+    assert_eq!(
+        unsupported_facts["contexts"][0]["inputs"]["degraded_scopes"][0][1],
+        "unsupported serialized input"
+    );
 }
 
 #[test]

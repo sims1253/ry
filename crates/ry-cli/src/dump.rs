@@ -522,7 +522,7 @@ pub(crate) fn run_dump_types(
         // the same precision loss without polluting the JSON on stdout.
         for (path, reason) in &group.degraded_scopes {
             eprintln!(
-                "ry: {}: degraded serialized scope ({reason}); inventory unavailable",
+                "ry: {}: degraded scope ({reason}); serialized inventory unavailable",
                 path.display()
             );
         }

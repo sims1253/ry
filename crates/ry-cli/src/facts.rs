@@ -259,6 +259,7 @@ pub(crate) fn run_dump_facts(
     project_root: Option<PathBuf>,
     format: &str,
     references: bool,
+    annotations: bool,
 ) -> Result<ExitCode> {
     if format != "json" {
         return Err(miette::miette!(
@@ -406,7 +407,16 @@ pub(crate) fn run_dump_facts(
         contexts.push(json!({"id": context_id, "inputs": context}));
         let imported = workspace.imported_bindings.clone();
         let group_files = input.files.clone();
-        let facts = pipeline::check_project_with_facts_capture(input, references);
+        let records = if annotations {
+            pipeline::adopted_records(&group_files, &cfg)
+        } else {
+            Vec::new()
+        };
+        let facts = if records.is_empty() {
+            pipeline::check_project_with_facts_capture(input, references)
+        } else {
+            pipeline::check_project_with_facts_and_records(input, references, records.clone())
+        };
         let mut captures: HashMap<_, _> = facts.scopes.into_iter().collect();
         let mut reference_captures: HashMap<_, _> = facts.references.into_iter().collect();
         for (path, file) in group_files {
@@ -417,19 +427,29 @@ pub(crate) fn run_dump_facts(
                     "{path}: built-in environment changed during analysis; retry dump-facts"
                 ));
             }
-            let records = captures.remove(&path).unwrap_or_default();
+            let scope_records = captures.remove(&path).unwrap_or_default();
             let mut exported_file = json!({
                 "path": sources[&path]["path"],
                 "source_hash": sources[&path]["source_hash"],
                 "context_id": context_id,
-                "scopes": export_scopes(&file, records),
+                "scopes": export_scopes(&file, scope_records),
                 "imports": imported.get(&path).map(|imports| imports.iter().collect::<BTreeMap<_,_>>()).unwrap_or_default(),
             });
             if references {
                 let facts = reference_captures.remove(&path).unwrap_or_default();
-                let (definitions, records) = export_references(&file, facts);
+                let (definitions, reference_records) = export_references(&file, facts);
                 exported_file["definitions"] = definitions;
-                exported_file["references"] = records;
+                exported_file["references"] = reference_records;
+            }
+            if annotations {
+                let attached = records
+                    .iter()
+                    .filter(|record| record.source.path == path)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                exported_file["annotations"] =
+                    crate::facts_declarations::export_records(&file, &attached)
+                        .map_err(|error| miette::miette!("{}: {error}", file.path))?;
             }
             exported.push(exported_file);
         }
@@ -459,6 +479,11 @@ pub(crate) fn run_dump_facts(
             "reference_facts": "same_file_ordered_prefix",
             "reference_coverage": "partial",
         });
+    }
+    if annotations {
+        result["schema_version"] = json!(3);
+        result["annotation_snapshot_kind"] = json!("adopted_source_records");
+        result["capabilities"]["annotation_records"] = json!("typehint_0.1.0_static_subset");
     }
     println!(
         "{}",

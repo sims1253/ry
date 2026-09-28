@@ -478,6 +478,9 @@ pub enum ParameterForm {
 pub enum SupplyStatus {
     Required,
     Defaulted,
+    /// The R formal has a default, but the authored predicate applies only
+    /// when a caller explicitly supplies an actual argument.
+    DefaultedSuppliedOnly,
     Unknown,
 }
 
@@ -702,6 +705,7 @@ impl SupplyStatus {
         match self {
             Self::Required => "required",
             Self::Defaulted => "defaulted",
+            Self::DefaultedSuppliedOnly => "defaulted_supplied_only",
             Self::Unknown => "unknown",
         }
     }
@@ -710,6 +714,7 @@ impl SupplyStatus {
         match name {
             "required" => Ok(Self::Required),
             "defaulted" => Ok(Self::Defaulted),
+            "defaulted_supplied_only" => Ok(Self::DefaultedSuppliedOnly),
             "unknown" => Ok(Self::Unknown),
             _ => Err(DeclarationError::InvalidSyntax(format!(
                 "unsupported supplied status `{name}`"

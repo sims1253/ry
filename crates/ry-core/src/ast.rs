@@ -59,6 +59,16 @@ pub struct SourceFile {
     /// uses these for lexical suppression parsing, so a `#` that
     /// appears INSIDE a string literal is NOT mistaken for a comment.
     pub comments: Vec<Comment>,
+    /// Exact CST body ranges for function literals. Annotation readers use
+    /// these to distinguish a body comment from a formal/default comment;
+    /// the lowered AST intentionally does not retain brace tokens.
+    pub function_bodies: Vec<FunctionBody>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionBody {
+    pub function: Span,
+    pub body: Span,
 }
 
 /// A source comment, collected lexically by the parser. `body` excludes

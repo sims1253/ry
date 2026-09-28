@@ -63,6 +63,7 @@ impl RParser {
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
         let (comments, special_operators) = collect_comments(root, src)?;
+        let function_bodies = collect_function_bodies(root);
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -104,6 +105,7 @@ impl RParser {
                 special_operators,
                 syntax_violations,
                 comments,
+                function_bodies,
             },
             tree,
         ))
@@ -1053,6 +1055,40 @@ fn self_span(node: tree_sitter::Node) -> Span {
 /// repair the tree become `MISSING` nodes. `root.has_error()` is the cheap
 /// "is anything broken" check; this function walks the tree when that is
 /// true to extract the individual broken regions for per-node diagnostics.
+fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
+    let mut bodies = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "function_definition"
+            && let Some(body) = node.child_by_field_name("body")
+            && body.kind() == "braced_expression"
+        {
+            let function_position = node.start_position();
+            let body_position = body.start_position();
+            bodies.push(FunctionBody {
+                function: Span::new(
+                    node.start_byte(),
+                    node.end_byte(),
+                    function_position.row,
+                    function_position.column,
+                ),
+                body: Span::new(
+                    body.start_byte(),
+                    body.end_byte(),
+                    body_position.row,
+                    body_position.column,
+                ),
+            });
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    bodies.sort_by_key(|body| (body.function.start, body.function.end));
+    bodies
+}
+
 fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
     if !root.has_error() {
         return Vec::new();

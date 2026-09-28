@@ -1135,7 +1135,12 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
 
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
-        per_file_diagnostics.extend(check_project(group.check_input));
+        let records = pipeline::adopted_records(&group.check_input.files, ctx.resolution_config);
+        per_file_diagnostics.extend(if records.is_empty() {
+            check_project(group.check_input)
+        } else {
+            pipeline::check_project_with_records(group.check_input, records)
+        });
         for (path, reason) in group.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason));
         }

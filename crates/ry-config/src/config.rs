@@ -146,9 +146,15 @@ impl ScopedPaths {
         let relative = relative
             .to_string_lossy()
             .replace(std::path::MAIN_SEPARATOR, "/");
-        self.patterns
-            .iter()
-            .any(|pattern| pattern.matches(&relative))
+        self.patterns.iter().any(|pattern| {
+            pattern.matches_with(
+                &relative,
+                glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..glob::MatchOptions::default()
+                },
+            )
+        })
     }
 }
 

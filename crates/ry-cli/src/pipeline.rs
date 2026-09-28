@@ -20,7 +20,15 @@ pub(crate) struct CheckInput {
 
 impl CheckInput {
     fn into_project(self) -> ry_checker::Project {
+        self.into_project_with_records(Vec::new())
+    }
+
+    fn into_project_with_records(
+        self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
+        project.set_declaration_records(records);
         let workspace = self.workspace;
         project.set_loaded(workspace.attached_packages);
         project.set_bare_loaded(workspace.bare_bindings);
@@ -34,6 +42,29 @@ impl CheckInput {
         }
         project
     }
+}
+
+pub(crate) fn adopted_records(
+    files: &[(String, Arc<ry_core::SourceFile>)],
+    cfg: &config::Config,
+) -> Vec<ry_core::declarations::DeclarationRecord> {
+    let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
+        return Vec::new();
+    };
+    files
+        .iter()
+        .flat_map(|(_, file)| ry_checker::typehint::read_records(file, &scope))
+        .collect()
+}
+
+pub(crate) fn check_project_with_records(
+    input: CheckInput,
+    records: Vec<ry_core::declarations::DeclarationRecord>,
+) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    let mut project = input.into_project_with_records(records);
+    let mut diagnostics = project.check();
+    ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
+    diagnostics
 }
 
 /// Run a one-shot project check with workspace metadata.
@@ -58,7 +89,15 @@ pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
 ) -> CapturedFacts {
-    let mut project = input.into_project();
+    check_project_with_facts_and_records(input, references, Vec::new())
+}
+
+pub(crate) fn check_project_with_facts_and_records(
+    input: CheckInput,
+    references: bool,
+    records: Vec<ry_core::declarations::DeclarationRecord>,
+) -> CapturedFacts {
+    let mut project = input.into_project_with_records(records);
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();

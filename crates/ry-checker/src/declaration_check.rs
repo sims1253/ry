@@ -35,6 +35,40 @@ pub struct DeclarationFinding {
     pub message: String,
 }
 
+/// Append the public diagnostic view of structured declaration findings.
+/// CLI and LSP call this after either a fresh or warm project check, so the
+/// editor's byte spans and suppression pipeline use the same records.
+pub fn append_diagnostics(
+    output: &mut [(String, Vec<crate::Diagnostic>)],
+    findings: &[(String, Vec<DeclarationFinding>)],
+) {
+    for (path, records) in findings {
+        let Some((_, diagnostics)) = output.iter_mut().find(|(file, _)| file == path) else {
+            continue;
+        };
+        for record in records {
+            let (code, severity) = match record.kind {
+                DeclarationFindingKind::Mismatch => ("RY114", crate::Severity::Warning),
+                DeclarationFindingKind::Partial | DeclarationFindingKind::Unsupported => {
+                    ("RY115", crate::Severity::Info)
+                }
+                DeclarationFindingKind::Conflict => ("RY116", crate::Severity::Warning),
+                DeclarationFindingKind::InvalidSyntax
+                | DeclarationFindingKind::AmbiguousAttachment => {
+                    ("RY117", crate::Severity::Warning)
+                }
+            };
+            diagnostics.push(crate::Diagnostic::new(
+                severity,
+                record.span,
+                &record.path,
+                code,
+                record.message.clone(),
+            ));
+        }
+    }
+}
+
 impl DeclarationFinding {
     pub(crate) fn new(
         kind: DeclarationFindingKind,
@@ -277,7 +311,10 @@ pub(crate) fn matches_formals<'a>(
                 parameter.name
             ));
         }
-        if (parameter.supplied == SupplyStatus::Defaulted && !defaulted)
+        if (matches!(
+            parameter.supplied,
+            SupplyStatus::Defaulted | SupplyStatus::DefaultedSuppliedOnly
+        ) && !defaulted)
             || (parameter.supplied == SupplyStatus::Required && defaulted)
         {
             return Err(format!(
@@ -541,18 +578,16 @@ impl crate::Checker {
         parameter: &ry_core::ast::Param,
         independent_default: &RType,
     ) -> Option<RType> {
-        let declared = signature?
-            .parameters
-            .iter()
-            .find(|declared| {
-                declared.name == semantic_argument_name(&parameter.name)
-                    && declared.form == ParameterForm::Ordinary
-            })?
-            .constraint
-            .as_ref()?;
-        if parameter.default.as_ref().is_some_and(|default| {
-            compare_actual(independent_default, default, declared) == Evidence::Incompatible
-        }) {
+        let selected = signature?.parameters.iter().find(|declared| {
+            declared.name == semantic_argument_name(&parameter.name)
+                && declared.form == ParameterForm::Ordinary
+        })?;
+        let declared = selected.constraint.as_ref()?;
+        if selected.supplied != SupplyStatus::DefaultedSuppliedOnly
+            && parameter.default.as_ref().is_some_and(|default| {
+                compare_actual(independent_default, default, declared) == Evidence::Incompatible
+            })
+        {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Mismatch,
                 &self.path,
@@ -566,7 +601,11 @@ impl crate::Checker {
                 ),
             ));
         }
-        let entry = body_entry_type(declared);
+        let entry = if selected.supplied == SupplyStatus::DefaultedSuppliedOnly {
+            None
+        } else {
+            body_entry_type(declared)
+        };
         if entry.is_none() {
             let reason = if matches!(declared, TypeExpr::ExactClass(_)) {
                 "effective class does not establish a storage mode; no body entry type is assumed"

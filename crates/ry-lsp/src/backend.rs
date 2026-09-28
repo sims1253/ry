@@ -335,6 +335,16 @@ impl ProjectCache {
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
         workspace: Option<&ry_workspace::WorkspaceContext>,
     ) -> ProjectCheckResult {
+        self.check_with_workspace_and_records(files, user_stubs, workspace, Vec::new())
+    }
+
+    pub(super) fn check_with_workspace_and_records(
+        &mut self,
+        files: Vec<(String, i32, Arc<SourceFile>)>,
+        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+        workspace: Option<&ry_workspace::WorkspaceContext>,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) -> ProjectCheckResult {
         let checked_files = files
             .iter()
             .map(|(path, _, file)| (path.clone(), Arc::clone(file)))
@@ -353,6 +363,7 @@ impl ProjectCache {
         }
 
         self.project.set_user_stubs(user_stubs);
+        self.project.set_declaration_records(records);
         let empty_workspace = ry_workspace::WorkspaceContext::default();
         let workspace = workspace.unwrap_or(&empty_workspace);
         self.project.set_loaded(workspace.attached_packages.clone());
@@ -384,8 +395,13 @@ impl ProjectCache {
         // which same-named definition wins. The incoming sequence is
         // the canonical one; enforce it regardless of history (#490).
         self.project.reorder_files(&order);
+        let mut diagnostics = self.project.check_incremental();
+        ry_checker::append_declaration_diagnostics(
+            &mut diagnostics,
+            self.project.declaration_findings(),
+        );
         ProjectCheckResult {
-            diagnostics: self.project.check_incremental(),
+            diagnostics,
             files: checked_files,
         }
     }
@@ -1085,6 +1101,7 @@ impl Backend {
             root_baseline,
             root,
             root_config_dir,
+            root_config,
         ) = {
             let state = self.state.lock().await;
             (
@@ -1095,6 +1112,7 @@ impl Backend {
                 state.root_baseline.clone(),
                 state.root.clone(),
                 state.root_config_dir.clone(),
+                state.file_config.clone(),
             )
         };
 
@@ -1227,8 +1245,29 @@ impl Backend {
 
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
         for job in jobs {
+            let config = job.ctx.as_ref().map_or(&root_config, |ctx| &ctx.config);
+            let records: Vec<ry_core::declarations::DeclarationRecord> = config
+                .annotations
+                .typehint
+                .adopted_scope()
+                .map(|scope| {
+                    job.files
+                        .iter()
+                        .flat_map(|(_, _, file)| ry_checker::typehint::read_records(file, &scope))
+                        .collect()
+                })
+                .unwrap_or_default();
             let mut project = job.cache.lock().await;
-            let result = project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref());
+            let result = if records.is_empty() {
+                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref())
+            } else {
+                project.check_with_workspace_and_records(
+                    job.files,
+                    job.stubs,
+                    job.workspace.as_ref(),
+                    records,
+                )
+            };
             all_results.push((job.ctx, result));
         }
 

@@ -236,6 +236,22 @@ class RunStatusTests(unittest.TestCase):
             self.assertEqual(experiment.finish(), 1)
             self.assertTrue((experiment.output / "report.json").exists())
 
+    def test_failed_comparison_with_results_retains_measured_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            experiment = self.make_experiment(Path(directory))
+            experiment.report["fixtures"] = [
+                {"name": "witness", "role": "witness", "status": "failed",
+                 "reference": [finding("RY040", 1)], "candidate": [finding("RY010", 2)],
+                 "removed": [{**finding("RY040", 1), "label": "true_positive"}],
+                 "added": [{**finding("RY010", 2), "label": "unreviewed"}]},
+            ]
+            experiment.stage("fixture-diff-witness", "failed", reason="reviewed true positive removed")
+            self.assertEqual(experiment.finish(), 1)
+            markdown = (experiment.output / "report.md").read_text()
+            self.assertIn("### witness (witness)\nReference: 1; candidate: 1.", markdown)
+            self.assertIn("- removed: `RY040:1:1`", markdown)
+            self.assertIn("- added: `RY010:2:1`", markdown)
+
     def test_malformed_measurement_ledger_has_failed_stage_and_report(self):
         with tempfile.TemporaryDirectory() as directory:
             experiment = self.make_experiment(Path(directory))
@@ -298,6 +314,10 @@ class RunStatusTests(unittest.TestCase):
                              ["skipped", "skipped"])
             self.assertEqual(experiment.finish(), 1)
             self.assertTrue((experiment.output / "report.json").exists())
+            markdown = (experiment.output / "report.md").read_text()
+            self.assertIn("### witness (witness)\nComparison failed.", markdown)
+            self.assertIn("### quiet (quiet_control)\nComparison skipped.", markdown)
+            self.assertNotIn("Reference: 0; candidate: 0.", markdown)
 
     def test_malformed_manifest_finding_and_triage_fail_cleanly(self):
         with tempfile.TemporaryDirectory() as directory:

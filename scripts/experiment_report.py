@@ -546,6 +546,11 @@ class Experiment:
             lines.append(f"### {fixture['name']} ({fixture['role']})")
             if fixture["status"] in ("skipped", "unavailable"):
                 lines.append(f"Comparison {fixture['status']}.")
+            elif "added" not in fixture:
+                # A failed check, JSON parse, or triage lookup has no
+                # comparison result. The initialized empty lists are not
+                # measured zero-finding counts.
+                lines.append("Comparison failed.")
             else:
                 lines.append(f"Reference: {len(fixture['reference'])}; candidate: {len(fixture['candidate'])}.")
             for direction in ("removed", "added"):

@@ -35,6 +35,8 @@ struct Renderer {
     max_bytes: usize,
     compact: bool,
     truncated: bool,
+    #[cfg(test)]
+    inspected_name_characters: usize,
 }
 
 impl Renderer {
@@ -44,6 +46,8 @@ impl Renderer {
             max_bytes,
             compact,
             truncated: false,
+            #[cfg(test)]
+            inspected_name_characters: 0,
         }
     }
 
@@ -63,9 +67,14 @@ impl Renderer {
         // writes to a formatter. Iterate ourselves so the output budget also
         // bounds how much of an arbitrarily long name we inspect.
         self.push("\"");
-        for character in name.chars() {
-            if self.truncated {
+        let mut characters = name.chars();
+        while !self.truncated {
+            let Some(character) = characters.next() else {
                 break;
+            };
+            #[cfg(test)]
+            {
+                self.inspected_name_characters += 1;
             }
             // Rust's str Debug leaves apostrophes literal; char Debug escapes
             // them. Its other character escapes match str Debug.
@@ -125,7 +134,7 @@ impl Renderer {
                     }
                     self.ty(member, depth + 1);
                 }
-                if shown < members.len() {
+                if shown < members.len() && !self.truncated {
                     self.push(&format!(", +{} known alternatives", members.len() - shown));
                 }
             } else {
@@ -185,7 +194,7 @@ impl Renderer {
                     self.push(": ");
                     self.ty(field_ty, depth + 1);
                 }
-                if shown < schema.columns.len() {
+                if shown < schema.columns.len() && !self.truncated {
                     if shown != 0 {
                         self.push(", ");
                     }
@@ -370,12 +379,10 @@ mod tests {
             complete: true,
             locally_constructed: true,
         }));
-        let started = std::time::Instant::now();
         let view = expanded_type(&ty);
         assert!(view.truncated);
         assert!(view.text.len() <= DETAIL_BYTES);
         assert!(view.text.ends_with('…'));
-        assert!(started.elapsed().as_secs() < 2);
     }
 
     #[test]
@@ -410,11 +417,10 @@ mod tests {
         let render = |name: &str| {
             let mut renderer = Renderer::new(160, false);
             renderer.escaped_name(name);
+            assert!(renderer.inspected_name_characters <= 160);
             renderer.finish()
         };
-        let started = std::time::Instant::now();
         let long_view = render(&long);
-        assert!(started.elapsed().as_secs() < 2);
         assert_eq!(long_view, render(&short));
         assert!(long_view.truncated);
         assert!(long_view.text.len() <= 160);

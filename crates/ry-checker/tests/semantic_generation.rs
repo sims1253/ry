@@ -544,12 +544,39 @@ fn record(case: &Case, evaluation: &Evaluation, r_version: &str) -> Value {
     })
 }
 
-fn artifact_dir() -> PathBuf {
-    std::env::var_os("RY_SEMANTIC_ARTIFACT_DIR")
+fn artifact_dir_from(
+    workspace: &Path,
+    override_dir: Option<std::ffi::OsString>,
+    cargo_target: Option<std::ffi::OsString>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return PathBuf::from(dir);
+    }
+    let target = cargo_target
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/semantic-generation")
-        })
+        .unwrap_or_else(|| workspace.join("target"));
+    // Cargo tests run with the crate as cwd, not the workspace root. Anchor
+    // relative target overrides at the workspace root so generated evidence
+    // cannot appear as untracked files in crates/ry-checker/target.
+    let target = if target.is_absolute() {
+        target
+    } else {
+        workspace.join(target)
+    };
+    target.join("semantic-generation")
+}
+
+fn artifact_dir() -> PathBuf {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(Path::parent)
+        .expect("ry-checker is in workspace/crates");
+    artifact_dir_from(
+        workspace,
+        std::env::var_os("RY_SEMANTIC_ARTIFACT_DIR"),
+        std::env::var_os("CARGO_TARGET_DIR"),
+    )
 }
 
 fn write_artifact(name: &str, value: &Value) {
@@ -584,6 +611,36 @@ fn generator_is_versioned_deterministic_and_covers_controls() {
     assert_eq!(
         Case::from_seed(62).source(),
         "condition <- c(TRUE, FALSE, TRUE)\nif  (condition)  TRUE else FALSE\n"
+    );
+}
+
+#[test]
+fn default_artifacts_follow_the_workspace_target() {
+    let temp = tempfile::tempdir().expect("workspace root");
+    let root = temp.path();
+    assert_eq!(
+        artifact_dir_from(root, None, None),
+        root.join("target/semantic-generation")
+    );
+    assert_eq!(
+        artifact_dir_from(root, None, Some("custom-target".into())),
+        root.join("custom-target/semantic-generation")
+    );
+    assert_eq!(
+        artifact_dir_from(
+            root,
+            None,
+            Some(root.join("absolute-target").into_os_string())
+        ),
+        root.join("absolute-target/semantic-generation")
+    );
+    assert_eq!(
+        artifact_dir_from(
+            root,
+            Some(root.join("explicit-evidence").into_os_string()),
+            Some("ignored-target".into()),
+        ),
+        root.join("explicit-evidence")
     );
 }
 

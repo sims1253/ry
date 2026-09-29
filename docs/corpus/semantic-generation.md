@@ -39,6 +39,10 @@ failure cannot qualify. `injected-disagreement.json` retains both sources.
 Real disagreements also retain original and reduced cases during campaigns;
 they do not update accepted snapshots automatically. Review a candidate with
 an adjacent quiet control before promoting it to the corpus and R oracle.
+Without `RY_SEMANTIC_ARTIFACT_DIR`, records go under the workspace's
+`target/semantic-generation` directory. An absolute `CARGO_TARGET_DIR` is
+used directly; a relative one is anchored at the workspace root. The explicit
+artifact override takes precedence.
 
 The separately budgeted campaign requires a working bubblewrap no-network
 namespace. It gives R a read-only host view and only its per-case temporary

@@ -89,8 +89,10 @@ version and the expected findings in that notification. For a nonempty result,
 it also requires diagnostic origin data with an analysis generation newer than
 the previous accepted result. This disambiguates identical findings in the
 unchanged caller across repetitions, whose document version stays fixed.
-It then drains other
-notifications and compares the entire observed diagnostic state with a fresh
+The stop timestamp is taken when the client receives and decodes the target
+notification, so the duration includes client receive, JSON decoding, and
+notification routing overhead. The test then drains other notifications and
+compares the entire observed diagnostic state with a fresh
 CLI check of equivalent source bytes in an isolated tree. That independent
 comparison, fixture writes, and reset edits occur outside the timed interval.
 The clean case requires a versioned empty analysis publication, distinct from
@@ -103,9 +105,9 @@ Startup runs from process spawn through the first versioned diagnostic; it does
 not claim cold disk caches. The report shows a median for startup and a median
 and nearest-rank p95 for each warm scenario (the value at sorted one-based rank
 `ceil(0.95 × n)`). It never derives a startup tail estimate from five samples.
-Raw nanosecond durations, per-sample snapshot hashes, document versions, and
-nonempty-result analysis generations,
-the fixture and binary SHA-256 hashes, binary/Rust versions, Rayon setting, and
+Raw nanosecond durations, per-sample snapshot hashes, document versions,
+nonempty-result analysis generations, fixture and binary SHA-256 hashes,
+binary/Rust versions, Rayon setting, and
 sample counts are retained in `server-replay.json`. These server timings are
 advisory, like the other hosted-runner measurements; confirm suspected changes
 with repeated runs on the same machine.

@@ -84,6 +84,86 @@ fn caller_binding_value_sources(expression: &Expr) -> Option<HashSet<String>> {
     (!uncertain).then_some(sources)
 }
 
+/// Follow a top-level value only through base operations whose result is the
+/// selected argument. A stored list is not a callable alias; extracting one
+/// of its elements is. An unmodeled value can still be a callable installer,
+/// so it cannot certify that a later invocation leaves the caller untouched.
+fn global_caller_binding_value_sources(expression: &Expr, remaining: usize) -> HashSet<String> {
+    let unknown = || HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()]);
+    if remaining == 0 {
+        return unknown();
+    }
+    match expression {
+        Expr::Ident { name, .. } => HashSet::from([caller_binding_identity(name)
+            .unwrap_or_else(|| UNKNOWN_CALLER_BINDING_IDENTITY.to_string())]),
+        Expr::Call { func, args, .. }
+            if ident_name(func).is_some_and(|name| {
+                matches!(name, "base::identity" | "base::force" | "base::invisible")
+            }) && args.len() == 1
+                && args[0].name.as_deref().is_none_or(|name| name == "x") =>
+        {
+            global_caller_binding_value_sources(&args[0].value, remaining - 1)
+        }
+        Expr::Call { func, .. } if ident_name(func) == Some("base::list") => HashSet::new(),
+        Expr::Index {
+            base,
+            kind: IndexKind::Double,
+            args,
+            ..
+        } if let Expr::Call {
+            func, args: values, ..
+        } = base.as_ref()
+            && ident_name(func) == Some("base::list")
+            && let [
+                Arg {
+                    name: None,
+                    value: Expr::Integer(index, _),
+                    ..
+                },
+            ] = args.as_slice()
+            && *index > 0
+            && let Some(value) = values.get((*index - 1) as usize) =>
+        {
+            let mut sources = global_caller_binding_value_sources(&value.value, remaining - 1);
+            // `[[` uses an ordinary R operator binding even when the list
+            // constructor is qualified. A masked extractor may return a
+            // different callable value than the selected list element.
+            sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+            sources
+        }
+        Expr::BinOp {
+            op: BinOpKind::Assign,
+            rhs,
+            ..
+        } => global_caller_binding_value_sources(rhs, remaining - 1),
+        Expr::Block { body, .. } => match body.last() {
+            Some(Stmt::Expr(value) | Stmt::Assign { value, .. }) => {
+                global_caller_binding_value_sources(value, remaining - 1)
+            }
+            _ => unknown(),
+        },
+        Expr::If { then, else_, .. } => {
+            let mut sources = global_caller_binding_value_sources(then, remaining - 1);
+            if let Some(other) = else_ {
+                sources.extend(global_caller_binding_value_sources(other, remaining - 1));
+            }
+            if sources.len() > 128 {
+                unknown()
+            } else {
+                sources
+            }
+        }
+        Expr::Function { .. } if inert_caller_binding_actual(expression) => HashSet::new(),
+        Expr::Null(_)
+        | Expr::Logical(_, _)
+        | Expr::Integer(_, _)
+        | Expr::Double(_, _)
+        | Expr::String(_, _)
+        | Expr::Na(_, _) => HashSet::new(),
+        _ => unknown(),
+    }
+}
+
 fn variadic_callable_source(name: &str) -> bool {
     name == "..."
         || name
@@ -513,28 +593,22 @@ impl Checker {
     // constructor calls), and, when the value is a function literal, the
     // function itself.
     fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
-        if let (Expr::Ident { name: alias, .. }, Expr::Ident { name: source, .. }) = (target, value)
+        if !matches!(value, Expr::Function { .. })
+            && let Expr::Ident { name: alias, .. } = target
         {
-            let table = Arc::make_mut(&mut self.fn_table);
-            match (
-                caller_binding_identity(alias),
-                caller_binding_identity(source),
-            ) {
-                (Some(alias), Some(source)) => {
-                    table
-                        .caller_binding_aliases
-                        .entry(alias)
-                        .or_default()
-                        .insert(source);
+            let sources = global_caller_binding_value_sources(value, 64);
+            if !sources.is_empty() {
+                let table = Arc::make_mut(&mut self.fn_table);
+                match caller_binding_identity(alias) {
+                    Some(alias) => {
+                        table
+                            .caller_binding_aliases
+                            .entry(alias)
+                            .or_default()
+                            .extend(sources);
+                    }
+                    None => table.caller_binding_unresolved_alias_target = true,
                 }
-                (Some(alias), None) => {
-                    table
-                        .caller_binding_aliases
-                        .entry(alias)
-                        .or_default()
-                        .insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
-                }
-                (None, _) => table.caller_binding_unresolved_alias_target = true,
             }
         }
         // Record every identifier-bound top-level assignment in

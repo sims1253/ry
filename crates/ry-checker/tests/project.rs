@@ -1340,6 +1340,40 @@ fn incremental_caller_binding_alias_retracts_after_a_pure_edit() {
 }
 
 #[test]
+fn incremental_wrapped_global_caller_binding_alias_retracts_after_a_pure_edit() {
+    let mut sources = [
+        ("alias.R", "put <- base::identity(base::delayedAssign)\n"),
+        (
+            "helper.R",
+            "install <- function(env = parent.frame()) put('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\n",
+        ),
+        (
+            "consumer.R",
+            "f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n",
+        ),
+    ];
+    let mut warm = callback_project(&sources);
+    let initial = warm.check_incremental();
+    assert!(initial.iter().any(|(path, diagnostics)| {
+        path == "consumer.R"
+            && diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+    }));
+
+    sources[0].1 = "put <- base::identity(function(...) NULL)\n";
+    warm.update_file("alias.R".into(), Arc::new(parse("alias.R", sources[0].1)));
+    let after = warm.check_incremental();
+    assert_eq!(after, callback_project(&sources).check());
+    assert!(after.iter().all(|(_, diagnostics)| {
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032")
+    }));
+    assert_eq!(warm.check_incremental(), after);
+}
+
+#[test]
 fn incremental_wrapped_callback_default_retracts_after_a_pure_edit() {
     let helper = "install <- function(env, act = function() makeActiveBinding('x', function() c(1L, 2L), env)) base::do.call(base::identity(act), base::list())\n";
     let pure = "install <- function(env, act = function() NULL) base::do.call(base::identity(act), base::list())\n";

@@ -839,12 +839,16 @@ pub(crate) struct UserParam {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
+    may_install_caller_binding: bool,
+    called_formals: Vec<String>,
 }
 
 impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
+            may_install_caller_binding: self.may_install_caller_binding,
+            called_formals: self.caller_binding_called_formals.clone(),
         }
     }
 

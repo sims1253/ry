@@ -24,3 +24,27 @@ stopifnot(identical(names(renamed), c("new", "g")))
 stopifnot(identical(names(relocated), c("new", "g")))
 stopifnot(identical(names(selected), "new"))
 stopifnot(identical(names(summarised), c("g", "n")))
+
+# Literal column effects and control tags are specific to the verb.
+small <- data.frame(x = 1L, g = 2L)
+stopifnot(identical(names(dplyr::summarise(small, x)), "x"))
+stopifnot(identical(names(dplyr::reframe(small, x)), "x"))
+stopifnot(identical(names(dplyr::summarise(small, .keep = 1L)), ".keep"))
+stopifnot(identical(names(dplyr::reframe(small, .groups = 1L)), ".groups"))
+stopifnot(identical(names(base::transform(small, .keep = 1L)), c("x", "g", ".keep")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, `.by` = g)), c("g", "z")))
+stopifnot(identical(names(dplyr::reframe(small, z = 1L, `.by` = g)), c("g", "z")))
+stopifnot(identical(names(dplyr::mutate(small, z = x + 1L, .keep = "none", .by = g)), c("g", "z")))
+stopifnot(identical(names(dplyr::transmute(small, x = 2L, x = NULL)), character()))
+stopifnot(identical(names(dplyr::transmute(small, x, x = NULL)), character()))
+
+two_types <- data.frame(x = 1L, y = "a", g = 2L)
+for (out in list(
+  dplyr::rename(two_types, y = x, z = y),
+  dplyr::relocate(two_types, y = x, z = y)
+)) {
+  stopifnot(identical(names(out), c("y", "z", "g")))
+  stopifnot(is.integer(out$y), is.character(out$z))
+}
+stopifnot(identical(names(dplyr::relocate(two_types, g)), c("g", "x", "y")))
+stopifnot(identical(class(dplyr::group_by(small, x)), c("grouped_df", "tbl_df", "tbl", "data.frame")))

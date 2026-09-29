@@ -97,7 +97,9 @@ fn aggregate_after_group_by_does_not_prove_group_keys_absent() {
                out <- dplyr::reframe(grouped, y = mean(x))\n\
                value <- out$g\n";
     let (diagnostics, scope) = check_with_scope(src);
-    assert!(scope.get("grouped").unwrap().class.contains("grouped_df"));
+    // The tibble constructor is opaque to the current typeshed, so its
+    // group_by result must not claim a precisely known class vector.
+    assert!(scope.get("grouped").unwrap().class.is_unknown());
     let schema = scope.get("out").unwrap().columns.as_ref().unwrap().clone();
     assert!(!schema.complete);
     assert!(
@@ -158,6 +160,157 @@ fn forwarded_ellipsis_does_not_prove_aggregate_columns() {
     assert!(
         diagnostics.iter().all(|d| d.code != "RY060"),
         "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn unnamed_aggregate_outputs_are_retained_or_incomplete() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for verb in ["summarise", "reframe"] {
+        let call = format!("dplyr::{verb}(d, x)");
+        let (names, complete, diagnostics) =
+            columns(&format!("{prefix}out <- {call}\nvalue <- out$x\n"), "out");
+        assert_eq!(names, ["x"], "{call}: {diagnostics:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    for call in ["dplyr::summarise(d, extra)", "dplyr::reframe(d, extra)"] {
+        let src = format!("{prefix}extra <- data.frame(y = 3L)\nout <- {call}\nvalue <- out$y\n");
+        let (_, complete, diagnostics) = columns(&src, "out");
+        assert!(!complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn mutate_keep_none_preserves_literal_by_columns() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for tag in [".by", "`.by`"] {
+        let call = format!("dplyr::mutate(d, z = x + 1L, .keep = 'none', {tag} = g)");
+        let (names, complete, diagnostics) =
+            columns(&format!("{prefix}out <- {call}\nvalue <- out$g\n"), "out");
+        assert_eq!(names, ["g", "z"], "{call}: {diagnostics:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let (names, complete, _) = columns(
+        &format!(
+            "{prefix}out <- dplyr::mutate(d, z = x + 1L, .keep = 'none', .by = starts_with('g'))\n"
+        ),
+        "out",
+    );
+    assert_eq!(names, ["z"]);
+    assert!(!complete);
+}
+
+#[test]
+fn control_tags_belong_to_the_specific_verb() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for (call, field) in [
+        ("dplyr::summarise(d, .keep = 1L)", ".keep"),
+        ("dplyr::reframe(d, .groups = 1L)", ".groups"),
+        ("base::transform(d, .keep = 1L)", ".keep"),
+    ] {
+        let (names, complete, diagnostics) = columns(
+            &format!("{prefix}out <- {call}\nvalue <- out${field}\n"),
+            "out",
+        );
+        assert!(names.contains(&field.to_owned()), "{call}: {names:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn quoted_by_tag_is_a_control_in_aggregate() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for verb in ["summarise", "reframe"] {
+        let call = format!("dplyr::{verb}(d, z = 1L, `.by` = g)");
+        let (names, complete, diagnostics) =
+            columns(&format!("{prefix}out <- {call}\nvalue <- out$g\n"), "out");
+        assert_eq!(names, ["g", "z"], "{call}: {diagnostics:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let (_, complete, diagnostics) = columns(
+        r#"d <- data.frame(x = 1L, g = 2L)
+out <- dplyr::summarise(d, z = 1L, `.\u0062y` = g)
+value <- out$g
+"#,
+        "out",
+    );
+    assert!(
+        !complete,
+        "encoded tag must not prove absence: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn transmute_null_deletes_previous_literal_outputs() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for call in [
+        "dplyr::transmute(d, x = 2L, x = NULL)",
+        "dplyr::transmute(d, x, x = NULL)",
+    ] {
+        let (names, complete, diagnostics) =
+            columns(&format!("{prefix}out <- {call}\nvalue <- out$x\n"), "out");
+        assert!(names.is_empty(), "{call}: {names:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY060" && d.message.contains("`x`")),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let (_, complete, _) = columns(
+        &format!("{prefix}out <- dplyr::transmute(d, .keep = 1L)\n"),
+        "out",
+    );
+    assert!(!complete, "transmute rejects the mutate-only .keep control");
+}
+
+#[test]
+fn simultaneous_renames_use_original_column_identities() {
+    let prefix = "d <- data.frame(x = 1L, y = 'a', g = 2L)\n";
+    for verb in ["rename", "relocate"] {
+        let src = format!(
+            "{prefix}out <- dplyr::{verb}(d, y = x, z = y)\ny_read <- out$y\nz_read <- out$z\n"
+        );
+        let (names, complete, diagnostics) = columns(&src, "out");
+        assert_eq!(names, ["y", "z", "g"], "{verb}: {diagnostics:?}");
+        assert!(complete, "{verb}: {diagnostics:?}");
+        let (_, scope) = check_with_scope(&src);
+        assert_eq!(scope.get("y_read").unwrap().mode, Mode::Integer, "{verb}");
+        assert_eq!(scope.get("z_read").unwrap().mode, Mode::Character, "{verb}");
+    }
+    let (names, complete, _) = columns(&format!("{prefix}out <- dplyr::relocate(d, g)\n"), "out");
+    assert_eq!(names, ["g", "x", "y"]);
+    assert!(complete);
+}
+
+#[test]
+fn group_by_class_is_full_when_receiver_is_proved() {
+    let src = "d <- data.frame(x = 1L)\nout <- dplyr::group_by(d, x)\n";
+    let (_, scope) = check_with_scope(src);
+    assert_eq!(
+        scope.get("out").unwrap().class,
+        ClassVector::from_slice(&["grouped_df", "tbl_df", "tbl", "data.frame"])
     );
 }
 

@@ -11,6 +11,69 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        let checking_declarations = !self.discarding && !self.declarations.records().is_empty();
+        let mut direct_writes = FxSet::default();
+        if checking_declarations {
+            crate::collect::collect_callable_binding_write(func, args, &mut direct_writes);
+        }
+        // Resolve a directly bound helper before inferring its arguments:
+        // R fixes the call head before promises can mutate its binding. The
+        // effect is applied only after the call itself has been checked.
+        let mut helper_writes = if checking_declarations {
+            match func {
+                Expr::Function { params, body, .. } => {
+                    Some(self.declaration_literal_helper_writes(params, body, scope))
+                }
+                _ => match callee_name(func) {
+                    Some(name)
+                        if direct_writes.is_empty()
+                            || scope
+                                .lexical_definition(semantic_argument_name(&name))
+                                .is_some()
+                            || self
+                                .fn_table
+                                .fns
+                                .contains_key(semantic_argument_name(&name)) =>
+                    {
+                        let name = semantic_argument_name(&name);
+                        if crate::collect::certified_literal_effect_free_call(func, args)
+                            && scope.get(name).is_none()
+                            && scope.lexical_definition(name).is_none()
+                            && !self.fn_table.fns.contains_key(name)
+                        {
+                            Some(FxSet::default())
+                        } else {
+                            Some(self.declaration_known_call_writes(name, scope))
+                        }
+                    }
+                    None if direct_writes.is_empty() => Some(FxSet::from_iter([
+                        crate::collect::UNKNOWN_CAPTURE_BINDING.to_string(),
+                    ])),
+                    _ => None,
+                },
+            }
+        } else {
+            None
+        };
+        if checking_declarations
+            && args
+                .iter()
+                .any(|arg| !declaration_closed_literal(&arg.value))
+            && callee_name(func).is_some_and(|name| {
+                let name = semantic_argument_name(&name);
+                scope.lexical_definition(name).is_some()
+                    || scope.function_alias(name).is_some()
+                    || self.fn_table.fns.contains_key(name)
+                    || self.fn_table.capture_literal_bindings.contains_key(name)
+            })
+        {
+            // A user function may force an actual promise whose expression
+            // reads an active/delayed binding. Even a body with no explicit
+            // outward assignment can then replace a captured declaration.
+            helper_writes
+                .get_or_insert_with(FxSet::default)
+                .insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
         if self.capture_references {
             self.enable_eager_reference_argument(func, args, scope, span);
         }
@@ -23,10 +86,388 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        if checking_declarations {
+            let mut writes = direct_writes;
+            if let Some(helper_writes) = helper_writes {
+                writes.extend(helper_writes);
+            }
+            if let Expr::Function { params, body, .. } = func {
+                writes.extend(crate::collect::called_function_outward_writes(params, body));
+            }
+            if writes.remove(crate::collect::UNKNOWN_CAPTURE_BINDING) {
+                self.invalidate_declaration_identities(scope);
+            }
+            for name in writes {
+                scope.insert(name, RType::unknown());
+            }
+        }
         if !pure {
             scope.invalidate_ops_environment();
         }
         result
+    }
+
+    /// Discard declaration-only exact identities after evaluating an
+    /// expression whose binding effects cannot be excluded. Ordinary type
+    /// inference still runs only when declarations were explicitly adopted.
+    pub(crate) fn invalidate_declaration_identities(&self, scope: &mut Scope) {
+        if self.discarding || self.declarations.records().is_empty() {
+            return;
+        }
+        let mut names = scope
+            .lexical_definitions
+            .keys()
+            .cloned()
+            .collect::<FxSet<_>>();
+        names.extend(
+            self.fn_table
+                .fns
+                .iter()
+                .filter(|(_, function)| {
+                    self.declarations
+                        .target(&function.source_path, function.definition_span)
+                        .is_some_and(|decision| decision.signature.is_some())
+                })
+                .map(|(name, _)| semantic_argument_name(name).to_string()),
+        );
+        for name in names {
+            scope.insert(name, RType::unknown());
+        }
+    }
+
+    fn declaration_known_call_writes(&self, name: &str, scope: &Scope) -> FxSet<String> {
+        let mut writes = FxSet::default();
+        let mut remaining = 64;
+        let mut visiting = FxSet::default();
+        let mut alias_path = FxSet::default();
+        self.declaration_named_helper_writes(
+            name,
+            &self.path,
+            None,
+            scope,
+            &mut remaining,
+            &mut visiting,
+            &mut alias_path,
+            &mut writes,
+        );
+        writes
+    }
+
+    fn declaration_literal_helper_writes(
+        &self,
+        params: &[ry_core::ast::Param],
+        body: &[Stmt],
+        scope: &Scope,
+    ) -> FxSet<String> {
+        let mut remaining = 64;
+        let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
+        let mut writes = FxSet::default();
+        let mut visiting = FxSet::default();
+        self.declaration_possible_helper_writes(
+            &possible,
+            &self.path,
+            scope,
+            &mut remaining,
+            &mut visiting,
+            &mut writes,
+        );
+        writes
+    }
+
+    fn declaration_possible_helper_writes(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        owner_path: &str,
+        scope: &Scope,
+        remaining: &mut usize,
+        visiting: &mut FxSet<(String, usize, usize)>,
+        writes: &mut FxSet<String>,
+    ) {
+        if possible.uncertain
+            || self.declaration_unproven_operators(possible, scope)
+            || self.declaration_unproven_reads(possible, scope)
+        {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+        for name in &possible.calls {
+            self.declaration_named_helper_writes(
+                name,
+                owner_path,
+                Some(possible),
+                scope,
+                remaining,
+                visiting,
+                &mut FxSet::default(),
+                writes,
+            );
+        }
+        for inner in &possible.immediate_closures {
+            if *remaining == 0 {
+                writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+                break;
+            }
+            *remaining -= 1;
+            self.declaration_possible_helper_writes(
+                inner, owner_path, scope, remaining, visiting, writes,
+            );
+        }
+    }
+
+    fn declaration_unproven_reads(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        scope: &Scope,
+    ) -> bool {
+        possible.read_sites.iter().any(|(name, offset)| {
+            name == crate::collect::UNKNOWN_CAPTURE_BINDING
+                || !(possible.definitely_local_at(name, *offset)
+                    || (!possible
+                        .rebound_bindings
+                        .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
+                        && !possible.rebound_bindings.contains(name)
+                        && (possible.formals.contains(name)
+                            || scope.lexical_definition(name).is_some()
+                            || scope.function_alias(name).is_some()
+                            || self.declaration_stable_project_binding(name, scope))))
+        })
+    }
+
+    fn declaration_stable_project_binding(&self, name: &str, scope: &Scope) -> bool {
+        // Project collection can prove a literal remains available across
+        // files only when no collected write may have rebound it. A current
+        // unknown scope entry (for example after rm/active installation)
+        // takes precedence over this static inventory.
+        scope.get(name).is_none()
+            && self
+                .fn_table
+                .capture_literal_bindings
+                .get(name)
+                .is_some_and(|definitions| {
+                    definitions
+                        .iter()
+                        .any(|key| !self.fn_table.rebound_after_capture.contains(key))
+                })
+    }
+
+    fn declaration_unproven_operators(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        scope: &Scope,
+    ) -> bool {
+        possible.operator_symbols.iter().any(|symbol| {
+            !self.resolves_to_base(symbol, scope)
+                || self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope)
+                || possible.aliases.contains_key(*symbol)
+                || possible.local_literals.contains_key(*symbol)
+                || possible.unknown_bindings.contains(*symbol)
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn declaration_named_helper_writes(
+        &self,
+        name: &str,
+        owner_path: &str,
+        possible: Option<&crate::collect::PotentialHelperCalls>,
+        scope: &Scope,
+        remaining: &mut usize,
+        visiting: &mut FxSet<(String, usize, usize)>,
+        alias_path: &mut FxSet<String>,
+        writes: &mut FxSet<String>,
+    ) {
+        if *remaining == 0 || !alias_path.insert(name.to_string()) {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+            return;
+        }
+        // A long chain of local or scope aliases must spend the same bound
+        // as function and immediate-closure descent before recursing.
+        *remaining -= 1;
+        let mut candidates = Vec::<UserFn>::new();
+        let mut candidate_keys = FxSet::default();
+        let mut add = |function: &UserFn| {
+            let key = (
+                function.source_path.clone(),
+                function.definition_span.start,
+                function.definition_span.end,
+            );
+            if candidate_keys.insert(key) {
+                candidates.push(function.clone());
+            }
+        };
+        if let Some(possible) = possible {
+            if possible.unknown_bindings.contains(name) {
+                writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+            }
+            if let Some(spans) = possible.local_literals.get(name) {
+                for span in spans {
+                    if let Some(function) = self.fn_table.definition(owner_path, *span) {
+                        add(function);
+                    } else {
+                        writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+                    }
+                }
+            }
+            if let Some(aliases) = possible.aliases.get(name) {
+                for alias in aliases {
+                    self.declaration_named_helper_writes(
+                        alias,
+                        owner_path,
+                        Some(possible),
+                        scope,
+                        remaining,
+                        visiting,
+                        alias_path,
+                        writes,
+                    );
+                }
+            }
+        }
+        let exact_scope_function = scope
+            .lexical_definition(name)
+            .and_then(|span| self.fn_table.definition(&self.path, span));
+        let local_identity = possible.is_some_and(|possible| {
+            let mut uses = possible
+                .call_sites
+                .iter()
+                .chain(possible.read_sites.iter())
+                .filter(|(used, _)| used == name);
+            uses.next()
+                .is_some_and(|(_, offset)| possible.definitely_local_at(name, *offset))
+                && uses.all(|(_, offset)| possible.definitely_local_at(name, *offset))
+        });
+        let stable_project_identity = self.declaration_stable_project_binding(name, scope);
+        if exact_scope_function.is_none()
+            && scope.function_alias(name).is_none()
+            && !local_identity
+            && !stable_project_identity
+        {
+            // Flat project/capture inventories retain past literals. They
+            // cannot certify the binding read by a call head after removal,
+            // active-binding installation, or a not-yet-executed local write.
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+            alias_path.remove(name);
+            return;
+        }
+        if let Some(function) = exact_scope_function {
+            add(function);
+        }
+        if let Some(alias) = scope
+            .function_alias(name)
+            .filter(|_| exact_scope_function.is_none())
+        {
+            self.declaration_named_helper_writes(
+                alias, owner_path, possible, scope, remaining, visiting, alias_path, writes,
+            );
+        }
+        if exact_scope_function.is_none() {
+            if let Some(definitions) = self.fn_table.capture_literal_bindings.get(name) {
+                for (path, start, end) in definitions {
+                    if let Some(function) = self.fn_table.definition(
+                        path,
+                        Span {
+                            start: *start,
+                            end: *end,
+                            ..Span::default()
+                        },
+                    ) {
+                        add(function);
+                    } else {
+                        writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+                    }
+                }
+            }
+            if let Some(function) = self.fn_table.fns.get(name) {
+                add(function);
+            }
+        }
+        let found = !candidates.is_empty();
+        for function in candidates {
+            self.declaration_function_helper_writes(&function, scope, remaining, visiting, writes);
+        }
+        if !found
+            && possible.is_some_and(|possible| {
+                possible.unproven_calls.contains(name)
+                    && !possible.aliases.contains_key(name)
+                    && !possible.local_literals.contains_key(name)
+            })
+        {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+        if !found
+            && possible.is_none_or(|possible| {
+                !possible.aliases.contains_key(name)
+                    && !possible.local_literals.contains_key(name)
+                    && !possible.handled_calls.contains(name)
+                    && !possible.certified_calls.contains(name)
+            })
+            && scope.function_alias(name).is_none()
+        {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+        alias_path.remove(name);
+    }
+
+    fn declaration_function_helper_writes(
+        &self,
+        function: &UserFn,
+        scope: &Scope,
+        remaining: &mut usize,
+        visiting: &mut FxSet<(String, usize, usize)>,
+        writes: &mut FxSet<String>,
+    ) {
+        let key = (
+            function.source_path.clone(),
+            function.definition_span.start,
+            function.definition_span.end,
+        );
+        if *remaining == 0 || !visiting.insert(key.clone()) {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+            return;
+        }
+        *remaining -= 1;
+        writes.extend(function.outward_writes().iter().cloned());
+        if function.source_params.as_deref().is_some_and(|params| {
+            params.iter().any(|param| {
+                param
+                    .default
+                    .as_ref()
+                    .is_some_and(|default| !declaration_closed_literal(default))
+            })
+        }) {
+            // An omitted default is also a promise. Without call-specific
+            // forcing proof, an expression such as e$trigger may read an
+            // active binding and replace a captured callable.
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+        let mut possible = crate::collect::potential_helper_calls(
+            function.source_params.as_deref().unwrap_or(&[]),
+            &function.body,
+            remaining,
+        );
+        // `source_params` is absent for the common no-default case; the
+        // signature still carries every formal name that can shadow a
+        // same-spelled outer helper when called with an actual argument.
+        possible.unknown_bindings.extend(
+            function
+                .params
+                .iter()
+                .map(|param| semantic_argument_name(&param.name).to_string()),
+        );
+        possible.formals.extend(
+            function
+                .params
+                .iter()
+                .map(|param| semantic_argument_name(&param.name).to_string()),
+        );
+        self.declaration_possible_helper_writes(
+            &possible,
+            &function.source_path,
+            scope,
+            remaining,
+            visiting,
+            writes,
+        );
+        visiting.remove(&key);
     }
 
     fn infer_call_inner(
@@ -242,10 +683,11 @@ impl Checker {
         }
 
         // The argument-inference stage.
-        let mut call = self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope);
+        let mut call =
+            self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope, span);
 
         // The argument-validation stage.
-        self.check_call_arguments(&lookup_name, &call, args, span);
+        self.check_call_arguments(&name, &lookup_name, &call, args, span);
 
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
@@ -1280,6 +1722,7 @@ impl Checker {
         lookup_name: &str,
         args: &[Arg],
         scope: &mut Scope,
+        call_span: Span,
     ) -> CallResolution {
         let inherited_sig = self.resolve_user_s3_inherited_sig(lookup_name);
         let inherited_s3_metadata = inherited_sig.is_some();
@@ -1303,6 +1746,54 @@ impl Checker {
         // may contain a same-named nested/top-level definition from elsewhere;
         // using that signature here produces bogus RY090/RY091 diagnostics.
         let lexical_callable = !name.contains("::") && scope.is_lexical_function(lookup_name);
+        // R's function-position lookup skips a proven nonfunction local and
+        // searches enclosing environments. A current callable/unknown local
+        // instead masks those environments. Keep the nearest exact literal
+        // identity when one exists, regardless of which same-spelled entry
+        // survived in the flat inference table.
+        let local_binding = scope.get(lookup_name);
+        let local_is_nonfunction = local_binding
+            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
+        let outward = scope.outward_function_definition(lookup_name);
+        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
+            frame
+                .possible_default_writes
+                .contains(semantic_argument_name(lookup_name))
+                || frame
+                    .possible_default_writes
+                    .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
+        });
+        let local_definition = scope.lexical_definition(lookup_name);
+        // Function walks start with a copy of the captured scope. An exact
+        // literal that is identical to the nearest enclosing frame is still
+        // an outward binding, not a new local one: R's closure keeps the
+        // environment live after the literal is created.
+        let from_outward = local_is_nonfunction
+            || (local_binding.is_none() && local_definition.is_none())
+            || (local_definition.is_some() && local_definition == outward.flatten());
+        let exact_definition = if from_outward {
+            outward.flatten()
+        } else {
+            local_definition
+        };
+        let exact_declaration_function = if self.discarding {
+            None
+        } else {
+            exact_definition
+                .filter(|definition| {
+                    !possible_default_shadow
+                        && (!from_outward
+                            || !self
+                                .fn_table
+                                .was_rebound_after_capture(&self.path, *definition))
+                        && self
+                            .declarations
+                            .target(&self.path, *definition)
+                            .is_some_and(|decision| decision.signature.is_some())
+                })
+                .and_then(|definition| self.fn_table.definition(&self.path, definition))
+                .cloned()
+        };
         let user_function = if lexical_callable {
             None
         } else {
@@ -1314,6 +1805,29 @@ impl Checker {
                     .map(|(_, function)| function.clone())
             })
         };
+        // A local binding may be an earlier literal, a later rebind, or a
+        // branch join. The flat table is last-definition-wins, so its
+        // declaration is safe only when the current binding is absent (a
+        // cross-file/deferred lookup) or has the identical source span.
+        let declaration_user_function = user_function
+            .as_ref()
+            .filter(|function| {
+                if possible_default_shadow || local_is_nonfunction || outward.is_some() {
+                    false
+                } else if local_binding.is_some() {
+                    function.source_path == self.path
+                        && exact_definition == Some(function.definition_span)
+                } else {
+                    // A deferred call inside a function may resolve a later
+                    // definition. An eager top-level call cannot use a function
+                    // defined later in this same file; the table's future entry
+                    // is not evidence about the current binding.
+                    !self.enclosing_formals.is_empty()
+                        || function.source_path != self.path
+                        || function.definition_span.start < call_span.start
+                }
+            })
+            .cloned();
         if let Some(function) = &user_function {
             self.record_signature_read(function.return_slot);
         }
@@ -1450,6 +1964,8 @@ impl Checker {
             arg_types,
             resolved_sig,
             user_function,
+            declaration_user_function,
+            exact_declaration_function,
             lexical_callable,
             locally_shadows_stub: false,
         }
@@ -1464,6 +1980,7 @@ impl Checker {
     /// `base::inherits` is a lookup-order bug, not a missing argument.
     fn check_call_arguments(
         &mut self,
+        original_name: &str,
         lookup_name: &str,
         resolution: &CallResolution,
         args: &[Arg],
@@ -1504,6 +2021,16 @@ impl Checker {
             }
             _ => {}
         }
+        self.check_declaration_call(
+            original_name,
+            lookup_name,
+            resolution
+                .exact_declaration_function
+                .as_ref()
+                .or(resolution.declaration_user_function.as_ref()),
+            args,
+            &resolution.arg_types,
+        );
     }
 
     /// The dynamic-loader stage: scope-populating calls suppress
@@ -2060,6 +2587,10 @@ struct CallResolution {
     /// The project FnTable entry for the call, unless a lexical callable
     /// shadows it.
     user_function: Option<UserFn>,
+    /// Flat entry only when source identity agrees with the current binding.
+    declaration_user_function: Option<UserFn>,
+    /// Exact current or nearest enclosing literal, used only for declarations.
+    exact_declaration_function: Option<UserFn>,
     /// Whether a lexical function binding shadows every table lookup.
     lexical_callable: bool,
     /// Whether a local non-alias binding shadows a same-named stub; the
@@ -2202,4 +2733,59 @@ fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) 
                     .iter()
                     .any(|param| param.name == *fingerprint)
             })
+}
+
+fn declaration_closed_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..)
+    )
+}
+
+#[cfg(test)]
+mod declaration_effect_budget_tests {
+    use super::*;
+
+    #[test]
+    fn exhausted_or_recursive_helper_effect_is_unknown_before_descending() {
+        let file = crate::tests::parse_file(
+            "effect-budget.R",
+            "h <- function() { f <<- function(x) x; h() }",
+        );
+        let mut checker = Checker::new(&file.path);
+        checker.collect_file_fns(&file);
+        let function = checker.fn_table.fns.get("h").unwrap();
+        let scope = Scope::default();
+        let mut remaining = 0;
+        let mut writes = FxSet::default();
+        checker.declaration_function_helper_writes(
+            function,
+            &scope,
+            &mut remaining,
+            &mut FxSet::default(),
+            &mut writes,
+        );
+        assert_eq!(
+            writes,
+            FxSet::from_iter([crate::collect::UNKNOWN_CAPTURE_BINDING.to_string()]),
+            "a spent budget must not inspect even a direct nested write"
+        );
+
+        let mut remaining = 64;
+        writes.clear();
+        checker.declaration_function_helper_writes(
+            function,
+            &scope,
+            &mut remaining,
+            &mut FxSet::default(),
+            &mut writes,
+        );
+        assert!(writes.contains(crate::collect::UNKNOWN_CAPTURE_BINDING));
+        assert!(writes.contains("f"));
+    }
 }

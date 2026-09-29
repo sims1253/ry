@@ -139,6 +139,23 @@ impl Checker {
         if scope.loop_frame.is_some() && !then_reaches && !has_else {
             return;
         }
+        // Function values can have equal inferred types while denoting
+        // different lexical definitions. A branch merge must not retain an
+        // exact declaration target unless every reachable continuation
+        // still carries that same source identity.
+        let lexical_names: Vec<_> = scope.lexical_definitions.keys().cloned().collect();
+        for name in lexical_names {
+            let original = scope.lexical_definition(&name);
+            let then_agrees = !then_reaches || then_scope.lexical_definition(&name) == original;
+            let else_agrees = if has_else {
+                !else_reaches || else_scope.lexical_definition(&name) == original
+            } else {
+                true
+            };
+            if !then_agrees || !else_agrees {
+                scope.forget_lexical_definition(&name);
+            }
+        }
         if has_else && then_reaches != else_reaches {
             let continuation = if then_reaches { then_scope } else { else_scope };
             for (name, ty) in &continuation.bindings {

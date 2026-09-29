@@ -860,10 +860,10 @@ mod selected_branch_tests {
         scope.insert_parameter_default("x", RType::scalar(Mode::Null));
         scope.mark_list_origin("x");
         scope.set_function_alias("x", "base::identity".into());
-        scope.mark_lexical_function("x");
+        scope.mark_lexical_function("x", Span::default());
         scope.insert_parameter("untouched", RType::scalar(Mode::Integer));
         scope.set_function_alias("untouched", "other".into());
-        scope.mark_lexical_function("untouched");
+        scope.mark_lexical_function("untouched", Span::default());
         scope.tidy_injection = Some(InjectionMode::Full);
         apply_single_narrowing_branch(
             &mut scope,

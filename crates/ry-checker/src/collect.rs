@@ -6,48 +6,132 @@ use std::ops::ControlFlow;
 
 /// A small caller-effect summary, collected once with the function body.
 /// `parent.frame()` or an environment supplied through a formal can pass the
-/// caller's frame to a binding installer. We also retain direct calls so a
-/// wrapper around such a helper receives the same conservative summary.
-/// A local installer without either route does not taint callers.
+/// caller's frame to a binding installer, including through local value
+/// flows. Defaults that may be forced are executable code; unused defaults
+/// are not.
+/// Direct calls let wrappers inherit this conservative summary. A local
+/// installer without a caller-frame route does not taint callers.
 fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<String>) {
-    let mut parent_frame = false;
-    let mut installer = false;
-    let mut installer_uses_formal = false;
-    let formals: HashSet<&str> = params.iter().map(|param| param.name.as_str()).collect();
-    for param in params {
-        if let Some(default) = &param.default {
-            let _ = walk_expr(default, Walk::ALL, |node, _| {
-                if let AstNode::Expr(Expr::Call { func, .. }) = node
-                    && ident_name(func).is_some_and(|name| bare_name(name) == "parent.frame")
-                {
-                    parent_frame = true;
-                }
+    let default_names: HashSet<&str> = params
+        .iter()
+        .filter(|param| param.default.is_some())
+        .map(|param| param.name.as_str())
+        .collect();
+    let direct_walk = Walk {
+        assign_targets: false,
+        assign_operands: false,
+        dollar_args: false,
+        fn_bodies: false,
+        control_tests: true,
+    };
+    // A default can itself force another default. Walk that reachable set
+    // from reads in the body, without treating an unused promise as executed.
+    let mut pending = Vec::new();
+    let note_default_read = |node: AstNode<'_>, pending: &mut Vec<String>| {
+        if let AstNode::Expr(Expr::Ident { name, .. }) = node
+            && default_names.contains(name.as_str())
+        {
+            pending.push(name.clone());
+        }
+    };
+    let _ = walk_stmts(body, direct_walk, |node, _| {
+        note_default_read(node, &mut pending);
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
+    let mut forced_defaults = HashSet::new();
+    while let Some(name) = pending.pop() {
+        if !forced_defaults.insert(name.clone()) {
+            continue;
+        }
+        if let Some(default) = params
+            .iter()
+            .find(|param| param.name == name)
+            .and_then(|param| param.default.as_ref())
+        {
+            let _ = walk_expr(default, direct_walk, |node, _| {
+                note_default_read(node, &mut pending);
                 ControlFlow::<(), Descend>::Continue(Descend::Into)
             });
         }
     }
+
+    let mut parent_frame = false;
+    let mut installer = false;
+    let mut installer_args = HashSet::new();
+    let mut alias_targets: HashMap<String, Vec<String>> = HashMap::new();
     let mut callees = HashSet::new();
-    let _ = walk_stmts(body, Walk::ALL, |node, _| {
-        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
-            && let Some(name) = ident_name(func)
-        {
-            let name = bare_name(name);
-            callees.insert(name.to_string());
-            match name {
-                "parent.frame" => parent_frame = true,
-                "makeActiveBinding" | "delayedAssign" => {
-                    installer = true;
-                    installer_uses_formal |= args.iter().any(|arg| {
-                        matches!(&arg.value, Expr::Ident { name, .. } if formals.contains(name.as_str()))
-                    });
+    let mut collect_effect = |node: AstNode<'_>, _| {
+        match node {
+            AstNode::Stmt(Stmt::Assign {
+                target: Expr::Ident { name: target, .. },
+                value,
+                ..
+            }) => {
+                let mut sources = Vec::new();
+                let _ = walk_expr(value, direct_walk, |child, _| {
+                    if let AstNode::Expr(Expr::Ident { name, .. }) = child {
+                        sources.push(name.clone());
+                    }
+                    ControlFlow::<(), Descend>::Continue(Descend::Into)
+                });
+                for source in sources {
+                    alias_targets
+                        .entry(source)
+                        .or_default()
+                        .push(target.clone());
                 }
-                _ => {}
             }
+            AstNode::Expr(Expr::Call { func, args, .. }) => {
+                if let Some(name) = ident_name(func) {
+                    let name = bare_name(name);
+                    callees.insert(name.to_string());
+                    match name {
+                        "parent.frame" => parent_frame = true,
+                        "makeActiveBinding" | "delayedAssign" => {
+                            installer = true;
+                            for arg in args {
+                                let _ = walk_expr(&arg.value, direct_walk, |child, _| {
+                                    if let AstNode::Expr(Expr::Ident { name, .. }) = child {
+                                        installer_args.insert(name.clone());
+                                    }
+                                    ControlFlow::<(), Descend>::Continue(Descend::Into)
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
-    });
+    };
+    let _ = walk_stmts(body, Walk::ALL, &mut collect_effect);
+    for param in params {
+        if forced_defaults.contains(&param.name)
+            && let Some(default) = &param.default
+        {
+            let _ = walk_expr(default, direct_walk, &mut collect_effect);
+        }
+    }
+    let mut caller_env_names: HashSet<String> =
+        params.iter().map(|param| param.name.clone()).collect();
+    let mut pending: Vec<String> = caller_env_names.iter().cloned().collect();
+    while let Some(source) = pending.pop() {
+        if let Some(targets) = alias_targets.get(&source) {
+            for target in targets {
+                if caller_env_names.insert(target.clone()) {
+                    pending.push(target.clone());
+                }
+            }
+        }
+    }
     (
-        installer && (parent_frame || installer_uses_formal),
+        installer
+            && (parent_frame
+                || installer_args
+                    .iter()
+                    .any(|name| caller_env_names.contains(name))),
         callees.into_iter().collect(),
     )
 }

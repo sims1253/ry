@@ -2139,6 +2139,11 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_helper_passed_env.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_transitive_local.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_alias_local.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_environment_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_transformed_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_forced_default.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_delayed_default.R"),
+        include_str!("../../testdata/oracle/assertion_subject_helper_forced_default_call.R"),
     ]
     .into_iter()
     .enumerate()
@@ -2160,6 +2165,8 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
     for source in [
         "local_install <- function() { makeActiveBinding('y', function() 1L, environment()) }; f <- function(x = 1L) { local_install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         "read_parent <- function() parent.frame(); f <- function(x = 1L) { read_parent(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        include_str!("../../testdata/oracle/assertion_subject_unused_installer_default.R"),
+        "install <- function(env) { target <- new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ] {
         let diagnostics = check(source);
         assert!(

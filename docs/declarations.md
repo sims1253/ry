@@ -110,6 +110,10 @@ read, call, or operator can change a binding and its effects cannot be proved
 absent, later call checks become inconclusive; source attachment, default
 checks, and independent return evidence remain available. A typeshed
 signature alone does not establish that a call is effect-free.
+For precision, even an ordinary local data read or subscript can make a later
+contract check inconclusive when the checker cannot prove its binding effects
+absent. Local assignments inside an immediately invoked closure belong to
+that closure; they cannot certify a later read in its caller.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and

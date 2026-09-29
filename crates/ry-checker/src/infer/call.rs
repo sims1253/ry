@@ -162,37 +162,61 @@ impl Checker {
         let mut remaining = 64;
         let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
         let mut writes = FxSet::default();
+        let mut visiting = FxSet::default();
+        self.declaration_possible_helper_writes(
+            &possible,
+            &self.path,
+            scope,
+            &mut remaining,
+            &mut visiting,
+            &mut writes,
+        );
+        writes
+    }
+
+    fn declaration_possible_helper_writes(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        owner_path: &str,
+        scope: &Scope,
+        remaining: &mut usize,
+        visiting: &mut FxSet<(String, usize, usize)>,
+        writes: &mut FxSet<String>,
+    ) {
         if possible.uncertain
-            || self.declaration_unproven_operators(&possible, scope)
-            || self.declaration_unproven_reads(&possible, scope, |name| {
-                params
-                    .iter()
-                    .any(|param| semantic_argument_name(&param.name) == name)
-            })
+            || self.declaration_unproven_operators(possible, scope)
+            || self.declaration_unproven_reads(possible, scope)
         {
             writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
         }
-        let mut visiting = FxSet::default();
         for name in &possible.calls {
             self.declaration_named_helper_writes(
                 name,
-                &self.path,
-                Some(&possible),
+                owner_path,
+                Some(possible),
                 scope,
-                &mut remaining,
-                &mut visiting,
+                remaining,
+                visiting,
                 &mut FxSet::default(),
-                &mut writes,
+                writes,
             );
         }
-        writes
+        for inner in &possible.immediate_closures {
+            if *remaining == 0 {
+                writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+                break;
+            }
+            *remaining -= 1;
+            self.declaration_possible_helper_writes(
+                inner, owner_path, scope, remaining, visiting, writes,
+            );
+        }
     }
 
     fn declaration_unproven_reads(
         &self,
         possible: &crate::collect::PotentialHelperCalls,
         scope: &Scope,
-        is_formal: impl Fn(&str) -> bool,
     ) -> bool {
         possible.read_sites.iter().any(|(name, offset)| {
             name == crate::collect::UNKNOWN_CAPTURE_BINDING
@@ -201,7 +225,7 @@ impl Checker {
                         .rebound_bindings
                         .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
                         && !possible.rebound_bindings.contains(name)
-                        && (is_formal(name)
+                        && (possible.formals.contains(name)
                             || scope.lexical_definition(name).is_some()
                             || scope.function_alias(name).is_some()
                             || self.declaration_stable_project_binding(name, scope))))
@@ -429,29 +453,20 @@ impl Checker {
                 .iter()
                 .map(|param| semantic_argument_name(&param.name).to_string()),
         );
-        if possible.uncertain
-            || self.declaration_unproven_operators(&possible, scope)
-            || self.declaration_unproven_reads(&possible, scope, |name| {
-                function
-                    .params
-                    .iter()
-                    .any(|param| semantic_argument_name(&param.name) == name)
-            })
-        {
-            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
-        }
-        for name in &possible.calls {
-            self.declaration_named_helper_writes(
-                name,
-                &function.source_path,
-                Some(&possible),
-                scope,
-                remaining,
-                visiting,
-                &mut FxSet::default(),
-                writes,
-            );
-        }
+        possible.formals.extend(
+            function
+                .params
+                .iter()
+                .map(|param| semantic_argument_name(&param.name).to_string()),
+        );
+        self.declaration_possible_helper_writes(
+            &possible,
+            &function.source_path,
+            scope,
+            remaining,
+            visiting,
+            writes,
+        );
         visiting.remove(&key);
     }
 

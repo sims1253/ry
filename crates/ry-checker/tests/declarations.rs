@@ -1206,6 +1206,73 @@ fn helper_local_bindings_only_prove_reads_after_unconditional_assignment() {
 }
 
 #[test]
+fn immediately_invoked_local_bindings_do_not_prove_outer_reads() {
+    for (body, expected) in [
+        (
+            "{ (function() { trigger <- function() 1L })(); trigger }",
+            vec!["\"before\""],
+        ),
+        (
+            "{ inner <- function() { trigger <- function() 1L }; inner(); trigger }",
+            vec!["\"before\""],
+        ),
+        (
+            "{ inner <- function() { trigger <- function() 1L }; saved <- inner; saved(); trigger }",
+            vec!["\"before\""],
+        ),
+        (
+            "{ (function(trigger) trigger)(function() 1L); trigger }",
+            vec!["\"before\""],
+        ),
+        ("{ (function() 1L)(); trigger }", vec!["\"before\""]),
+        (
+            "{ (function() { trigger <- function() 1L; trigger })() }",
+            vec!["\"before\"", "\"after\""],
+        ),
+        (
+            "{ trigger <- function() 1L; (function() 1L)(); trigger }",
+            vec!["\"before\"", "\"after\""],
+        ),
+    ] {
+        let source = format!(
+            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
+        );
+        let file = parse("inner-frame-reads.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
+    }
+}
+
+#[test]
+fn immediate_closure_outward_write_still_invalidates_later_contracts() {
+    for (body, expected) in [
+        ("(function() { f <<- function(x) x })()", vec!["\"before\""]),
+        ("(function() 1L)()", vec!["\"before\"", "\"after\""]),
+    ] {
+        let source = format!(
+            "f <- function(x) x\ntouch <- function() {{ {body} }}\nf(\"before\")\ntouch()\nf(\"after\")\n"
+        );
+        let file = parse("immediate-outward-write.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
+    }
+}
+
+#[test]
 fn active_call_heads_cannot_reuse_removed_function_inventory() {
     for (setup, action, expected) in [
         (
@@ -1279,6 +1346,8 @@ fn warm_helper_binding_order_edits_match_cold_findings() {
     for (body, expected) in [
         ("trigger; trigger <- function() 1L", 0),
         ("trigger <- function() 1L; trigger", 1),
+        ("(function() { trigger <- function() 1L })(); trigger", 0),
+        ("trigger <- function() 1L; (function() 1L)(); trigger", 1),
     ] {
         let edited = parse("ordered-reader.R", &source(body));
         project.update_file(edited.path.clone(), Arc::new(edited.clone()));

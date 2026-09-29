@@ -406,6 +406,8 @@ pub(crate) struct PotentialHelperCalls {
     pub(crate) call_sites: Vec<(String, usize)>,
     pub(crate) definite_local_bindings: FxMap<String, usize>,
     pub(crate) rebound_bindings: FxSet<String>,
+    pub(crate) formals: FxSet<String>,
+    pub(crate) immediate_closures: Vec<PotentialHelperCalls>,
     pub(crate) operator_symbols: FxSet<&'static str>,
     excluded_ident_spans: FxSet<(usize, usize)>,
     pub(crate) uncertain: bool,
@@ -524,7 +526,12 @@ fn scan_possible_helper_node(
                     calls.uncertain = true;
                 } else {
                     *remaining -= 1;
-                    scan_possible_helper_calls(params, body, calls, remaining);
+                    // An IIFE executes here, but its local bindings belong to
+                    // its own frame. Retain its effect summary separately so
+                    // an inner assignment cannot certify an outer read.
+                    calls
+                        .immediate_closures
+                        .push(potential_helper_calls(params, body, remaining));
                 }
             }
             _ => calls.uncertain = true,
@@ -580,9 +587,9 @@ fn scan_possible_helper_calls(
         }
     }
     for parameter in params {
-        calls
-            .unknown_bindings
-            .insert(capture_identifier_name(&parameter.name).to_string());
+        let name = capture_identifier_name(&parameter.name).to_string();
+        calls.unknown_bindings.insert(name.clone());
+        calls.formals.insert(name);
     }
     let walk = Walk {
         assign_targets: true,

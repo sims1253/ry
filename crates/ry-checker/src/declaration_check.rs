@@ -11,6 +11,8 @@ use ry_core::declarations::{
 };
 use ry_core::types::{ClassVector, Length, MAX_UNION_MEMBERS, Mode, RType};
 
+use crate::infer::semantic_argument_name;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeclarationFindingKind {
     /// A known value contradicts an adopted constraint.
@@ -248,19 +250,24 @@ pub(crate) fn matches_formals<'a>(
     for parameter in &signature.parameters {
         let Some(offset) = formals[next..]
             .iter()
-            .position(|(name, _)| *name == parameter.name)
+            .position(|(name, _)| semantic_argument_name(name) == parameter.name)
         else {
-            return Err(if formals.iter().any(|(name, _)| *name == parameter.name) {
-                format!(
-                    "declared parameter `{}` has a different order from the attached function",
-                    parameter.name
-                )
-            } else {
-                format!(
-                    "declared parameter `{}` is absent from the attached function",
-                    parameter.name
-                )
-            });
+            return Err(
+                if formals
+                    .iter()
+                    .any(|(name, _)| semantic_argument_name(name) == parameter.name)
+                {
+                    format!(
+                        "declared parameter `{}` has a different order from the attached function",
+                        parameter.name
+                    )
+                } else {
+                    format!(
+                        "declared parameter `{}` is absent from the attached function",
+                        parameter.name
+                    )
+                },
+            );
         };
         let (_, defaulted) = formals[next + offset];
         next += offset + 1;
@@ -453,7 +460,8 @@ impl crate::Checker {
             .parameters
             .iter()
             .find(|declared| {
-                declared.name == parameter.name && declared.form == ParameterForm::Ordinary
+                declared.name == semantic_argument_name(&parameter.name)
+                    && declared.form == ParameterForm::Ordinary
             })?
             .constraint
             .as_ref()?;
@@ -576,9 +584,13 @@ impl crate::Checker {
         let names: Vec<_> = function
             .params
             .iter()
-            .map(|parameter| parameter.name.as_str())
+            .map(|parameter| semantic_argument_name(&parameter.name))
             .collect();
-        let bindings = crate::infer::match_arguments(&names, args);
+        let bindings = crate::infer::match_argument_names(
+            &names,
+            args.iter()
+                .map(|argument| argument.name.as_deref().map(semantic_argument_name)),
+        );
         let mut mismatches = Vec::new();
         for (index, (argument, actual)) in args.iter().zip(arg_types).enumerate() {
             if matches!(argument.value, ry_core::ast::Expr::Missing(_)) {
@@ -594,7 +606,7 @@ impl crate::Checker {
             let Some(constraint) = signature
                 .parameters
                 .iter()
-                .find(|declared| declared.name == formal.name)
+                .find(|declared| declared.name == semantic_argument_name(&formal.name))
                 .and_then(|declared| declared.constraint.as_ref())
             else {
                 continue;

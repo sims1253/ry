@@ -2295,6 +2295,167 @@ fn quoted_formal_edits_retract_and_restore_warm_declaration_findings() {
 }
 
 #[test]
+fn declaration_attachment_and_calls_match_semantic_formal_names() {
+    for (source, declared, expected) in [
+        (
+            "f <- function(x) x\nf(\"bad\")\n",
+            "x",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(`x`) `x`\nf(\"bad\")\n",
+            "x",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(`x`) `x`\nf(x = \"bad\")\n",
+            "x",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(x) x\nf(`x` = \"bad\")\n",
+            "x",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(`longname`) `longname`\nf(long = \"bad\")\n",
+            "longname",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(`a b`) `a b`\nf(`a b` = \"bad\")\n",
+            "a b",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(x, `x y`) x\nf(`x y` = \"bad\", x = 1L)\n",
+            "x",
+            None,
+        ),
+        (
+            "f <- function(x, `x y`) x\nf(`x y` = \"bad\", x = 1L)\n",
+            "x y",
+            Some(DeclarationFindingKind::Mismatch),
+        ),
+        (
+            "f <- function(`x`) `x`\nf(\"bad\")\n",
+            "y",
+            Some(DeclarationFindingKind::AmbiguousAttachment),
+        ),
+        (
+            "f <- function(`x`) `x`\nf(\"bad\")\n",
+            "`x`",
+            Some(DeclarationFindingKind::AmbiguousAttachment),
+        ),
+    ] {
+        let file = parse("formal-attachment.R", source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            (declared, AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let actual = kinds(&checker);
+        assert_eq!(
+            actual.as_slice(),
+            expected.as_slice(),
+            "{source}: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn quoted_formal_entry_and_attachment_edits_match_cold_analysis() {
+    let source = |formal: &str, actual: &str| {
+        format!("f <- function({formal}) {{ {formal} }}\nf({actual} = \"bad\")\n")
+    };
+    let original = parse("formal-attachment-warm.R", &source("x", "x"));
+    let mut warm = Project::new();
+    warm.add_file(original.path.clone(), original.clone());
+    warm.set_declaration_records(vec![record(
+        &original,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    warm.check_incremental();
+    assert_eq!(project_mismatch_count(&warm, &original.path), 1);
+
+    for (formal, actual, declared, expected) in [
+        ("`x`", "x", "x", 1),
+        ("x", "`x`", "x", 1),
+        ("`a b`", "`a b`", "a b", 1),
+        ("`x`", "x", "y", 0),
+        ("x", "x", "x", 1),
+    ] {
+        let edited = parse("formal-attachment-warm.R", &source(formal, actual));
+        let declaration = record(
+            &edited,
+            "f",
+            (declared, AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        );
+        warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        warm.set_declaration_records(vec![declaration.clone()]);
+        warm.check_incremental();
+        assert_eq!(project_mismatch_count(&warm, &edited.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration]);
+        cold.check();
+        assert_eq!(warm.declaration_findings(), cold.declaration_findings());
+    }
+
+    let file = parse("formal-entry.R", "f <- function(`x`) { `x` }\n");
+    let mut checker = Checker::new(&file.path);
+    checker.enable_scope_capture();
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    let scope = checker
+        .take_scope_records()
+        .into_iter()
+        .find(|record| record.name.as_deref() == Some("f"))
+        .expect("attached function scope");
+    assert_eq!(scope.scope.bindings["`x`"].mode, Mode::Integer);
+}
+
+#[test]
+fn quoted_default_is_checked_against_its_semantic_declared_formal() {
+    for formal in ["x", "`x`"] {
+        let source = format!("f <- function({formal} = \"wrong\") {{ {formal} }}\nf(x = 1L)\n");
+        let file = parse("quoted-default.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Defaulted),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker),
+            vec![DeclarationFindingKind::Mismatch],
+            "{source}: {:?}",
+            checker.declaration_findings()
+        );
+        assert!(
+            checker.declaration_findings()[0]
+                .message
+                .contains("default for")
+        );
+    }
+}
+
+#[test]
 fn escaped_backtick_replacement_cannot_keep_a_decoded_contract() {
     for source in [
         "f <- function(x) x\nf(\"before\")\n`\\x66` <- function(x) x\nf(\"after\")\n",

@@ -58,6 +58,15 @@ struct CachedHints {
     hints: Vec<InlayHint>,
 }
 
+#[derive(Clone)]
+struct OpenSource {
+    native: Option<PathBuf>,
+    // Only populated while multiple native URIs share one display key.
+    // The active buffer also lives in `docs`; inactive buffers need this
+    // snapshot so a close or incremental edit can restore their text.
+    shadow: Option<(String, i32)>,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     /// Open documents: path -> current source text. Keeping every open
@@ -69,7 +78,9 @@ pub(super) struct State {
     /// map is keyed by a display string, which can collapse distinct Unix
     /// filenames; annotation adoption must retain the identity before that
     /// conversion. Multiple URIs at one display key are ambiguous.
-    open_source_paths: HashMap<String, HashMap<Url, PathBuf>>,
+    open_source_paths: HashMap<String, HashMap<Url, OpenSource>>,
+    /// The URI whose snapshot currently occupies `docs` at a colliding key.
+    active_collision_uri: HashMap<String, Url>,
     /// path -> version of the most recent edit. `did_open`/`did_change`
     /// record the version here so cache freshness can be validated.
     versions: HashMap<String, i32>,
@@ -95,7 +106,7 @@ pub(super) struct State {
     published_paths: HashSet<String>,
     /// Actual URI used for the last non-empty publication at a display
     /// path. It can differ from a URI rebuilt from lossy path text.
-    published_uris: HashMap<String, Url>,
+    published_uris: HashMap<String, HashSet<Url>>,
     /// Index generation stamp, bumped each time `spawn_background_index`
     /// starts so results from a prior folder set are discarded. The
     /// background task captures the generation at dispatch and checks it
@@ -416,6 +427,40 @@ impl ProjectCache {
 }
 
 impl State {
+    /// Remove one original URI from a display-keyed document. If another
+    /// URI remains, restore its own buffer when the closing URI was active
+    /// and retain its native provenance for the next publication.
+    fn close_open_source(&mut self, path: &str, uri: &Url) -> Option<Url> {
+        let open = self.open_source_paths.get_mut(path)?;
+        open.remove(uri);
+        if open.is_empty() {
+            self.open_source_paths.remove(path);
+            self.active_collision_uri.remove(path);
+            return None;
+        }
+        let one_left = open.len() == 1;
+        let closing_active = self.active_collision_uri.get(path) == Some(uri);
+        let (survivor, shadow) = open
+            .iter()
+            .next()
+            .map(|(uri, source)| (uri.clone(), source.shadow.clone()))?;
+        if one_left {
+            open.get_mut(&survivor).expect("surviving source").shadow = None;
+            self.active_collision_uri.remove(path);
+        } else if closing_active {
+            self.active_collision_uri
+                .insert(path.to_string(), survivor.clone());
+        }
+        if closing_active && let Some((text, version)) = shadow {
+            self.docs.insert(path.to_string(), text);
+            self.versions.insert(path.to_string(), version);
+            self.parsed.remove(path);
+            self.hints.remove(path);
+            self.trees.remove(path);
+        }
+        Some(survivor)
+    }
+
     /// Return the cached parse for `path` when its version matches the
     /// latest recorded version, else `None`. Pure cache read -- does
     /// NOT parse.
@@ -1013,7 +1058,13 @@ impl Backend {
         // checking so a slow check doesn't block other LSP requests
         // (e.g. didOpen of a second file). Only eligible documents'
         // versions are snapshotted.
-        let (doc_versions, requested_ineligible, supports_diagnostic_data, open_source_paths) = {
+        let (
+            doc_versions,
+            requested_ineligible,
+            supports_diagnostic_data,
+            open_source_paths,
+            active_collision_uris,
+        ) = {
             let state = self.state.lock().await;
             if state.initial_index_pending {
                 return;
@@ -1038,21 +1089,31 @@ impl Backend {
                     .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
                 state.open_source_paths.clone(),
+                state.active_collision_uri.clone(),
             )
         };
-        for path in &requested_ineligible {
-            let uri = open_source_paths
+        let publication_uris = |path: &str| {
+            let mut uris = open_source_paths
                 .get(path)
-                .filter(|open| open.len() == 1)
-                .and_then(|open| open.keys().next().cloned())
-                .unwrap_or_else(|| path_to_uri(path));
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
-        }
+                .map(|open| open.keys().cloned().collect::<Vec<_>>())
+                .filter(|uris| !uris.is_empty())
+                .unwrap_or_else(|| vec![path_to_uri(path)]);
+            uris.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+            uris
+        };
         if !requested_ineligible.is_empty() {
-            let mut state = self.state.lock().await;
-            for path in &requested_ineligible {
-                state.published_paths.remove(path);
-                state.published_uris.remove(path);
+            let uris_to_clear = {
+                let mut state = self.state.lock().await;
+                let mut uris_to_clear = HashSet::new();
+                for path in &requested_ineligible {
+                    uris_to_clear.extend(publication_uris(path));
+                    uris_to_clear.extend(state.published_uris.remove(path).unwrap_or_default());
+                    state.published_paths.remove(path);
+                }
+                uris_to_clear
+            };
+            for uri in uris_to_clear {
+                self.client.publish_diagnostics(uri, Vec::new(), None).await;
             }
         }
 
@@ -1259,14 +1320,55 @@ impl Backend {
         }
 
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
+        let mut ambiguous_claim_uris: HashMap<String, HashSet<Url>> = HashMap::new();
         for job in jobs {
             let config = job.ctx.as_ref().map_or(&root_config, |ctx| &ctx.config);
             let mut records = Vec::new();
             let mut declined = Vec::new();
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
                 for (path, _, file) in &job.files {
+                    if let Some(open) = open_source_paths.get(path)
+                        && open.len() > 1
+                    {
+                        let mut claimants = HashSet::new();
+                        for (uri, source) in open {
+                            let candidate = if active_collision_uris.get(path) == Some(uri) {
+                                !ry_checker::typehint::read_records(file, &scope).is_empty()
+                            } else {
+                                source.shadow.as_ref().is_some_and(|(text, _)| {
+                                    if !text.contains("#|") {
+                                        return false;
+                                    }
+                                    RParser::new()
+                                        .ok()
+                                        .and_then(|mut parser| parser.parse(path, text).ok())
+                                        .is_some_and(|parsed| {
+                                            !ry_checker::typehint::read_records(&parsed, &scope)
+                                                .is_empty()
+                                        })
+                                })
+                            };
+                            if candidate {
+                                claimants.insert(uri.clone());
+                            }
+                        }
+                        if !claimants.is_empty() {
+                            ambiguous_claim_uris.insert(path.clone(), claimants);
+                            declined.push(ry_checker::Diagnostic::new(
+                                ry_checker::Severity::Warning,
+                                ry_core::Span::new(0, 1, 0, 0),
+                                path,
+                                "RY117",
+                                "Native source identity is ambiguous; typehint attachment was skipped.",
+                            ));
+                        }
+                        continue;
+                    }
                     let native = match open_source_paths.get(path) {
-                        Some(open) if open.len() == 1 => open.values().next().cloned(),
+                        Some(open) if open.len() == 1 => open
+                            .values()
+                            .next()
+                            .and_then(|source| source.native.clone()),
                         Some(_) => None,
                         None if open_document_paths.contains(path.as_str()) => None,
                         None => {
@@ -1331,7 +1433,7 @@ impl Backend {
         // snapshotted root-level values. `published` records what this
         // pass sent (and whether it was non-empty) for the tracking
         // reconciliation below.
-        let mut published: Vec<(String, Url, bool)> = Vec::new();
+        let mut published: Vec<(String, HashSet<Url>, HashSet<Url>)> = Vec::new();
         for (ctx, result) in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
@@ -1407,16 +1509,64 @@ impl Backend {
                         diagnostic
                     })
                     .collect();
-                let diagnostic_uri = open_source_paths
-                    .get(&diagnostic_path)
-                    .filter(|open| open.len() == 1)
-                    .and_then(|open| open.keys().next().cloned())
-                    .unwrap_or_else(|| path_to_uri(&diagnostic_path));
-                let non_empty = !diagnostics.is_empty();
-                self.client
-                    .publish_diagnostics(diagnostic_uri.clone(), diagnostics, None)
-                    .await;
-                published.push((diagnostic_path, diagnostic_uri, non_empty));
+                let uris = publication_uris(&diagnostic_path);
+                if uris.len() == 1 {
+                    let uri = uris[0].clone();
+                    let non_empty = if diagnostics.is_empty() {
+                        HashSet::new()
+                    } else {
+                        HashSet::from([uri.clone()])
+                    };
+                    self.client
+                        .publish_diagnostics(uri, diagnostics, None)
+                        .await;
+                    published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
+                    continue;
+                }
+                let ambiguous_only: Vec<LspDiagnostic> = diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        matches!(
+                            diagnostic.code.as_ref(),
+                            Some(NumberOrString::String(code)) if code == "RY117"
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                let ordinary: Vec<LspDiagnostic> = diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        !matches!(
+                            diagnostic.code.as_ref(),
+                            Some(NumberOrString::String(code)) if code == "RY117"
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                let mut non_empty = HashSet::new();
+                for uri in &uris {
+                    // The active display-keyed buffer owns ordinary check
+                    // results. Other native URIs only receive the shared
+                    // ambiguity status, never another buffer's findings.
+                    let mut for_uri = if active_collision_uris.get(&diagnostic_path) == Some(uri) {
+                        ordinary.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    if ambiguous_claim_uris
+                        .get(&diagnostic_path)
+                        .is_some_and(|claimants| claimants.contains(uri))
+                    {
+                        for_uri.extend(ambiguous_only.iter().cloned());
+                    }
+                    if !for_uri.is_empty() {
+                        non_empty.insert(uri.clone());
+                    }
+                    self.client
+                        .publish_diagnostics(uri.clone(), for_uri, None)
+                        .await;
+                }
+                published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
             }
         }
 
@@ -1429,15 +1579,12 @@ impl Backend {
         let previous_uris = {
             let mut state = self.state.lock().await;
             let mut previous_uris = Vec::new();
-            for (path, uri, non_empty) in published {
-                if let Some(previous) = state.published_uris.remove(&path)
-                    && previous != uri
-                {
-                    previous_uris.push(previous);
-                }
-                if non_empty {
+            for (path, destinations, non_empty) in published {
+                let previous = state.published_uris.remove(&path).unwrap_or_default();
+                previous_uris.extend(previous.difference(&destinations).cloned());
+                if !non_empty.is_empty() {
                     state.published_paths.insert(path.clone());
-                    state.published_uris.insert(path, uri);
+                    state.published_uris.insert(path, non_empty);
                 } else {
                     state.published_paths.remove(&path);
                 }
@@ -1477,11 +1624,11 @@ impl Backend {
             }
             dropped
                 .iter()
-                .map(|path| {
+                .flat_map(|path| {
                     state
                         .published_uris
                         .remove(path)
-                        .unwrap_or_else(|| path_to_uri(path))
+                        .unwrap_or_else(|| HashSet::from([path_to_uri(path)]))
                 })
                 .collect()
         };

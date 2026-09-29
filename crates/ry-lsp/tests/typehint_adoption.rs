@@ -252,3 +252,334 @@ fn sole_genuine_unicode_replacement_filename_adopts_normally() {
             join_session(session, server).await;
         });
 }
+
+#[cfg(unix)]
+#[test]
+fn two_native_uris_keep_distinct_publication_and_survivor_ownership() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for (reverse_open, close_second) in [
+                (false, false),
+                (false, true),
+                (true, false),
+                (true, true),
+            ] {
+                let fixture = FixtureProject::empty().unwrap();
+                fixture
+                    .write_file(
+                        "ry.toml",
+                        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                    )
+                    .unwrap();
+                std::fs::create_dir(fixture.path("R")).unwrap();
+                let source = "f <- function(x) {\n #| x integer\n x\n}\nf(\"bad\")\n";
+                let raw_paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()]
+                    .map(|name| fixture.path("R").join(std::ffi::OsString::from_vec(name.to_vec())));
+                for path in &raw_paths {
+                    std::fs::write(path, source).unwrap();
+                }
+                let mut uris = raw_paths.map(|path| file_uri(&path).unwrap());
+                if reverse_open {
+                    uris.swap(0, 1);
+                }
+                let invented = tower_lsp::lsp_types::Url::from_file_path(
+                    fixture.path("R/bad\u{fffd}.R"),
+                )
+                .unwrap()
+                .to_string();
+                let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+                let mark = session.publication_mark();
+                session.open(&uris[0], 1, source).await.unwrap();
+                let first = session
+                    .published_diagnostics_after(&uris[0], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&first, "RY117"), 1, "{first}");
+
+                let mark = session.publication_mark();
+                session.open(&uris[1], 1, source).await.unwrap();
+                let both = session
+                    .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert!(!both.contains_key(&invented), "{both:?}");
+                for uri in &uris {
+                    assert_eq!(
+                        both.get(uri)
+                            .unwrap_or_else(|| panic!("missing {uri}: {both:?}"))
+                            .iter()
+                            .filter(|diagnostic| diagnostic["code"] == "RY117")
+                            .count(),
+                        1,
+                        "{both:?}"
+                    );
+                }
+
+                let closing = usize::from(close_second);
+                let survivor = 1 - closing;
+                let mark = session.publication_mark();
+                session
+                    .notify(
+                        "textDocument/didClose",
+                        json!({"textDocument": {"uri": uris[closing]}}),
+                    )
+                    .await
+                    .unwrap();
+                let after_close = session
+                    .quiesce_diagnostics(&uris[survivor], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert!(after_close.get(&uris[closing]).is_some_and(Vec::is_empty));
+                assert_eq!(
+                    after_close[&uris[survivor]]
+                        .iter()
+                        .filter(|diagnostic| diagnostic["code"] == "RY117")
+                        .count(),
+                    1,
+                    "{after_close:?}"
+                );
+                assert!(!after_close.contains_key(&invented), "{after_close:?}");
+
+                let mark = session.publication_mark();
+                session
+                    .change(
+                        &uris[survivor],
+                        2,
+                        json!([{"range": {
+                            "start": {"line": 1, "character": 1},
+                            "end": {"line": 1, "character": 13}
+                        }, "text": "# ordinary"}]),
+                    )
+                    .await
+                    .unwrap();
+                let edited = session
+                    .published_diagnostics_after(&uris[survivor], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&edited, "RY117"), 0, "{edited}");
+
+                let mark = session.publication_mark();
+                session
+                    .change(
+                        &uris[survivor],
+                        3,
+                        json!([{"range": {
+                            "start": {"line": 1, "character": 1},
+                            "end": {"line": 1, "character": 11}
+                        }, "text": "#| x integer"}]),
+                    )
+                    .await
+                    .unwrap();
+                let restored = session
+                    .published_diagnostics_after(&uris[survivor], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&restored, "RY117"), 1, "{restored}");
+
+                let mark = session.publication_mark();
+                session
+                    .notify(
+                        "textDocument/didClose",
+                        json!({"textDocument": {"uri": uris[survivor]}}),
+                    )
+                    .await
+                    .unwrap();
+                let final_clear = session
+                    .published_diagnostics_after(&uris[survivor], mark)
+                    .await
+                    .unwrap();
+                assert!(final_clear["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty));
+                join_session(session, server).await;
+            }
+        });
+}
+
+#[cfg(unix)]
+#[test]
+fn ineligible_collision_clears_all_actual_open_uris() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                )
+                .unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let source = "f <- function(x) {\n #| x integer\n x\n}\nf(\"bad\")\n";
+            let uris = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
+                let path = fixture.path("R").join(std::ffi::OsString::from_vec(name.to_vec()));
+                std::fs::write(&path, source).unwrap();
+                file_uri(&path).unwrap()
+            });
+            let invented = tower_lsp::lsp_types::Url::from_file_path(
+                fixture.path("R/bad\u{fffd}.R"),
+            )
+            .unwrap()
+            .to_string();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            session.open(&uris[0], 1, source).await.unwrap();
+            let mark = session.publication_mark();
+            session.open(&uris[1], 1, source).await.unwrap();
+            let _ = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[index]\nmax-file-bytes = 1\n[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                )
+                .unwrap();
+            let mark = session.publication_mark();
+            session
+                .notify("workspace/didChangeConfiguration", json!({"settings": {}}))
+                .await
+                .unwrap();
+            let cleared = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            for uri in &uris {
+                assert!(cleared.get(uri).is_some_and(Vec::is_empty), "{cleared:?}");
+            }
+            assert!(!cleared.contains_key(&invented), "{cleared:?}");
+            join_session(session, server).await;
+        });
+}
+
+#[cfg(unix)]
+#[test]
+fn mixed_content_collision_reports_only_the_uri_with_a_clause() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let annotated = "f <- function(x) {\n #| x integer\n x\n}\nf(\"bad\")\n";
+            let plain = format!(
+                "{}missing_collision_name\n",
+                annotated.replace("#| x integer", "# ordinary")
+            );
+            for first_annotated in [true, false] {
+                let fixture = FixtureProject::empty().unwrap();
+                fixture
+                    .write_file(
+                        "ry.toml",
+                        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                    )
+                    .unwrap();
+                std::fs::create_dir(fixture.path("R")).unwrap();
+                let sources = if first_annotated {
+                    [annotated, plain.as_str()]
+                } else {
+                    [plain.as_str(), annotated]
+                };
+                let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()]
+                    .map(|name| fixture.path("R").join(std::ffi::OsString::from_vec(name.to_vec())));
+                for (path, source) in paths.iter().zip(sources) {
+                    std::fs::write(path, source).unwrap();
+                }
+                let uris = paths.map(|path| file_uri(&path).unwrap());
+                let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+                let mark = session.publication_mark();
+                session.open(&uris[0], 1, sources[0]).await.unwrap();
+                let _ = session
+                    .published_diagnostics_after(&uris[0], mark)
+                    .await
+                    .unwrap();
+                let mark = session.publication_mark();
+                session.open(&uris[1], 7, sources[1]).await.unwrap();
+                let both = session
+                    .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                for index in 0..2 {
+                    let expected = usize::from(index == 0 && first_annotated
+                        || index == 1 && !first_annotated);
+                    assert_eq!(
+                        both[&uris[index]]
+                            .iter()
+                            .filter(|diagnostic| diagnostic["code"] == "RY117")
+                            .count(),
+                        expected,
+                        "{both:?}"
+                    );
+                }
+                assert!(
+                    !both[&uris[0]]
+                        .iter()
+                        .any(|diagnostic| diagnostic["code"] == "RY010"),
+                    "inactive buffer must not inherit the active buffer's ordinary finding: {both:?}"
+                );
+                if first_annotated {
+                    assert!(
+                        both[&uris[1]]
+                            .iter()
+                            .any(|diagnostic| diagnostic["code"] == "RY010"),
+                        "active plain buffer should retain its own finding: {both:?}"
+                    );
+                }
+
+                // Change the active second buffer, then close it. The first
+                // buffer's older text/version must become authoritative.
+                let mark = session.publication_mark();
+                session
+                    .change(&uris[1], 8, json!([{"text": annotated}]))
+                    .await
+                    .unwrap();
+                let changed = session
+                    .published_diagnostics_after(&uris[1], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&changed, "RY117"), 1, "{changed}");
+                let mark = session.publication_mark();
+                session
+                    .notify(
+                        "textDocument/didClose",
+                        json!({"textDocument": {"uri": uris[1]}}),
+                    )
+                    .await
+                    .unwrap();
+                let survivor = session
+                    .published_diagnostics_after(&uris[0], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    count_code(&survivor, "RY117"),
+                    usize::from(first_annotated),
+                    "{survivor}"
+                );
+                let mark = session.publication_mark();
+                session
+                    .change(&uris[0], 2, json!([{"text": annotated}]))
+                    .await
+                    .unwrap();
+                let restored = session
+                    .published_diagnostics_after(&uris[0], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&restored, "RY117"), 1, "{restored}");
+                join_session(session, server).await;
+            }
+        });
+}

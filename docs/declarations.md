@@ -15,6 +15,8 @@ to `check_types()` succeeded.
 The `#|` must begin a source line after indentation; an inline R comment is
 not a provider clause. A comment in a nested function's header, default, or
 unbraced body cannot attach to an enclosing function.
+This lexical ownership rule is deliberately narrower than the provider's
+textual scan: uncertain nested comments never become a contract.
 
 ## Supported canonical vocabulary
 
@@ -109,6 +111,8 @@ identity. A native path that cannot be represented exactly, or a real Unicode
 replacement-character path with a colliding native neighbor, cannot supply
 an adopted contract; the editor reports RY117 at the opened URI. A sole,
 genuine Unicode replacement-character filename remains eligible.
+When several open native URIs share a display key, each annotated buffer gets
+its own RY117; closing one clears that URI and keeps the survivor's source.
 Backtick quoting of an AST formal is equivalent to the same unquoted R name;
 structured declaration-record names are literal semantic names. The reader's
 bounded simple clause grammar does not decode encoded or escaped source

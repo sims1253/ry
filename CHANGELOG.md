@@ -9,6 +9,10 @@ All notable changes to ry are documented in this file.
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
 
+### Fixed
+
+- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
+
 ## [0.11.0] - 2026-09-22
 
 This release adds six new rules (RY106-RY111) whose founding fixtures are

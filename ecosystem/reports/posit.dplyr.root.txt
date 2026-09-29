@@ -13,8 +13,6 @@ tests/testthat/test-conditions.R:6:23 RY040
 tests/testthat/test-conditions.R:7:38 RY040
 tests/testthat/test-conditions.R:8:20 RY040
 tests/testthat/test-conditions.R:9:21 RY040
-tests/testthat/test-group-by.R:26:16 RY060
-tests/testthat/test-group-by.R:40:16 RY060
 tests/testthat/test-select.R:167:34 RY040
 tests/testthat/test-sets.R:60:25 RY090
 tests/testthat/test-slice.R:94:15 RY040

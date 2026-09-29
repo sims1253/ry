@@ -174,7 +174,11 @@ fn convergence_and_depth_bound_are_distinct() {
     let mut bounded = Project::new();
     bounded.add_file("chain.R".into(), parsed("chain.R", &source));
     bounded.enable_trace(TraceOptions::default()).unwrap();
-    let trace = checked(&mut bounded);
+    let bounded_diagnostics = bounded.check_incremental();
+    let trace = bounded.take_trace().unwrap();
+    let mut plain = Project::new();
+    plain.add_file("chain.R".into(), parsed("chain.R", &source));
+    assert_eq!(bounded_diagnostics, plain.check_incremental());
     assert_eq!(
         trace.summary.completion,
         Some(TraceCompletion::BoundReached)
@@ -212,7 +216,7 @@ fn logical_events_are_deterministic_and_budgeted() {
     bounded
         .enable_trace(TraceOptions {
             max_events: 2,
-            max_event_bytes: 256,
+            max_event_bytes: 512,
             ..TraceOptions::default()
         })
         .unwrap();
@@ -226,7 +230,42 @@ fn logical_events_are_deterministic_and_budgeted() {
     ));
     let bytes = serde_json::to_vec(&trace.events).unwrap().len();
     assert_eq!(trace.summary.event_bytes, bytes);
-    assert!(bytes <= 256);
+    assert!(bytes <= 512);
+
+    let mut byte_bounded = pair();
+    byte_bounded
+        .enable_trace(TraceOptions {
+            max_event_bytes: 256,
+            ..TraceOptions::default()
+        })
+        .unwrap();
+    let trace = checked(&mut byte_bounded);
+    assert!(trace.summary.truncated);
+    assert!(trace.summary.event_bytes <= 256);
+    assert!(matches!(
+        trace.events.last().map(|event| &event.kind),
+        Some(TraceEventKind::Truncated { .. })
+    ));
+
+    let mut marker_only = pair();
+    marker_only
+        .enable_trace(TraceOptions {
+            max_events: 1,
+            max_event_bytes: 256,
+            ..TraceOptions::default()
+        })
+        .unwrap();
+    let trace = checked(&mut marker_only);
+    assert_eq!(trace.events.len(), 1);
+    assert!(matches!(
+        trace.events[0].kind,
+        TraceEventKind::Truncated { .. }
+    ));
+    assert_eq!(
+        trace.summary.event_bytes,
+        serde_json::to_vec(&trace.events).unwrap().len()
+    );
+    assert!(trace.summary.event_bytes <= 256);
 }
 
 #[test]
@@ -264,8 +303,7 @@ fn exact_function_and_file_filters_keep_only_selected_local_events() {
     assert!(filtered.summary.emitted_files >= 1);
 }
 
-fn facts_snapshot(project: &mut Project) -> (String, String, String) {
-    let diagnostics = format!("{:?}", project.check_incremental());
+fn scopes_snapshot(project: &mut Project) -> String {
     let scopes = project
         .take_scope_records()
         .into_iter()
@@ -286,8 +324,14 @@ fn facts_snapshot(project: &mut Project) -> (String, String, String) {
             (path, records)
         })
         .collect::<Vec<_>>();
+    format!("{scopes:?}")
+}
+
+fn facts_snapshot(project: &mut Project) -> (String, String, String) {
+    let diagnostics = format!("{:?}", project.check_incremental());
+    let scopes = scopes_snapshot(project);
     let references = format!("{:?}", project.take_reference_facts());
-    (diagnostics, format!("{scopes:?}"), references)
+    (diagnostics, scopes, references)
 }
 
 #[test]
@@ -299,6 +343,15 @@ fn trace_does_not_change_diagnostics_or_available_facts() {
         project.enable_reference_capture();
     }
     traced.enable_trace(TraceOptions::default()).unwrap();
+    let plain_cold = format!("{:?}", plain.check());
+    let traced_cold = format!("{:?}", traced.check());
+    assert_eq!(plain_cold, traced_cold);
+    assert_eq!(scopes_snapshot(&mut plain), scopes_snapshot(&mut traced));
+    assert_eq!(
+        format!("{:?}", plain.take_reference_facts()),
+        format!("{:?}", traced.take_reference_facts())
+    );
+    assert!(traced.take_trace().is_some());
     assert_eq!(facts_snapshot(&mut plain), facts_snapshot(&mut traced));
     assert!(traced.take_trace().is_some());
 

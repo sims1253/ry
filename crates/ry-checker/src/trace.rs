@@ -99,7 +99,6 @@ pub enum TraceReason {
     NoDirtyWork,
     DependencyRead,
     ReturnChanged,
-    SignatureChanged,
     EvaluationMetadataChanged,
     PackageAttachmentChanged,
     FullScopeRetry,
@@ -202,6 +201,16 @@ pub(crate) struct TraceRecorder {
     pub(crate) summary: TraceSummary,
 }
 
+pub(crate) struct RoundMetrics {
+    pub(crate) round: usize,
+    pub(crate) pending_before: usize,
+    pub(crate) refined: usize,
+    pub(crate) return_changes: usize,
+    pub(crate) metadata_changes: usize,
+    pub(crate) attachments_changed: bool,
+    pub(crate) pending_after: usize,
+}
+
 impl TraceRecorder {
     pub(crate) fn new(
         options: TraceOptions,
@@ -299,26 +308,17 @@ impl TraceRecorder {
         });
     }
 
-    pub(crate) fn round(
-        &mut self,
-        round: usize,
-        pending_before: usize,
-        refined: usize,
-        return_changes: usize,
-        metadata_changes: usize,
-        attachments_changed: bool,
-        pending_after: usize,
-    ) {
+    pub(crate) fn round(&mut self, metrics: RoundMetrics) {
         self.summary.refinement_rounds += 1;
-        self.summary.refined_functions += refined;
+        self.summary.refined_functions += metrics.refined;
         self.global_event(TraceEventKind::Round {
-            round,
-            pending_before,
-            refined,
-            return_changes,
-            metadata_changes,
-            attachments_changed,
-            pending_after,
+            round: metrics.round,
+            pending_before: metrics.pending_before,
+            refined: metrics.refined,
+            return_changes: metrics.return_changes,
+            metadata_changes: metrics.metadata_changes,
+            attachments_changed: metrics.attachments_changed,
+            pending_after: metrics.pending_after,
         });
     }
 
@@ -347,11 +347,16 @@ impl TraceRecorder {
                 return;
             }
         }
+        // Keep a prefix. Once either budget is exhausted, count later
+        // eligible events without serializing or retaining their payloads.
+        if self.dropped_events > 0 || self.events.len() >= self.options.max_events - 1 {
+            self.dropped_events += 1;
+            return;
+        }
         let serialized = serde_json::to_vec(&event).expect("trace event is serializable");
         let additional = serialized.len() + usize::from(!self.events.is_empty());
-        if self.events.len() < self.options.max_events.saturating_sub(1)
-            && self.event_bytes.saturating_add(additional)
-                <= self.options.max_event_bytes - EVENT_MARKER_RESERVE
+        if self.event_bytes.saturating_add(additional)
+            <= self.options.max_event_bytes - EVENT_MARKER_RESERVE
         {
             self.event_bytes += additional;
             self.events.push(event);

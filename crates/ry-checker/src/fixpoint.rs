@@ -1,5 +1,5 @@
 use super::*;
-use crate::trace::{TraceCompletion, TraceEventKind, TraceReason, TraceRecorder};
+use crate::trace::{RoundMetrics, TraceCompletion, TraceEventKind, TraceReason, TraceRecorder};
 
 /// Resolve method identities once; only their parameter metadata changes
 /// during refinement. Include every dot prefix because generic names may
@@ -189,15 +189,15 @@ impl Checker {
                 }
             }
             if let Some(trace) = trace.as_deref_mut() {
-                trace.round(
+                trace.round(RoundMetrics {
                     round,
                     pending_before,
                     refined,
                     return_changes,
                     metadata_changes,
                     attachments_changed,
-                    pending.len(),
-                );
+                    pending_after: pending.len(),
+                });
                 for (index, reason) in scheduled.expect("enabled trace has schedule buffer") {
                     trace
                         .function_event(&names[index], TraceEventKind::Scheduled { round, reason });
@@ -208,7 +208,7 @@ impl Checker {
                 break;
             }
         }
-        if let Some(trace) = trace.as_deref_mut() {
+        if let Some(trace) = trace {
             trace.completion(completion, rounds);
         }
         if let Some(dependencies) = &mut self.refinement_dependencies {

@@ -710,7 +710,7 @@ impl Project {
         }
         let seeds = trace.as_ref().map(|_| affected.clone());
         let affected = self.with_refinement_callers(affected);
-        if let Some(trace) = trace.as_deref_mut() {
+        if let Some(trace) = trace {
             if let Some(seeds) = seeds {
                 let mut callers: Vec<_> = affected.difference(&seeds).collect();
                 callers.sort_unstable();

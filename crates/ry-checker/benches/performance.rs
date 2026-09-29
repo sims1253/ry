@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use ry_checker::{Checker, Project};
+use ry_checker::{Checker, Project, TraceOptions};
 use ry_core::{RParser, SourceFile};
 
 // ---------------------------------------------------------------------------
@@ -433,6 +433,42 @@ fn warm_edit_sparse_callers(c: &mut Criterion) {
     });
 }
 
+/// Matched warm-edit workload for the opt-in project trace. Both arms parse
+/// the same two alternating sources and take the (possibly absent) trace;
+/// only one arm records events. No report serialization is in the timed path.
+fn warm_edit_trace(c: &mut Criterion) {
+    let mut group = c.benchmark_group("warm_edit_trace");
+    for enabled in [false, true] {
+        let (mut project, sources, mut parser) = primed_project();
+        // The existing helper calls `check()`, which does not populate the
+        // incremental pass-1 cache. Prime that cache equally in both arms.
+        project.check_incremental();
+        let (edited_path, original) = find_source(&sources, "glue.R");
+        let edited_sources = [
+            format!("{original}\n.ry_trace_value <- 1L\n"),
+            format!("{original}\n.ry_trace_value <- 2L\n"),
+        ];
+        if enabled {
+            project
+                .enable_trace(TraceOptions::default())
+                .expect("valid default trace budget");
+        }
+        let mut toggle = false;
+        group.bench_function(if enabled { "enabled" } else { "disabled" }, |b| {
+            b.iter(|| {
+                toggle = !toggle;
+                let changed = parser
+                    .parse(&edited_path, black_box(&edited_sources[toggle as usize]))
+                    .expect("reparse");
+                project.update_file(edited_path.clone(), Arc::new(changed));
+                black_box(project.check_incremental());
+                black_box(project.take_trace());
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = performance;
     config = Criterion::default()
@@ -441,6 +477,6 @@ criterion_group! {
         .measurement_time(Duration::from_secs(3));
     targets = parse_large, check_project_glue, check_single_synthetic, check_branch_scopes, check_selected_branch_scopes, check_if_expression_scopes,
               warm_edit_dependent, warm_edit_leaf, warm_edit_library,
-              lsp_edit_sim, warm_edit_sparse_callers
+              lsp_edit_sim, warm_edit_sparse_callers, warm_edit_trace
 }
 criterion_main!(performance);

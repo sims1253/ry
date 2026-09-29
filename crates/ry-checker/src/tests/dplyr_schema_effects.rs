@@ -128,6 +128,40 @@ fn dynamic_writes_and_selections_do_not_claim_complete_schemas() {
 }
 
 #[test]
+fn unknown_and_custom_s3_receivers_do_not_prove_missing_result_fields() {
+    for source in [
+        "d <- unknown_frame()",
+        "d <- structure(data.frame(x = 1L), class = c('lazy_dt', 'data.frame'))",
+    ] {
+        for verb in [
+            "dplyr::summarise(d, n = 1L)",
+            "dplyr::mutate(d, n = 1L)",
+            "dplyr::group_by(d, n = 1L)",
+        ] {
+            let src = format!("{source}\nout <- {verb}\nvalue <- out$method_field\n");
+            let (_, complete, diagnostics) = columns(&src, "out");
+            assert!(!complete, "{source}; {verb}: {diagnostics:?}");
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY060"),
+                "{source}; {verb}: {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn forwarded_ellipsis_does_not_prove_aggregate_columns() {
+    let src =
+        "d <- data.frame(x = 1L)\nout <- dplyr::reframe(d, ...)\nvalue <- out$dynamic_field\n";
+    let (_, complete, diagnostics) = columns(src, "out");
+    assert!(!complete, "{diagnostics:?}");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY060"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn qualified_and_attached_dplyr_keep_schema_resolution_distinct() {
     for call in [
         "dplyr::group_by(d, big = x > 0)",

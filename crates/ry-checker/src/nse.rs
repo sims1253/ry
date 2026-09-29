@@ -22,6 +22,7 @@ impl Checker {
         let data_type = self.infer(&args[data_index].value, scope);
         let user_dispatch = self.resolve_user_s3_inherited_sig(name).is_some()
             || self.resolves_user_s3_dispatch(name, &data_type);
+        let trusted_receiver = standard_dplyr_frame(&data_type) && !user_dispatch;
         let mut arg_types = vec![RType::unknown(); args.len()];
         arg_types[data_index] = data_type.clone();
         if matches!(effect, SchemaEffect::Join) {
@@ -90,7 +91,7 @@ impl Checker {
             arg_types[index] = inferred;
         }
 
-        let result = match effect {
+        let mut result = match effect {
             SchemaEffect::Preserve => data_type,
             SchemaEffect::AddNamedArgs => {
                 schema_mutated_type(data_type, &named_results, &masked_args, args)
@@ -125,6 +126,23 @@ impl Checker {
             SchemaEffect::Pivot => RType::new(Mode::List, Length::Unknown)
                 .with_class(ClassVector::single("data.frame")),
         };
+        if !trusted_receiver
+            && matches!(
+                effect,
+                SchemaEffect::AddNamedArgs
+                    | SchemaEffect::GroupBy
+                    | SchemaEffect::Transmute
+                    | SchemaEffect::Rename
+                    | SchemaEffect::Relocate
+                    | SchemaEffect::Select
+                    | SchemaEffect::Aggregate
+            )
+        {
+            // Those verbs are S3 generics. A user method or an unknown
+            // receiver may return a different record shape even when the
+            // visible call supplies literal names.
+            result = incomplete_schema(result);
+        }
         Some(result)
     }
 
@@ -262,6 +280,16 @@ fn incomplete_schema(mut data_type: RType) -> RType {
     data_type
 }
 
+fn standard_dplyr_frame(data_type: &RType) -> bool {
+    let class = &data_type.class;
+    class.known
+        && class.contains("data.frame")
+        && class.names[..class.len as usize].iter().all(|name| {
+            name.as_deref()
+                .is_some_and(|name| matches!(name, "data.frame" | "tbl_df" | "tbl" | "grouped_df"))
+        })
+}
+
 fn drop_column(mut data_type: RType, name: &str) -> RType {
     if let Some(schema) = &data_type.columns {
         let mut schema = (**schema).clone();
@@ -272,8 +300,9 @@ fn drop_column(mut data_type: RType, name: &str) -> RType {
 }
 
 fn masked_output_is_dynamic(args: &[&Arg]) -> bool {
-    args.iter()
-        .any(|arg| arg.name.is_none() && !matches!(arg.value, Expr::Ident { .. }))
+    args.iter().any(|arg| {
+        arg.name.is_none() && !matches!(&arg.value, Expr::Ident { name, .. } if name != "...")
+    })
 }
 
 fn schema_mutated_type(
@@ -440,7 +469,12 @@ fn schema_aggregate_type(
     args: &[Arg],
 ) -> RType {
     let mut schema = ColumnSchema {
-        complete: !data_type.class.contains("grouped_df") && !masked_output_is_dynamic(masked_args),
+        complete: data_type
+            .columns
+            .as_ref()
+            .is_some_and(|source| source.complete)
+            && !data_type.class.contains("grouped_df")
+            && !masked_output_is_dynamic(masked_args),
         ..ColumnSchema::default()
     };
     if let Some(by) = args.iter().find(|arg| arg.name.as_deref() == Some(".by")) {

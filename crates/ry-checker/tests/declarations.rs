@@ -99,6 +99,15 @@ fn kinds(checker: &Checker) -> Vec<DeclarationFindingKind> {
         .collect()
 }
 
+fn mismatch_sources<'a>(checker: &Checker, file: &'a SourceFile) -> Vec<&'a str> {
+    checker
+        .declaration_findings()
+        .iter()
+        .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+        .map(|finding| &file.source[finding.span.start..finding.span.end])
+        .collect()
+}
+
 fn all_named_function_spans(file: &SourceFile, name: &str) -> Vec<Span> {
     use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
     use std::ops::ControlFlow;
@@ -1126,6 +1135,143 @@ fn standalone_and_helper_value_reads_can_force_a_replacement() {
             .map(|finding| &file.source[finding.span.start..finding.span.end])
             .collect::<Vec<_>>();
         assert_eq!(spans, expected, "action: {action}");
+    }
+}
+
+#[test]
+fn historical_function_table_name_does_not_certify_a_current_helper_read() {
+    for (setup, expected) in [
+        (
+            "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
+            vec!["\"before\""],
+        ),
+        ("trigger <- function() 1L", vec!["\"before\"", "\"after\""]),
+    ] {
+        let source = format!(
+            "{setup}\ntouch <- function() trigger\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
+        );
+        let file = parse("current-helper-read.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            mismatch_sources(&checker, &file),
+            expected,
+            "setup: {setup}"
+        );
+    }
+}
+
+#[test]
+fn evaluated_assignment_targets_can_replace_a_declared_callable() {
+    for (action, expected) in [
+        (
+            "touch <- function() e$trigger[1] <- 1L\ntouch()",
+            vec!["\"before\""],
+        ),
+        (
+            "touch <- function() e[[swap()]] <- 1L\ntouch()",
+            vec!["\"before\""],
+        ),
+        ("e$trigger[1] <- 1L", vec!["\"before\""]),
+        ("result <- (e$trigger[1] <- 1L)", vec!["\"before\""]),
+        ("e[[swap()]] <- 1L", vec!["\"before\""]),
+        (
+            "touch <- function() { local <- 1L; 1L }\ntouch()",
+            vec!["\"before\"", "\"after\""],
+        ),
+    ] {
+        let source = format!(
+            "e <- new.env()\nmakeActiveBinding(\"trigger\", function(value) {{ f <<- function(x) x; if (missing(value)) c(0L) else NULL }}, e)\nswap <- function() {{ f <<- function(x) x; \"other\" }}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n"
+        );
+        let file = parse("assignment-target-effects.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            mismatch_sources(&checker, &file),
+            expected,
+            "action: {action}"
+        );
+    }
+}
+
+#[test]
+fn helper_operator_lookup_requires_a_current_base_binding() {
+    for (setup, body, expected) in [
+        (
+            "`+` <- function(e1, e2) { f <<- function(x) x; 1L }",
+            "1L + 1L",
+            vec!["\"before\""],
+        ),
+        (
+            "`-` <- function(e1) { f <<- function(x) x; 1L }",
+            "-1L",
+            vec!["\"before\""],
+        ),
+        (
+            "",
+            "{ `+` <- function(e1, e2) { f <<- function(x) x; 1L }; 1L + 1L }",
+            vec!["\"before\""],
+        ),
+        ("", "1L + 1L", vec!["\"before\"", "\"after\""]),
+        ("", "-1L", vec!["\"before\"", "\"after\""]),
+    ] {
+        let source = format!(
+            "{setup}\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
+        );
+        let file = parse("helper-operator-effect.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            mismatch_sources(&checker, &file),
+            expected,
+            "body: {body}, setup: {setup}"
+        );
+    }
+}
+
+#[test]
+fn direct_masked_operators_drop_only_later_declaration_identity() {
+    for (setup, action) in [
+        (
+            "`+` <- function(e1, e2) { f <<- function(x) x; 1L }",
+            "1L + 1L",
+        ),
+        ("`-` <- function(e1) { f <<- function(x) x; 1L }", "-1L"),
+    ] {
+        let source =
+            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
+        let file = parse("direct-operator-effect.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            mismatch_sources(&checker, &file),
+            vec!["\"before\""],
+            "action: {action}"
+        );
     }
 }
 

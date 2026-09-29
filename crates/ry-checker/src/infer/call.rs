@@ -163,6 +163,7 @@ impl Checker {
         let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
         let mut writes = FxSet::default();
         if possible.uncertain
+            || self.declaration_unproven_operators(&possible, scope)
             || self.declaration_unproven_reads(&possible, scope, |name| {
                 params
                     .iter()
@@ -203,9 +204,22 @@ impl Checker {
                         || possible.aliases.contains_key(name)
                         || possible.local_literals.contains_key(name)
                         || scope.lexical_definition(name).is_some()
-                        || scope.function_alias(name).is_some()
-                        || self.fn_table.fns.contains_key(name))
+                        || scope.function_alias(name).is_some())
             })
+    }
+
+    fn declaration_unproven_operators(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        scope: &Scope,
+    ) -> bool {
+        possible.operator_symbols.iter().any(|symbol| {
+            !self.resolves_to_base(symbol, scope)
+                || self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope)
+                || possible.aliases.contains_key(*symbol)
+                || possible.local_literals.contains_key(*symbol)
+                || possible.unknown_bindings.contains(*symbol)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -376,6 +390,7 @@ impl Checker {
                 .map(|param| semantic_argument_name(&param.name).to_string()),
         );
         if possible.uncertain
+            || self.declaration_unproven_operators(&possible, scope)
             || self.declaration_unproven_reads(&possible, scope, |name| {
                 function
                     .params

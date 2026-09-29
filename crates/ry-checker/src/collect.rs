@@ -403,6 +403,7 @@ pub(crate) struct PotentialHelperCalls {
     pub(crate) certified_calls: FxSet<String>,
     pub(crate) unproven_calls: FxSet<String>,
     pub(crate) read_names: FxSet<String>,
+    pub(crate) operator_symbols: FxSet<&'static str>,
     excluded_ident_spans: FxSet<(usize, usize)>,
     pub(crate) uncertain: bool,
 }
@@ -413,9 +414,13 @@ fn scan_possible_helper_node(
     remaining: &mut usize,
 ) {
     let mut note_assignment = |target: &Expr, value: &Expr| {
-        let Expr::Ident { name, .. } = target else {
+        let Expr::Ident { name, span } = target else {
             return;
         };
+        // An assignment binder is not a value read. Its receiver or
+        // subscript, when present, is evaluated and must remain visible to
+        // the walk below.
+        calls.excluded_ident_spans.insert((span.start, span.end));
         let name = capture_identifier_name(name);
         if name == UNKNOWN_CAPTURE_BINDING {
             calls.uncertain = true;
@@ -456,12 +461,26 @@ fn scan_possible_helper_node(
                 calls.unknown_bindings.insert(name.to_string());
             }
         }
-        AstNode::Expr(Expr::BinOp {
-            op: BinOpKind::Assign,
-            lhs,
-            rhs,
-            ..
-        }) => note_assignment(lhs, rhs),
+        AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
+            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                note_assignment(lhs, rhs);
+            } else {
+                calls.operator_symbols.insert(op_symbol(*op));
+                if !closed_literal_operand(lhs) || !closed_literal_operand(rhs) {
+                    // S3/S4 operator dispatch can run a mutating method.
+                    calls.uncertain = true;
+                }
+            }
+        }
+        AstNode::Expr(Expr::UnaryOp { op, expr, .. }) => {
+            calls.operator_symbols.insert(match op {
+                UnaryOpKind::Neg => "-",
+                UnaryOpKind::Not => "!",
+            });
+            if !closed_literal_operand(expr) {
+                calls.uncertain = true;
+            }
+        }
         AstNode::Expr(Expr::Call { func, args, .. }) => match func.as_ref() {
             Expr::Ident { name, span } => {
                 calls.excluded_ident_spans.insert((span.start, span.end));
@@ -507,6 +526,18 @@ fn scan_possible_helper_node(
     }
 }
 
+fn closed_literal_operand(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..)
+    )
+}
+
 fn scan_possible_helper_calls(
     params: &[Param],
     body: &[Stmt],
@@ -519,8 +550,8 @@ fn scan_possible_helper_calls(
             .insert(capture_identifier_name(&parameter.name).to_string());
     }
     let walk = Walk {
-        assign_targets: false,
-        assign_operands: false,
+        assign_targets: true,
+        assign_operands: true,
         fn_bodies: false,
         dollar_args: false,
         ..Walk::ALL

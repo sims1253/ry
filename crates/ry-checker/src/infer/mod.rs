@@ -2005,6 +2005,12 @@ impl Checker {
         class_write: Option<ClassLiteral>,
         scope: &mut Scope,
     ) -> bool {
+        if !matches!(target, Expr::Ident { .. }) {
+            // Replacement targets evaluate their receiver/subscript and can
+            // dispatch through active bindings or user methods. The ordinary
+            // assignment model does not prove those effects absent.
+            self.invalidate_declaration_identities(scope);
+        }
         if binding_name(target).is_none() {
             // Replacement functions may install bindings in the caller.
             scope.invalidate_literal_values();
@@ -2875,6 +2881,17 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
+                let symbol = match op {
+                    UnaryOpKind::Neg => "-",
+                    UnaryOpKind::Not => "!",
+                };
+                if !self.resolves_to_base(symbol, scope)
+                    || self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope)
+                {
+                    // Unary lookup is executable too. A masked operator may
+                    // replace a declared callable before forcing its operand.
+                    self.invalidate_declaration_identities(scope);
+                }
                 scope.invalidate_ops_environment();
                 // Injection is syntax only in arguments whose signatures opt in.
                 if scope.tidy_injection.is_some()

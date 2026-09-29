@@ -2162,6 +2162,10 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_block_global_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_callback_helper_hop.R"),
         include_str!("../../testdata/oracle/assertion_subject_callback_helper_alias_hop.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_callback_formal.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_callback_partial.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_callback_actual.R"),
+        include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_used.R"),
         include_str!("../../testdata/oracle/assertion_subject_unknown_global_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_triple_namespace_primitive_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_primitive_alias.R"),
@@ -2230,6 +2234,11 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_stored_string_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_pure_block_global_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_forwarded_pure_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_callback_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_unused.R"),
+        "run <- function(env, `action` = function(...) NULL) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "run <- function(env, `action`) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(act = function(...) NULL, env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+        "run <- function(env, action) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(`action` = function(...) NULL, env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ]
     .into_iter()
@@ -2241,6 +2250,63 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
             "control {control}: a helper without a caller-frame binding install keeps the proof: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn shared_callback_aliases_have_bounded_purity_work() {
+    let mut source = String::from("a0 <- function(...) NULL\nb0 <- function(...) NULL\n");
+    for level in 1..=24 {
+        let prior = level - 1;
+        source.push_str(&format!(
+            "a{level} <- if (TRUE) a{prior} else b{prior}\nb{level} <- if (TRUE) a{prior} else b{prior}\n"
+        ));
+    }
+    source.push_str("run <- function(action) action()\ninstall <- function() run(a24)\nf <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n");
+    let start = std::time::Instant::now();
+    let diagnostics = check(&source);
+    assert!(
+        start.elapsed().as_secs() < 3,
+        "a shared alias DAG must be traversed once per node"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032"),
+        "the pure shared aliases should retain the scalar proof: {diagnostics:?}"
+    );
+
+    let installer = source.replace(
+        "a0 <- function(...) NULL\nb0 <- function(...) NULL",
+        "a0 <- base::delayedAssign\nb0 <- function(...) NULL",
+    );
+    let diagnostics = check(&installer);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY032"),
+        "one installing leaf invalidates the shared proof: {diagnostics:?}"
+    );
+
+    let unknown = source.replace(
+        "a0 <- function(...) NULL\nb0 <- function(...) NULL",
+        "a0 <- get('unknown_callback')\nb0 <- function(...) NULL",
+    );
+    let diagnostics = check(&unknown);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY032"),
+        "an unresolved leaf cannot certify the shared aliases: {diagnostics:?}"
+    );
+
+    let cycle = "a <- b; b <- a; run <- function(action) action(); install <- function() run(a); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()";
+    let diagnostics = check(cycle);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "RY032"),
+        "a cyclic alias does not certify callback purity: {diagnostics:?}"
+    );
 }
 
 #[test]

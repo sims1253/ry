@@ -1306,6 +1306,65 @@ fn callback_project(sources: &[(&str, &str)]) -> Project {
 }
 
 #[test]
+fn quoted_callback_matching_retracts_after_a_pure_edit() {
+    let consumer = "f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let helper = "run <- function(env, `action`) action('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\n";
+    for (route, installing, pure) in [
+        (
+            "quoted formal, exact actual",
+            "install <- function() run(action = base::delayedAssign, env = parent.frame())\n",
+            "install <- function() run(action = function(...) NULL, env = parent.frame())\n",
+        ),
+        (
+            "quoted formal, partial actual",
+            "install <- function() run(act = base::delayedAssign, env = parent.frame())\n",
+            "install <- function() run(act = function(...) NULL, env = parent.frame())\n",
+        ),
+        (
+            "quoted actual tag",
+            "install <- function() run(`action` = base::delayedAssign, env = parent.frame())\n",
+            "install <- function() run(`action` = function(...) NULL, env = parent.frame())\n",
+        ),
+    ] {
+        let mut warm = callback_project(&[
+            ("helper.R", helper),
+            ("installer.R", installing),
+            ("consumer.R", consumer),
+        ]);
+        let before = warm.check_incremental();
+        assert!(
+            before.iter().any(|(path, diagnostics)| {
+                path == "consumer.R"
+                    && diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.code == "RY032")
+            }),
+            "{route}: {before:?}"
+        );
+        warm.update_file("installer.R".into(), Arc::new(parse("installer.R", pure)));
+        let after = warm.check_incremental();
+        assert_eq!(
+            after,
+            callback_project(&[
+                ("helper.R", helper),
+                ("installer.R", pure),
+                ("consumer.R", consumer),
+            ])
+            .check(),
+            "{route}: warm and cold checks differ"
+        );
+        assert!(
+            after.iter().all(|(_, diagnostics)| {
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code != "RY032")
+            }),
+            "{route}: {after:?}"
+        );
+    }
+}
+
+#[test]
 fn incremental_caller_binding_alias_retracts_after_a_pure_edit() {
     let mut sources = [
         ("alias.R", "`put` <- base:::delayedAssign\n"),

@@ -830,66 +830,102 @@ pub(crate) struct CallerBindingCallbackCall {
     forwarded_only: Vec<bool>,
 }
 
-fn inert_caller_binding_source(source: &str, table: &FnTable, seen: &mut HashSet<String>) -> bool {
-    if !seen.insert(source.to_string()) || seen.len() > 128 {
-        return false;
-    }
-    if let Some(sources) = table.caller_binding_aliases.get(source) {
-        return !sources.is_empty()
-            && sources
-                .iter()
-                .all(|source| inert_caller_binding_source(source, table, &mut seen.clone()));
-    }
-    table
-        .fns
-        .get(source)
-        .is_some_and(|function| collect::inert_caller_binding_body(&function.body))
+/// Completed purity results depend only on the immutable alias graph and
+/// function bodies, not on the effect flags set later in propagation. One
+/// memo and work budget are shared by every branch and callback in this pass.
+struct CallerBindingPurity<'a> {
+    table: &'a FnTable,
+    completed: HashMap<String, bool>,
+    visiting: HashSet<String>,
+    remaining: usize,
 }
 
-fn callback_actual_may_install_caller_binding(actual: &Expr, table: &FnTable) -> bool {
+impl CallerBindingPurity<'_> {
+    fn inert_source(&mut self, source: &str) -> bool {
+        if let Some(result) = self.completed.get(source) {
+            return *result;
+        }
+        if self.remaining == 0 || self.visiting.len() >= 128 {
+            return false;
+        }
+        if !self.visiting.insert(source.to_string()) {
+            return false;
+        }
+        self.remaining -= 1;
+        let result = if let Some(sources) = self.table.caller_binding_aliases.get(source) {
+            !sources.is_empty() && sources.iter().all(|source| self.inert_source(source))
+        } else {
+            self.table
+                .fns
+                .get(source)
+                .is_some_and(|function| collect::inert_caller_binding_body(&function.body))
+        };
+        self.visiting.remove(source);
+        self.completed.insert(source.to_string(), result);
+        result
+    }
+}
+
+fn callback_actual_may_install_caller_binding(
+    actual: &Expr,
+    purity: &mut CallerBindingPurity<'_>,
+) -> bool {
     collect::global_caller_binding_value_sources(actual, 64)
         .iter()
-        .any(|source| !inert_caller_binding_source(source, table, &mut HashSet::new()))
+        .any(|source| !purity.inert_source(source))
 }
 
 fn invoked_callback_actual_may_install(
     function: &UserFn,
     call: &CallerBindingCallbackCall,
-    table: &FnTable,
+    purity: &mut CallerBindingPurity<'_>,
 ) -> bool {
     if function.caller_binding_called_formals.is_empty() {
         return false;
     }
-    let param_names: Vec<_> = function
+    let param_names: Option<Vec<_>> = function
         .params
         .iter()
-        .map(|param| param.name.as_str())
+        .map(|param| caller_binding_identity(&param.name))
         .collect();
-    let matches = infer::match_arguments(&param_names, &call.args);
+    let actual_names: Option<Vec<_>> = call
+        .args
+        .iter()
+        .map(|arg| match arg.name.as_deref() {
+            Some(name) => caller_binding_identity(name).map(Some),
+            None => Some(None),
+        })
+        .collect();
+    let (Some(param_names), Some(actual_names)) = (param_names, actual_names) else {
+        // Escaped R names require a decoder. They cannot certify that a
+        // supplied callback was not bound to an invoked formal.
+        return true;
+    };
+    let param_refs: Vec<_> = param_names.iter().map(String::as_str).collect();
+    let matches =
+        infer::match_argument_names(&param_refs, actual_names.iter().map(|name| name.as_deref()));
     let dots_actuals: Vec<_> = matches
         .param_for_arg
         .iter()
         .enumerate()
         .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
         .collect();
-    let may_install = |actual: usize| {
+    let mut may_install = |actual: usize| {
         !call.forwarded_only.get(actual).copied().unwrap_or(false)
             && call
                 .args
                 .get(actual)
-                .is_some_and(|arg| callback_actual_may_install_caller_binding(&arg.value, table))
+                .is_some_and(|arg| callback_actual_may_install_caller_binding(&arg.value, purity))
     };
     function.caller_binding_called_formals.iter().any(|called| {
-        if let Some(formal) = function.params.iter().position(|param| {
-            caller_binding_identity(&param.name).as_deref() == Some(called.as_str())
-        }) {
-            return matches.arg_for_param(formal).is_some_and(may_install);
+        if let Some(formal) = param_names.iter().position(|name| name == called) {
+            return matches.arg_for_param(formal).is_some_and(&mut may_install);
         }
         if matches.dots.is_none() {
             return false;
         }
         if called == "..." {
-            return dots_actuals.iter().copied().any(may_install);
+            return dots_actuals.iter().copied().any(&mut may_install);
         }
         called
             .strip_prefix("..")
@@ -897,7 +933,7 @@ fn invoked_callback_actual_may_install(
             .and_then(|index| index.checked_sub(1))
             .and_then(|index| dots_actuals.get(index))
             .copied()
-            .is_some_and(may_install)
+            .is_some_and(&mut may_install)
     })
 }
 
@@ -1055,50 +1091,59 @@ impl FnTable {
                     .push(alias.clone());
             }
         }
-        let mut functions_by_identity: HashMap<String, Vec<&UserFn>> = HashMap::new();
-        for (name, function) in &self.fns {
-            if let Some(identity) = caller_binding_identity(name) {
-                functions_by_identity
-                    .entry(identity)
-                    .or_default()
-                    .push(function);
+        let callback_affected = {
+            let mut functions_by_identity: HashMap<String, Vec<&UserFn>> = HashMap::new();
+            for (name, function) in &self.fns {
+                if let Some(identity) = caller_binding_identity(name) {
+                    functions_by_identity
+                        .entry(identity)
+                        .or_default()
+                        .push(function);
+                }
             }
-        }
-        let mut callback_affected = HashSet::new();
-        for (caller, function) in &self.fns {
-            for call in function.caller_binding_callback_calls.iter() {
-                let Some(callee) = caller_binding_identity(&call.callee) else {
-                    callback_affected.insert(caller.clone());
-                    continue;
-                };
-                let mut pending = vec![callee];
-                let mut seen = HashSet::new();
-                while let Some(candidate) = pending.pop() {
-                    if !seen.insert(candidate.clone()) || seen.len() > 128 {
-                        if seen.len() > 128 {
+            let mut purity = CallerBindingPurity {
+                table: self,
+                completed: HashMap::new(),
+                visiting: HashSet::new(),
+                remaining: 16_384,
+            };
+            let mut callback_affected = HashSet::new();
+            for (caller, function) in &self.fns {
+                for call in function.caller_binding_callback_calls.iter() {
+                    let Some(callee) = caller_binding_identity(&call.callee) else {
+                        callback_affected.insert(caller.clone());
+                        continue;
+                    };
+                    let mut pending = vec![callee];
+                    let mut seen = HashSet::new();
+                    while let Some(candidate) = pending.pop() {
+                        if !seen.insert(candidate.clone()) || seen.len() > 128 {
+                            if seen.len() > 128 {
+                                callback_affected.insert(caller.clone());
+                            }
+                            continue;
+                        }
+                        if candidate == UNKNOWN_CALLER_BINDING_IDENTITY {
                             callback_affected.insert(caller.clone());
                         }
-                        continue;
-                    }
-                    if candidate == UNKNOWN_CALLER_BINDING_IDENTITY {
-                        callback_affected.insert(caller.clone());
-                    }
-                    if functions_by_identity
-                        .get(&candidate)
-                        .is_some_and(|functions| {
-                            functions.iter().any(|function| {
-                                invoked_callback_actual_may_install(function, call, self)
+                        if functions_by_identity
+                            .get(&candidate)
+                            .is_some_and(|functions| {
+                                functions.iter().any(|function| {
+                                    invoked_callback_actual_may_install(function, call, &mut purity)
+                                })
                             })
-                        })
-                    {
-                        callback_affected.insert(caller.clone());
-                    }
-                    if let Some(sources) = self.caller_binding_aliases.get(&candidate) {
-                        pending.extend(sources.iter().cloned());
+                        {
+                            callback_affected.insert(caller.clone());
+                        }
+                        if let Some(sources) = self.caller_binding_aliases.get(&candidate) {
+                            pending.extend(sources.iter().cloned());
+                        }
                     }
                 }
             }
-        }
+            callback_affected
+        };
         for name in callback_affected {
             if let Some(function) = self.fns.get_mut(&name) {
                 function.may_install_caller_binding = true;

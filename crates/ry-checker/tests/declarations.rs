@@ -785,7 +785,8 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
         ("eval(quote(f <- function(x) x), .GlobalEnv)", false),
         ("evalq(f <- function(x) x, envir = .GlobalEnv)", false),
         ("assign(\"f\", function(x) x, envir = new.env())", false),
-        ("eval(quote(1L), envir = .GlobalEnv)", true),
+        ("eval(base::quote(1L), envir = .GlobalEnv)", true),
+        ("eval(quote(1L), envir = .GlobalEnv)", false),
         ("helper()", true),
     ] {
         let source = format!(
@@ -966,6 +967,61 @@ fn project_capture_inventory_includes_global_expression_control_binder_and_outwa
             "mutate <- function() { eval(quote(f <- function(x) x), envir = .GlobalEnv) }; mutate()",
             1,
         ),
+        ("base::assign(\"f\", function(x) x, envir = .GlobalEnv)", 1),
+        (
+            "base::eval(quote(f <- function(x) x), envir = .GlobalEnv)",
+            1,
+        ),
+        ("base::evalq(f <- function(x) x, envir = .GlobalEnv)", 1),
+        (
+            "setGeneric(\"f\", function(x) standardGeneric(\"f\")); setMethod(\"f\", \"ANY\", function(x) x)",
+            1,
+        ),
+        (
+            "methods::setGeneric(\"f\", function(x) standardGeneric(\"f\")); methods::setMethod(\"f\", \"ANY\", function(x) x)",
+            1,
+        ),
+        (
+            "delayedAssign(\"f\", function(x) x, assign.env = .GlobalEnv)",
+            1,
+        ),
+        (
+            "base::delayedAssign(value = function(x) x, x = \"f\", assign.env = .GlobalEnv)",
+            1,
+        ),
+        (
+            "rm(f, envir = .GlobalEnv); makeActiveBinding(\"f\", function() function(x) x, .GlobalEnv)",
+            1,
+        ),
+        (
+            "base::rm(f, envir = .GlobalEnv); base::makeActiveBinding(\"f\", function() function(x) x, .GlobalEnv)",
+            1,
+        ),
+        ("base::remove(list = base::c(\"f\"), envir = .GlobalEnv)", 1),
+        ("rm(list = target_name, envir = .GlobalEnv)", 1),
+        (
+            "delayedAssign(target_name, function(x) x, assign.env = .GlobalEnv)",
+            1,
+        ),
+        ("setGeneric(\"g\", function(x) standardGeneric(\"g\"))", 2),
+        ("g <- 1L; rm(g, envir = .GlobalEnv)", 2),
+        (
+            "g <- 1L; remove(list = base::c(\"g\"), envir = .GlobalEnv)",
+            2,
+        ),
+        (
+            "c <- function(...) \"f\"; rm(list = c(\"g\"), envir = .GlobalEnv)",
+            1,
+        ),
+        (
+            "quote <- function(...) base::quote(f <- function(x) x); eval(quote(1L), envir = .GlobalEnv)",
+            1,
+        ),
+        (
+            "mutate <- function() { local <- 1L; rm(local) }; mutate()",
+            2,
+        ),
+        ("globalVariables(\"f\")", 2),
         (
             "mutate <- function(z = (function() { f <- function(x) { x } })()) { z }; mutate()",
             2,
@@ -1031,6 +1087,84 @@ fn project_capture_write_edits_and_removal_match_cold_analysis() {
     project.remove_file("second.R");
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
+}
+
+#[test]
+fn write_only_warm_edits_reemit_a_deferred_capture() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) x\nouter <- function() f(\"bad\")\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.add_file("writer.R".into(), parse("writer.R", "invisible(f <- 1L)"));
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 0);
+
+    for (source, expected) in [
+        ("invisible(g <- 1L)", 1),
+        ("invisible(f <- 1L)", 0),
+        ("invisible(g <- 1L)", 1),
+    ] {
+        let writer = parse("writer.R", source);
+        project.update_file(writer.path.clone(), Arc::new(writer.clone()));
+        project.check_incremental();
+        assert_eq!(project.emit_count, 2, "write-only edit: {source}");
+        assert_eq!(project_mismatch_count(&project, &first.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(writer.path.clone(), writer);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
+fn generic_installation_warm_edits_match_cold_capture_checking() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) x\nouter <- function() f(\"bad\")\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let generic = "methods::setGeneric(\"f\", function(x) standardGeneric(\"f\")); methods::setMethod(\"f\", \"ANY\", function(x) x)";
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.add_file("writer.R".into(), parse("writer.R", generic));
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 0);
+
+    for (source, expected) in [
+        ("globalVariables(\"f\")", 1),
+        (generic, 0),
+        ("g <- function(x) x", 1),
+    ] {
+        let writer = parse("writer.R", source);
+        project.update_file(writer.path.clone(), Arc::new(writer.clone()));
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &first.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(writer.path.clone(), writer);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
 }
 
 #[test]

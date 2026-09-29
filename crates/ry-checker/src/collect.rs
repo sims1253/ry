@@ -130,39 +130,102 @@ fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
     );
 }
 
-fn collect_explicit_global_call(func: &Expr, args: &[Arg], writes: &mut FxSet<String>) {
+fn collect_rm_list(expr: &Expr, writes: &mut FxSet<String>, remaining: usize) {
+    if remaining == 0 {
+        writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+        return;
+    }
+    match expr {
+        Expr::String(name, _) => {
+            writes.insert(name.clone());
+        }
+        // Bare `c` can be masked and return a different name; only the
+        // namespace-qualified constructor justifies inspecting its literals.
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::c" | "base:::c")) => {
+            for argument in args {
+                collect_rm_list(&argument.value, writes, remaining - 1);
+            }
+        }
+        _ => {
+            writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+    }
+}
+
+fn collect_rm_targets(args: &[Arg], writes: &mut FxSet<String>) {
+    for argument in args {
+        match argument.name.as_deref().map(semantic_argument_name) {
+            Some("list") => collect_rm_list(&argument.value, writes, 16),
+            Some("pos" | "envir" | "inherits") => {}
+            _ => match &argument.value {
+                Expr::Ident { name, .. } => {
+                    writes.insert(capture_identifier_name(name).to_string());
+                }
+                Expr::String(name, _) => {
+                    writes.insert(name.clone());
+                }
+                _ => {
+                    writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                }
+            },
+        }
+    }
+}
+
+fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut FxSet<String>) {
     let Expr::Ident { name, .. } = func else {
         return;
     };
+    let target_name = |formal: &str| {
+        args.iter()
+            .find(|argument| argument.name.as_deref().map(semantic_argument_name) == Some(formal))
+            .or_else(|| args.iter().find(|argument| argument.name.is_none()))
+            .and_then(|argument| string_literal(&argument.value))
+            .unwrap_or(UNKNOWN_CAPTURE_BINDING)
+    };
     match semantic_argument_name(name) {
-        "assign" => {
+        "assign" | "base::assign" | "base:::assign" => {
             // `pos`, an environment alias, and omitted `envir` can all
             // reach a captured frame. Even a `new.env()` spelling is not
             // proof of freshness when that name can be masked.
-            let target = args
-                .iter()
-                .find(|argument| argument.name.as_deref().map(semantic_argument_name) == Some("x"))
-                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
-            let binding = match target.map(|argument| &argument.value) {
-                Some(Expr::String(name, _)) => name.as_str(),
-                _ => UNKNOWN_CAPTURE_BINDING,
-            };
-            writes.insert(binding.to_string());
+            writes.insert(target_name("x").to_string());
         }
-        "eval" => {
+        "delayedAssign" | "base::delayedAssign" | "base:::delayedAssign" => {
+            // A delayed promise replaces the binding before its value is
+            // forced. Its assign.env can identify a captured/global frame.
+            writes.insert(target_name("x").to_string());
+        }
+        "makeActiveBinding" | "base::makeActiveBinding" | "base:::makeActiveBinding" => {
+            writes.insert(target_name("sym").to_string());
+        }
+        "rm" | "base::rm" | "base:::rm" | "remove" | "base::remove" | "base:::remove" => {
+            collect_rm_targets(args, writes);
+        }
+        "setGeneric" | "methods::setGeneric" | "methods:::setGeneric" => {
+            // Installing a generic can replace an ordinary binding in the
+            // current/global environment. The method table can also change
+            // an existing callable's behavior without an R assignment.
+            writes.insert(target_name("name").to_string());
+        }
+        "setMethod" | "methods::setMethod" | "methods:::setMethod" => {
+            writes.insert(target_name("f").to_string());
+        }
+        "eval" | "base::eval" | "base:::eval" => {
             let expression = args
                 .iter()
                 .find(|argument| {
                     argument.name.as_deref().map(semantic_argument_name) == Some("expr")
                 })
                 .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+            // Bare `quote` can be masked to return an unrelated mutating
+            // expression, so only a base-qualified quote is inspected.
             if let Some(expression) = expression
                 && let Expr::Call {
                     func,
                     args: quote_args,
                     ..
                 } = &expression.value
-                && matches!(func.as_ref(), Expr::Ident { name, .. } if semantic_argument_name(name) == "quote")
+                && matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::quote" | "base:::quote"))
                 && let Some(quoted) = quote_args.first()
             {
                 collect_quoted_global_writes(&quoted.value, writes);
@@ -170,7 +233,7 @@ fn collect_explicit_global_call(func: &Expr, args: &[Arg], writes: &mut FxSet<St
                 writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
             }
         }
-        "evalq" => {
+        "evalq" | "base::evalq" | "base:::evalq" => {
             let expression = args
                 .iter()
                 .find(|argument| {
@@ -248,13 +311,13 @@ fn collect_immediate_outward_writes(
                     }
                 }
                 AstNode::Expr(Expr::Call { func, args, .. }) => {
-                    collect_explicit_global_call(func, args, outward);
+                    collect_callable_binding_write(func, args, outward);
                     if let Expr::Function { params, body, .. } = func.as_ref() {
-                        outward.extend(collect_default_writes_bounded(params, remaining).1);
                         if *remaining == 0 {
                             outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
                         } else {
                             *remaining -= 1;
+                            outward.extend(collect_default_writes_bounded(params, remaining).1);
                             collect_immediate_outward_writes(body, outward, remaining);
                         }
                     }
@@ -364,13 +427,15 @@ fn collect_default_writes_bounded(
                             }
                         }
                         AstNode::Expr(Expr::Call { func, args, .. }) => {
-                            collect_explicit_global_call(func, args, &mut outward);
+                            collect_callable_binding_write(func, args, &mut outward);
                             if let Expr::Function { params, body, .. } = func.as_ref() {
-                                outward.extend(collect_default_writes_bounded(params, remaining).1);
                                 if *remaining == 0 {
                                     outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
                                 } else {
                                     *remaining -= 1;
+                                    outward.extend(
+                                        collect_default_writes_bounded(params, remaining).1,
+                                    );
                                     collect_immediate_outward_writes(body, &mut outward, remaining);
                                 }
                             }
@@ -433,8 +498,9 @@ impl Checker {
     /// a later write in that environment invalidates a captured literal even
     /// when the write occurs in an expression, condition, or `for` binder.
     /// Each function body gets its own frame; ordinary local writes there do
-    /// not affect an enclosing frame. A `<<-` can write outward, so its name
-    /// conservatively invalidates same-named captured literals in this file.
+    /// not affect an enclosing frame. A `<<-` or recognized callable-binding
+    /// installation can write outward, so its target conservatively
+    /// invalidates same-named captured literals in this file.
     fn collect_capture_writes(&mut self, stmts: &[Stmt]) {
         let mut frames = vec![FxMap::<String, Span>::default()];
         let mut rebound = FxSet::<Span>::default();
@@ -533,7 +599,7 @@ impl Checker {
                         }
                     }
                     AstNode::Expr(Expr::Call { func, args, .. }) => {
-                        collect_explicit_global_call(func, args, &mut superassigned);
+                        collect_callable_binding_write(func, args, &mut superassigned);
                     }
                     AstNode::Stmt(Stmt::FunctionDef { params, .. })
                     | AstNode::Expr(Expr::Function { params, .. }) => {
@@ -1710,6 +1776,35 @@ mod collect_walker_tests {
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker
+    }
+
+    #[test]
+    fn exhausted_default_helper_budget_skips_nested_iife_defaults_in_both_walkers() {
+        let source = "f <- function(z = (function(y = { target <<- 1L }) { y })()) { (function(y = { target <<- 1L }) { y })() }";
+        let statements = parse_stmts(source);
+        let Stmt::Assign {
+            value: Expr::Function { params, body, .. },
+            ..
+        } = &statements[0]
+        else {
+            panic!("fixture has one function literal");
+        };
+
+        let mut remaining = 0;
+        let (_, from_default) = collect_default_writes_bounded(params, &mut remaining);
+        assert_eq!(
+            from_default,
+            FxSet::from_iter([UNKNOWN_CAPTURE_BINDING.to_string()]),
+            "no inner default should be scanned after the budget is exhausted"
+        );
+
+        let mut from_body = FxSet::default();
+        collect_immediate_outward_writes(body, &mut from_body, &mut remaining);
+        assert_eq!(
+            from_body,
+            FxSet::from_iter([UNKNOWN_CAPTURE_BINDING.to_string()]),
+            "the body walker must apply the same bound before parameter descent"
+        );
     }
 
     #[test]

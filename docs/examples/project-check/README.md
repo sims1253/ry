@@ -33,6 +33,10 @@ has reviewed existing findings, run
 `ry check --write-baseline ry-baseline.json .`, review and commit that file,
 then enable the `baseline` setting. New findings still fail. The workflow
 does not use `--exit-zero` or rewrite the baseline.
+With `error-on-warning = true`, this first command exits 1 because it reports
+the existing findings, even though it writes the baseline file. Inspect the
+file before enabling it; a subsequent check should pass only for the reviewed
+findings.
 
 For an offline hook, provide a preinstalled binary on `PATH`; neither
 the hook nor the checker needs R or Rust. An offline CI runner can supply

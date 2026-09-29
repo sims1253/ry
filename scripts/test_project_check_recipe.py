@@ -9,8 +9,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "docs/examples/project-check"
 
@@ -36,6 +34,8 @@ def run(
 
 
 def read_recipe() -> str:
+    import yaml
+
     hook_config = yaml.safe_load((EXAMPLE / ".pre-commit-config.yaml").read_text())
     [hook] = hook_config["repos"][0]["hooks"]
     assert hook_config["repos"][0]["repo"] == "local"
@@ -148,6 +148,7 @@ def check_runner(
         cwd=project,
         env=env,
         expected=1,
+        contains="RY010",
     )
     config = project / "ry.toml"
     config.write_text(config.read_text().replace("# baseline =", "baseline ="))

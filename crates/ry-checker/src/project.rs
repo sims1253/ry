@@ -17,7 +17,8 @@
 //! tests rely on this).
 
 use crate::trace::{
-    ProjectTrace, TraceEventKind, TraceFunctionId, TraceOptions, TraceReason, TraceRecorder,
+    ProjectTrace, TraceEventKind, TraceFileId, TraceFunctionId, TraceOptions, TraceReason,
+    TraceRecorder,
 };
 use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
 use rayon::prelude::*;
@@ -187,8 +188,42 @@ impl Project {
         options.validate()?;
         self.trace_options = Some(options);
         self.last_trace = None;
-        self.trace_function_ids.clear();
+        // An existing Project may enable tracing only after a successful
+        // untraced check. Snapshot the current winners before the next edit,
+        // so a later removal still has its old file/source identity.
+        self.trace_function_ids = self.snapshot_trace_function_ids();
         Ok(())
+    }
+
+    fn snapshot_trace_function_ids(&self) -> HashMap<String, TraceFunctionId> {
+        let mut ids = HashMap::new();
+        if !self.has_prev_emit {
+            return ids;
+        }
+        for (index, (path, file)) in self.files.iter().enumerate() {
+            let names: Vec<String> = if let Some(collected) = self.collected_files.get(path) {
+                collected.fn_table.fns.keys().cloned().collect()
+            } else {
+                // `check()` does not keep the pass-1 cache. This opt-in
+                // one-time collection recovers source ownership without
+                // changing the Project's analysis state.
+                let mut collector = Checker::new(path);
+                collector.set_user_stubs(Arc::clone(&self.user_stubs));
+                collector.collect_file_fns(file);
+                collector.into_tables().0.fns.keys().cloned().collect()
+            };
+            let file_id = TraceFileId::from_source(index, path, &file.source);
+            for name in names {
+                ids.insert(
+                    name.clone(),
+                    TraceFunctionId {
+                        file: file_id.clone(),
+                        table_name: name,
+                    },
+                );
+            }
+        }
+        ids
     }
 
     /// Disable tracing without changing analysis state.
@@ -708,22 +743,8 @@ impl Project {
                 affected.extend(collected.fn_table.fns.keys().cloned());
             }
         }
-        let seeds = trace.as_ref().map(|_| affected.clone());
-        let affected = self.with_refinement_callers(affected);
+        let affected = self.with_refinement_callers(affected, trace.as_deref_mut());
         if let Some(trace) = trace {
-            if let Some(seeds) = seeds {
-                let mut callers: Vec<_> = affected.difference(&seeds).collect();
-                callers.sort_unstable();
-                for name in callers {
-                    trace.function_event(
-                        name,
-                        TraceEventKind::Scheduled {
-                            round: 0,
-                            reason: TraceReason::DependencyRead,
-                        },
-                    );
-                }
-            }
             trace.global_event(TraceEventKind::RefinementScope {
                 full: false,
                 size: affected.len(),
@@ -733,7 +754,11 @@ impl Project {
         Some(affected)
     }
 
-    fn with_refinement_callers(&self, mut affected: HashSet<String>) -> HashSet<String> {
+    fn with_refinement_callers(
+        &self,
+        mut affected: HashSet<String>,
+        mut trace: Option<&mut TraceRecorder>,
+    ) -> HashSet<String> {
         let methods = crate::fixpoint::s3_evaluation_methods(&self.fn_table);
         let mut callers: HashMap<&str, HashSet<&str>> = HashMap::new();
         for (caller, dependencies) in &self.refinement_dependencies {
@@ -760,10 +785,35 @@ impl Project {
             }
         }
         let mut pending: Vec<_> = affected.iter().cloned().collect();
+        if trace.is_some() {
+            // The set result is unchanged; trace-enabled traversal fixes one
+            // deterministic first cause when several edges reach a caller.
+            pending.sort_unstable_by(|left, right| right.cmp(left));
+        }
         while let Some(callee) = pending.pop() {
-            for caller in callers.get(callee.as_str()).into_iter().flatten() {
-                if affected.insert((*caller).to_string()) {
-                    pending.push((*caller).to_string());
+            let mut dependents: Vec<_> = callers
+                .get(callee.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect();
+            if trace.is_some() {
+                dependents.sort_unstable();
+            }
+            for caller in dependents {
+                if affected.insert(caller.to_string()) {
+                    if let Some(trace) = trace.as_deref_mut() {
+                        let trigger = trace.function_trigger(&callee);
+                        trace.function_event_with_trigger(
+                            caller,
+                            TraceEventKind::Scheduled {
+                                round: 0,
+                                reason: TraceReason::DependencyRead,
+                            },
+                            Some(trigger),
+                        );
+                    }
+                    pending.push(caller.to_string());
                 }
             }
         }
@@ -786,6 +836,23 @@ impl Project {
             .chain(self.file_read_fns.get(path))
             .flatten()
             .any(|callee| affected.contains(callee))
+    }
+
+    /// Select an actual changed dependency from the same read/call sets used
+    /// by `file_depends_on`. Lexical order makes multi-cause traces stable.
+    fn first_changed_file_dependency<'a>(
+        &'a self,
+        path: &str,
+        affected: &HashSet<String>,
+    ) -> Option<&'a str> {
+        self.file_called_fns
+            .get(path)
+            .into_iter()
+            .chain(self.file_read_fns.get(path))
+            .flatten()
+            .filter(|callee| affected.contains(*callee))
+            .map(String::as_str)
+            .min()
     }
 
     /// Expand a set of changed callees through the cached reverse call graph.
@@ -1030,16 +1097,21 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if self.file_depends_on(path, &changed_fns) {
-                    dirty.insert(path.as_str());
-                    if let Some(trace) = &mut trace {
-                        trace.file_event(
+                if let Some(trace) = &mut trace {
+                    if let Some(dependency) = self.first_changed_file_dependency(path, &changed_fns)
+                    {
+                        dirty.insert(path.as_str());
+                        let trigger = trace.function_trigger(dependency);
+                        trace.file_event_with_trigger(
                             path,
                             TraceEventKind::Emission {
                                 reason: TraceReason::DependencyRead,
                             },
+                            Some(trigger),
                         );
                     }
+                } else if self.file_depends_on(path, &changed_fns) {
+                    dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
                 // this file. S3 dispatch is dynamic; we cannot cheaply

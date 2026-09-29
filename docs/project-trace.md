@@ -20,7 +20,9 @@ Tracing is off by default. `enable_trace` validates its limits and does not
 change diagnostic or facts capture settings. `disable_trace` turns it off.
 `take_trace` consumes the latest report; checking again replaces an untaken
 report. Existing `Project` instances keep their normal collection and emission
-caches while tracing is enabled.
+caches while tracing is enabled. When tracing begins after an untraced check,
+`enable_trace` snapshots the current winning definitions so later removals
+retain their previous source identity. Enable it before the edit of interest.
 
 For a standalone developer run, pass UTF-8 R files to the example:
 
@@ -52,8 +54,19 @@ for navigation or rename.
 
 Collection events report pass-1 cache hits and misses. Invalidation, scope,
 schedule, changed-function, and emission events are emitted from the branches
-that actually select work. A `Round` records pending/refined counts and the
-number of return and evaluation-metadata changes. `FixpointComplete` reports
+that actually select work. A dependency-caused `scheduled` or `emission`
+event carries a `trigger`: either the changed function or the return slot read
+by the caller. A return slot includes its snapshot-local numeric index and
+all winning function bindings sharing it. A file/function filter selects the
+event target; a cross-file trigger remains attached. A slot changed in both
+return type and evaluation metadata reports both in its reason. If several dependencies
+could schedule the same target, the stream records the first one selected by
+deterministic traversal, not an exhaustive proof of every cause. An unresolved
+function or file target is marked by its unresolved name/path and cannot pass
+an exact file/function filter as though it were a global event. A `Round` records pending counts,
+function-body refinement attempts (including repeats), and the number of
+return and evaluation-metadata changes. The summary's `refined_functions`
+also counts attempts, not unique functions or changed results. `FixpointComplete` reports
 `converged` or `bound_reached`; the latter means the configured internal depth
 limit stopped refinement, **not** that the result converged. A full-scope retry
 can produce more than one completion event; the summary completion is for the
@@ -65,7 +78,9 @@ last attempt and its round count is the total of attempts. The synchronous
 limits are 1–10,000 events and 256 bytes–1 MiB. Limits include the visible
 `truncated` marker; the summary reports the number of omitted events and final
 event-array byte count. Summary fields and report framing are outside the
-event-byte cap. Source contents, full ASTs, and environment values are not
+event-byte cap. A one-event limit, or a byte limit too small for the first
+identity-bearing event plus marker reserve, produces a marker-only stream with
+summary counts. Source contents, full ASTs, and environment values are not
 included. Paths and function names still appear in events, so handle a report
 with the same care as other project metadata.
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ry_checker::{
-    Project, ProjectTrace, TraceCompletion, TraceEventKind, TraceOptions, TraceReason,
+    Project, ProjectTrace, TraceCompletion, TraceEventKind, TraceOptions, TraceReason, TraceTrigger,
 };
 use ry_core::{RParser, SourceFile};
 
@@ -363,4 +363,105 @@ fn trace_does_not_change_diagnostics_or_available_facts() {
     }
     assert_eq!(facts_snapshot(&mut plain), facts_snapshot(&mut traced));
     assert!(traced.take_trace().is_some());
+}
+
+#[test]
+fn late_enable_retains_removed_definition_identity_and_file_filter() {
+    fn removed(file_filter: Option<&str>) -> ProjectTrace {
+        let mut project = Project::new();
+        project.add_file("gone.R".into(), parsed("gone.R", "f <- function() 1L"));
+        project.add_file("keep.R".into(), parsed("keep.R", "g <- function() 2L"));
+        project.check_incremental(); // Already analyzed without tracing.
+        project
+            .enable_trace(TraceOptions {
+                file: file_filter.map(str::to_owned),
+                ..TraceOptions::default()
+            })
+            .unwrap();
+        project.remove_file("gone.R");
+        checked(&mut project)
+    }
+
+    let full = removed(None);
+    assert!(full.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::RemovedDefinition
+            }
+        ) && event.function.as_ref().is_some_and(|id| {
+            id.table_name == "f" && id.file.path == "gone.R" && id.file.source_sha256.len() == 64
+        })
+    }));
+    let filtered = removed(Some("keep.R"));
+    assert!(!filtered.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::RemovedDefinition
+            }
+        )
+    }));
+    assert!(
+        filtered
+            .events
+            .iter()
+            .any(|event| { event.file.as_ref().is_some_and(|id| id.path == "keep.R") })
+    );
+}
+
+#[test]
+fn scheduling_and_emission_retain_the_actual_cross_file_dependency() {
+    fn changed(file_filter: Option<&str>) -> ProjectTrace {
+        let mut project = Project::new();
+        project.add_file(
+            "leaves.R".into(),
+            parsed("leaves.R", "b <- function() 1L\nc <- function() 2L"),
+        );
+        project.add_file(
+            "caller.R".into(),
+            parsed("caller.R", "a <- function() b() + c()"),
+        );
+        project
+            .enable_trace(TraceOptions {
+                file: file_filter.map(str::to_owned),
+                ..TraceOptions::default()
+            })
+            .unwrap();
+        checked(&mut project);
+        project.update_file(
+            "leaves.R".into(),
+            Arc::new(parsed(
+                "leaves.R",
+                "b <- function() 'new'\nc <- function() 'value'",
+            )),
+        );
+        checked(&mut project)
+    }
+
+    let full = changed(None);
+    let filtered = changed(Some("caller.R"));
+    for trace in [&full, &filtered] {
+        assert!(trace.events.iter().any(|event| {
+            matches!(event.kind, TraceEventKind::Scheduled { round: 0, reason: TraceReason::DependencyRead })
+                && event.function.as_ref().is_some_and(|id| id.table_name == "a")
+                && matches!(&event.trigger, Some(TraceTrigger::Function { identity }) if identity.table_name == "b" && identity.file.path == "leaves.R")
+        }));
+        assert!(trace.events.iter().any(|event| {
+            matches!(event.kind, TraceEventKind::Scheduled { round: 1, reason: TraceReason::ReturnChanged })
+                && event.function.as_ref().is_some_and(|id| id.table_name == "a")
+                && matches!(&event.trigger, Some(TraceTrigger::ReturnSlot { bindings, .. }) if bindings.iter().any(|id| id.table_name == "b" && id.file.path == "leaves.R"))
+        }));
+        assert!(trace.events.iter().any(|event| {
+            matches!(event.kind, TraceEventKind::Emission { reason: TraceReason::DependencyRead })
+                && event.file.as_ref().is_some_and(|id| id.path == "caller.R")
+                && matches!(&event.trigger, Some(TraceTrigger::Function { identity }) if identity.table_name == "b" && identity.file.path == "leaves.R")
+        }));
+    }
+    assert!(
+        !filtered
+            .events
+            .iter()
+            .any(|event| { event.file.as_ref().is_some_and(|id| id.path == "leaves.R") })
+    );
 }

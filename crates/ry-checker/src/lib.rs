@@ -36,7 +36,7 @@ pub mod trace;
 pub use project::Project;
 pub use trace::{
     ProjectTrace, TraceCompletion, TraceEvent, TraceEventKind, TraceFileId, TraceFunctionId,
-    TraceOptions, TraceReason,
+    TraceOptions, TraceReason, TraceTrigger,
 };
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference

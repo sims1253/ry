@@ -67,6 +67,16 @@ pub struct TraceFileId {
     pub source_sha256: String,
 }
 
+impl TraceFileId {
+    pub(crate) fn from_source(index: usize, path: &str, source: &str) -> Self {
+        Self {
+            index,
+            path: path.to_owned(),
+            source_sha256: hex_digest(&Sha256::digest(source.as_bytes())),
+        }
+    }
+}
+
 /// Winning binding in the project's merged function table. Later files with
 /// the same name replace earlier ones; the ID describes the winner. It is
 /// stable within this source snapshot, not across edits or renames.
@@ -74,6 +84,24 @@ pub struct TraceFileId {
 pub struct TraceFunctionId {
     pub file: TraceFileId,
     pub table_name: String,
+}
+
+/// The input that caused a scheduling or emission decision. A return slot
+/// can have several table names; the slot is the actual read identity and
+/// `bindings` lists its winning snapshot-local names.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TraceTrigger {
+    Function {
+        identity: TraceFunctionId,
+    },
+    ReturnSlot {
+        slot: usize,
+        bindings: Vec<TraceFunctionId>,
+    },
+    UnresolvedFunction {
+        table_name: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -99,6 +127,7 @@ pub enum TraceReason {
     NoDirtyWork,
     DependencyRead,
     ReturnChanged,
+    ReturnAndEvaluationMetadataChanged,
     EvaluationMetadataChanged,
     PackageAttachmentChanged,
     FullScopeRetry,
@@ -125,6 +154,7 @@ pub enum TraceEventKind {
     Round {
         round: usize,
         pending_before: usize,
+        /// Function-body refinement attempts in this round, including repeats.
         refined: usize,
         return_changes: usize,
         metadata_changes: usize,
@@ -158,7 +188,15 @@ pub struct TraceEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<TraceFileId>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub unresolved_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<TraceFunctionId>,
+    /// Set when the target's definition cannot be tied to a retained source
+    /// snapshot. This is never treated as a global event by filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unresolved_function: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<TraceTrigger>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -166,6 +204,8 @@ pub struct TraceSummary {
     pub collected_files: usize,
     pub collection_cache_hits: usize,
     pub refinement_rounds: usize,
+    /// Function-body refinement attempts across rounds, not unique functions
+    /// or changed results.
     pub refined_functions: usize,
     pub emitted_files: usize,
     pub emission_cache_hits: usize,
@@ -246,11 +286,7 @@ impl TraceRecorder {
         source: &str,
         names: impl Iterator<Item = &'a str>,
     ) {
-        let id = TraceFileId {
-            index,
-            path: path.to_owned(),
-            source_sha256: hex_digest(&Sha256::digest(source.as_bytes())),
-        };
+        let id = TraceFileId::from_source(index, path, source);
         self.input_hash.update((path.len() as u64).to_le_bytes());
         self.input_hash.update(path.as_bytes());
         self.input_hash.update(id.source_sha256.as_bytes());
@@ -285,26 +321,75 @@ impl TraceRecorder {
     }
 
     pub(crate) fn file_event(&mut self, path: &str, kind: TraceEventKind) {
+        self.file_event_with_trigger(path, kind, None);
+    }
+
+    pub(crate) fn file_event_with_trigger(
+        &mut self,
+        path: &str,
+        kind: TraceEventKind,
+        trigger: Option<TraceTrigger>,
+    ) {
+        let file = self.files.get(path).cloned();
         self.push(TraceEvent {
             kind,
-            file: self.files.get(path).cloned(),
+            unresolved_file: file.is_none().then(|| path.to_owned()),
+            file,
             function: None,
+            unresolved_function: None,
+            trigger,
         });
     }
 
     pub(crate) fn function_event(&mut self, name: &str, kind: TraceEventKind) {
+        self.function_event_with_trigger(name, kind, None);
+    }
+
+    pub(crate) fn function_event_with_trigger(
+        &mut self,
+        name: &str,
+        kind: TraceEventKind,
+        trigger: Option<TraceTrigger>,
+    ) {
+        let function = self.function_id(name);
         self.push(TraceEvent {
             kind,
             file: None,
-            function: self.function_id(name),
+            unresolved_file: None,
+            unresolved_function: function.is_none().then(|| name.to_owned()),
+            function,
+            trigger,
         });
+    }
+
+    pub(crate) fn function_trigger(&self, name: &str) -> TraceTrigger {
+        self.function_id(name).map_or_else(
+            || TraceTrigger::UnresolvedFunction {
+                table_name: name.to_owned(),
+            },
+            |identity| TraceTrigger::Function { identity },
+        )
+    }
+
+    pub(crate) fn return_slot_trigger<'a>(
+        &self,
+        slot: usize,
+        names: impl Iterator<Item = &'a str>,
+    ) -> TraceTrigger {
+        TraceTrigger::ReturnSlot {
+            slot,
+            bindings: names.filter_map(|name| self.function_id(name)).collect(),
+        }
     }
 
     pub(crate) fn global_event(&mut self, kind: TraceEventKind) {
         self.push(TraceEvent {
             kind,
             file: None,
+            unresolved_file: None,
             function: None,
+            unresolved_function: None,
+            trigger: None,
         });
     }
 
@@ -333,7 +418,10 @@ impl TraceRecorder {
                 .file
                 .as_ref()
                 .or_else(|| event.function.as_ref().map(|function| &function.file));
-            if file.is_some_and(|file| &file.path != filter) {
+            if event.unresolved_file.is_some()
+                || event.unresolved_function.is_some()
+                || file.is_some_and(|file| &file.path != filter)
+            {
                 return;
             }
         }
@@ -342,7 +430,10 @@ impl TraceRecorder {
                 .function
                 .as_ref()
                 .is_some_and(|function| function != filter)
-                || (event.function.is_none() && event.file.is_some())
+                || (event.function.is_none()
+                    && (event.file.is_some()
+                        || event.unresolved_file.is_some()
+                        || event.unresolved_function.is_some()))
             {
                 return;
             }
@@ -372,7 +463,10 @@ impl TraceRecorder {
                     dropped_events: self.dropped_events,
                 },
                 file: None,
+                unresolved_file: None,
                 function: None,
+                unresolved_function: None,
+                trigger: None,
             };
             let additional = serde_json::to_vec(&marker)
                 .expect("truncation marker is serializable")

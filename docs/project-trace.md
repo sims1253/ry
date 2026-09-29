@@ -23,9 +23,13 @@ report. Existing `Project` instances keep their normal collection and emission
 caches while tracing is enabled. When tracing begins after an untraced check,
 `enable_trace` snapshots the current winning definitions so later removals
 retain their previous source identity. Edits and removals after `check()` also
-retain trace-only transition names even though that cold entry point does not
-keep the pass-1 collection cache. This telemetry does not change refinement
-scheduling. Enable tracing before the edit of interest.
+retain trace-only transition names. The transition is captured before the edit
+or removal whether the prior check kept a pass-1 cache or not, so a subsequent
+full `check()` cannot erase it when it resets scheduling state. Enabling trace
+after a full `check()` may collect each source once to recover the current
+definition identities; the ordinary check did not retain that cache. This
+telemetry does not change refinement scheduling. Enable tracing before the
+edit of interest.
 
 For a standalone developer run, pass UTF-8 R files to the example:
 

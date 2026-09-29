@@ -411,7 +411,7 @@ fn late_enable_retains_removed_definition_identity_and_file_filter() {
 }
 
 #[test]
-fn removal_after_cold_check_retains_identity_across_trace_start_and_recheck_modes() {
+fn removed_or_renamed_definition_survives_all_check_mode_transitions() {
     fn project() -> Project {
         let mut project = Project::new();
         project.add_file("gone.R".into(), parsed("gone.R", "f <- function() 1L"));
@@ -419,73 +419,100 @@ fn removal_after_cold_check_retains_identity_across_trace_start_and_recheck_mode
         project
     }
 
-    for enable_before_first_check in [false, true] {
+    for initial_is_cold in [false, true] {
         for next_is_cold in [false, true] {
-            for file_filter in [None, Some("keep.R"), Some("gone.R")] {
-                let mut traced = project();
-                if enable_before_first_check {
-                    traced
-                        .enable_trace(TraceOptions {
-                            file: file_filter.map(str::to_owned),
-                            ..TraceOptions::default()
-                        })
-                        .unwrap();
-                }
-                traced.check();
-                traced.take_trace();
-                if !enable_before_first_check {
-                    traced
-                        .enable_trace(TraceOptions {
-                            file: file_filter.map(str::to_owned),
-                            ..TraceOptions::default()
-                        })
-                        .unwrap();
-                }
-                traced.remove_file("gone.R");
-                let traced_diagnostics = if next_is_cold {
-                    traced.check()
-                } else {
-                    traced.check_incremental()
-                };
-                let trace = traced.take_trace().unwrap();
+            for enable_before_first_check in [false, true] {
+                for rename in [false, true] {
+                    for file_filter in [None, Some("keep.R"), Some("gone.R")] {
+                        let mut traced = project();
+                        if enable_before_first_check {
+                            traced
+                                .enable_trace(TraceOptions {
+                                    file: file_filter.map(str::to_owned),
+                                    ..TraceOptions::default()
+                                })
+                                .unwrap();
+                        }
+                        if initial_is_cold {
+                            traced.check();
+                        } else {
+                            traced.check_incremental();
+                        }
+                        traced.take_trace();
+                        if !enable_before_first_check {
+                            traced
+                                .enable_trace(TraceOptions {
+                                    file: file_filter.map(str::to_owned),
+                                    ..TraceOptions::default()
+                                })
+                                .unwrap();
+                        }
+                        if rename {
+                            traced.update_file(
+                                "gone.R".into(),
+                                Arc::new(parsed("gone.R", "renamed <- function() 3L")),
+                            );
+                        } else {
+                            traced.remove_file("gone.R");
+                        }
+                        let traced_diagnostics = if next_is_cold {
+                            traced.check()
+                        } else {
+                            traced.check_incremental()
+                        };
+                        let trace = traced.take_trace().unwrap();
 
-                let mut plain = project();
-                plain.check();
-                plain.remove_file("gone.R");
-                let plain_diagnostics = if next_is_cold {
-                    plain.check()
-                } else {
-                    plain.check_incremental()
-                };
-                assert_eq!(
-                    format!("{traced_diagnostics:?}"),
-                    format!("{plain_diagnostics:?}")
-                );
+                        let mut plain = project();
+                        if initial_is_cold {
+                            plain.check();
+                        } else {
+                            plain.check_incremental();
+                        }
+                        if rename {
+                            plain.update_file(
+                                "gone.R".into(),
+                                Arc::new(parsed("gone.R", "renamed <- function() 3L")),
+                            );
+                        } else {
+                            plain.remove_file("gone.R");
+                        }
+                        let plain_diagnostics = if next_is_cold {
+                            plain.check()
+                        } else {
+                            plain.check_incremental()
+                        };
+                        assert_eq!(
+                            format!("{traced_diagnostics:?}"),
+                            format!("{plain_diagnostics:?}"),
+                            "initial cold={initial_is_cold}, next cold={next_is_cold}, early trace={enable_before_first_check}, rename={rename}, filter={file_filter:?}"
+                        );
 
-                let removals: Vec<_> = trace
-                    .events
-                    .iter()
-                    .filter(|event| {
-                        matches!(
-                            event.kind,
-                            TraceEventKind::Invalidation {
-                                reason: TraceReason::RemovedDefinition
-                            }
-                        )
-                    })
-                    .collect();
-                if file_filter == Some("keep.R") {
-                    assert!(removals.is_empty());
-                    assert!(trace.events.iter().any(|event| {
-                        event.file.as_ref().is_some_and(|id| id.path == "keep.R")
-                    }));
-                } else {
-                    assert_eq!(removals.len(), 1);
-                    assert!(removals[0].function.as_ref().is_some_and(|id| {
-                        id.table_name == "f"
-                            && id.file.path == "gone.R"
-                            && id.file.source_sha256.len() == 64
-                    }));
+                        let removals: Vec<_> = trace
+                            .events
+                            .iter()
+                            .filter(|event| {
+                                matches!(
+                                    event.kind,
+                                    TraceEventKind::Invalidation {
+                                        reason: TraceReason::RemovedDefinition
+                                    }
+                                )
+                            })
+                            .collect();
+                        if file_filter == Some("keep.R") {
+                            assert!(removals.is_empty());
+                            assert!(trace.events.iter().any(|event| {
+                                event.file.as_ref().is_some_and(|id| id.path == "keep.R")
+                            }));
+                        } else {
+                            assert_eq!(removals.len(), 1);
+                            assert!(removals[0].function.as_ref().is_some_and(|id| {
+                                id.table_name == "f"
+                                    && id.file.path == "gone.R"
+                                    && id.file.source_sha256.len() == 64
+                            }));
+                        }
+                    }
                 }
             }
         }
@@ -525,59 +552,94 @@ fn rename_after_cold_check_records_old_definition_without_changing_diagnostics()
 
 #[test]
 fn removed_winning_definition_keeps_old_file_identity_when_shadowing_flips() {
-    fn changed(file_filter: Option<&str>) -> ProjectTrace {
+    fn changed(
+        initial_cold: bool,
+        next_cold: bool,
+        early_trace: bool,
+        file_filter: Option<&str>,
+    ) -> ProjectTrace {
         let mut project = Project::new();
         project.add_file("early.R".into(), parsed("early.R", "f <- function() 1L"));
         project.add_file("late.R".into(), parsed("late.R", "f <- function() 2L"));
-        project.check();
-        project
-            .enable_trace(TraceOptions {
-                file: file_filter.map(str::to_owned),
-                ..TraceOptions::default()
-            })
-            .unwrap();
+        let options = TraceOptions {
+            file: file_filter.map(str::to_owned),
+            ..TraceOptions::default()
+        };
+        if early_trace {
+            project.enable_trace(options.clone()).unwrap();
+        }
+        if initial_cold {
+            project.check();
+        } else {
+            project.check_incremental();
+        }
+        project.take_trace();
+        if !early_trace {
+            project.enable_trace(options).unwrap();
+        }
         project.remove_file("late.R");
-        checked(&mut project)
+        if next_cold {
+            project.check();
+        } else {
+            project.check_incremental();
+        }
+        project.take_trace().unwrap()
     }
 
-    let full = changed(None);
-    let replaced = full
-        .events
-        .iter()
-        .find(|event| {
-            matches!(
-                event.kind,
-                TraceEventKind::Invalidation {
-                    reason: TraceReason::ReplacedDefinition
-                }
-            )
-        })
-        .expect("old winning definition invalidated");
-    assert!(
-        replaced
-            .function
-            .as_ref()
-            .is_some_and(|id| { id.table_name == "f" && id.file.path == "late.R" })
-    );
-    assert!(
-        matches!(&replaced.trigger, Some(TraceTrigger::Function { identity }) if identity.table_name == "f" && identity.file.path == "early.R")
-    );
-    assert!(changed(Some("late.R")).events.iter().any(|event| {
-        matches!(
-            event.kind,
-            TraceEventKind::Invalidation {
-                reason: TraceReason::ReplacedDefinition
+    for initial_cold in [false, true] {
+        for next_cold in [false, true] {
+            for early_trace in [false, true] {
+                let full = changed(initial_cold, next_cold, early_trace, None);
+                let replaced = full
+                    .events
+                    .iter()
+                    .find(|event| {
+                        matches!(
+                            event.kind,
+                            TraceEventKind::Invalidation {
+                                reason: TraceReason::ReplacedDefinition
+                            }
+                        )
+                    })
+                    .expect("old winning definition invalidated");
+                assert!(
+                    replaced
+                        .function
+                        .as_ref()
+                        .is_some_and(|id| { id.table_name == "f" && id.file.path == "late.R" })
+                );
+                assert!(
+                    matches!(&replaced.trigger, Some(TraceTrigger::Function { identity }) if identity.table_name == "f" && identity.file.path == "early.R")
+                );
+                assert!(
+                    changed(initial_cold, next_cold, early_trace, Some("late.R"))
+                        .events
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event.kind,
+                                TraceEventKind::Invalidation {
+                                    reason: TraceReason::ReplacedDefinition
+                                }
+                            )
+                        })
+                );
+                assert!(
+                    !changed(initial_cold, next_cold, early_trace, Some("early.R"))
+                        .events
+                        .iter()
+                        .any(|event| {
+                            matches!(
+                                event.kind,
+                                TraceEventKind::Invalidation {
+                                    reason: TraceReason::ReplacedDefinition
+                                }
+                            )
+                        })
+                );
             }
-        )
-    }));
-    assert!(!changed(Some("early.R")).events.iter().any(|event| {
-        matches!(
-            event.kind,
-            TraceEventKind::Invalidation {
-                reason: TraceReason::ReplacedDefinition
-            }
-        )
-    }));
+        }
+    }
 }
 
 #[test]

@@ -103,9 +103,15 @@ impl Checker {
             .iter()
             .map(|name| self.fn_table.fns[name].return_slot)
             .collect();
-        let mut names_by_slot = vec![Vec::new(); self.return_slots.0.len()];
-        for (index, slot) in slots.iter().enumerate() {
-            names_by_slot[*slot].push(index);
+        let mut names_by_slot = if trace.is_some() || self.refinement_dependencies.is_some() {
+            vec![Vec::new(); self.return_slots.0.len()]
+        } else {
+            Vec::new()
+        };
+        if !names_by_slot.is_empty() {
+            for (index, slot) in slots.iter().enumerate() {
+                names_by_slot[*slot].push(index);
+            }
         }
         let active: Vec<_> = names
             .iter()

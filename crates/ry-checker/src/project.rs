@@ -154,9 +154,9 @@ pub struct Project {
     last_trace: Option<ProjectTrace>,
     trace_run_id: u64,
     trace_function_ids: HashMap<String, TraceFunctionId>,
-    /// Trace-only definition transitions when a preceding cold `check()`
-    /// left no pass-1 cache to populate `invalidated_fns` on edit/removal.
-    trace_uncached_invalidations: HashSet<String>,
+    /// Trace-only definition transitions survive a full `check()` resetting
+    /// the production invalidation set before trace emission.
+    trace_definition_transitions: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -187,6 +187,8 @@ impl Project {
     /// Enable bounded execution telemetry on subsequent `check` and
     /// `check_incremental` calls. The synchronous Project API has no
     /// cancellation input; its traces report convergence or the depth bound.
+    /// Enabling after a full `check()` may collect each source once to recover
+    /// definition identities because that entry point keeps no pass-1 cache.
     pub fn enable_trace(&mut self, options: TraceOptions) -> Result<(), &'static str> {
         options.validate()?;
         self.trace_options = Some(options);
@@ -234,7 +236,7 @@ impl Project {
         self.trace_options = None;
         self.last_trace = None;
         self.trace_function_ids.clear();
-        self.trace_uncached_invalidations.clear();
+        self.trace_definition_transitions.clear();
     }
 
     /// Take the most recent trace, if tracing was enabled for that run.
@@ -253,16 +255,25 @@ impl Project {
         ))
     }
 
-    fn note_uncached_trace_transition(&mut self, path: &str) {
-        if self.trace_options.is_none() || self.collected_files.contains_key(path) {
+    fn note_trace_definition_transition(&mut self, path: &str) {
+        if self.trace_options.is_none() {
             return;
         }
-        self.trace_uncached_invalidations.extend(
-            self.trace_function_ids
-                .iter()
-                .filter(|(_, id)| id.file.path == path)
-                .map(|(name, _)| name.clone()),
-        );
+        if let Some(previous) = self.collected_files.get(path) {
+            // Keep the same names the production incremental path invalidates.
+            // A following full check resets that set before trace emission.
+            self.trace_definition_transitions
+                .extend(previous.fn_table.fns.keys().cloned());
+        } else {
+            // Full checks keep no collection cache. Use the previous winning
+            // definitions, captured when tracing was enabled or last emitted.
+            self.trace_definition_transitions.extend(
+                self.trace_function_ids
+                    .iter()
+                    .filter(|(_, id)| id.file.path == path)
+                    .map(|(name, _)| name.clone()),
+            );
+        }
     }
 
     /// Add a parsed file to the project. Call this for every file
@@ -289,7 +300,7 @@ impl Project {
     /// append it when the path is new. Only that file's pass-1 cache entry is
     /// invalidated; `check_incremental` reuses every other file's collection.
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
-        self.note_uncached_trace_transition(&path);
+        self.note_trace_definition_transition(&path);
         if let Some(previous) = self.collected_files.remove(&path) {
             self.invalidated_fns
                 .extend(previous.fn_table.fns.keys().cloned());
@@ -386,7 +397,7 @@ impl Project {
 
     /// Remove a file and its cached pass-1 collection from the project.
     pub fn remove_file(&mut self, path: &str) {
-        self.note_uncached_trace_transition(path);
+        self.note_trace_definition_transition(path);
         self.files.retain(|(existing, _)| existing != path);
         if let Some(previous) = self.collected_files.remove(path) {
             self.invalidated_fns
@@ -675,7 +686,7 @@ impl Project {
             let mut invalidated: Vec<_> = self
                 .invalidated_fns
                 .iter()
-                .chain(&self.trace_uncached_invalidations)
+                .chain(&self.trace_definition_transitions)
                 .collect();
             invalidated.sort_unstable();
             invalidated.dedup();
@@ -1357,7 +1368,7 @@ impl Project {
             .collect();
         self.dirty_paths.clear();
         self.invalidated_fns.clear();
-        self.trace_uncached_invalidations.clear();
+        self.trace_definition_transitions.clear();
 
         self.diagnostics = result.clone();
         if let Some(trace) = trace {

@@ -18,26 +18,46 @@ fn supplied_callable_may_install_caller_binding(
         .map(|param| param.name.as_str())
         .collect();
     let matches = match_argument_names(&param_names, args.iter().map(|arg| arg.name.as_deref()));
+    let dots_actuals: Vec<_> = matches
+        .param_for_arg
+        .iter()
+        .enumerate()
+        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
+        .collect();
+    let actual_may_install = |actual: usize| {
+        args.get(actual).is_some_and(|actual| {
+            let known_environment = matches!(
+                &actual.value,
+                Expr::Call { func, args, .. }
+                    if args.is_empty()
+                        && ident_name(func).is_some_and(|name| {
+                            crate::semantic_lists::bare_name(name) == "environment"
+                                && checker.resolves_to_base(name, scope)
+                        })
+            );
+            !known_environment && !crate::collect::inert_caller_binding_actual(&actual.value)
+        })
+    };
     function.caller_binding_called_formals.iter().any(|called| {
-        function.params.iter().enumerate().any(|(formal, param)| {
+        let named = function.params.iter().enumerate().any(|(formal, param)| {
             crate::caller_binding_identity(&param.name).as_deref() == Some(called.as_str())
                 && matches
                     .arg_for_param(formal)
-                    .and_then(|actual| args.get(actual))
-                    .is_some_and(|actual| {
-                        let known_environment = matches!(
-                            &actual.value,
-                            Expr::Call { func, args, .. }
-                                if args.is_empty()
-                                    && ident_name(func).is_some_and(|name| {
-                                        crate::semantic_lists::bare_name(name) == "environment"
-                                            && checker.resolves_to_base(name, scope)
-                                    })
-                        );
-                        !known_environment
-                            && !crate::collect::inert_caller_binding_actual(&actual.value)
-                    })
-        })
+                    .is_some_and(actual_may_install)
+        });
+        if named || matches.dots.is_none() {
+            return named;
+        }
+        if called == "..." {
+            return dots_actuals.iter().copied().any(actual_may_install);
+        }
+        called
+            .strip_prefix("..")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| dots_actuals.get(index))
+            .copied()
+            .is_some_and(actual_may_install)
     })
 }
 

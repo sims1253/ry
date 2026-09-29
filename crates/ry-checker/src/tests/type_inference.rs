@@ -2161,6 +2161,11 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_overridden_pure_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_forwarded_callback_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_passed_default_do_call.R"),
+        include_str!("../../testdata/oracle/assertion_subject_wrapped_identity_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_wrapped_list_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_wrapped_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_second_variadic_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_reordered_arguments.R"),
         include_str!("../../testdata/oracle/assertion_subject_called_function_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_chained_called_defaults_earlier.R"),
@@ -2200,6 +2205,10 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_unused_callable_formal.R"),
         include_str!("../../testdata/oracle/assertion_subject_omitted_pure_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_passed_default_value_only.R"),
+        include_str!("../../testdata/oracle/assertion_subject_wrapped_value_only.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_pure_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_unused_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_second_variadic_pure_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_forwarded_pure_callback.R"),
         "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ]
@@ -2212,6 +2221,27 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
             "control {control}: a helper without a caller-frame binding install keeps the proof: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn variadic_positional_references_resolve_only_with_enclosing_dots() {
+    for source in [
+        "f <- function(...) ..1\nf(1L)",
+        "f <- function(...) { nested <- function() ..2; nested() }\nf(1L, 2L)",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY010"),
+            "`..n` reads an enclosing dots promise: {source}: {diagnostics:?}"
+        );
+    }
+    let unbound = check("value <- ..1");
+    assert!(
+        unbound.iter().any(|diagnostic| diagnostic.code == "RY010"),
+        "without `...`, `..1` has no binding: {unbound:?}"
+    );
 }
 
 #[test]

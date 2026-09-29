@@ -2615,6 +2615,21 @@ impl Checker {
                 {
                     return RType::unknown();
                 }
+                // `..1`, `..2`, ... are positional references into a
+                // lexically enclosing `...` promise list, not ordinary
+                // unbound variables. The parser retains these names so
+                // callback effects can follow variadic value flow.
+                if name
+                    .strip_prefix("..")
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .is_some_and(|index| index > 0)
+                    && self
+                        .enclosing_formals
+                        .iter()
+                        .any(|formals| formals.has_dots)
+                {
+                    return RType::unknown();
+                }
                 // Namespace-qualified reference (`pkg::name`),
                 // including the bare reexport pattern
                 // (`rlang::set_names` or `magrittr::`%>%`` in

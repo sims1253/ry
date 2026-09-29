@@ -348,7 +348,7 @@ impl RParser {
             "true" => Some(Expr::Logical(true, self.span(n))),
             "false" => Some(Expr::Logical(false, self.span(n))),
             "null" => Some(Expr::Null(self.span(n))),
-            "identifier" | "dots" => Some(Expr::Ident {
+            "identifier" | "dots" | "dot_dot_i" => Some(Expr::Ident {
                 name: text(n, src)?,
                 span: self.span(n),
             }),
@@ -1413,6 +1413,27 @@ mod tests {
     fn parses_simple_assignment() {
         let f = parse("x <- 1L\n");
         assert_eq!(f.stmts.len(), 1);
+    }
+
+    #[test]
+    fn variadic_positional_references_keep_their_binding_names() {
+        let file = parse("f <- function(...) { first <- ..1; ..2 }\n");
+        assert!(file.parse_errors.is_empty());
+        let Some(Stmt::Assign {
+            value: Expr::Function { body, .. },
+            ..
+        }) = file.stmts.first()
+        else {
+            panic!("expected function assignment: {:?}", file.stmts);
+        };
+        assert!(matches!(
+            body.first(),
+            Some(Stmt::Assign { value: Expr::Ident { name, .. }, .. }) if name == "..1"
+        ));
+        assert!(matches!(
+            body.get(1),
+            Some(Stmt::Expr(Expr::Ident { name, .. })) if name == "..2"
+        ));
     }
 
     #[test]

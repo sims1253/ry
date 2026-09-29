@@ -56,6 +56,34 @@ pub(crate) fn inert_caller_binding_actual(expression: &Expr) -> bool {
     })
 }
 
+/// Keep callable provenance when a value is wrapped before it is assigned or
+/// passed to another call. The enclosing call decides whether the value can
+/// be invoked; a pure `base::identity` or `base::list` alone does not.
+/// Exhaustion or an escaped name withdraws the negative effect proof.
+fn caller_binding_value_sources(expression: &Expr) -> Option<HashSet<String>> {
+    let mut sources = HashSet::new();
+    let mut uncertain = false;
+    let walk = Walk {
+        assign_targets: false,
+        assign_operands: true,
+        dollar_args: false,
+        fn_bodies: true,
+        control_tests: true,
+    };
+    let _ = walk_expr(expression, walk, |node, _| {
+        if let AstNode::Expr(Expr::Ident { name, .. }) = node {
+            match caller_binding_identity(name) {
+                Some(name) if sources.len() < 128 => {
+                    sources.insert(name);
+                }
+                _ => uncertain = true,
+            }
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    });
+    (!uncertain).then_some(sources)
+}
+
 fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
@@ -172,15 +200,13 @@ fn helper_caller_binding_summary_bounded(
             }) => Some((lhs.as_ref(), rhs.as_ref())),
             _ => None,
         };
-        if let Some((Expr::Ident { name: target, .. }, Expr::Ident { name: source, .. })) =
-            assignment
-        {
+        if let Some((Expr::Ident { name: target, .. }, value)) = assignment {
             match (
                 caller_binding_identity(target),
-                caller_binding_identity(source),
+                caller_binding_value_sources(value),
             ) {
-                (Some(target), Some(source)) => {
-                    local_aliases.entry(target).or_default().insert(source);
+                (Some(target), Some(sources)) => {
+                    local_aliases.entry(target).or_default().extend(sources);
                 }
                 _ => indirect_call = true,
             }
@@ -201,13 +227,13 @@ fn helper_caller_binding_summary_bounded(
                         | "base::is.function"
                 ) {
                     for arg in args {
-                        if let Expr::Ident { name: passed, .. } = &arg.value {
-                            match caller_binding_identity(passed) {
-                                Some(passed) => {
-                                    potential_callback_arguments.push((name.clone(), passed));
-                                }
-                                None => indirect_call = true,
+                        match caller_binding_value_sources(&arg.value) {
+                            Some(sources) => {
+                                potential_callback_arguments.extend(
+                                    sources.into_iter().map(|passed| (name.clone(), passed)),
+                                );
                             }
+                            None => indirect_call = true,
                         }
                     }
                 }
@@ -407,13 +433,29 @@ fn helper_caller_binding_summary_bounded(
             !certified_calls.contains(start)
                 && !definitely_local_installer_env(environment, &HashSet::new())
         });
-    let called_formals = params
+    let mut called_formals: Vec<String> = params
         .iter()
         .filter_map(|param| {
             let name = caller_binding_identity(&param.name)?;
             callees.contains(&name).then_some(name)
         })
         .collect();
+    if params.iter().any(|param| param.name == "...") {
+        called_formals.extend(
+            callees
+                .iter()
+                .filter(|name| {
+                    *name == "..."
+                        || name
+                            .strip_prefix("..")
+                            .and_then(|index| index.parse::<usize>().ok())
+                            .is_some_and(|index| index > 0)
+                })
+                .cloned(),
+        );
+        called_formals.sort_unstable();
+        called_formals.dedup();
+    }
     (
         uncertain_installer_environment || indirect_call,
         callees.into_iter().collect(),

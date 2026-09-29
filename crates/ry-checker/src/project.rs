@@ -1049,7 +1049,10 @@ mod tests {
         );
         project.add_file(
             "wrapper.R".into(),
-            parse_file("wrapper.R", "bridge <- function(target) install(target)"),
+            parse_file(
+                "wrapper.R",
+                "saved_install <- install\nbridge <- function(target) { local_alias <- saved_install; local_alias(target) }",
+            ),
         );
         project.add_file(
             "consumer.R".into(),

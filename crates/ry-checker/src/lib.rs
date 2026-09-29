@@ -897,6 +897,9 @@ pub(crate) struct FnTable {
     // lookup must treat them as candidates even though their inferred value is
     // otherwise opaque.
     pub(crate) callable_vars: std::collections::HashSet<String>,
+    // Possible top-level function-value aliases. The caller-binding effect
+    // graph follows these when a wrapper invokes an alias in another file.
+    pub(crate) caller_binding_aliases: FxMap<String, FxSet<String>>,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
     pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
@@ -914,6 +917,7 @@ impl FnTable {
     /// previously derived effects as well.
     pub(crate) fn propagate_caller_binding_installers(&mut self) {
         let mut callers: HashMap<String, Vec<String>> = HashMap::new();
+        let mut aliases_by_source: HashMap<String, Vec<String>> = HashMap::new();
         let mut work = Vec::new();
         for (name, function) in &self.fns {
             if function.may_install_caller_binding {
@@ -926,7 +930,22 @@ impl FnTable {
                     .push(name.clone());
             }
         }
+        for (alias, sources) in &self.caller_binding_aliases {
+            for source in sources {
+                aliases_by_source
+                    .entry(source.clone())
+                    .or_default()
+                    .push(alias.clone());
+            }
+        }
+        let mut reached = HashSet::new();
         while let Some(callee) = work.pop() {
+            if !reached.insert(callee.clone()) {
+                continue;
+            }
+            if let Some(aliases) = aliases_by_source.get(callee.as_str()) {
+                work.extend(aliases.iter().cloned());
+            }
             if let Some(parents) = callers.get(callee.as_str()) {
                 for caller in parents {
                     if let Some(function) = self.fns.get_mut(caller)
@@ -981,6 +1000,12 @@ impl FnTable {
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
+        for (alias, sources) in &collected.caller_binding_aliases {
+            self.caller_binding_aliases
+                .entry(alias.clone())
+                .or_default()
+                .extend(sources.iter().cloned());
+        }
         for (name, sites) in &collected.call_sites {
             self.call_sites
                 .entry(name.clone())

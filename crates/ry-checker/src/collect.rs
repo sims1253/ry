@@ -120,14 +120,38 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
 
     let mut installer_environments = Vec::new();
     let mut callees = HashSet::new();
+    let mut local_aliases: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut indirect_call = false;
     let mut collect_effect = |node: AstNode<'_>, _| {
-        if let AstNode::Expr(Expr::Call { func, args, span }) = node
-            && let Some(name) = ident_name(func)
+        let assignment = match node {
+            AstNode::Stmt(Stmt::Assign { target, value, .. }) => Some((target, value)),
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            }) => Some((lhs.as_ref(), rhs.as_ref())),
+            _ => None,
+        };
+        if let Some((Expr::Ident { name: target, .. }, Expr::Ident { name: source, .. })) =
+            assignment
         {
-            let name = bare_name(name);
-            callees.insert(name.to_string());
-            if let Some(environment) = installer_environment_arg(name, args) {
-                installer_environments.push((span.start, environment.clone()));
+            local_aliases
+                .entry(target.clone())
+                .or_default()
+                .insert(source.clone());
+        }
+        if let AstNode::Expr(Expr::Call { func, args, span }) = node {
+            if let Some(name) = ident_name(func) {
+                let name = bare_name(name);
+                callees.insert(name.to_string());
+                if let Some(environment) = installer_environment_arg(name, args) {
+                    installer_environments.push((span.start, environment.clone()));
+                }
+            } else if !matches!(func.as_ref(), Expr::Function { .. }) {
+                // A computed function value can be a known installer reached
+                // through `get("install")`, indexing, or another expression.
+                indirect_call = true;
             }
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
@@ -138,6 +162,27 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
             && let Some(default) = &param.default
         {
             let _ = walk_expr(default, direct_walk, &mut collect_effect);
+        }
+    }
+    for param in params {
+        if let Some(Expr::Ident { name, .. }) = &param.default {
+            local_aliases
+                .entry(param.name.clone())
+                .or_default()
+                .insert(name.clone());
+        }
+    }
+    // A local function-valued alias may be called long after the assignment,
+    // including through another alias. Retain every syntactically possible
+    // source: a conditional assignment cannot justify discarding a route.
+    let mut pending_aliases: Vec<_> = callees.iter().cloned().collect();
+    while let Some(callee) = pending_aliases.pop() {
+        if let Some(sources) = local_aliases.get(&callee) {
+            for source in sources {
+                if callees.insert(source.clone()) {
+                    pending_aliases.push(source.clone());
+                }
+            }
         }
     }
     // Certify an identifier only when a straight-line statement has made a
@@ -187,7 +232,7 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
                 && !definitely_local_installer_env(environment, &HashSet::new())
         });
     (
-        uncertain_installer_environment,
+        uncertain_installer_environment || indirect_call,
         callees.into_iter().collect(),
     )
 }
@@ -239,6 +284,14 @@ impl Checker {
     // constructor calls), and, when the value is a function literal, the
     // function itself.
     fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
+        if let (Expr::Ident { name: alias, .. }, Expr::Ident { name: source, .. }) = (target, value)
+        {
+            Arc::make_mut(&mut self.fn_table)
+                .caller_binding_aliases
+                .entry(alias.clone())
+                .or_default()
+                .insert(source.clone());
+        }
         // Record every identifier-bound top-level assignment in
         // `known_vars`. This is independent of whether the RHS
         // is a function literal: regular variable assignments

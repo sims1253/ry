@@ -2186,6 +2186,18 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
             "../../testdata/oracle/assertion_subject_local_do_call_saved_block_before_overwrite.R"
         ),
         include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env.R"),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_qualified_source_literal_collision.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_qualified_source_wrapped_literal_collision.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_qualified_source_block_literal_collision.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_qualified_source_internal_literal_collision.R"
+        ),
         include_str!("../../testdata/oracle/assertion_subject_quoted_do_call_what.R"),
         include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_used.R"),
         include_str!("../../testdata/oracle/assertion_subject_unknown_global_alias.R"),
@@ -2269,6 +2281,7 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_later_write_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_shared_pure_aliases.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env_local.R"),
+        include_str!("../../testdata/oracle/assertion_subject_literal_qualified_local_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_do_call_what_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_unused.R"),
         "run <- function(env, `action` = function(...) NULL) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",

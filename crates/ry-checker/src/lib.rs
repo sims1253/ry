@@ -119,16 +119,21 @@ fn ident_name(expr: &Expr) -> Option<&str> {
 }
 
 const UNKNOWN_CALLER_BINDING_IDENTITY: &str = "\0caller-binding-identity";
+const LITERAL_QUALIFIED_CALLER_BINDING_PREFIX: &str = "\0caller-binding-literal-qualified:";
 
-/// Use one semantic key for ordinary and simply quoted names in the binding
-/// effect graph. R's escaped backtick contents need a decoder; their identity
-/// stays unknown here rather than treating raw source bytes as a safe alias.
+/// Use one semantic key for ordinary and simply quoted lexical names in the
+/// binding effect graph. A quoted local name containing `::` is still a
+/// lexical binding, not a namespace reference with the same visible text.
+/// R's escaped backtick contents need a decoder; their identity stays unknown.
 fn caller_binding_identity(raw: &str) -> Option<String> {
     if raw.contains('\\') {
         return None;
     }
     let name = infer::semantic_argument_name(raw);
     if raw.starts_with('`') {
+        if name.contains("::") {
+            return Some(format!("{LITERAL_QUALIFIED_CALLER_BINDING_PREFIX}{name}"));
+        }
         return Some(name.to_string());
     }
     if let Some(primitive) = name.strip_prefix("base:::")

@@ -1461,6 +1461,33 @@ fn copied_local_do_call_target_retracts_after_a_source_order_edit() {
 }
 
 #[test]
+fn qualified_installer_retracts_when_replaced_by_a_literal_local_name() {
+    let installing = "install <- function(env = parent.frame()) { `base::delayedAssign` <- function(...) NULL; p <- base::delayedAssign; base::do.call(p, base::list('x', quote({ x <- c(1L, 2L); 1L }), assign.env = env, eval.env = env)) }\n";
+    let pure = "install <- function(env = parent.frame()) { `base::delayedAssign` <- function(...) NULL; p <- `base::delayedAssign`; base::do.call(p, base::list('x', quote({ x <- c(1L, 2L); 1L }), assign.env = env, eval.env = env)) }\n";
+    let consumer = "f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let mut warm = callback_project(&[("helper.R", installing), ("consumer.R", consumer)]);
+    let before = warm.check_incremental();
+    assert!(before.iter().any(|(path, diagnostics)| {
+        path == "consumer.R"
+            && diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+    }));
+
+    warm.update_file("helper.R".into(), Arc::new(parse("helper.R", pure)));
+    let after = warm.check_incremental();
+    assert_eq!(
+        after,
+        callback_project(&[("helper.R", pure), ("consumer.R", consumer)]).check()
+    );
+    assert!(after.iter().all(|(_, diagnostics)| {
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032")
+    }));
+}
+
+#[test]
 fn incremental_caller_binding_alias_retracts_after_a_pure_edit() {
     let mut sources = [
         ("alias.R", "`put` <- base:::delayedAssign\n"),

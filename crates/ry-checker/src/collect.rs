@@ -159,11 +159,14 @@ fn local_value_sources_at_point(
 ) -> HashSet<String> {
     let mut resolved = HashSet::new();
     for source in sources {
-        if let Some(values) = aliases.get(&source) {
+        if source.contains("::") && !source.starts_with(LITERAL_QUALIFIED_CALLER_BINDING_PREFIX) {
+            // A namespace reference cannot be replaced by a same-spelled
+            // backticked local binding.
+            resolved.insert(source);
+        } else if let Some(values) = aliases.get(&source) {
             resolved.extend(values.iter().cloned());
         } else if capture
             && source != UNKNOWN_CALLER_BINDING_IDENTITY
-            && !source.contains("::")
             && !formal_names.contains(&source)
             && !(formal_names.contains("...") && variadic_callable_source(&source))
         {
@@ -317,6 +320,9 @@ fn variadic_callable_source(name: &str) -> bool {
 /// `Err` means a tagged actual's semantic name is unknown, so callers must
 /// keep the installer effect uncertain rather than treating it as omitted.
 fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&'a Expr>, ()> {
+    if name.starts_with(LITERAL_QUALIFIED_CALLER_BINDING_PREFIX) {
+        return Ok(None);
+    }
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
         "delayedAssign" => (["x", "value", "eval.env", "assign.env"].as_slice(), 3),

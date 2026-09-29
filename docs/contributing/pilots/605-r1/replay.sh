@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C.UTF-8
 
 if [[ $# -ne 2 || ! -x "$1" || ! -x "$2" ]]; then
   echo "usage: $0 BASE_RY CANDIDATE_RY" >&2
@@ -27,10 +28,10 @@ run_case() {
   done
 }
 
-for stem in masked-and predicate-mutation; do
+for stem in masked-and predicate-mutation predicate-closure-mutation; do
   run_case "$stem" r Rscript --vanilla "$stem.R"
   run_case "$stem" base "$base" check "$stem.R" --output-format json
   run_case "$stem" candidate "$candidate" check "$stem.R" --output-format json
 done
 
-echo 'PASS: both rejected-candidate controls match R and the pinned base'
+echo 'PASS: two rejected-candidate controls and the existing-gap control match all nine retained commands'

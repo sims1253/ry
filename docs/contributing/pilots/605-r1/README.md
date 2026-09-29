@@ -14,17 +14,20 @@ counterexamples here.
 | --- | --- | --- | --- |
 | [masked-and.R](masked-and.R) | Exit 0 | `[]`, exit 0 | RY032 at 2:57, exit 0 |
 | [predicate-mutation.R](predicate-mutation.R) | Exit 1 at the later logical OR | RY032 at 3:6, exit 0 | `[]`, exit 0 |
+| [predicate-closure-mutation.R](predicate-closure-mutation.R) | Exit 1 at the later logical OR | `[]`, exit 0 | `[]`, exit 0 |
 
 The first candidate invents a warning for an R program that succeeds because
 `&&` is masked. It also removes an existing warning for a program that errors:
 the `assign()` RHS replaces `x` with a vector after the earlier predicate.
 The accepted decision for **this revision** was rejection. A later #605
-revision may fix these mechanisms; this record does not assess it. The related
-local-helper `x <<-` example was already quiet on the base and is not counted
-as a newly lost warning. No timing measurement was made.
+revision may fix these mechanisms; this record does not assess it. The third,
+exact local-helper `x <<-` source is an existing baseline gap: R errors, but
+both checker revisions are quiet. It is retained to make that narrow scoping
+claim replayable; other helper shapes may produce different findings and are
+not classified by this record. No timing measurement was made.
 
 The [`results/`](results/) directory contains unmodified stdout, stderr, and
-exit status for each of the six commands. The observed binaries were
+exit status for each of the nine commands. The observed binaries were
 `ry 0.11.0`: base SHA256
 `13c958b0ab171a2b5cdaa9eefa6b2dcef9f188f5d5a4322d82c3143993361759`,
 candidate SHA256
@@ -35,11 +38,12 @@ the claim. A different R version or locale may change error wording even when
 the semantic result agrees; inspect that difference before changing retained
 outputs.
 
-From a ry clone containing both commits, build isolated binaries and replay
-the exact sources. Use separate Cargo targets because the two checker sources
-have incompatible artifacts:
+From a ry clone, fetch both exact revisions before creating worktrees. Build
+isolated binaries and replay the exact sources. Use separate Cargo targets
+because the two checker sources have incompatible artifacts:
 
 ```sh
+git fetch origin adad7e4a1ca1ff291e6574cf5eb9117bb1843431 f1b20085fa0d2471eaad87c8c4a9e30205cd7d9b
 git worktree add --detach ../ry-evidence-base adad7e4a1ca1ff291e6574cf5eb9117bb1843431
 git worktree add --detach ../ry-evidence-candidate f1b20085fa0d2471eaad87c8c4a9e30205cd7d9b
 (cd ../ry-evidence-base && CARGO_TARGET_DIR=../ry-evidence-target-base cargo build --locked -p ry-cli --bin ry)
@@ -54,6 +58,6 @@ then compares stdout, stderr, and exit status byte-for-byte with the retained
 outputs. The original reviewer independently checked the
 [first-candidate controls](https://github.com/sims1253/ry/pull/605#issuecomment-5879116902).
 The first candidate's required gates were reported green in that review;
-this pilot reran only the six commands above.
+this pilot reran only the nine commands above.
 The lost named RY032 and new false positive therefore falsify the candidate
 even if aggregate totals and gates remain green.

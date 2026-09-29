@@ -60,9 +60,10 @@ that the rejected patch should be restored.
 
 ## Fresh pilot: rejected scalar-flow candidate
 
-The [#605 first-candidate pilot](pilots/605-r1/README.md) retains two tiny R
+The [#605 first-candidate pilot](pilots/605-r1/README.md) retains three tiny R
 sources, exact baseline and candidate revisions, raw checker/R outputs, and a
 replay script. One candidate false positive and one lost true positive were
+found; the third source records an existing baseline gap. These cases were
 reproduced against R 4.6.1. The later PR is separate from this rejected
 revision. This pilot checks whether another contributor can replay the key
 claim without a chat transcript.

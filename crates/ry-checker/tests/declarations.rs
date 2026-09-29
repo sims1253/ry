@@ -2220,6 +2220,81 @@ fn quoted_binding_replacement_invalidates_a_same_file_deferred_call() {
 }
 
 #[test]
+fn quoted_formal_reads_keep_only_live_parameter_identity() {
+    for (formal, read, default, call, expected) in [
+        ("q", "q", "= 1L", "outer()", 1),
+        ("`q`", "`q`", "= 1L", "outer()", 1),
+        ("q", "`q`", "= 1L", "outer()", 1),
+        ("`q`", "q", "= 1L", "outer()", 1),
+        ("`a b`", "`a b`", "= 1L", "outer()", 1),
+        ("`q`", "q", "", "outer(1L)", 1),
+        ("q", "`q`", "", "outer(1L)", 1),
+        // A same-R-name assignment under another raw spelling no longer
+        // certifies that the read still refers to the original formal.
+        ("`q`", "q <- 1L; q", "= 1L", "outer()", 0),
+        ("q", "`q` <- 1L; `q`", "= 1L", "outer()", 0),
+        ("q", "other", "= 1L", "outer()", 0),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nouter <- function({formal}{default}) {{ {read}; f(\"bad\") }}\n{call}\n"
+        );
+        let file = parse("formal-spelling.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let actual = kinds(&checker)
+            .iter()
+            .filter(|kind| **kind == DeclarationFindingKind::Mismatch)
+            .count();
+        assert_eq!(
+            actual,
+            expected,
+            "{source}: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn quoted_formal_edits_retract_and_restore_warm_declaration_findings() {
+    let source = |read: &str| {
+        format!(
+            "f <- function(x) x\nouter <- function(`q` = 1L) {{ {read}; f(\"bad\") }}\nouter()\n"
+        )
+    };
+    let original = parse("formal-warm.R", &source("`q`"));
+    let declaration = record(
+        &original,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut warm = Project::new();
+    warm.add_file(original.path.clone(), original.clone());
+    warm.set_declaration_records(vec![declaration.clone()]);
+    warm.check_incremental();
+    assert_eq!(project_mismatch_count(&warm, &original.path), 1);
+
+    for (read, expected) in [("other", 0), ("q", 1), ("`q`", 1)] {
+        let edited = parse("formal-warm.R", &source(read));
+        warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        warm.check_incremental();
+        assert_eq!(project_mismatch_count(&warm, &edited.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(warm.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
 fn escaped_backtick_replacement_cannot_keep_a_decoded_contract() {
     for source in [
         "f <- function(x) x\nf(\"before\")\n`\\x66` <- function(x) x\nf(\"after\")\n",

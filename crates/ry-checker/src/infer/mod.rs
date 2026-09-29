@@ -510,6 +510,31 @@ fn discarded_value_expression(expression: &Expr) -> bool {
     }
 }
 
+/// Only a live formal binding proves that a value read cannot be an active or
+/// delayed external binding. The AST preserves backticks in identifier names,
+/// while R treats `q` and q as the same binding. Keep this equivalence local to
+/// the declaration proof: ordinary scope lookup continues to use raw keys.
+fn proven_parameter_read(scope: &Scope, raw_name: &str) -> bool {
+    if scope.parameter_bindings.is_empty() {
+        return false;
+    }
+    let semantic_name = semantic_argument_name(raw_name);
+    if !scope
+        .parameter_bindings
+        .iter()
+        .any(|name| semantic_argument_name(name) == semantic_name)
+    {
+        return false;
+    }
+    // A differently spelled assignment can replace that same R binding.
+    // Raw-key scope inference cannot order the two spellings, so decline the
+    // proof when any equivalent current binding has lost its formal marker.
+    !scope
+        .bindings
+        .keys()
+        .any(|name| semantic_argument_name(name) == semantic_name && !scope.is_parameter(name))
+}
+
 impl Checker {
     /// The unified statement walker. Handles both diagnostic emission
     /// (gated by `self.discarding`) and return-type collection (when
@@ -2737,10 +2762,11 @@ impl Checker {
             Expr::Na(t, _) => t.clone(),
             Expr::Ident { name, span } => {
                 let result = self.infer_identifier(name, span, scope);
-                let name = semantic_argument_name(name);
-                if !scope.is_parameter(name)
-                    && scope.lexical_definition(name).is_none()
-                    && scope.function_alias(name).is_none()
+                let semantic_name = semantic_argument_name(name);
+                if !self.declarations.records().is_empty()
+                    && !proven_parameter_read(scope, name)
+                    && scope.lexical_definition(semantic_name).is_none()
+                    && scope.function_alias(semantic_name).is_none()
                 {
                     // A bare external read may force a delayed or active
                     // binding. Keep the inferred value, then drop any stale

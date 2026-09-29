@@ -607,7 +607,9 @@ impl crate::Checker {
             body_entry_type(declared)
         };
         if entry.is_none() {
-            let reason = if matches!(declared, TypeExpr::ExactClass(_)) {
+            let reason = if selected.supplied == SupplyStatus::DefaultedSuppliedOnly {
+                "only explicitly supplied arguments are constrained; no unconditional body entry type is assumed"
+            } else if matches!(declared, TypeExpr::ExactClass(_)) {
                 "effective class does not establish a storage mode; no body entry type is assumed"
             } else {
                 "constraint cannot be represented by body inference; no entry type is assumed"

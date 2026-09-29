@@ -1048,13 +1048,8 @@ fn self_span(node: tree_sitter::Node) -> Span {
     )
 }
 
-/// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
-///
-/// tree-sitter produces a recovered tree for malformed input: regions it
-/// could not parse become `ERROR` nodes, and tokens it had to insert to
-/// repair the tree become `MISSING` nodes. `root.has_error()` is the cheap
-/// "is anything broken" check; this function walks the tree when that is
-/// true to extract the individual broken regions for per-node diagnostics.
+/// Collect every function's lexical span and any braced body span so
+/// annotation readers can identify the innermost owning function.
 fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
     let mut bodies = Vec::new();
     let mut stack = vec![root];
@@ -1084,6 +1079,13 @@ fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
     bodies
 }
 
+/// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.
+///
+/// tree-sitter produces a recovered tree for malformed input: regions it
+/// could not parse become `ERROR` nodes, and tokens it had to insert to
+/// repair the tree become `MISSING` nodes. `root.has_error()` is the cheap
+/// "is anything broken" check; this function walks the tree when that is
+/// true to extract the individual broken regions for per-node diagnostics.
 fn collect_parse_errors(root: tree_sitter::Node) -> Vec<Span> {
     if !root.has_error() {
         return Vec::new();

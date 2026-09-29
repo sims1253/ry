@@ -92,7 +92,7 @@ use ry_typeshed::{
     load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -784,6 +784,9 @@ pub struct ScopeRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct UserFn {
     pub(crate) params: Vec<UserParam>,
+    /// Original default expressions, needed only when an adopted contract
+    /// asks for the possible effects of a known helper invocation.
+    pub(crate) source_params: Option<Arc<[Param]>>,
     /// Definition identity, independent of a same-spelled binding elsewhere.
     pub(crate) source_path: String,
     pub(crate) definition_span: Span,
@@ -793,9 +796,9 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
-    /// Bounded, scope-aware writes outside this function's frame when it
-    /// executes. Eager declaration checks use this precomputed summary.
-    pub(crate) outward_writes: Arc<FxSet<String>>,
+    /// Bounded writes outside this function's frame. Shared clones compute
+    /// the summary only if an opted-in declaration call needs it.
+    outward_writes: Arc<OnceLock<FxSet<String>>>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -825,6 +828,15 @@ pub(crate) struct CallerVisibleSignature {
 }
 
 impl UserFn {
+    pub(crate) fn outward_writes(&self) -> &FxSet<String> {
+        self.outward_writes.get_or_init(|| {
+            collect::called_function_outward_writes(
+                self.source_params.as_deref().unwrap_or(&[]),
+                &self.body,
+            )
+        })
+    }
+
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),

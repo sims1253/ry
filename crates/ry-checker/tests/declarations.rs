@@ -890,6 +890,204 @@ fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
 }
 
 #[test]
+fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call() {
+    for (setup, invoke, after_mismatch) in [
+        (
+            "mutate <- function() f <<- function(x) x\nsaved <- mutate",
+            "saved()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() mutate()",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() { saved <- mutate; saved() }",
+            "bridge()",
+            false,
+        ),
+        (
+            "bridge <- function() { inner <- function() f <<- function(x) x; inner() }",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() (function() mutate())()",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function(z = mutate()) z",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() do.call(mutate, list())",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() do.call(\"mutate\", list())",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() base::do.call(\"mutate\", list())",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() { helper <- get(\"mutate\"); helper() }",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x",
+            "get(\"mutate\")()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x",
+            "(function() mutate())()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x",
+            "(function() 1L)()",
+            true,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nsaved <- function() 1L\nbridge <- function(saved) saved()",
+            "bridge(mutate)",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nsaved <- function() 1L\nbridge <- function() { saved <- get(\"mutate\"); saved() }",
+            "bridge()",
+            false,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\nbridge <- function() 1L",
+            "bridge()",
+            true,
+        ),
+        (
+            "mutate <- function() f <<- function(x) x\npure <- function() 1L\nbridge <- function() pure()",
+            "bridge()",
+            true,
+        ),
+        ("mutate <- function() f <<- function(x) x", "1L", true),
+    ] {
+        let source =
+            format!("f <- function(x) x\n{setup}\nf(\"before\")\n{invoke}\nf(\"after\")\n");
+        let file = parse("known-wrapper.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        let expected = if after_mismatch {
+            vec!["\"before\"", "\"after\""]
+        } else {
+            vec!["\"before\""]
+        };
+        assert_eq!(spans, expected, "setup: {setup}, invoke: {invoke}");
+    }
+}
+
+#[test]
+fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
+    let file = parse(
+        "pure-helper.R",
+        "f <- function(x) { stopifnot(is.integer(x)); x }\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    let spans = checker
+        .declaration_findings()
+        .iter()
+        .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+        .map(|finding| &file.source[finding.span.start..finding.span.end])
+        .collect::<Vec<_>>();
+    assert_eq!(spans, vec!["\"before\"", "\"after\""]);
+}
+
+#[test]
+fn saved_alias_keeps_the_aliased_function_identity_after_name_rebinding() {
+    for (first, second, after_mismatch) in [
+        ("1L", "f <<- function(x) x", true),
+        ("f <<- function(x) x", "1L", false),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nmutate <- function() {first}\nsaved <- mutate\nmutate <- function() {second}\nf(\"before\")\nsaved()\nf(\"after\")\n"
+        );
+        let file = parse("saved-identity.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        let expected = if after_mismatch {
+            vec!["\"before\"", "\"after\""]
+        } else {
+            vec!["\"before\""]
+        };
+        assert_eq!(
+            spans, expected,
+            "saved body: {first}, rebound body: {second}"
+        );
+    }
+}
+
+#[test]
+fn mutating_argument_does_not_change_the_selected_call_head() {
+    let file = parse(
+        "argument-mutates-callee.R",
+        "f <- function(x) x\nmutate <- function() f <<- function(x) x\nf(\"before\")\nf({ mutate(); \"during\" })\nf(\"after\")\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    let spans = checker
+        .declaration_findings()
+        .iter()
+        .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+        .map(|finding| &file.source[finding.span.start..finding.span.end])
+        .collect::<Vec<_>>();
+    assert_eq!(spans, vec!["\"before\"", "{ mutate(); \"during\" }"]);
+}
+
+#[test]
 fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits() {
     let first = parse(
         "first.R",
@@ -929,6 +1127,45 @@ fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits(
         project.update_file(edited.path.clone(), Arc::new(edited.clone()));
         project.check_incremental();
         assert_eq!(kinds_in_first(&project).len(), expected, "mutator: {body}");
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
+fn cross_file_wrapper_effect_retracts_after_warm_helper_edit() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) x\nbridge <- function() mutate()\nf(\"before\")\nbridge()\nf(\"after\")\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.add_file(
+        "mutator.R".into(),
+        parse("mutator.R", "mutate <- function() f <<- function(x) x"),
+    );
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+
+    for (body, expected) in [
+        ("mutate <- function() 1L", 2),
+        ("mutate <- function() f <<- function(x) x", 1),
+    ] {
+        let edited = parse("mutator.R", body);
+        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &first.path), expected);
         let mut cold = Project::new();
         cold.add_file(first.path.clone(), first.clone());
         cold.add_file(edited.path.clone(), edited);

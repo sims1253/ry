@@ -343,6 +343,131 @@ pub(crate) fn called_function_outward_writes(params: &[Param], body: &[Stmt]) ->
     writes
 }
 
+#[derive(Default)]
+pub(crate) struct PotentialHelperCalls {
+    pub(crate) calls: FxSet<String>,
+    pub(crate) handled_calls: FxSet<String>,
+    pub(crate) aliases: FxMap<String, FxSet<String>>,
+    pub(crate) local_literals: FxMap<String, FxSet<Span>>,
+    pub(crate) unknown_bindings: FxSet<String>,
+    pub(crate) uncertain: bool,
+}
+
+fn scan_possible_helper_node(
+    node: AstNode<'_>,
+    calls: &mut PotentialHelperCalls,
+    remaining: &mut usize,
+) {
+    let mut note_assignment = |target: &Expr, value: &Expr| {
+        let Expr::Ident { name, .. } = target else {
+            return;
+        };
+        let name = capture_identifier_name(name);
+        if name == UNKNOWN_CAPTURE_BINDING {
+            calls.uncertain = true;
+            return;
+        }
+        match value {
+            Expr::Ident { name: source, .. } => {
+                calls
+                    .aliases
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(capture_identifier_name(source).to_string());
+            }
+            Expr::Function { span, .. } => {
+                calls
+                    .local_literals
+                    .entry(name.to_string())
+                    .or_default()
+                    .insert(*span);
+            }
+            // The value may be a callable selected at runtime. A same-named
+            // outer helper cannot prove this local call is effect-free.
+            _ => {
+                calls.unknown_bindings.insert(name.to_string());
+            }
+        }
+    };
+    match node {
+        AstNode::Stmt(Stmt::Assign { target, value, .. }) => note_assignment(target, value),
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign,
+            lhs,
+            rhs,
+            ..
+        }) => note_assignment(lhs, rhs),
+        AstNode::Expr(Expr::Call { func, args, .. }) => match func.as_ref() {
+            Expr::Ident { name, .. } => {
+                let name = capture_identifier_name(name);
+                if name == UNKNOWN_CAPTURE_BINDING {
+                    calls.uncertain = true;
+                } else {
+                    calls.calls.insert(name.to_string());
+                    let mut direct = FxSet::default();
+                    collect_callable_binding_write(func, args, &mut direct);
+                    if !direct.is_empty() {
+                        calls.handled_calls.insert(name.to_string());
+                    }
+                }
+            }
+            Expr::Function { params, body, .. } => {
+                if *remaining == 0 {
+                    calls.uncertain = true;
+                } else {
+                    *remaining -= 1;
+                    scan_possible_helper_calls(params, body, calls, remaining);
+                }
+            }
+            _ => calls.uncertain = true,
+        },
+        _ => {}
+    }
+}
+
+fn scan_possible_helper_calls(
+    params: &[Param],
+    body: &[Stmt],
+    calls: &mut PotentialHelperCalls,
+    remaining: &mut usize,
+) {
+    for parameter in params {
+        calls
+            .unknown_bindings
+            .insert(capture_identifier_name(&parameter.name).to_string());
+    }
+    let walk = Walk {
+        fn_bodies: false,
+        dollar_args: false,
+        ..Walk::ALL
+    };
+    for parameter in params {
+        if let Some(default) = &parameter.default {
+            let _ = walk_expr(default, walk, |node, _| -> ControlFlow<(), Descend> {
+                scan_possible_helper_node(node, calls, remaining);
+                ControlFlow::Continue(Descend::Into)
+            });
+        }
+    }
+    let _ = walk_stmts(body, walk, |node, _| -> ControlFlow<(), Descend> {
+        scan_possible_helper_node(node, calls, remaining);
+        ControlFlow::Continue(Descend::Into)
+    });
+}
+
+/// Call heads that executing a function may reach. Local aliases and nested
+/// literals are retained as alternatives because a branch can select either.
+/// Immediate closures share the caller's bounded recursion budget.
+pub(crate) fn potential_helper_calls(
+    params: &[Param],
+    body: &[Stmt],
+    remaining: &mut usize,
+) -> PotentialHelperCalls {
+    let mut calls = PotentialHelperCalls::default();
+    scan_possible_helper_calls(params, body, &mut calls, remaining);
+    calls
+}
+
 /// Defaults are promises evaluated in the called function's frame when
 /// forced. Return their ordinary local writes separately from outward `<<-`
 /// writes; neither is an unconditional effect at function definition time.
@@ -909,7 +1034,12 @@ impl Checker {
         body: Vec<Stmt>,
         span: Span,
     ) -> usize {
-        let outward_writes = Arc::new(called_function_outward_writes(params, &body));
+        let outward_writes = Arc::new(OnceLock::new());
+        let source_params = if params.iter().any(|param| param.default.is_some()) {
+            Some(Arc::from(params.to_vec()))
+        } else {
+            None
+        };
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -947,6 +1077,7 @@ impl Checker {
         fn_table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(&name);
         let function = UserFn {
             params,
+            source_params,
             source_path: self.path.clone(),
             definition_span: span,
             body,
@@ -1820,6 +1951,36 @@ mod collect_walker_tests {
             from_body,
             FxSet::from_iter([UNKNOWN_CAPTURE_BINDING.to_string()]),
             "the body walker must apply the same bound before parameter descent"
+        );
+    }
+
+    #[test]
+    fn unannotated_collection_does_not_build_helper_effect_summaries() {
+        let statements = parse_stmts("f <- function() { g <<- 1L }");
+        let mut checker = Checker::new("lazy-effect.R");
+        checker.collect_fns(&statements);
+        let function = &checker.fn_table.fns["f"];
+        assert!(function.outward_writes.get().is_none());
+        assert!(function.outward_writes().contains("g"));
+        assert!(function.outward_writes.get().is_some());
+    }
+
+    #[test]
+    fn spent_transitive_scan_budget_does_not_enter_an_iife() {
+        let statements = parse_stmts("bridge <- function() (function() mutate())()");
+        let Stmt::Assign {
+            value: Expr::Function { params, body, .. },
+            ..
+        } = &statements[0]
+        else {
+            panic!("fixture has one function literal");
+        };
+        let mut remaining = 0;
+        let calls = potential_helper_calls(params, body, &mut remaining);
+        assert!(calls.uncertain);
+        assert!(
+            calls.calls.is_empty(),
+            "exhaustion must stop before descent"
         );
     }
 

@@ -578,6 +578,10 @@ impl Checker {
                     })
                     .map(Arc::<str>::from);
                 let function_alias = self.function_alias_target(value, scope);
+                let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
+                    let span = scope.lexical_definition(alias)?;
+                    self.fn_table.definition(&self.path, span).map(|_| span)
+                });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 // A rebound name no longer carries any armed
@@ -648,6 +652,9 @@ impl Checker {
                     }
                     if let Some(alias) = function_alias {
                         scope.set_function_alias(name.to_string(), alias);
+                        if let Some(definition) = declaration_alias_definition {
+                            scope.mark_bound_function_definition(binding.to_string(), definition);
+                        }
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -3069,8 +3076,12 @@ impl Checker {
             target = next;
         }
 
-        self.is_aliasable_function(target)
-            .then(|| target.to_string())
+        (self.is_aliasable_function(target)
+            || (!self.discarding
+                && !self.declarations.records().is_empty()
+                && (scope.lexical_definition(target).is_some()
+                    || self.fn_table.fns.contains_key(target))))
+        .then(|| target.to_string())
     }
 
     fn is_aliasable_function(&self, name: &str) -> bool {

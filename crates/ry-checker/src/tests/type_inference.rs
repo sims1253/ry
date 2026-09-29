@@ -2165,6 +2165,16 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_quoted_callback_formal.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_callback_partial.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_callback_actual.R"),
+        include_str!("../../testdata/oracle/assertion_subject_direct_quoted_formal.R"),
+        include_str!("../../testdata/oracle/assertion_subject_direct_quoted_actual.R"),
+        include_str!("../../testdata/oracle/assertion_subject_direct_quoted_partial.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_value.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_string.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_wrapped.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_block.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_alias_chain.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_do_call_what.R"),
         include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_used.R"),
         include_str!("../../testdata/oracle/assertion_subject_unknown_global_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_triple_namespace_primitive_alias.R"),
@@ -2235,6 +2245,17 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_pure_block_global_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_forwarded_pure_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_callback_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_direct_quoted_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_stored.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_pure_alias_chain.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_stored_string.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_nested_alias_shadow.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_overwrite_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_later_write_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_shared_pure_aliases.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env_local.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_do_call_what_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_unused.R"),
         "run <- function(env, `action` = function(...) NULL) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         "run <- function(env, `action`) action('x', 1L, assign.env = env, eval.env = env); install <- function() run(act = function(...) NULL, env = parent.frame()); f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
@@ -2262,12 +2283,22 @@ fn shared_callback_aliases_have_bounded_purity_work() {
         ));
     }
     source.push_str("run <- function(action) action()\ninstall <- function() run(a24)\nf <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n");
-    let start = std::time::Instant::now();
-    let diagnostics = check(&source);
+    let file = parse_file("alias-diamond.R", &source);
+    let mut checker = Checker::new("alias-diamond.R");
+    checker.collect_fns(&file.stmts);
+    let mut purity = CallerBindingPurity {
+        table: &checker.fn_table,
+        completed: HashMap::new(),
+        visiting: HashSet::new(),
+        remaining: 128,
+    };
+    assert!(purity.inert_source("a24"));
+    assert!(purity.inert_source("b24"));
     assert!(
-        start.elapsed().as_secs() < 3,
-        "a shared alias DAG must be traversed once per node"
+        128 - purity.remaining <= 52,
+        "shared suffixes should consume work once per unique alias/function"
     );
+    let diagnostics = check(&source);
     assert!(
         diagnostics
             .iter()

@@ -875,6 +875,42 @@ fn callback_actual_may_install_caller_binding(
         .any(|source| !purity.inert_source(source))
 }
 
+/// Use the same semantic names for direct and composed callback effects.
+/// Ordinary type inference keeps its own argument and Scope spellings; an
+/// escaped name is not a negative proof until its R identity is decoded.
+fn match_caller_binding_argument_names(
+    formals: &[&str],
+    args: &[Arg],
+) -> Option<infer::ArgumentMatch> {
+    let actual_names: Option<Vec<_>> = args
+        .iter()
+        .map(|arg| match arg.name.as_deref() {
+            Some(name) => caller_binding_identity(name).map(Some),
+            None => Some(None),
+        })
+        .collect();
+    let actual_names = actual_names?;
+    Some(infer::match_argument_names(
+        formals,
+        actual_names.iter().map(|name| name.as_deref()),
+    ))
+}
+
+fn match_caller_binding_arguments(
+    function: &UserFn,
+    args: &[Arg],
+) -> Option<(Vec<String>, infer::ArgumentMatch)> {
+    let param_names: Option<Vec<_>> = function
+        .params
+        .iter()
+        .map(|param| caller_binding_identity(&param.name))
+        .collect();
+    let param_names = param_names?;
+    let param_refs: Vec<_> = param_names.iter().map(String::as_str).collect();
+    let matches = match_caller_binding_argument_names(&param_refs, args)?;
+    Some((param_names, matches))
+}
+
 fn invoked_callback_actual_may_install(
     function: &UserFn,
     call: &CallerBindingCallbackCall,
@@ -883,27 +919,11 @@ fn invoked_callback_actual_may_install(
     if function.caller_binding_called_formals.is_empty() {
         return false;
     }
-    let param_names: Option<Vec<_>> = function
-        .params
-        .iter()
-        .map(|param| caller_binding_identity(&param.name))
-        .collect();
-    let actual_names: Option<Vec<_>> = call
-        .args
-        .iter()
-        .map(|arg| match arg.name.as_deref() {
-            Some(name) => caller_binding_identity(name).map(Some),
-            None => Some(None),
-        })
-        .collect();
-    let (Some(param_names), Some(actual_names)) = (param_names, actual_names) else {
+    let Some((param_names, matches)) = match_caller_binding_arguments(function, &call.args) else {
         // Escaped R names require a decoder. They cannot certify that a
         // supplied callback was not bound to an invoked formal.
         return true;
     };
-    let param_refs: Vec<_> = param_names.iter().map(String::as_str).collect();
-    let matches =
-        infer::match_argument_names(&param_refs, actual_names.iter().map(|name| name.as_deref()));
     let dots_actuals: Vec<_> = matches
         .param_for_arg
         .iter()

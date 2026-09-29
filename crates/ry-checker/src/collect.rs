@@ -92,24 +92,55 @@ fn expand_block_value_sources(
     sources: HashSet<String>,
     aliases: &HashMap<String, HashSet<String>>,
 ) -> HashSet<String> {
-    let mut pending: Vec<_> = sources.into_iter().collect();
-    let mut seen = HashSet::new();
-    let mut resolved = HashSet::new();
-    while let Some(source) = pending.pop() {
-        if !seen.insert(source.clone()) {
-            resolved.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
-            continue;
+    fn unknown() -> HashSet<String> {
+        HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()])
+    }
+    fn expand_one(
+        source: &str,
+        aliases: &HashMap<String, HashSet<String>>,
+        completed: &mut HashMap<String, HashSet<String>>,
+        visiting: &mut HashSet<String>,
+        remaining: &mut usize,
+    ) -> HashSet<String> {
+        if let Some(result) = completed.get(source) {
+            return result.clone();
         }
-        if seen.len() > 128 {
-            return HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()]);
+        if *remaining == 0 || !visiting.insert(source.to_string()) {
+            return unknown();
         }
-        if let Some(values) = aliases.get(&source) {
-            if values.contains(&source) {
-                resolved.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+        *remaining -= 1;
+        let result = if let Some(values) = aliases.get(source) {
+            let mut result = HashSet::new();
+            for value in values {
+                result.extend(expand_one(value, aliases, completed, visiting, remaining));
+                if result.len() > 128 {
+                    result = unknown();
+                    break;
+                }
             }
-            pending.extend(values.iter().filter(|value| *value != &source).cloned());
+            result
         } else {
-            resolved.insert(source);
+            HashSet::from([source.to_string()])
+        };
+        visiting.remove(source);
+        completed.insert(source.to_string(), result.clone());
+        result
+    }
+
+    let mut completed = HashMap::new();
+    let mut visiting = HashSet::new();
+    let mut remaining = 128;
+    let mut resolved = HashSet::new();
+    for source in sources {
+        resolved.extend(expand_one(
+            &source,
+            aliases,
+            &mut completed,
+            &mut visiting,
+            &mut remaining,
+        ));
+        if resolved.len() > 128 {
+            return unknown();
         }
     }
     resolved
@@ -243,19 +274,151 @@ fn variadic_callable_source(name: &str) -> bool {
             .is_some_and(|index| index > 0)
 }
 
-fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
+/// `Err` means a tagged actual's semantic name is unknown, so callers must
+/// keep the installer effect uncertain rather than treating it as omitted.
+fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&'a Expr>, ()> {
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
         "delayedAssign" => (["x", "value", "eval.env", "assign.env"].as_slice(), 3),
-        _ => return None,
+        _ => return Ok(None),
     };
     // Exact names bind first, then unique partial names, then the remaining
     // unnamed actuals. A raw index is wrong after a later named actual fills
     // an earlier formal (notably `eval.env =` before `assign.env`).
-    match_arguments(formals, args)
+    Ok(crate::match_caller_binding_argument_names(formals, args)
+        .ok_or(())?
         .arg_for_param(environment)
         .and_then(|index| args.get(index))
-        .map(|arg| &arg.value)
+        .map(|arg| &arg.value))
+}
+
+fn note_do_call_sources(
+    sources: impl IntoIterator<Item = String>,
+    callees: &mut HashSet<String>,
+    indirect_call: &mut bool,
+) {
+    for source in sources {
+        if matches!(
+            source.as_str(),
+            "delayedAssign"
+                | "makeActiveBinding"
+                | "base::delayedAssign"
+                | "base::makeActiveBinding"
+                | UNKNOWN_CALLER_BINDING_IDENTITY
+        ) {
+            *indirect_call = true;
+        } else {
+            callees.insert(source);
+        }
+    }
+}
+
+/// Follow local `do.call` target assignments in source order, in this
+/// helper's lexical body. A later overwrite cannot affect an earlier call,
+/// and a same-named assignment in an uncalled nested function is not local
+/// provenance for that call. Control-flow assignments merge conservatively.
+fn local_do_call_effects(
+    body: &[Stmt],
+    aliases: &mut HashMap<String, HashSet<String>>,
+    callees: &mut HashSet<String>,
+    indirect_call: &mut bool,
+    remaining: &mut usize,
+) {
+    let policy = Walk {
+        assign_targets: false,
+        assign_operands: true,
+        dollar_args: false,
+        fn_bodies: false,
+        control_tests: true,
+    };
+    for statement in body {
+        if *remaining == 0 {
+            *indirect_call = true;
+            return;
+        }
+        // Count block nesting as well as visited AST nodes so a chain of
+        // single-statement blocks cannot bypass the total-work limit.
+        *remaining -= 1;
+        if let Stmt::Expr(Expr::Block { body, .. }) = statement {
+            local_do_call_effects(body, aliases, callees, indirect_call, remaining);
+            continue;
+        }
+        let direct_assignment = match statement {
+            Stmt::Assign { target, value, .. } => Some((target, value)),
+            Stmt::Expr(Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            }) => Some((lhs.as_ref(), rhs.as_ref())),
+            _ => None,
+        };
+        {
+            let mut visit = |node: AstNode<'_>, _| {
+                if *remaining == 0 {
+                    *indirect_call = true;
+                    return ControlFlow::<(), Descend>::Break(());
+                }
+                *remaining -= 1;
+                if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+                    if ident_name(func).is_some_and(|name| bare_name(name) == "do.call") {
+                        match crate::match_caller_binding_argument_names(
+                            &["what", "args", "quote", "envir"],
+                            args,
+                        ) {
+                            Some(matched) => {
+                                if let Some(target) =
+                                    matched.arg_for_param(0).and_then(|index| args.get(index))
+                                {
+                                    let sources =
+                                        global_caller_binding_value_sources(&target.value, 64);
+                                    note_do_call_sources(
+                                        expand_block_value_sources(sources, aliases),
+                                        callees,
+                                        indirect_call,
+                                    );
+                                }
+                            }
+                            None => *indirect_call = true,
+                        }
+                    }
+                }
+                let assignment = match node {
+                    AstNode::Stmt(Stmt::Assign { target, value, .. }) => Some((target, value)),
+                    AstNode::Expr(Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        rhs,
+                        ..
+                    }) => Some((lhs.as_ref(), rhs.as_ref())),
+                    _ => None,
+                };
+                if let Some((Expr::Ident { name, .. }, value)) = assignment {
+                    if let Some(name) = caller_binding_identity(name) {
+                        aliases
+                            .entry(name)
+                            .or_default()
+                            .extend(global_caller_binding_value_sources(value, 64));
+                    } else {
+                        *indirect_call = true;
+                    }
+                }
+                ControlFlow::<(), Descend>::Continue(Descend::Into)
+            };
+            if let Some((_, value)) = direct_assignment {
+                let _ = walk_expr(value, policy, &mut visit);
+            } else {
+                let _ = walk_stmt(statement, policy, &mut visit);
+            }
+        }
+        if let Some((Expr::Ident { name, .. }, value)) = direct_assignment {
+            if let Some(name) = caller_binding_identity(name) {
+                aliases.insert(name, global_caller_binding_value_sources(value, 64));
+            } else {
+                *indirect_call = true;
+            }
+        }
+    }
 }
 
 /// A small caller-effect summary, collected once with the function body.
@@ -357,6 +520,7 @@ fn helper_caller_binding_summary_bounded(
     let mut callees = HashSet::new();
     let mut potential_callback_arguments = Vec::new();
     let mut local_aliases: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut do_call_targets = Vec::new();
     let mut indirect_call = false;
     let mut collect_effect = |node: AstNode<'_>, _| {
         let assignment = match node {
@@ -381,27 +545,20 @@ fn helper_caller_binding_summary_bounded(
             }
         }
         if let AstNode::Expr(Expr::Call { func, args, span }) = node {
-            if ident_name(func).is_some_and(|name| bare_name(name) == "do.call")
-                && let Some(target) = match_arguments(&["what", "args", "quote", "envir"], args)
-                    .arg_for_param(0)
-                    .and_then(|index| args.get(index))
-            {
-                // `do.call` accepts both function values and string names.
-                // The latter are data until this invocation, so a literal
-                // string or an unresolved wrapper cannot certify purity.
-                for source in global_caller_binding_value_sources(&target.value, 64) {
-                    if matches!(
-                        source.as_str(),
-                        "delayedAssign"
-                            | "makeActiveBinding"
-                            | "base::delayedAssign"
-                            | "base::makeActiveBinding"
-                            | UNKNOWN_CALLER_BINDING_IDENTITY
-                    ) {
-                        indirect_call = true;
-                    } else {
-                        callees.insert(source);
+            if ident_name(func).is_some_and(|name| bare_name(name) == "do.call") {
+                match crate::match_caller_binding_argument_names(
+                    &["what", "args", "quote", "envir"],
+                    args,
+                ) {
+                    Some(matched) => {
+                        if let Some(target) =
+                            matched.arg_for_param(0).and_then(|index| args.get(index))
+                        {
+                            do_call_targets
+                                .push(global_caller_binding_value_sources(&target.value, 64));
+                        }
                     }
+                    None => indirect_call = true,
                 }
             }
             if let Some(name) = ident_name(func).and_then(caller_binding_identity) {
@@ -466,6 +623,24 @@ fn helper_caller_binding_summary_bounded(
                 _ => indirect_call = true,
             }
         }
+    }
+    // A target found in a nested/default body still keeps its prior global
+    // conservative classification. The lexical pass adds local assignment
+    // provenance for directly executed calls, including string values that
+    // become callable only when passed as `what`.
+    for sources in &do_call_targets {
+        note_do_call_sources(sources.iter().cloned(), &mut callees, &mut indirect_call);
+    }
+    if !do_call_targets.is_empty() {
+        let mut local_aliases_at_call = HashMap::new();
+        let mut remaining = 4096;
+        local_do_call_effects(
+            body,
+            &mut local_aliases_at_call,
+            &mut callees,
+            &mut indirect_call,
+            &mut remaining,
+        );
     }
     // A local function-valued alias may be called long after the assignment,
     // including through another alias. Retain every syntactically possible
@@ -574,8 +749,12 @@ fn helper_caller_binding_summary_bounded(
             if !seen.insert(candidate) {
                 continue;
             }
-            if let Some(environment) = installer_environment_arg(candidate, args) {
-                installer_environments.push((*start, environment.clone()));
+            match installer_environment_arg(candidate, args) {
+                Ok(Some(environment)) => {
+                    installer_environments.push((*start, environment.clone()));
+                }
+                Err(()) => indirect_call = true,
+                Ok(None) => {}
             }
             if let Some(sources) = local_aliases.get(candidate) {
                 possible_names.extend(sources.iter().map(String::as_str));
@@ -613,7 +792,7 @@ fn helper_caller_binding_summary_bounded(
             }
             Stmt::Expr(Expr::Call { func, args, span }) => {
                 if let Some(name) = ident_name(func)
-                    && let Some(environment) = installer_environment_arg(bare_name(name), args)
+                    && let Ok(Some(environment)) = installer_environment_arg(bare_name(name), args)
                     && definitely_local_installer_env(environment, &straight_local)
                 {
                     certified_calls.insert(span.start);

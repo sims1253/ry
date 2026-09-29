@@ -12,12 +12,9 @@ fn supplied_callable_may_install_caller_binding(
     if function.caller_binding_called_formals.is_empty() {
         return false;
     }
-    let param_names: Vec<_> = function
-        .params
-        .iter()
-        .map(|param| param.name.as_str())
-        .collect();
-    let matches = match_argument_names(&param_names, args.iter().map(|arg| arg.name.as_deref()));
+    let Some((param_names, matches)) = crate::match_caller_binding_arguments(function, args) else {
+        return true;
+    };
     let dots_actuals: Vec<_> = matches
         .param_for_arg
         .iter()
@@ -39,8 +36,8 @@ fn supplied_callable_may_install_caller_binding(
         })
     };
     function.caller_binding_called_formals.iter().any(|called| {
-        let named = function.params.iter().enumerate().any(|(formal, param)| {
-            crate::caller_binding_identity(&param.name).as_deref() == Some(called.as_str())
+        let named = param_names.iter().enumerate().any(|(formal, param)| {
+            param == called
                 && matches
                     .arg_for_param(formal)
                     .is_some_and(actual_may_install)

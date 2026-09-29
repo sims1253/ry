@@ -254,6 +254,44 @@ pub(crate) fn collect_callable_binding_write(
     }
 }
 
+/// A deliberately narrow proof for calls whose implementation cannot run a
+/// user expression here. Absent effect metadata in a typeshed is not proof:
+/// retrieving a value can force an active binding or a delayed promise.
+pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> bool {
+    let Expr::Ident { name, .. } = func else {
+        return false;
+    };
+    match semantic_argument_name(name) {
+        "base::quote" | "base:::quote" => true,
+        "eval" | "base::eval" | "base:::eval" => {
+            let expression = args
+                .iter()
+                .find(|argument| {
+                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
+                })
+                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+            matches!(
+                expression.map(|argument| &argument.value),
+                Some(Expr::Call { func, args, .. })
+                    if matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::quote" | "base:::quote"))
+                        && args.first().is_some_and(|arg| matches!(arg.value, Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) | Expr::Null(..) | Expr::Na(..)))
+            )
+        }
+        "evalq" | "base::evalq" | "base:::evalq" => args.first().is_some_and(|arg| {
+            matches!(
+                arg.value,
+                Expr::Logical(..)
+                    | Expr::Integer(..)
+                    | Expr::Double(..)
+                    | Expr::String(..)
+                    | Expr::Null(..)
+                    | Expr::Na(..)
+            )
+        }),
+        _ => false,
+    }
+}
+
 fn collect_immediate_outward_writes(
     body: &[Stmt],
     outward: &mut FxSet<String>,
@@ -350,6 +388,8 @@ pub(crate) struct PotentialHelperCalls {
     pub(crate) aliases: FxMap<String, FxSet<String>>,
     pub(crate) local_literals: FxMap<String, FxSet<Span>>,
     pub(crate) unknown_bindings: FxSet<String>,
+    pub(crate) certified_calls: FxSet<String>,
+    pub(crate) unproven_calls: FxSet<String>,
     pub(crate) uncertain: bool,
 }
 
@@ -391,6 +431,16 @@ fn scan_possible_helper_node(
     };
     match node {
         AstNode::Stmt(Stmt::Assign { target, value, .. }) => note_assignment(target, value),
+        AstNode::Stmt(Stmt::For { name, .. }) => {
+            let name = capture_identifier_name(name);
+            if name == UNKNOWN_CAPTURE_BINDING {
+                calls.uncertain = true;
+            } else {
+                // Each iteration can install a different callable under
+                // this local name, independent of a same-named outer helper.
+                calls.unknown_bindings.insert(name.to_string());
+            }
+        }
         AstNode::Expr(Expr::BinOp {
             op: BinOpKind::Assign,
             lhs,
@@ -408,6 +458,10 @@ fn scan_possible_helper_node(
                     collect_callable_binding_write(func, args, &mut direct);
                     if !direct.is_empty() {
                         calls.handled_calls.insert(name.to_string());
+                    } else if certified_literal_effect_free_call(func, args) {
+                        calls.certified_calls.insert(name.to_string());
+                    } else {
+                        calls.unproven_calls.insert(name.to_string());
                     }
                 }
             }

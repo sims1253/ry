@@ -1009,7 +1009,7 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
 fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
     let file = parse(
         "pure-helper.R",
-        "f <- function(x) { stopifnot(is.integer(x)); x }\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
+        "f <- function(x) x\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
     );
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![record(
@@ -1026,6 +1026,162 @@ fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
         .map(|finding| &file.source[finding.span.start..finding.span.end])
         .collect::<Vec<_>>();
     assert_eq!(spans, vec!["\"before\"", "\"after\""]);
+}
+
+#[test]
+fn forcing_a_possible_active_or_delayed_binding_drops_stale_contract_identity() {
+    for setup in [
+        "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, e)",
+        "e <- new.env(); delayedAssign(\"trigger\", { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, assign.env = e)",
+        // The retrieval is actually inert, but no source-level proof that a
+        // binding in an arbitrary environment is ordinary is available.
+        "e <- new.env(); e$trigger <- 1L",
+    ] {
+        let source = format!(
+            "{setup}\nf <- function(x) x\nf(\"before\")\nget(\"trigger\", envir = e)\nf(\"after\")\n"
+        );
+        let file = parse("forced-binding.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        assert_eq!(spans, vec!["\"before\""], "setup: {setup}");
+    }
+}
+
+#[test]
+fn forcing_a_nonliteral_actual_promise_can_replace_the_declared_callee() {
+    for (definition, supply, call, expected) in [
+        (
+            "f <- function(x) x",
+            SupplyStatus::Required,
+            "f(e$trigger)",
+            vec!["\"before\""],
+        ),
+        (
+            "f <- function(x = e$trigger) x",
+            SupplyStatus::Defaulted,
+            "f()",
+            vec!["\"before\""],
+        ),
+        (
+            "f <- function(x) { is.integer(e$trigger); x }",
+            SupplyStatus::Required,
+            "f(1L)",
+            vec!["\"before\""],
+        ),
+        (
+            "f <- function(x) x",
+            SupplyStatus::Required,
+            "f(1L)",
+            vec!["\"before\"", "\"after\""],
+        ),
+    ] {
+        let source = format!(
+            "e <- new.env()\nmakeActiveBinding(\"trigger\", function() {{ assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }}, e)\n{definition}\nf(\"before\")\n{call}\nf(\"after\")\n"
+        );
+        let file = parse("active-actual.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, supply),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        assert_eq!(spans, expected, "definition: {definition}; call: {call}");
+    }
+}
+
+#[test]
+fn alias_only_helper_chains_spend_a_shared_effect_budget() {
+    for (aliases, expected_g_after) in [(12, true), (10_000, false)] {
+        let mut source = String::from(
+            "f <- function(x) x\ng <- function(x) x\nmutate <- function() f <<- function(x) x\nbridge <- function() {\n  a0 <- mutate\n",
+        );
+        for index in 1..=aliases {
+            source.push_str(&format!("  a{index} <- a{}\n", index - 1));
+        }
+        source.push_str(&format!(
+            "  a{aliases}()\n}}\nf(\"before\")\ng(\"before\")\nbridge()\nf(\"after\")\ng(\"after\")\n"
+        ));
+        let file = parse("alias-budget.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![
+            record(
+                &file,
+                "f",
+                ("x", AtomicMode::Integer, SupplyStatus::Required),
+                None,
+            ),
+            record(
+                &file,
+                "g",
+                ("x", AtomicMode::Integer, SupplyStatus::Required),
+                None,
+            ),
+        ]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        let expected = if expected_g_after {
+            vec!["\"before\"", "\"before\"", "\"after\""]
+        } else {
+            vec!["\"before\"", "\"before\""]
+        };
+        assert_eq!(spans, expected, "alias count: {aliases}");
+    }
+}
+
+#[test]
+fn loop_binder_callable_shadows_a_same_named_pure_outer_helper() {
+    for (body, expected) in [
+        (
+            "for (h in list(function() f <<- function(x) x)) h()",
+            vec!["\"before\""],
+        ),
+        ("for (h in 1L) 1L", vec!["\"before\"", "\"after\""]),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nh <- function() 1L\nbridge <- function() {{ {body} }}\nf(\"before\")\nbridge()\nf(\"after\")\n"
+        );
+        let file = parse("loop-helper-shadow.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        assert_eq!(spans, expected, "body: {body}");
+    }
 }
 
 #[test]
@@ -1651,7 +1807,7 @@ fn other_file_global_write_does_not_replace_a_nested_local_literal() {
 fn mixed_or_unknown_evidence_does_not_prove_a_call_mismatch() {
     let file = parse(
         "uncertain.R",
-        "f <- function(x) { x }\nf(if (flag) 1L else \"text\")\nf(missing_value)\nf(TRUE)\n",
+        "f <- function(x) { x }\nf(TRUE)\nf(if (flag) 1L else \"text\")\nf(missing_value)\n",
     );
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![record(

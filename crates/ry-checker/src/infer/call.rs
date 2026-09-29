@@ -19,37 +19,61 @@ impl Checker {
         // Resolve a directly bound helper before inferring its arguments:
         // R fixes the call head before promises can mutate its binding. The
         // effect is applied only after the call itself has been checked.
-        let helper_writes =
-            if checking_declarations {
-                match func {
-                    Expr::Function { params, body, .. } => {
-                        Some(self.declaration_literal_helper_writes(params, body, scope))
-                    }
-                    _ => match callee_name(func) {
-                        Some(name)
-                            if direct_writes.is_empty()
-                                || scope
-                                    .lexical_definition(semantic_argument_name(&name))
-                                    .is_some()
-                                || self
-                                    .fn_table
-                                    .fns
-                                    .contains_key(semantic_argument_name(&name)) =>
-                        {
-                            Some(self.declaration_known_call_writes(
-                                semantic_argument_name(&name),
-                                scope,
-                            ))
-                        }
-                        None if direct_writes.is_empty() => Some(FxSet::from_iter([
-                            crate::collect::UNKNOWN_CAPTURE_BINDING.to_string(),
-                        ])),
-                        _ => None,
-                    },
+        let mut helper_writes = if checking_declarations {
+            match func {
+                Expr::Function { params, body, .. } => {
+                    Some(self.declaration_literal_helper_writes(params, body, scope))
                 }
-            } else {
-                None
-            };
+                _ => match callee_name(func) {
+                    Some(name)
+                        if direct_writes.is_empty()
+                            || scope
+                                .lexical_definition(semantic_argument_name(&name))
+                                .is_some()
+                            || self
+                                .fn_table
+                                .fns
+                                .contains_key(semantic_argument_name(&name)) =>
+                    {
+                        let name = semantic_argument_name(&name);
+                        if crate::collect::certified_literal_effect_free_call(func, args)
+                            && scope.get(name).is_none()
+                            && scope.lexical_definition(name).is_none()
+                            && !self.fn_table.fns.contains_key(name)
+                        {
+                            Some(FxSet::default())
+                        } else {
+                            Some(self.declaration_known_call_writes(name, scope))
+                        }
+                    }
+                    None if direct_writes.is_empty() => Some(FxSet::from_iter([
+                        crate::collect::UNKNOWN_CAPTURE_BINDING.to_string(),
+                    ])),
+                    _ => None,
+                },
+            }
+        } else {
+            None
+        };
+        if checking_declarations
+            && args
+                .iter()
+                .any(|arg| !declaration_closed_literal(&arg.value))
+            && callee_name(func).is_some_and(|name| {
+                let name = semantic_argument_name(&name);
+                scope.lexical_definition(name).is_some()
+                    || scope.function_alias(name).is_some()
+                    || self.fn_table.fns.contains_key(name)
+                    || self.fn_table.capture_literal_bindings.contains_key(name)
+            })
+        {
+            // A user function may force an actual promise whose expression
+            // reads an active/delayed binding. Even a body with no explicit
+            // outward assignment can then replace a captured declaration.
+            helper_writes
+                .get_or_insert_with(FxSet::default)
+                .insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
         if self.capture_references {
             self.enable_eager_reference_argument(func, args, scope, span);
         }
@@ -100,14 +124,6 @@ impl Checker {
     }
 
     fn declaration_known_call_writes(&self, name: &str, scope: &Scope) -> FxSet<String> {
-        if scope.lexical_definition(name).is_none()
-            && scope.function_alias(name).is_none()
-            && !self.fn_table.fns.contains_key(name)
-            && !self.fn_table.capture_literal_bindings.contains_key(name)
-            && self.declaration_stub_has_no_binding_effect(name, scope)
-        {
-            return FxSet::default();
-        }
         let mut writes = FxSet::default();
         let mut remaining = 64;
         let mut visiting = FxSet::default();
@@ -123,18 +139,6 @@ impl Checker {
             &mut writes,
         );
         writes
-    }
-
-    fn declaration_stub_has_no_binding_effect(&self, name: &str, scope: &Scope) -> bool {
-        scope.get(name).is_none()
-            && self.resolve_typeshed_sig(name).is_some_and(|signature| {
-                signature.scope_effect.is_none()
-                    && signature.conditional_scope_effect.is_none()
-                    && signature.higher_order.is_none()
-                    // `do.call` executes the function supplied through
-                    // `what`, even when the typeshed has no scope effect.
-                    && crate::semantic_lists::bare_name(name) != "do.call"
-            })
     }
 
     fn declaration_literal_helper_writes(
@@ -181,6 +185,9 @@ impl Checker {
             writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
             return;
         }
+        // A long chain of local or scope aliases must spend the same bound
+        // as function and immediate-closure descent before recursing.
+        *remaining -= 1;
         let mut candidates = Vec::<UserFn>::new();
         let mut candidate_keys = FxSet::default();
         let mut add = |function: &UserFn| {
@@ -261,13 +268,22 @@ impl Checker {
             self.declaration_function_helper_writes(&function, scope, remaining, visiting, writes);
         }
         if !found
+            && possible.is_some_and(|possible| {
+                possible.unproven_calls.contains(name)
+                    && !possible.aliases.contains_key(name)
+                    && !possible.local_literals.contains_key(name)
+            })
+        {
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
+        if !found
             && possible.is_none_or(|possible| {
                 !possible.aliases.contains_key(name)
                     && !possible.local_literals.contains_key(name)
                     && !possible.handled_calls.contains(name)
+                    && !possible.certified_calls.contains(name)
             })
             && scope.function_alias(name).is_none()
-            && !self.declaration_stub_has_no_binding_effect(name, scope)
         {
             writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
         }
@@ -293,6 +309,19 @@ impl Checker {
         }
         *remaining -= 1;
         writes.extend(function.outward_writes().iter().cloned());
+        if function.source_params.as_deref().is_some_and(|params| {
+            params.iter().any(|param| {
+                param
+                    .default
+                    .as_ref()
+                    .is_some_and(|default| !declaration_closed_literal(default))
+            })
+        }) {
+            // An omitted default is also a promise. Without call-specific
+            // forcing proof, an expression such as e$trigger may read an
+            // active binding and replace a captured callable.
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+        }
         let mut possible = crate::collect::potential_helper_calls(
             function.source_params.as_deref().unwrap_or(&[]),
             &function.body,
@@ -2588,6 +2617,18 @@ fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) 
                     .iter()
                     .any(|param| param.name == *fingerprint)
             })
+}
+
+fn declaration_closed_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..)
+    )
 }
 
 #[cfg(test)]

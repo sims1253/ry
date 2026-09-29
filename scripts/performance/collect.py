@@ -58,6 +58,7 @@ def replay_rows(path):
     for scenario, target in targets.items():
         samples = warm[scenario]
         values = durations(samples, counts['warm_per_scenario'], scenario)
+        previous_generation = None
         for sample in samples:
             digest = sample.get('snapshot_sha256')
             if sample.get('completion') != target or not isinstance(digest, str) or len(digest) != 64:
@@ -67,6 +68,15 @@ def replay_rows(path):
             if any(type(sample.get(key)) is not int or sample[key] < 1
                    for key in ('edited_version', 'completion_version')):
                 raise ValueError(f'{scenario} lacks document versions')
+            generation = sample.get('analysis_generation')
+            if scenario == 'local-clean':
+                if generation is not None:
+                    raise ValueError('Clean completion must use its document version')
+            elif type(generation) is not int or generation < 1 or (
+                previous_generation is not None and generation <= previous_generation
+            ):
+                raise ValueError(f'{scenario} lacks a fresh analysis generation')
+            previous_generation = generation
         ordered = sorted(values)
         # Nearest-rank p95: ceiling(0.95 * n), one-indexed. Never calculate a
         # tail percentile from the five fresh-process startup observations.

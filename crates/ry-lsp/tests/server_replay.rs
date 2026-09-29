@@ -46,6 +46,7 @@ struct Replay {
     versions: BTreeMap<String, i32>,
     uri_to_path: BTreeMap<String, String>,
     published: BTreeMap<String, Vec<Published>>,
+    last_generation: u64,
 }
 
 impl Replay {
@@ -72,7 +73,12 @@ impl Replay {
         let stdout = child.stdout.take().ok_or("server stdout is not piped")?;
         let stdin = child.stdin.take().ok_or("server stdin is not piped")?;
         let mut session = LspSession::new(stdout, stdin);
-        session.initialize(live.root()).await?;
+        session
+            .initialize_with_capabilities(
+                live.root(),
+                json!({"textDocument": {"publishDiagnostics": {"dataSupport": true}}}),
+            )
+            .await?;
         let mark = session.publication_mark();
         for (path, source) in &workload.files {
             session
@@ -85,6 +91,8 @@ impl Replay {
             .await?;
         let startup_ns = nanos(checkpoint.first_received_at.duration_since(started));
         assert_eq!(checkpoint.first.pointer("/params/version"), Some(&json!(1)));
+        let last_generation = completion_generation(&checkpoint.first, None)?
+            .ok_or("startup target has no origin-bearing diagnostic")?;
 
         let mut replay = Self {
             live,
@@ -96,6 +104,7 @@ impl Replay {
             versions: workload.files.keys().map(|p| (p.clone(), 1)).collect(),
             uri_to_path,
             published: BTreeMap::new(),
+            last_generation,
         };
         replay.apply_publications(checkpoint.publications);
         // Initial readiness is a real publication plus fresh analysis, not a
@@ -191,6 +200,14 @@ impl Replay {
             self.fresh.root(),
         );
         assert_eq!(first, expected_target, "first target publication is stale");
+        // An unchanged caller keeps its document version and can have the
+        // same findings in every warm repetition. Its diagnostic origin must
+        // therefore advance beyond the previous accepted analysis pass.
+        let analysis_generation =
+            completion_generation(&checkpoint.first, Some(self.last_generation))?;
+        if let Some(generation) = analysis_generation {
+            self.last_generation = generation;
+        }
         self.apply_publications(checkpoint.publications);
         self.assert_fresh()?;
         Ok(json!({
@@ -198,6 +215,7 @@ impl Replay {
             "snapshot_sha256": hex_hash(&serde_json::to_vec(&self.sources)?),
             "edited_version": edited_version,
             "completion_version": target_version,
+            "analysis_generation": analysis_generation,
             "completion": completion,
         }))
     }
@@ -229,6 +247,35 @@ fn hex_hash(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn completion_generation(
+    publication: &Value,
+    floor: Option<u64>,
+) -> Result<Option<u64>, DriverError> {
+    let diagnostics = publication
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .ok_or("completion lacks a diagnostic array")?;
+    let mut generation = None;
+    for diagnostic in diagnostics {
+        let next = diagnostic
+            .pointer("/data/ry/generation")
+            .and_then(Value::as_u64)
+            .ok_or("nonempty completion lacks an analysis generation")?;
+        if generation.is_some_and(|current| current != next) {
+            return Err("one publication combines different analysis generations".into());
+        }
+        generation = Some(next);
+    }
+    if let (Some(current), Some(previous)) = (generation, floor)
+        && current <= previous
+    {
+        return Err(
+            format!("stale completion generation {current} is not newer than {previous}").into(),
+        );
+    }
+    Ok(generation)
 }
 
 fn required_count(name: &str, default: usize) -> usize {
@@ -318,6 +365,73 @@ async fn server_edit_replay_matches_fresh_cli() -> Result<(), DriverError> {
         fs::write(path, serde_json::to_vec_pretty(&report)?)?;
     }
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repeated_caller_finding_rejects_the_previous_analysis_generation()
+-> Result<(), DriverError> {
+    let workload_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/server-replay/v1.json");
+    let workload: Workload = serde_json::from_slice(&fs::read(workload_path)?)?;
+    let binary = env::var_os("RY_REPLAY_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(ry_binary)
+        .canonicalize()?;
+    let (mut replay, _) = Replay::start(&binary, &workload).await?;
+    let helper = file_uri(&replay.live.path("R/helper.R"))?;
+    let caller = file_uri(&replay.live.path("R/caller.R"))?;
+
+    let mark = replay.session.publication_mark();
+    replay
+        .session
+        .change(
+            &helper,
+            2,
+            json!([{"text": "value <- function() \"text\"\n"}]),
+        )
+        .await?;
+    let first = replay
+        .session
+        .quiesce_diagnostics_timed(&caller, mark, DRAIN_IDLE)
+        .await?
+        .first;
+    let old_generation = completion_generation(&first, Some(replay.last_generation))?
+        .ok_or("caller must report a diagnostic")?;
+    assert_eq!(first.pointer("/params/version"), Some(&json!(1)));
+
+    let mark = replay.session.publication_mark();
+    replay
+        .session
+        .change(&helper, 3, json!([{"text": "value <- function() 1L\n"}]))
+        .await?;
+    let reset = replay
+        .session
+        .quiesce_diagnostics_timed(&caller, mark, DRAIN_IDLE)
+        .await?;
+    assert_eq!(reset.first["params"]["diagnostics"], json!([]));
+
+    // A second final edit would produce the same caller version and RY040.
+    // Replaying the earlier publication instead must fail even though a fresh
+    // CLI check of the intended source has identical normalized findings.
+    replay
+        .fresh
+        .write_file("R/helper.R", "value <- function() \"text\"\n")?;
+    let expected: Vec<_> = replay
+        .cli_diagnostics()?
+        .into_iter()
+        .filter(|item| item.path == "R/caller.R")
+        .collect();
+    assert_eq!(
+        published_from_lsp(
+            &first,
+            &replay.fresh.path("R/caller.R"),
+            replay.fresh.root()
+        ),
+        expected
+    );
+    let stale = completion_generation(&first, Some(old_generation)).unwrap_err();
+    assert!(stale.to_string().contains("stale completion generation"));
+    replay.finish().await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

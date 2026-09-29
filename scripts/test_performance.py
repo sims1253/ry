@@ -61,6 +61,7 @@ class PerformanceReportTests(unittest.TestCase):
                     'completion': target,
                     'edited_version': n + 1,
                     'completion_version': 1,
+                    'analysis_generation': None if scenario == 'local-clean' else n + 100,
                 }
                 for n in range(1, 31)
             ]
@@ -142,6 +143,14 @@ class PerformanceReportTests(unittest.TestCase):
         report['warm']['cross-file-caller'][0]['completion'] = 'R/helper.R'
         path.write_text(json.dumps(report))
         with self.assertRaisesRegex(ValueError, 'completion snapshot'):
+            collect(self.root, server_replay=path)
+
+    def test_server_replay_rejects_reused_caller_analysis_generation(self):
+        path, report = self.write_replay()
+        caller = report['warm']['cross-file-caller']
+        caller[1]['analysis_generation'] = caller[0]['analysis_generation']
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'fresh analysis generation'):
             collect(self.root, server_replay=path)
 
 

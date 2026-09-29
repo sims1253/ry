@@ -85,7 +85,11 @@ for the edited helper cannot stop that timer.
 For a warm sample, the timer starts just before the client sends the complete
 `didChange` JSON-RPC frame. It stops on the first publication for the scenario's
 completion file after that edit. The test requires the analyzed open-document
-version and the expected findings in that notification. It then drains other
+version and the expected findings in that notification. For a nonempty result,
+it also requires diagnostic origin data with an analysis generation newer than
+the previous accepted result. This disambiguates identical findings in the
+unchanged caller across repetitions, whose document version stays fixed.
+It then drains other
 notifications and compares the entire observed diagnostic state with a fresh
 CLI check of equivalent source bytes in an isolated tree. That independent
 comparison, fixture writes, and reset edits occur outside the timed interval.
@@ -99,7 +103,8 @@ Startup runs from process spawn through the first versioned diagnostic; it does
 not claim cold disk caches. The report shows a median for startup and a median
 and nearest-rank p95 for each warm scenario (the value at sorted one-based rank
 `ceil(0.95 × n)`). It never derives a startup tail estimate from five samples.
-Raw nanosecond durations, per-sample snapshot hashes and document versions,
+Raw nanosecond durations, per-sample snapshot hashes, document versions, and
+nonempty-result analysis generations,
 the fixture and binary SHA-256 hashes, binary/Rust versions, Rayon setting, and
 sample counts are retained in `server-replay.json`. These server timings are
 advisory, like the other hosted-runner measurements; confirm suspected changes

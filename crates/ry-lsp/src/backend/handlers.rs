@@ -224,25 +224,19 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
         let mut changes = params.content_changes;
-        let collision =
+        #[cfg(feature = "test-util")]
+        let paused_transition = crate::test_seam::maybe_pause_change_transition().await;
+        let result =
             self.state
                 .lock()
                 .await
-                .apply_colliding_changes(&path, &uri, &mut changes, version);
-        if collision == CollisionChangeResult::Rejected {
-            return;
+                .apply_document_changes(&path, &uri, &mut changes, version);
+        #[cfg(feature = "test-util")]
+        if paused_transition {
+            crate::test_seam::note_change_transition_landed();
         }
-        if collision == CollisionChangeResult::NotCollision {
-            // If any change has an invalid UTF-16 range, abort the
-            // remaining batch: later ranges refer to text after that edit.
-            for change in changes {
-                if !self.apply_incremental_change(&path, change, version).await {
-                    tracing::error!(
-                        "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
-                    );
-                    break;
-                }
-            }
+        if result == CollisionChangeResult::Rejected {
+            return;
         }
         self.schedule_diagnostics(uri).await;
         // Test seam: signals didChange completion (see `test_seam`).

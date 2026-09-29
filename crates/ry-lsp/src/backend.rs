@@ -434,6 +434,77 @@ impl ProjectCache {
 }
 
 impl State {
+    /// Classify the original URI and commit its complete edit batch under
+    /// one lock. `didOpen`/`didClose` cannot change display-key ownership
+    /// between classification and a ranged splice or tree-cache update.
+    fn apply_document_changes(
+        &mut self,
+        path: &str,
+        uri: &Url,
+        changes: &mut Vec<TextDocumentContentChangeEvent>,
+        version: i32,
+    ) -> CollisionChangeResult {
+        let Some(open) = self.open_source_paths.get(path) else {
+            tracing::warn!(%uri, "ignoring change for a closed URI");
+            return CollisionChangeResult::Rejected;
+        };
+        if open.len() > 1 {
+            return self.apply_colliding_changes(path, uri, changes, version);
+        }
+        if !open.contains_key(uri) {
+            tracing::warn!(%uri, "ignoring change for a closed URI");
+            return CollisionChangeResult::Rejected;
+        }
+
+        // An invalid UTF-16 range stops the batch. Prior valid edits remain
+        // committed, as before; later ranges refer to text we could not
+        // produce and must not be applied independently.
+        for change in changes.drain(..) {
+            if let Some(range) = change.range
+                && let Some(old_text) = self.docs.get(path).cloned()
+            {
+                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
+                    tracing::error!(
+                        ?range,
+                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
+                    );
+                    tracing::error!(
+                        "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
+                    );
+                    break;
+                };
+                let mut new_text = String::with_capacity(old_text.len() + change.text.len());
+                new_text.push_str(&old_text[..start_byte]);
+                new_text.push_str(&change.text);
+                new_text.push_str(&old_text[end_byte..]);
+                let edit =
+                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
+                let mut tree = self.tree_for(path);
+                self.docs.insert(path.to_string(), new_text);
+                self.versions.insert(path.to_string(), version);
+                self.parsed.remove(path);
+                self.hints.remove(path);
+                if let Some(ref mut tree) = tree {
+                    tree.edit(&edit);
+                }
+                if let Some(tree) = tree {
+                    self.store_tree(path, version, tree);
+                } else {
+                    self.trees.remove(path);
+                }
+            } else {
+                // Full replacement, or a ranged edit without old text:
+                // the protocol's fallback replaces the whole document.
+                self.docs.insert(path.to_string(), change.text);
+                self.versions.insert(path.to_string(), version);
+                self.parsed.remove(path);
+                self.hints.remove(path);
+                self.trees.remove(path);
+            }
+        }
+        CollisionChangeResult::Applied
+    }
+
     /// Apply a whole `didChange` batch to one original URI while holding the
     /// state lock. Reading its shadow, splicing UTF-16 ranges, and replacing
     /// the active display-keyed source form one transaction. A second URI's
@@ -743,6 +814,78 @@ impl State {
 mod colliding_change_tests {
     use super::*;
 
+    #[test]
+    fn ordinary_batch_keeps_incremental_tree_and_stops_at_invalid_utf16() {
+        let uri = Url::parse("file:///tmp/ordinary.R").unwrap();
+        let path = uri_to_path(&uri);
+        let original = "x <- 1L\ny <- 2L\n";
+        let (_, tree) = RParser::new()
+            .unwrap()
+            .parse_with_tree(&path, original, None)
+            .unwrap();
+        let mut state = State::default();
+        state.docs.insert(path.clone(), original.to_string());
+        state.versions.insert(path.clone(), 1);
+        state.trees.insert(path.clone(), (1, tree));
+        state.open_source_paths.insert(
+            path.clone(),
+            HashMap::from([(
+                uri.clone(),
+                OpenSource {
+                    native: uri.to_file_path().ok(),
+                    shadow: None,
+                },
+            )]),
+        );
+        let edit = |line, start, end, text: &str| TextDocumentContentChangeEvent {
+            range: Some(Range {
+                start: Position::new(line, start),
+                end: Position::new(line, end),
+            }),
+            range_length: None,
+            text: text.to_string(),
+        };
+        let mut changes = vec![edit(0, 5, 7, "\"😀\""), edit(1, 5, 7, "3L")];
+        assert_eq!(
+            state.apply_document_changes(&path, &uri, &mut changes, 2),
+            CollisionChangeResult::Applied
+        );
+        let expected = "x <- \"😀\"\ny <- 3L\n";
+        assert_eq!(state.docs[&path], expected);
+        assert_eq!(state.versions[&path], 2);
+        let edited_tree = state.tree_for(&path).expect("ranged edits retain the tree");
+        let (_, incremental) = RParser::new()
+            .unwrap()
+            .parse_with_tree(&path, expected, Some(&edited_tree))
+            .unwrap();
+        let (_, cold) = RParser::new()
+            .unwrap()
+            .parse_with_tree(&path, expected, None)
+            .unwrap();
+        assert_eq!(
+            incremental.root_node().to_sexp(),
+            cold.root_node().to_sexp()
+        );
+
+        // UTF-16 column 7 lands inside the astral character. The following
+        // full replacement must not run after this malformed ranged edit.
+        let mut invalid = vec![
+            edit(0, 7, 7, "bad"),
+            TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "stale <- TRUE\n".to_string(),
+            },
+        ];
+        assert_eq!(
+            state.apply_document_changes(&path, &uri, &mut invalid, 3),
+            CollisionChangeResult::Applied
+        );
+        assert_eq!(state.docs[&path], expected);
+        assert_eq!(state.versions[&path], 2);
+        assert!(state.tree_for(&path).is_some());
+    }
+
     #[tokio::test]
     async fn simultaneous_ranged_edits_keep_each_native_snapshot() {
         let first = Url::parse("file:///tmp/bad%FF.R").unwrap();
@@ -966,79 +1109,6 @@ impl Backend {
         }
     }
 
-    /// Apply a single incremental text change. A ranged change is spliced
-    /// into the old text and drives a tree-sitter `InputEdit` so the
-    /// reparse is incremental; everything else replaces the document
-    /// wholesale.
-    async fn apply_incremental_change(
-        &self,
-        path: &str,
-        change: TextDocumentContentChangeEvent,
-        version: i32,
-    ) -> bool {
-        if let Some(range) = change.range {
-            let (old_text, old_tree) = {
-                let state = self.state.lock().await;
-                let old = state.docs.get(path).cloned();
-                (old, state.tree_for(path))
-            };
-
-            if let Some(old_text) = old_text {
-                // Invalid UTF-16 endpoints (including a position inside an
-                // astral surrogate pair) cannot describe a byte splice.
-                // Ignore the malformed event rather than clamping it and
-                // corrupting the document.
-                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
-                    tracing::error!(
-                        ?range,
-                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
-                    );
-                    return false;
-                };
-                let new_text = {
-                    let mut result = String::with_capacity(old_text.len() + change.text.len());
-                    result.push_str(&old_text[..start_byte]);
-                    result.push_str(&change.text);
-                    result.push_str(&old_text[end_byte..]);
-                    result
-                };
-                let edit =
-                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
-                self.update_doc(path.to_string(), new_text, version).await;
-
-                let mut tree_mut = old_tree;
-                if let Some(ref mut tree) = tree_mut {
-                    tree.edit(&edit);
-                }
-                let mut state = self.state.lock().await;
-                if let Some(tree) = tree_mut {
-                    state.store_tree(path, version, tree);
-                } else {
-                    state.trees.remove(path);
-                }
-                return true;
-            }
-        }
-        // Full replacement: no range, or no old text to splice into. Drop
-        // any stale tree so the next parse is a full parse.
-        {
-            let mut state = self.state.lock().await;
-            state.trees.remove(path);
-        }
-        self.update_doc(path.to_string(), change.text, version)
-            .await;
-        true
-    }
-
-    async fn update_doc(&self, path: String, text: String, version: i32) {
-        let mut state = self.state.lock().await;
-        state.docs.insert(path.clone(), text);
-        state.versions.insert(path.clone(), version);
-        // Invalidate the cached parse and hints; the next read repopulates.
-        state.parsed.remove(&path);
-        state.hints.remove(&path);
-    }
-
     /// Return the current AST for `path` together with the exact source
     /// text it was parsed from: handlers use the text for byte-offset /
     /// UTF-16 conversions that must match the AST's span offsets, so a
@@ -1078,20 +1148,31 @@ impl Backend {
             // `test-util` feature, it is absent from production builds
             // (#170) and costs nothing when not armed.
             #[cfg(feature = "test-util")]
-            crate::test_seam::maybe_pause().await;
+            let paused_parse = crate::test_seam::maybe_pause().await;
             let mut parser = RParser::new().ok()?;
             let (parsed, new_tree) = parser
                 .parse_with_tree(path, &text, old_tree.as_ref())
                 .ok()?;
-            {
-                let mut state = self.state.lock().await;
-                state.store_tree(path, version, new_tree);
-            }
             let file = Arc::new(parsed);
             let mut state = self.state.lock().await;
-            // If an edit landed while parsing, retry against the new version
-            // instead of returning an AST already known to be stale.
-            if state.record_parse(path, version, Arc::clone(&file)) {
+            // A different original URI can replace this display-keyed source
+            // with the same numeric version. The parsed text and version must
+            // still describe the current snapshot before either cache entry
+            // is installed; a version-only check can publish the first URI's
+            // AST through the second URI's buffer.
+            let stored = if state.versions.get(path).copied() == Some(version)
+                && state.docs.get(path) == Some(&text)
+            {
+                state.store_tree(path, version, new_tree);
+                state.record_parse(path, version, Arc::clone(&file))
+            } else {
+                false
+            };
+            #[cfg(feature = "test-util")]
+            if paused_parse {
+                crate::test_seam::note_parse_landed();
+            }
+            if stored {
                 return Some((file, text));
             }
         }

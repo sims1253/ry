@@ -211,6 +211,199 @@ fn native_filename_and_unicode_collision_never_adopt_the_wrong_contract() {
 
 #[cfg(unix)]
 #[test]
+fn change_transition_to_collision_keeps_the_edit_with_its_original_uri() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                )
+                .unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let first = "f <- function(x) {\n #| x integer\n x\n}\n";
+            let second = "g <- function(x) {\n #| x integer\n x\n}\n";
+            let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
+                fixture
+                    .path("R")
+                    .join(std::ffi::OsString::from_vec(name.to_vec()))
+            });
+            for (path, source) in paths.iter().zip([first, second]) {
+                std::fs::write(path, source).unwrap();
+            }
+            let uris = paths.map(|path| file_uri(&path).unwrap());
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&uris[0], 1, first).await.unwrap();
+            let initial = session
+                .published_diagnostics_after(&uris[0], mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&initial, "RY117"), 1, "{initial}");
+
+            // A's edit waits after the handler has received it. B opens at
+            // the same display key before A's edit commits.
+            ry_lsp::test_seam::arm_change_transition();
+            session
+                .change(
+                    &uris[0],
+                    2,
+                    json!([{"range": {
+                        "start": {"line": 0, "character": 0},
+                        "end": {"line": 0, "character": 0}
+                    }, "text": "# ry: ignore-file\n"}]),
+                )
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                ry_lsp::test_seam::wait_change_transition(),
+            )
+            .await
+            .unwrap();
+            let mark = session.publication_mark();
+            session.open(&uris[1], 2, second).await.unwrap();
+            let both = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            assert_eq!(
+                both[&uris[1]]
+                    .iter()
+                    .filter(|d| d["code"] == "RY117")
+                    .count(),
+                1
+            );
+            ry_lsp::test_seam::release_change_transition();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                ry_lsp::test_seam::wait_change_transition_landed(),
+            )
+            .await
+            .unwrap();
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": uris[1]}}),
+                )
+                .await
+                .unwrap();
+            let survivor = session
+                .published_diagnostics_after(&uris[0], mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&survivor, "RY117"), 0, "{survivor}");
+            join_session(session, server).await;
+        });
+}
+
+#[test]
+fn change_waiting_on_a_close_cannot_recreate_the_closed_document() {
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            let path = fixture.write_file("main.R", "x <- 1L\n").unwrap();
+            let uri = file_uri(&path).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, "x <- 1L\n").await.unwrap();
+            let _ = session.published_diagnostics_after(&uri, mark).await.unwrap();
+
+            ry_lsp::test_seam::arm_change_transition();
+            session.change(&uri, 2, json!([{"text": "x <- FALSE\n"}])).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(10), ry_lsp::test_seam::wait_change_transition())
+                .await
+                .unwrap();
+            let mark = session.publication_mark();
+            session
+                .notify("textDocument/didClose", json!({"textDocument": {"uri": uri}}))
+                .await
+                .unwrap();
+            let cleared = session.published_diagnostics_after(&uri, mark).await.unwrap();
+            assert!(cleared["params"]["diagnostics"].as_array().is_some_and(Vec::is_empty));
+            ry_lsp::test_seam::release_change_transition();
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                ry_lsp::test_seam::wait_change_transition_landed(),
+            )
+            .await
+            .unwrap();
+            let hints = session
+                .request("textDocument/inlayHint", json!({
+                    "textDocument": {"uri": uri},
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 20}}
+                }))
+                .await
+                .unwrap();
+            assert!(hints.is_null(), "closed source reappeared: {hints}");
+            join_session(session, server).await;
+        });
+}
+
+#[cfg(unix)]
+#[test]
+fn same_version_collision_rejects_a_parse_from_the_previous_uri() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let sources = ["a <- 1L\n", "b <- TRUE\n"];
+            let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()]
+                .map(|name| fixture.path("R").join(std::ffi::OsString::from_vec(name.to_vec())));
+            for (path, source) in paths.iter().zip(sources) {
+                std::fs::write(path, source).unwrap();
+            }
+            let uris = paths.map(|path| file_uri(&path).unwrap());
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            ry_lsp::test_seam::arm();
+            session.open(&uris[0], 1, sources[0]).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(10), ry_lsp::test_seam::wait_arrived())
+                .await
+                .unwrap();
+
+            // Both native buffers carry version 1, but have different ASTs.
+            // B's publication parses B while A's earlier parse is parked.
+            let mark = session.publication_mark();
+            session.open(&uris[1], 1, sources[1]).await.unwrap();
+            let _ = session.published_diagnostics_after(&uris[1], mark).await.unwrap();
+            ry_lsp::test_seam::release_barrier();
+            tokio::time::timeout(Duration::from_secs(10), ry_lsp::test_seam::wait_parse_landed())
+                .await
+                .unwrap();
+
+            let hints = session
+                .request("textDocument/inlayHint", json!({
+                    "textDocument": {"uri": uris[1]},
+                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 20}}
+                }))
+                .await
+                .unwrap();
+            assert_eq!(hints[0]["label"], ": logical<len=1>", "{hints}");
+            join_session(session, server).await;
+        });
+}
+
+#[cfg(unix)]
+#[test]
 fn sole_genuine_unicode_replacement_filename_adopts_normally() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

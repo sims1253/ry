@@ -59,7 +59,9 @@ pub(crate) fn adopted_records(
     let mut ambiguous = std::collections::BTreeSet::new();
     for (native, file) in files {
         let records = ry_checker::typehint::read_records_at(file, native, &scope);
-        if display_counts[file.path.as_str()] == 1 {
+        if display_counts[file.path.as_str()] == 1
+            && config::unambiguous_native_display_path(native, &file.path)
+        {
             result.records.extend(records);
         } else if !records.is_empty() {
             // Project attachment still uses the display path. Decline all

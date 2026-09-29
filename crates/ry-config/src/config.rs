@@ -156,6 +156,86 @@ impl ScopedPaths {
     }
 }
 
+/// Whether a native path can safely identify a source named by `display`.
+/// A replacement character in an otherwise valid Unicode filename may be
+/// genuine, so inspect only those path components for another native entry
+/// with the same lossy spelling. An unsaved file is allowed when no existing
+/// entry could be confused with it.
+pub fn unambiguous_native_display_path(native: &Path, display: &str) -> bool {
+    if native.to_str() != Some(display) {
+        return false;
+    }
+    let Ok(absolute) = std::path::absolute(native) else {
+        return false;
+    };
+    for prefix in absolute.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let Some(name) = prefix.file_name() else {
+            continue;
+        };
+        let Some(name_text) = name.to_str() else {
+            return false;
+        };
+        if !name_text.contains('\u{fffd}') {
+            continue;
+        }
+        let Some(parent) = prefix.parent() else {
+            return false;
+        };
+        let entries = match std::fs::read_dir(parent) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => return false,
+        };
+        let mut exact = false;
+        let mut matching = 0;
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            let entry_name = entry.file_name();
+            if entry_name.to_string_lossy() == name_text {
+                matching += 1;
+                exact |= entry_name == name;
+                if matching > 1 {
+                    return false;
+                }
+            }
+        }
+        if matching != 0 && !exact {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(all(test, unix))]
+mod native_display_tests {
+    use super::unambiguous_native_display_path;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn genuine_unicode_replacement_is_allowed_until_native_collision() {
+        let root = tempfile::tempdir().unwrap();
+        let unicode = root.path().join("bad\u{fffd}.R");
+        std::fs::write(&unicode, "x <- 1L").unwrap();
+        let display = unicode.to_str().unwrap();
+        assert!(unambiguous_native_display_path(&unicode, display));
+
+        let raw = root
+            .path()
+            .join(std::ffi::OsString::from_vec(b"bad\xff.R".to_vec()));
+        std::fs::write(&raw, "x <- 2L").unwrap();
+        assert!(!unambiguous_native_display_path(&unicode, display));
+        assert!(!unambiguous_native_display_path(
+            &raw,
+            &raw.to_string_lossy()
+        ));
+
+        std::fs::remove_file(&unicode).unwrap();
+        assert!(!unambiguous_native_display_path(&unicode, display));
+    }
+}
+
 fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
     let pattern = if cfg!(windows) {
         pattern.replace('\\', "/")

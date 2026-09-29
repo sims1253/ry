@@ -104,6 +104,11 @@ Project rechecks affected files when its record set changes.
 If distinct native filenames collapse to one display path, CLI checking
 declines their source-record attachment and reports RY117 once for that
 ambiguous path. It does not attach the scoped file's claim to its neighbor.
+The editor retains each opened file URI and native path when checking this
+identity. A native path that cannot be represented exactly, or a real Unicode
+replacement-character path with a colliding native neighbor, cannot supply
+an adopted contract; the editor reports RY117 at the opened URI. A sole,
+genuine Unicode replacement-character filename remains eligible.
 Backtick quoting of an AST formal is equivalent to the same unquoted R name;
 structured declaration-record names are literal semantic names. The reader's
 bounded simple clause grammar does not decode encoded or escaped source

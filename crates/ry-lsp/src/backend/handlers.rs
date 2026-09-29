@@ -191,6 +191,13 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.lock().await;
             state.trees.remove(&path);
+            if let Ok(native) = uri.to_file_path() {
+                state
+                    .open_source_paths
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(uri.clone(), native);
+            }
         }
         self.update_doc(path, text, version).await;
         self.schedule_diagnostics(uri).await;
@@ -535,6 +542,7 @@ impl LanguageServer for Backend {
         let remaining_open_paths = {
             let mut state = self.state.lock().await;
             state.docs.remove(&path);
+            state.open_source_paths.remove(&path);
             state.versions.remove(&path);
             state.parsed.remove(&path);
             state.hints.remove(&path);
@@ -542,6 +550,7 @@ impl LanguageServer for Backend {
             // The empty publication below clears this URI, so it must
             // leave the tracked set too (#489).
             state.published_paths.remove(&path);
+            state.published_uris.remove(&path);
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
             state.docs.keys().cloned().collect::<Vec<_>>()

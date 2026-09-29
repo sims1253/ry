@@ -65,6 +65,11 @@ pub(super) struct State {
     /// change so cross-file resolution (function defined in `a.R`
     /// visible from `b.R` when both are open in the editor) works.
     docs: HashMap<String, String>,
+    /// Native file paths and original URIs for open buffers. The document
+    /// map is keyed by a display string, which can collapse distinct Unix
+    /// filenames; annotation adoption must retain the identity before that
+    /// conversion. Multiple URIs at one display key are ambiguous.
+    open_source_paths: HashMap<String, HashMap<Url, PathBuf>>,
     /// path -> version of the most recent edit. `did_open`/`did_change`
     /// record the version here so cache freshness can be validated.
     versions: HashMap<String, i32>,
@@ -88,6 +93,9 @@ pub(super) struct State {
     /// cleared with an empty publication so stale squiggles cannot
     /// linger in the editor (#489).
     published_paths: HashSet<String>,
+    /// Actual URI used for the last non-empty publication at a display
+    /// path. It can differ from a URI rebuilt from lossy path text.
+    published_uris: HashMap<String, Url>,
     /// Index generation stamp, bumped each time `spawn_background_index`
     /// starts so results from a prior folder set are discarded. The
     /// background task captures the generation at dispatch and checks it
@@ -1005,7 +1013,7 @@ impl Backend {
         // checking so a slow check doesn't block other LSP requests
         // (e.g. didOpen of a second file). Only eligible documents'
         // versions are snapshotted.
-        let (doc_versions, requested_ineligible, supports_diagnostic_data) = {
+        let (doc_versions, requested_ineligible, supports_diagnostic_data, open_source_paths) = {
             let state = self.state.lock().await;
             if state.initial_index_pending {
                 return;
@@ -1029,21 +1037,28 @@ impl Backend {
                     .cloned()
                     .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
+                state.open_source_paths.clone(),
             )
         };
         for path in &requested_ineligible {
-            self.client
-                .publish_diagnostics(path_to_uri(path), Vec::new(), None)
-                .await;
+            let uri = open_source_paths
+                .get(path)
+                .filter(|open| open.len() == 1)
+                .and_then(|open| open.keys().next().cloned())
+                .unwrap_or_else(|| path_to_uri(path));
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
         if !requested_ineligible.is_empty() {
             let mut state = self.state.lock().await;
             for path in &requested_ineligible {
                 state.published_paths.remove(path);
+                state.published_uris.remove(path);
             }
         }
 
         let mut open_files = Vec::with_capacity(doc_versions.len());
+        let open_document_paths: HashSet<String> =
+            doc_versions.iter().map(|(path, _)| path.clone()).collect();
         for (doc_path, version) in &doc_versions {
             let Some((file, _)) = self.parsed_file(doc_path).await else {
                 continue;
@@ -1246,19 +1261,37 @@ impl Backend {
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
         for job in jobs {
             let config = job.ctx.as_ref().map_or(&root_config, |ctx| &ctx.config);
-            let records: Vec<ry_core::declarations::DeclarationRecord> = config
-                .annotations
-                .typehint
-                .adopted_scope()
-                .map(|scope| {
-                    job.files
-                        .iter()
-                        .flat_map(|(_, _, file)| ry_checker::typehint::read_records(file, &scope))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let mut records = Vec::new();
+            let mut declined = Vec::new();
+            if let Some(scope) = config.annotations.typehint.adopted_scope() {
+                for (path, _, file) in &job.files {
+                    let native = match open_source_paths.get(path) {
+                        Some(open) if open.len() == 1 => open.values().next().cloned(),
+                        Some(_) => None,
+                        None if open_document_paths.contains(path.as_str()) => None,
+                        None => {
+                            let candidate = PathBuf::from(path);
+                            candidate.exists().then_some(candidate)
+                        }
+                    };
+                    if let Some(native) = native
+                        .as_deref()
+                        .filter(|native| ry_config::unambiguous_native_display_path(native, path))
+                    {
+                        records.extend(ry_checker::typehint::read_records_at(file, native, &scope));
+                    } else if !ry_checker::typehint::read_records(file, &scope).is_empty() {
+                        declined.push(ry_checker::Diagnostic::new(
+                            ry_checker::Severity::Warning,
+                            ry_core::Span::new(0, 1, 0, 0),
+                            path,
+                            "RY117",
+                            "Native source identity is ambiguous; typehint attachment was skipped.",
+                        ));
+                    }
+                }
+            }
             let mut project = job.cache.lock().await;
-            let result = if records.is_empty() {
+            let mut result = if records.is_empty() {
                 project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref())
             } else {
                 project.check_with_workspace_and_records(
@@ -1268,6 +1301,15 @@ impl Backend {
                     records,
                 )
             };
+            for diagnostic in declined {
+                if let Some((_, diagnostics)) = result
+                    .diagnostics
+                    .iter_mut()
+                    .find(|(path, _)| *path == diagnostic.path)
+                {
+                    diagnostics.push(diagnostic);
+                }
+            }
             all_results.push((job.ctx, result));
         }
 
@@ -1289,7 +1331,7 @@ impl Backend {
         // snapshotted root-level values. `published` records what this
         // pass sent (and whether it was non-empty) for the tracking
         // reconciliation below.
-        let mut published: Vec<(String, bool)> = Vec::new();
+        let mut published: Vec<(String, Url, bool)> = Vec::new();
         for (ctx, result) in all_results {
             let ProjectCheckResult {
                 diagnostics: per_file,
@@ -1365,12 +1407,16 @@ impl Backend {
                         diagnostic
                     })
                     .collect();
-                let diagnostic_uri = path_to_uri(&diagnostic_path);
+                let diagnostic_uri = open_source_paths
+                    .get(&diagnostic_path)
+                    .filter(|open| open.len() == 1)
+                    .and_then(|open| open.keys().next().cloned())
+                    .unwrap_or_else(|| path_to_uri(&diagnostic_path));
                 let non_empty = !diagnostics.is_empty();
                 self.client
-                    .publish_diagnostics(diagnostic_uri, diagnostics, None)
+                    .publish_diagnostics(diagnostic_uri.clone(), diagnostics, None)
                     .await;
-                published.push((diagnostic_path, non_empty));
+                published.push((diagnostic_path, diagnostic_uri, non_empty));
             }
         }
 
@@ -1380,15 +1426,26 @@ impl Backend {
         // rescan dropped the closed file from the index — keeps its old
         // squiggles in the editor forever unless it is explicitly
         // cleared (#489).
-        {
+        let previous_uris = {
             let mut state = self.state.lock().await;
-            for (path, non_empty) in published {
+            let mut previous_uris = Vec::new();
+            for (path, uri, non_empty) in published {
+                if let Some(previous) = state.published_uris.remove(&path)
+                    && previous != uri
+                {
+                    previous_uris.push(previous);
+                }
                 if non_empty {
-                    state.published_paths.insert(path);
+                    state.published_paths.insert(path.clone());
+                    state.published_uris.insert(path, uri);
                 } else {
                     state.published_paths.remove(&path);
                 }
             }
+            previous_uris
+        };
+        for uri in previous_uris {
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
         }
         self.clear_dropped_diagnostics().await;
     }
@@ -1418,7 +1475,15 @@ impl Backend {
             for path in &dropped {
                 state.published_paths.remove(path);
             }
-            dropped.iter().map(|p| path_to_uri(p)).collect()
+            dropped
+                .iter()
+                .map(|path| {
+                    state
+                        .published_uris
+                        .remove(path)
+                        .unwrap_or_else(|| path_to_uri(path))
+                })
+                .collect()
         };
         for uri in dropped {
             self.client.publish_diagnostics(uri, Vec::new(), None).await;

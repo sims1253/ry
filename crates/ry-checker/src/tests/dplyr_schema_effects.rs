@@ -439,6 +439,39 @@ fn empty_and_forwarded_group_specs_do_not_assert_a_grouped_class() {
 }
 
 #[test]
+fn dynamic_group_specs_do_not_assert_nonempty_grouping() {
+    let prefix = "`+.grouped_df` <- function(e1, e2) 'bad'\n\
+                  d <- data.frame(x = 1L, g = 2L)\n";
+    for spec in [
+        "!!!list()",
+        "dplyr::across(tidyselect::starts_with('absent'))",
+        "dplyr::pick(tidyselect::starts_with('absent'))",
+        "if (TRUE) NULL else x",
+    ] {
+        let source =
+            format!("{prefix}out <- dplyr::group_by(d, {spec})\nresult <- (out + 1L) + 1L\n");
+        let (diagnostics, scope) = check_with_scope(&source);
+        let out = scope.get("out").unwrap();
+        assert!(out.class.is_unknown(), "{spec}: {out:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{spec}: {diagnostics:?}"
+        );
+    }
+    for spec in ["x", "big = x > mean(x)"] {
+        let source =
+            format!("{prefix}out <- dplyr::group_by(d, {spec})\nresult <- (out + 1L) + 1L\n");
+        let (diagnostics, scope) = check_with_scope(&source);
+        let out = scope.get("out").unwrap();
+        assert!(out.class.contains("grouped_df"), "{spec}: {out:?}");
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{spec}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn control_tags_belong_to_the_specific_verb() {
     let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
     for (call, field) in [

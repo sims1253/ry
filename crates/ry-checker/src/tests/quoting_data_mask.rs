@@ -789,6 +789,24 @@ fn base_schema_effects_retain_list_and_vector_receivers() {
 }
 
 #[test]
+fn base_subset_select_formal_keeps_source_column_names() {
+    for selector in ["x", "c(new = x)"] {
+        let source = format!(
+            "d <- data.frame(x = 1L, g = 2L)\nout <- base::subset(d, select = {selector})\nvalue <- base::with(out, x + 1L)\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY010"),
+            "{selector}: {diagnostics:?}"
+        );
+        let columns = scope.get("out").unwrap().columns.as_ref().unwrap();
+        assert!(columns.get("x").is_some(), "{selector}: {columns:?}");
+        assert!(columns.get("select").is_none(), "{selector}: {columns:?}");
+        assert!(columns.get("new").is_none(), "{selector}: {columns:?}");
+    }
+}
+
+#[test]
 fn package_schema_effects_with_base_names_still_require_a_standard_frame() {
     assert!(
         Checker::new("package_nse.R")

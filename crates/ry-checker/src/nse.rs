@@ -123,6 +123,7 @@ impl Checker {
             ),
             SchemaEffect::GroupBy => {
                 let source_grouped = data_type.class.contains("grouped_df");
+                let source_columns = data_type.columns.clone();
                 let mut result =
                     schema_mutated_type(data_type, &named_results, &masked_args, &[], false);
                 let group_specs = args.iter().enumerate().filter(|(index, arg)| {
@@ -132,19 +133,23 @@ impl Checker {
                         })
                 });
                 let mut has_group_spec = false;
-                let mut forwarded_group_spec = false;
-                for (_, arg) in group_specs {
-                    match &arg.value {
-                        Expr::Null(_) => {}
-                        Expr::Call { func, args, .. }
-                            if args.is_empty()
-                                && ident_name(func).is_some_and(|name| {
-                                    crate::semantic_lists::bare_name(name) == "c"
-                                }) => {}
-                        Expr::Ident { name, .. } if name == "..." => {
-                            forwarded_group_spec = true;
-                        }
-                        _ => has_group_spec = true,
+                let mut possible_group_spec = false;
+                for (index, arg) in group_specs {
+                    let source_column = matches!(&arg.value, Expr::Ident { name, .. }
+                        if source_columns.as_ref().is_some_and(|schema| schema.get(name).is_some()));
+                    match arg_types[index].mode {
+                        _ if source_column => has_group_spec = true,
+                        Mode::Logical
+                        | Mode::Integer
+                        | Mode::Double
+                        | Mode::Complex
+                        | Mode::Character
+                        | Mode::Raw => has_group_spec = true,
+                        Mode::Null => {}
+                        // Splices, across/pick, and unions that may be NULL
+                        // can expand to zero grouping columns. Their type
+                        // alone cannot certify a grouped result class.
+                        _ => possible_group_spec = true,
                     }
                 }
                 let add = args
@@ -157,15 +162,15 @@ impl Checker {
                 if has_group_spec || retain_groups {
                     result.class =
                         ClassVector::from_slice(&["grouped_df", "tbl_df", "tbl", "data.frame"]);
-                } else if !uncertain_groups && !forwarded_group_spec {
+                } else if !uncertain_groups && !possible_group_spec {
                     result.class = ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
                 } else {
                     result.class = ClassVector::unknown();
                 }
-                if uncertain_groups || forwarded_group_spec {
+                if uncertain_groups || possible_group_spec {
                     // A dynamic .add may preserve old grouping keys. Later
                     // summarise/transmute cannot certify their absence. A
-                    // forwarded ... may add groups, or contain no arguments.
+                    // dynamic grouping spec may add groups or none.
                     result = incomplete_schema(result);
                 }
                 result
@@ -175,7 +180,12 @@ impl Checker {
             }
             SchemaEffect::Rename => schema_renamed_type(data_type, &tidy_args, true, args),
             SchemaEffect::Relocate => schema_renamed_type(data_type, &tidy_args, false, args),
-            SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
+            SchemaEffect::Select => {
+                // In base::subset(), `select` names the formal argument; it
+                // does not rename the selected column. Package select()
+                // effects may use named selectors as output names.
+                schema_selected_type(data_type, &tidy_args, provider == SchemaProvider::Package)
+            }
             SchemaEffect::Aggregate => {
                 schema_aggregate_type(data_type, &named_results, &masked_args, args)
             }
@@ -622,7 +632,7 @@ fn schema_renamed_type(
     data_type
 }
 
-fn schema_selected_type(mut data_type: RType, args: &[&Arg]) -> RType {
+fn schema_selected_type(mut data_type: RType, args: &[&Arg], rename_named: bool) -> RType {
     if args.is_empty() {
         return data_type;
     }
@@ -632,7 +642,7 @@ fn schema_selected_type(mut data_type: RType, args: &[&Arg]) -> RType {
     let mut includes: Vec<(String, String)> = Vec::new();
     let mut excludes = Vec::new();
     for arg in args {
-        if let Some(name) = arg.name.as_deref() {
+        if let Some(name) = arg.name.as_deref().filter(|_| rename_named) {
             let Some(old_name) = selected_name(&arg.value) else {
                 return incomplete_schema(data_type);
             };

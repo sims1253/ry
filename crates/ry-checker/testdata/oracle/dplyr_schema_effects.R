@@ -98,3 +98,21 @@ stopifnot(!inherits(forwarded_groups(), "grouped_df"))
 stopifnot(inherits(forwarded_groups(x), "grouped_df"))
 stopifnot(!inherits(dplyr::group_by(small, NULL), "grouped_df"))
 stopifnot(!inherits(dplyr::group_by(small, c()), "grouped_df"))
+
+# Unsupported grouping expressions may expand to no columns. A definite
+# bare or computed group still selects the grouped method.
+for (out in list(
+  dplyr::group_by(small, !!!list()),
+  dplyr::group_by(small, dplyr::across(tidyselect::starts_with("absent"))),
+  dplyr::group_by(small, dplyr::pick(tidyselect::starts_with("absent"))),
+  dplyr::group_by(small, if (TRUE) NULL else x)
+)) {
+  stopifnot(!inherits(out, "grouped_df"))
+}
+stopifnot(inherits(dplyr::group_by(small, x), "grouped_df"))
+stopifnot(inherits(dplyr::group_by(small, big = x > mean(x)), "grouped_df"))
+
+# A named base subset argument is a formal, not an output-column rename.
+stopifnot(identical(names(base::subset(small, select = x)), "x"))
+stopifnot(identical(names(base::subset(small, select = c(new = x))), "x"))
+stopifnot(identical(base::with(base::subset(small, select = x), x + 1L), 2L))

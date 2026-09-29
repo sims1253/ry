@@ -2142,6 +2142,10 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_helper_environment_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_transformed_env.R"),
         include_str!("../../testdata/oracle/assertion_subject_expression_environment_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_get_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_iife_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_masked_new_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_masked_invisible.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_delayed_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default_call.R"),
@@ -2167,16 +2171,20 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         "a later binding installation revokes an earlier scalar proof: {after_assertion:?}"
     );
 
-    for source in [
-        "local_install <- function() { makeActiveBinding('y', function() 1L, environment()) }; f <- function(x = 1L) { local_install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+    for (control, source) in [
+        "local_install <- function() { makeActiveBinding('y', function() 1L, base::environment()) }; f <- function(x = 1L) { local_install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         "read_parent <- function() parent.frame(); f <- function(x = 1L) { read_parent(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         include_str!("../../testdata/oracle/assertion_subject_unused_installer_default.R"),
-        "install <- function(env) { target <- new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
-    ] {
+        include_str!("../../testdata/oracle/assertion_subject_local_installer_env.R"),
+        "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let diagnostics = check(source);
         assert!(
             diagnostics.iter().all(|d| d.code != "RY032"),
-            "a helper without a caller-frame binding install keeps the proof: {diagnostics:?}"
+            "control {control}: a helper without a caller-frame binding install keeps the proof: {diagnostics:?}"
         );
     }
 }

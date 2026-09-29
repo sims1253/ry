@@ -4,6 +4,51 @@ use crate::semantic_lists::bare_name;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
+/// Only these expressions certify that an installer receives a frame made by
+/// the helper itself. Any other value may be its caller's frame. In
+/// particular, `get("env")` and an immediately invoked closure can return a
+/// formal without exposing that formal to the direct identifier walk.
+fn definitely_local_installer_env(expression: &Expr, local_names: &HashSet<String>) -> bool {
+    match expression {
+        Expr::Ident { name, .. } => local_names.contains(name),
+        Expr::Call { func, args, .. } => {
+            let Some(name) = ident_name(func) else {
+                return false;
+            };
+            match name {
+                "base::environment" => args.is_empty(),
+                "base::new.env" => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
+    match name {
+        "makeActiveBinding" => args
+            .iter()
+            .find(|arg| {
+                arg.name
+                    .as_deref()
+                    .is_some_and(|name| "env".starts_with(name))
+            })
+            .or_else(|| args.get(2))
+            .map(|arg| &arg.value),
+        "delayedAssign" => args
+            .iter()
+            .find(|arg| {
+                arg.name
+                    .as_deref()
+                    .is_some_and(|name| "assign.env".starts_with(name))
+            })
+            .or_else(|| args.get(3))
+            .map(|arg| &arg.value),
+        _ => None,
+    }
+}
+
 /// A small caller-effect summary, collected once with the function body.
 /// `parent.frame()` or an environment supplied through a formal can pass the
 /// caller's frame to a binding installer, including through local value
@@ -38,8 +83,13 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
         AstNode::Expr(Expr::Call { func, .. })
             if !ident_name(func).is_some_and(|name| {
                 matches!(
-                    bare_name(name),
-                    "invisible" | "return" | "force" | "parent.frame" | "environment" | "new.env"
+                    name,
+                    "base::invisible"
+                        | "base::return"
+                        | "base::force"
+                        | "base::parent.frame"
+                        | "base::environment"
+                        | "base::new.env"
                 )
             }) =>
         {
@@ -68,58 +118,17 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
         }
     }
 
-    let mut parent_frame = false;
-    let mut installer = false;
-    let mut installer_args = HashSet::new();
-    let mut alias_targets: HashMap<String, Vec<String>> = HashMap::new();
+    let mut installer_environments = Vec::new();
     let mut callees = HashSet::new();
-    let mut record_alias = |target: &str, value: &Expr| {
-        let _ = walk_expr(value, direct_walk, |child, _| {
-            if let AstNode::Expr(Expr::Ident { name, .. }) = child {
-                alias_targets
-                    .entry(name.clone())
-                    .or_default()
-                    .push(target.to_string());
-            }
-            ControlFlow::<(), Descend>::Continue(Descend::Into)
-        });
-    };
     let mut collect_effect = |node: AstNode<'_>, _| {
-        match node {
-            AstNode::Stmt(Stmt::Assign {
-                target: Expr::Ident { name: target, .. },
-                value,
-                ..
-            }) => record_alias(target, value),
-            AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. })
-                if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) =>
-            {
-                if let Expr::Ident { name: target, .. } = lhs.as_ref() {
-                    record_alias(target, rhs);
-                }
+        if let AstNode::Expr(Expr::Call { func, args, span }) = node
+            && let Some(name) = ident_name(func)
+        {
+            let name = bare_name(name);
+            callees.insert(name.to_string());
+            if let Some(environment) = installer_environment_arg(name, args) {
+                installer_environments.push((span.start, environment.clone()));
             }
-            AstNode::Expr(Expr::Call { func, args, .. }) => {
-                if let Some(name) = ident_name(func) {
-                    let name = bare_name(name);
-                    callees.insert(name.to_string());
-                    match name {
-                        "parent.frame" => parent_frame = true,
-                        "makeActiveBinding" | "delayedAssign" => {
-                            installer = true;
-                            for arg in args {
-                                let _ = walk_expr(&arg.value, direct_walk, |child, _| {
-                                    if let AstNode::Expr(Expr::Ident { name, .. }) = child {
-                                        installer_args.insert(name.clone());
-                                    }
-                                    ControlFlow::<(), Descend>::Continue(Descend::Into)
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     };
@@ -131,24 +140,54 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
             let _ = walk_expr(default, direct_walk, &mut collect_effect);
         }
     }
-    let mut caller_env_names: HashSet<String> =
-        params.iter().map(|param| param.name.clone()).collect();
-    let mut pending: Vec<String> = caller_env_names.iter().cloned().collect();
-    while let Some(source) = pending.pop() {
-        if let Some(targets) = alias_targets.get(&source) {
-            for target in targets {
-                if caller_env_names.insert(target.clone()) {
-                    pending.push(target.clone());
+    // Certify an identifier only when a straight-line statement has made a
+    // fresh local frame before the installer call. A conditional assignment,
+    // unknown call, or later write leaves the value uncertain.
+    let mut straight_local = HashSet::new();
+    let mut certified_calls = HashSet::new();
+    for statement in body {
+        match statement {
+            Stmt::Assign {
+                target: Expr::Ident { name, .. },
+                value,
+                ..
+            } => {
+                if definitely_local_installer_env(value, &straight_local) {
+                    straight_local.insert(name.clone());
+                } else {
+                    if !matches!(
+                        value,
+                        Expr::Integer(_, _)
+                            | Expr::Double(_, _)
+                            | Expr::Logical(_, _)
+                            | Expr::String(_, _)
+                            | Expr::Null(_)
+                            | Expr::Na(_, _)
+                    ) {
+                        straight_local.clear();
+                    }
+                    straight_local.remove(name);
                 }
             }
+            Stmt::Expr(Expr::Call { func, args, span }) => {
+                if let Some(name) = ident_name(func)
+                    && let Some(environment) = installer_environment_arg(bare_name(name), args)
+                    && definitely_local_installer_env(environment, &straight_local)
+                {
+                    certified_calls.insert(span.start);
+                }
+                straight_local.clear();
+            }
+            _ => straight_local.clear(),
         }
     }
+    let uncertain_installer_environment =
+        installer_environments.iter().any(|(start, environment)| {
+            !certified_calls.contains(start)
+                && !definitely_local_installer_env(environment, &HashSet::new())
+        });
     (
-        installer
-            && (parent_frame
-                || installer_args
-                    .iter()
-                    .any(|name| caller_env_names.contains(name))),
+        uncertain_installer_environment,
         callees.into_iter().collect(),
     )
 }
@@ -1304,6 +1343,66 @@ mod collect_walker_tests {
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker
+    }
+
+    #[test]
+    fn caller_binding_installer_environment_requires_a_stable_local_frame() {
+        for (source, may_replace_caller) in [
+            (
+                "install <- function(env) makeActiveBinding('x', function() 1L, env)",
+                true,
+            ),
+            (
+                "install <- function(env) { target <- get('env'); makeActiveBinding('x', function() 1L, target) }",
+                true,
+            ),
+            (
+                "install <- function(env) { target <- (function() env)(); makeActiveBinding('x', function() 1L, target) }",
+                true,
+            ),
+            (
+                "install <- function(env) { invisible(target <- env); makeActiveBinding('x', function() 1L, target) }",
+                true,
+            ),
+            (
+                "install <- function(env) makeActiveBinding('x', function() 1L, base::new.env())",
+                false,
+            ),
+            (
+                "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }",
+                false,
+            ),
+            (
+                "install <- function(env) { target <- base::new.env(); if (TRUE) target <- env; makeActiveBinding('x', function() 1L, target) }",
+                true,
+            ),
+            (
+                "install <- function(env) { target <- base::new.env(); get('target'); makeActiveBinding('x', function() 1L, target) }",
+                true,
+            ),
+            (
+                "install <- function(env) makeActiveBinding('x', function() 1L, new.env())",
+                true,
+            ),
+            (
+                "install <- function(env) makeActiveBinding('x', function() 1L, other::new.env())",
+                true,
+            ),
+            (
+                "install <- function(env) makeActiveBinding('x', function() 1L, base::new.env(parent=env))",
+                false,
+            ),
+            (
+                "install <- function(env, new.env = function() env) makeActiveBinding('x', function() 1L, new.env())",
+                true,
+            ),
+        ] {
+            let checker = collect(source);
+            assert_eq!(
+                checker.fn_table.fns["install"].may_install_caller_binding, may_replace_caller,
+                "{source}"
+            );
+        }
     }
 
     #[test]

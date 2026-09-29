@@ -583,3 +583,302 @@ fn mixed_content_collision_reports_only_the_uri_with_a_clause() {
             }
         });
 }
+
+#[cfg(unix)]
+#[test]
+fn colliding_buffers_apply_size_cap_to_each_original_source() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let annotated = "f <- function(x) {\n #| x integer\n x\n}\n";
+            let plain = "z <- 1L\n";
+            for active_oversized in [false, true] {
+                let fixture = FixtureProject::empty().unwrap();
+                fixture
+                    .write_file(
+                        "ry.toml",
+                        "[index]\nmax-file-bytes = 100\n[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                    )
+                    .unwrap();
+                std::fs::create_dir(fixture.path("R")).unwrap();
+                let first = if active_oversized {
+                    annotated.to_string()
+                } else {
+                    format!("{annotated}#{}\n", "x".repeat(200))
+                };
+                let second = if active_oversized {
+                    format!("{plain}#{}\n", "x".repeat(200))
+                } else {
+                    plain.to_string()
+                };
+                let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()]
+                    .map(|name| fixture.path("R").join(std::ffi::OsString::from_vec(name.to_vec())));
+                for (path, text) in paths.iter().zip([&first, &second]) {
+                    std::fs::write(path, text).unwrap();
+                }
+                let uris = paths.map(|path| file_uri(&path).unwrap());
+                let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+                session.open(&uris[0], 1, &first).await.unwrap();
+                let mark = session.publication_mark();
+                session.open(&uris[1], 2, &second).await.unwrap();
+                let both = session
+                    .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    both[&uris[0]]
+                        .iter()
+                        .filter(|d| d["code"] == "RY117")
+                        .count(),
+                    usize::from(active_oversized),
+                    "{both:?}"
+                );
+                assert!(!both[&uris[1]].iter().any(|d| d["code"] == "RY117"));
+
+                let mark = session.publication_mark();
+                session
+                    .change(&uris[1], 4, json!([{"text": annotated}]))
+                    .await
+                    .unwrap();
+                let active_edit = session
+                    .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    active_edit[&uris[1]]
+                        .iter()
+                        .filter(|d| d["code"] == "RY117")
+                        .count(),
+                    1,
+                    "{active_edit:?}"
+                );
+                let mark = session.publication_mark();
+                session
+                    .change(&uris[1], 5, json!([{"text": second}]))
+                    .await
+                    .unwrap();
+                let active_restored = session
+                    .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert!(!active_restored[&uris[1]]
+                    .iter()
+                    .any(|d| d["code"] == "RY117"));
+
+                // An inactive edit changes only that URI's byte budget;
+                // closing the active sibling restores the same snapshot.
+                let mark = session.publication_mark();
+                session
+                    .change(&uris[0], 3, json!([{"text": annotated}]))
+                    .await
+                    .unwrap();
+                let edited = session
+                    .quiesce_diagnostics(&uris[0], mark, Duration::from_millis(200))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    edited[&uris[0]]
+                        .iter()
+                        .filter(|d| d["code"] == "RY117")
+                        .count(),
+                    1,
+                    "{edited:?}"
+                );
+
+                let mark = session.publication_mark();
+                session
+                    .notify("textDocument/didClose", json!({"textDocument": {"uri": uris[1]}}))
+                    .await
+                    .unwrap();
+                let restored = session
+                    .published_diagnostics_after(&uris[0], mark)
+                    .await
+                    .unwrap();
+                assert_eq!(count_code(&restored, "RY117"), 1, "{restored}");
+                join_session(session, server).await;
+            }
+        });
+}
+
+#[cfg(unix)]
+#[test]
+fn colliding_buffers_keep_independent_suppression_and_version() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                )
+                .unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let plain = "f <- function(x) {\n #| x integer\n x\n}\n";
+            let ignored = format!("# ry: ignore-file\n{plain}");
+            let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
+                fixture
+                    .path("R")
+                    .join(std::ffi::OsString::from_vec(name.to_vec()))
+            });
+            for path in &paths {
+                std::fs::write(path, plain).unwrap();
+            }
+            let uris = paths.map(|path| file_uri(&path).unwrap());
+            let (mut session, server) = spawn_session(
+                &[fixture.root()],
+                json!({"textDocument": {"publishDiagnostics": {"dataSupport": true}}}),
+                None,
+            )
+            .await;
+            session.open(&uris[0], 1, &ignored).await.unwrap();
+            let mark = session.publication_mark();
+            session.open(&uris[1], 7, plain).await.unwrap();
+            let both = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            assert!(!both[&uris[0]].iter().any(|d| d["code"] == "RY117"));
+            let second = both[&uris[1]]
+                .iter()
+                .find(|d| d["code"] == "RY117")
+                .unwrap();
+            assert_eq!(second["data"]["ry"]["version"], 7);
+
+            let mark = session.publication_mark();
+            session
+                .change(&uris[1], 8, json!([{"text": ignored}]))
+                .await
+                .unwrap();
+            let both = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            assert!(!both[&uris[0]].iter().any(|d| d["code"] == "RY117"));
+            assert!(!both[&uris[1]].iter().any(|d| d["code"] == "RY117"));
+
+            let mark = session.publication_mark();
+            session
+                .change(&uris[0], 3, json!([{"text": plain}]))
+                .await
+                .unwrap();
+            let both = session
+                .quiesce_diagnostics(&uris[0], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            let first = both[&uris[0]]
+                .iter()
+                .find(|d| d["code"] == "RY117")
+                .unwrap();
+            assert_eq!(first["data"]["ry"]["version"], 3);
+            assert!(!both[&uris[1]].iter().any(|d| d["code"] == "RY117"));
+            join_session(session, server).await;
+        });
+}
+
+#[cfg(unix)]
+#[test]
+fn colliding_sources_cannot_offer_other_buffers_quickfix() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+                )
+                .unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let source = "f <- function(x) {\n #| x integer\n x\n}\n";
+            let sources = [
+                source.replace("f <-", "first_function_with_long_name <-"),
+                source.replace("f <-", "g <-"),
+            ];
+            let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
+                fixture
+                    .path("R")
+                    .join(std::ffi::OsString::from_vec(name.to_vec()))
+            });
+            for (path, text) in paths.iter().zip(&sources) {
+                std::fs::write(path, text).unwrap();
+            }
+            let uris = paths.map(|path| file_uri(&path).unwrap());
+            let (mut session, server) = spawn_session(
+                &[fixture.root()],
+                json!({"workspace": {"workspaceEdit": {"documentChanges": true}},
+                       "textDocument": {"publishDiagnostics": {"dataSupport": true}}}),
+                None,
+            )
+            .await;
+            session.open(&uris[0], 1, &sources[0]).await.unwrap();
+            let mark = session.publication_mark();
+            session.open(&uris[1], 1, &sources[1]).await.unwrap();
+            let both = session
+                .quiesce_diagnostics(&uris[1], mark, Duration::from_millis(200))
+                .await
+                .unwrap();
+            let first = both[&uris[0]]
+                .iter()
+                .find(|d| d["code"] == "RY117")
+                .unwrap();
+            let response = session
+                .request(
+                    "textDocument/codeAction",
+                    json!({"textDocument": {"uri": uris[0]}, "range": first["range"],
+                           "context": {"diagnostics": [first]}}),
+                )
+                .await
+                .unwrap();
+            assert!(response.is_null(), "{response}");
+
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": uris[1]}}),
+                )
+                .await
+                .unwrap();
+            let single = session
+                .published_diagnostics_after(&uris[0], mark)
+                .await
+                .unwrap();
+            let diag = single["params"]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["code"] == "RY117")
+                .unwrap();
+            let response = session
+                .request(
+                    "textDocument/codeAction",
+                    json!({"textDocument": {"uri": uris[0]}, "range": diag["range"],
+                           "context": {"diagnostics": [diag]}}),
+                )
+                .await
+                .unwrap();
+            assert!(
+                response
+                    .as_array()
+                    .is_some_and(|actions| !actions.is_empty()),
+                "{response}"
+            );
+            join_session(session, server).await;
+        });
+}

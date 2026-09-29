@@ -223,66 +223,25 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        // The display-keyed parser cache holds one buffer. Restore this
-        // URI's own snapshot before applying an incremental edit when two
-        // native URIs collapse to the same display key.
-        {
-            let mut state = self.state.lock().await;
-            if state
-                .open_source_paths
-                .get(&path)
-                .is_some_and(|open| !open.contains_key(&uri))
-            {
-                tracing::warn!(%uri, "ignoring change for a closed colliding URI");
-                return;
-            }
-            if state
-                .open_source_paths
-                .get(&path)
-                .is_some_and(|open| open.len() > 1)
-                && state.active_collision_uri.get(&path) != Some(&uri)
-            {
-                let shadow = state
-                    .open_source_paths
-                    .get(&path)
-                    .and_then(|open| open.get(&uri))
-                    .and_then(|source| source.shadow.clone());
-                let Some((text, old_version)) = shadow else {
-                    tracing::warn!(%uri, "missing colliding URI buffer snapshot");
-                    return;
-                };
-                state.docs.insert(path.clone(), text);
-                state.versions.insert(path.clone(), old_version);
-                state.parsed.remove(&path);
-                state.hints.remove(&path);
-                state.trees.remove(&path);
-                state.active_collision_uri.insert(path.clone(), uri.clone());
-            }
+        let mut changes = params.content_changes;
+        let collision =
+            self.state
+                .lock()
+                .await
+                .apply_colliding_changes(&path, &uri, &mut changes, version);
+        if collision == CollisionChangeResult::Rejected {
+            return;
         }
-        // If any change has an invalid UTF-16 range, abort the remaining
-        // batch: subsequent changes' ranges are relative to the client
-        // text after the dropped edit, so applying them to the server's
-        // (pre-dropped-edit) text would splice wrong bytes.
-        for change in params.content_changes {
-            if !self.apply_incremental_change(&path, change, version).await {
-                tracing::error!(
-                    "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
-                );
-                break;
-            }
-        }
-        {
-            let mut state = self.state.lock().await;
-            let updated = state
-                .docs
-                .get(&path)
-                .cloned()
-                .zip(state.versions.get(&path).copied());
-            if let Some(open) = state.open_source_paths.get_mut(&path)
-                && open.len() > 1
-                && let Some(source) = open.get_mut(&uri)
-            {
-                source.shadow = updated;
+        if collision == CollisionChangeResult::NotCollision {
+            // If any change has an invalid UTF-16 range, abort the
+            // remaining batch: later ranges refer to text after that edit.
+            for change in changes {
+                if !self.apply_incremental_change(&path, change, version).await {
+                    tracing::error!(
+                        "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
+                    );
+                    break;
+                }
             }
         }
         self.schedule_diagnostics(uri).await;
@@ -807,8 +766,19 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
-        if !self.state.lock().await.eligibility_for_path(&path) {
-            return Ok(None);
+        {
+            let state = self.state.lock().await;
+            if !state.eligibility_for_path(&path)
+                || state
+                    .open_source_paths
+                    .get(&path)
+                    .is_some_and(|open| open.len() > 1)
+            {
+                // A display-keyed parse can belong to another native URI.
+                // Even matching document version numbers do not prove that
+                // an edit uses the requesting buffer's source text.
+                return Ok(None);
+            }
         }
         let Some((file, _)) = self.parsed_file(&path).await else {
             return Ok(None);
@@ -822,6 +792,10 @@ impl LanguageServer for Backend {
             if !Arc::ptr_eq(cached, &file)
                 || state.versions.get(&path) != Some(version)
                 || !state.eligibility_for_path(&path)
+                || state
+                    .open_source_paths
+                    .get(&path)
+                    .is_some_and(|open| open.len() > 1)
             {
                 return Ok(None);
             }

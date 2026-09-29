@@ -67,6 +67,13 @@ struct OpenSource {
     shadow: Option<(String, i32)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CollisionChangeResult {
+    NotCollision,
+    Applied,
+    Rejected,
+}
+
 #[derive(Default)]
 pub(super) struct State {
     /// Open documents: path -> current source text. Keeping every open
@@ -427,6 +434,64 @@ impl ProjectCache {
 }
 
 impl State {
+    /// Apply a whole `didChange` batch to one original URI while holding the
+    /// state lock. Reading its shadow, splicing UTF-16 ranges, and replacing
+    /// the active display-keyed source form one transaction. A second URI's
+    /// notification can acquire the lock before or after it, never midway.
+    fn apply_colliding_changes(
+        &mut self,
+        path: &str,
+        uri: &Url,
+        changes: &mut Vec<TextDocumentContentChangeEvent>,
+        version: i32,
+    ) -> CollisionChangeResult {
+        let Some(open) = self.open_source_paths.get(path) else {
+            return CollisionChangeResult::NotCollision;
+        };
+        if !open.contains_key(uri) {
+            tracing::warn!(%uri, "ignoring change for a closed colliding URI");
+            return CollisionChangeResult::Rejected;
+        }
+        if open.len() == 1 {
+            return CollisionChangeResult::NotCollision;
+        }
+        let Some((mut text, mut installed_version)) =
+            open.get(uri).and_then(|source| source.shadow.clone())
+        else {
+            tracing::warn!(%uri, "missing colliding URI buffer snapshot");
+            return CollisionChangeResult::Rejected;
+        };
+        for change in changes.drain(..) {
+            if let Some(range) = change.range {
+                let Some((start, end)) = range_byte_span(&text, range) else {
+                    tracing::error!(
+                        ?range,
+                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
+                    );
+                    break;
+                };
+                text.replace_range(start..end, &change.text);
+            } else {
+                text = change.text;
+            }
+            installed_version = version;
+        }
+        // The one-key incremental tree may describe another native source.
+        self.docs.insert(path.to_string(), text.clone());
+        self.versions.insert(path.to_string(), installed_version);
+        self.parsed.remove(path);
+        self.hints.remove(path);
+        self.trees.remove(path);
+        self.active_collision_uri
+            .insert(path.to_string(), uri.clone());
+        self.open_source_paths
+            .get_mut(path)
+            .and_then(|open| open.get_mut(uri))
+            .expect("colliding source still open under lock")
+            .shadow = Some((text, installed_version));
+        CollisionChangeResult::Applied
+    }
+
     /// Remove one original URI from a display-keyed document. If another
     /// URI remains, restore its own buffer when the closing URI was active
     /// and retain its native provenance for the next publication.
@@ -612,10 +677,14 @@ impl State {
     /// relative to the folder root — walk depth is not a path property,
     /// so it is recomputed here.
     fn eligibility_for_path(&self, doc_path: &str) -> bool {
-        let path = std::path::Path::new(doc_path);
         // The open buffer's byte length, when the path is open. Closed
         // paths pass `None` and skip the size gate (see above).
         let content_len = self.docs.get(doc_path).map(|text| text.len() as u64);
+        self.eligibility_for_path_with_len(doc_path, content_len)
+    }
+
+    fn eligibility_for_path_with_len(&self, doc_path: &str, content_len: Option<u64>) -> bool {
+        let path = std::path::Path::new(doc_path);
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
             if ctx.folder_settings.enable == Some(false) {
                 return false;
@@ -653,6 +722,102 @@ impl State {
             }
             _ => true,
         }
+    }
+
+    /// A collision's display key remains live while any original buffer is
+    /// eligible. Each shadow has its own size; the active `docs` text must
+    /// never grant eligibility to an oversized sibling (or hide a small one).
+    fn any_open_source_eligible(&self, doc_path: &str) -> bool {
+        match self.open_source_paths.get(doc_path) {
+            Some(open) if open.len() > 1 => open.values().any(|source| {
+                source.shadow.as_ref().is_some_and(|(text, _)| {
+                    self.eligibility_for_path_with_len(doc_path, Some(text.len() as u64))
+                })
+            }),
+            _ => self.eligibility_for_path(doc_path),
+        }
+    }
+}
+
+#[cfg(test)]
+mod colliding_change_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn simultaneous_ranged_edits_keep_each_native_snapshot() {
+        let first = Url::parse("file:///tmp/bad%FF.R").unwrap();
+        let second = Url::parse("file:///tmp/bad%FE.R").unwrap();
+        let path = uri_to_path(&first);
+        assert_eq!(path, uri_to_path(&second));
+        let first_text = "first🙂\n#| x integer\n";
+        let second_text = "g\n# ordinary\n";
+        let mut state = State::default();
+        state.docs.insert(path.clone(), second_text.to_string());
+        state.versions.insert(path.clone(), 1);
+        state
+            .active_collision_uri
+            .insert(path.clone(), second.clone());
+        state.open_source_paths.insert(
+            path.clone(),
+            HashMap::from([
+                (
+                    first.clone(),
+                    OpenSource {
+                        native: first.to_file_path().ok(),
+                        shadow: Some((first_text.to_string(), 1)),
+                    },
+                ),
+                (
+                    second.clone(),
+                    OpenSource {
+                        native: second.to_file_path().ok(),
+                        shadow: Some((second_text.to_string(), 1)),
+                    },
+                ),
+            ]),
+        );
+        let shared = Arc::new(Mutex::new(state));
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let edit = |uri: Url, end: u32, replacement: &'static str| {
+            let shared = Arc::clone(&shared);
+            let barrier = Arc::clone(&barrier);
+            let path = path.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                let mut changes = vec![TextDocumentContentChangeEvent {
+                    range: Some(Range {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, end),
+                    }),
+                    range_length: None,
+                    text: replacement.to_string(),
+                }];
+                let result =
+                    shared
+                        .lock()
+                        .await
+                        .apply_colliding_changes(&path, &uri, &mut changes, 7);
+                assert_eq!(result, CollisionChangeResult::Applied);
+            })
+        };
+        let (a, b) = tokio::join!(
+            edit(first.clone(), 7, "one"),
+            edit(second.clone(), 1, "two")
+        );
+        a.unwrap();
+        b.unwrap();
+        let state = shared.lock().await;
+        let open = &state.open_source_paths[&path];
+        assert_eq!(
+            open[&first].shadow.as_ref().unwrap(),
+            &("one\n#| x integer\n".to_string(), 7)
+        );
+        assert_eq!(
+            open[&second].shadow.as_ref().unwrap(),
+            &("two\n# ordinary\n".to_string(), 7)
+        );
+        let active = &state.active_collision_uri[&path];
+        assert_eq!(&state.docs[&path], &open[active].shadow.as_ref().unwrap().0);
     }
 }
 
@@ -1064,6 +1229,7 @@ impl Backend {
             supports_diagnostic_data,
             open_source_paths,
             active_collision_uris,
+            eligible_collision_sources,
         ) = {
             let state = self.state.lock().await;
             if state.initial_index_pending {
@@ -1084,12 +1250,29 @@ impl Backend {
                     .collect::<Vec<_>>(),
                 requested
                     .iter()
-                    .filter(|p| !state.eligibility_for_path(p))
+                    .filter(|p| !state.any_open_source_eligible(p))
                     .cloned()
                     .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
                 state.open_source_paths.clone(),
                 state.active_collision_uri.clone(),
+                state
+                    .open_source_paths
+                    .iter()
+                    .filter(|(_, open)| open.len() > 1)
+                    .map(|(path, open)| {
+                        let eligible = open
+                            .iter()
+                            .filter_map(|(uri, source)| {
+                                let (text, version) = source.shadow.as_ref()?;
+                                state
+                                    .eligibility_for_path_with_len(path, Some(text.len() as u64))
+                                    .then(|| (uri.clone(), (text.clone(), *version)))
+                            })
+                            .collect();
+                        (path.clone(), eligible)
+                    })
+                    .collect::<HashMap<String, HashMap<Url, (String, i32)>>>(),
             )
         };
         let publication_uris = |path: &str| {
@@ -1191,6 +1374,86 @@ impl Backend {
                 state.file_config.clone(),
             )
         };
+
+        // A display path can stand for several native URIs. Keep each
+        // admitted buffer's annotation status, comments, and version with
+        // that URI; the active sibling cannot supply any of those values.
+        let mut collision_diagnostics: HashMap<String, HashMap<Url, Vec<LspDiagnostic>>> =
+            HashMap::new();
+        for (path, sources) in eligible_collision_sources {
+            let mut by_uri = HashMap::new();
+            let ctx = folder_contexts
+                .iter()
+                .find(|ctx| Path::new(&path).starts_with(&ctx.root));
+            let config = ctx.map_or(&root_config, |ctx| &ctx.config);
+            if let Some(scope) = config.annotations.typehint.adopted_scope() {
+                let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx {
+                    Some(ctx) => (
+                        &ctx.filter,
+                        ctx.min_confidence,
+                        &ctx.excludes,
+                        ctx.baseline.as_ref(),
+                        ctx.config_root.as_deref().or(Some(ctx.root.as_path())),
+                    ),
+                    None => (
+                        &root_filter,
+                        root_min_confidence,
+                        &root_excludes,
+                        root_baseline.as_ref(),
+                        root_config_dir.as_deref().or(root.as_deref()),
+                    ),
+                };
+                let excluded = !excludes.is_empty()
+                    && excludes.matches(&ry_config::diagnostic_path(&path, config_anchor));
+                if !excluded {
+                    for (uri, (text, version)) in sources {
+                        if !text.contains("#|") {
+                            continue;
+                        }
+                        let Some(file) = RParser::new()
+                            .ok()
+                            .and_then(|mut parser| parser.parse(&path, &text).ok())
+                        else {
+                            continue;
+                        };
+                        if ry_checker::typehint::read_records(&file, &scope).is_empty() {
+                            continue;
+                        }
+                        let post = ry_checker::PostProcess {
+                            filter,
+                            baseline,
+                            min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
+                            repo_root: config_anchor,
+                        };
+                        let warning = ry_checker::Diagnostic::new(
+                            ry_checker::Severity::Warning,
+                            ry_core::Span::new(0, 1, 0, 0),
+                            &path,
+                            "RY117",
+                            "Native source identity is ambiguous; typehint attachment was skipped.",
+                        );
+                        let mut warnings =
+                            post.pre_demotion(vec![warning], &file.comments, &file.source);
+                        post.demote_non_source_paths(&mut warnings);
+                        post.post_demotion(&mut warnings);
+                        let warnings = warnings
+                            .iter()
+                            .map(|warning| {
+                                let mut diagnostic =
+                                    diagnostic_to_lsp_with_source(warning, &file.source);
+                                if supports_diagnostic_data {
+                                    diagnostic.data =
+                                        Some(diagnostic_origin(&path, version, generation));
+                                }
+                                diagnostic
+                            })
+                            .collect();
+                        by_uri.insert(uri, warnings);
+                    }
+                }
+            }
+            collision_diagnostics.insert(path, by_uri);
+        }
 
         // Partition project_files by folder root, then sub-partition each
         // folder's files by nearest-`DESCRIPTION` ancestor root — the
@@ -1320,48 +1583,19 @@ impl Backend {
         }
 
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
-        let mut ambiguous_claim_uris: HashMap<String, HashSet<Url>> = HashMap::new();
         for job in jobs {
             let config = job.ctx.as_ref().map_or(&root_config, |ctx| &ctx.config);
             let mut records = Vec::new();
             let mut declined = Vec::new();
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
                 for (path, _, file) in &job.files {
-                    if let Some(open) = open_source_paths.get(path)
-                        && open.len() > 1
+                    if open_source_paths
+                        .get(path)
+                        .is_some_and(|open| open.len() > 1)
                     {
-                        let mut claimants = HashSet::new();
-                        for (uri, source) in open {
-                            let candidate = if active_collision_uris.get(path) == Some(uri) {
-                                !ry_checker::typehint::read_records(file, &scope).is_empty()
-                            } else {
-                                source.shadow.as_ref().is_some_and(|(text, _)| {
-                                    if !text.contains("#|") {
-                                        return false;
-                                    }
-                                    RParser::new()
-                                        .ok()
-                                        .and_then(|mut parser| parser.parse(path, text).ok())
-                                        .is_some_and(|parsed| {
-                                            !ry_checker::typehint::read_records(&parsed, &scope)
-                                                .is_empty()
-                                        })
-                                })
-                            };
-                            if candidate {
-                                claimants.insert(uri.clone());
-                            }
-                        }
-                        if !claimants.is_empty() {
-                            ambiguous_claim_uris.insert(path.clone(), claimants);
-                            declined.push(ry_checker::Diagnostic::new(
-                                ry_checker::Severity::Warning,
-                                ry_core::Span::new(0, 1, 0, 0),
-                                path,
-                                "RY117",
-                                "Native source identity is ambiguous; typehint attachment was skipped.",
-                            ));
-                        }
+                        // Colliding snapshots are handled by the per-URI
+                        // annotation pass above. No contract may be adopted
+                        // from a display-keyed source here.
                         continue;
                     }
                     let native = match open_source_paths.get(path) {
@@ -1523,42 +1757,20 @@ impl Backend {
                     published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
                     continue;
                 }
-                let ambiguous_only: Vec<LspDiagnostic> = diagnostics
-                    .iter()
-                    .filter(|diagnostic| {
-                        matches!(
-                            diagnostic.code.as_ref(),
-                            Some(NumberOrString::String(code)) if code == "RY117"
-                        )
-                    })
-                    .cloned()
-                    .collect();
-                let ordinary: Vec<LspDiagnostic> = diagnostics
-                    .iter()
-                    .filter(|diagnostic| {
-                        !matches!(
-                            diagnostic.code.as_ref(),
-                            Some(NumberOrString::String(code)) if code == "RY117"
-                        )
-                    })
-                    .cloned()
-                    .collect();
+                let mut warnings = collision_diagnostics
+                    .remove(&diagnostic_path)
+                    .unwrap_or_default();
                 let mut non_empty = HashSet::new();
                 for uri in &uris {
                     // The active display-keyed buffer owns ordinary check
                     // results. Other native URIs only receive the shared
                     // ambiguity status, never another buffer's findings.
                     let mut for_uri = if active_collision_uris.get(&diagnostic_path) == Some(uri) {
-                        ordinary.clone()
+                        diagnostics.clone()
                     } else {
                         Vec::new()
                     };
-                    if ambiguous_claim_uris
-                        .get(&diagnostic_path)
-                        .is_some_and(|claimants| claimants.contains(uri))
-                    {
-                        for_uri.extend(ambiguous_only.iter().cloned());
-                    }
+                    for_uri.extend(warnings.remove(uri).unwrap_or_default());
                     if !for_uri.is_empty() {
                         non_empty.insert(uri.clone());
                     }
@@ -1568,6 +1780,25 @@ impl Backend {
                 }
                 published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
             }
+        }
+
+        // If the active colliding buffer is over cap, no project file was
+        // checked for this display key. Eligible inactive buffers still own
+        // their annotation warning, so publish them without admitting the
+        // oversized active text into inference or reparsing it.
+        for (path, mut warnings) in collision_diagnostics {
+            let uris = publication_uris(&path);
+            let mut non_empty = HashSet::new();
+            for uri in &uris {
+                let for_uri = warnings.remove(uri).unwrap_or_default();
+                if !for_uri.is_empty() {
+                    non_empty.insert(uri.clone());
+                }
+                self.client
+                    .publish_diagnostics(uri.clone(), for_uri, None)
+                    .await;
+            }
+            published.push((path, uris.into_iter().collect(), non_empty));
         }
 
         // Reconcile the tracked publication set against this pass: a URI
@@ -1613,7 +1844,7 @@ impl Backend {
                 .published_paths
                 .iter()
                 .filter(|path| {
-                    !state.eligibility_for_path(path.as_str())
+                    !state.any_open_source_eligible(path.as_str())
                         || (!state.docs.contains_key(path.as_str())
                             && !state.disk_files.contains_key(path.as_str()))
                 })

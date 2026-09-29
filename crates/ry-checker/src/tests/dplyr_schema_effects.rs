@@ -213,6 +213,107 @@ fn mutate_keep_none_preserves_literal_by_columns() {
 }
 
 #[test]
+fn mutate_keep_none_retains_unnamed_source_columns() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for call in [
+        "dplyr::mutate(d, x, .keep = 'none')",
+        "dplyr::mutate(d, x, z = g + 1L, .keep = 'none')",
+    ] {
+        let src = format!("{prefix}out <- {call}\nvalue <- out$x\n");
+        let (names, complete, diagnostics) = columns(&src, "out");
+        assert!(names.contains(&"x".to_owned()), "{call}: {names:?}");
+        assert!(complete, "{call}: {diagnostics:?}");
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY060" || !d.message.contains("`x`")),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let (names, complete, _) = columns(
+        &format!("{prefix}out <- dplyr::mutate(d, x, x = NULL, .keep = 'none')\n"),
+        "out",
+    );
+    assert!(names.is_empty());
+    assert!(complete);
+}
+
+#[test]
+fn unknown_add_keeps_prior_group_keys_uncertain() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n\
+                  grouped <- dplyr::group_by(d, g)\n";
+    for verb in [
+        "dplyr::summarise(regrouped, n = dplyr::n())",
+        "dplyr::transmute(regrouped, n = 1L)",
+    ] {
+        let src = format!(
+            "{prefix}flag <- TRUE\nregrouped <- dplyr::group_by(grouped, .add = flag)\n\
+             out <- {verb}\nvalue <- out$g\n"
+        );
+        let (_, grouped_complete, _) = columns(&src, "regrouped");
+        let (_, complete, diagnostics) = columns(&src, "out");
+        assert!(!grouped_complete, "{verb}");
+        assert!(!complete, "{verb}: {diagnostics:?}");
+        let (_, scope) = check_with_scope(&src);
+        assert!(scope.get("regrouped").unwrap().class.is_unknown());
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.code != "RY060" || !d.message.contains("`g`")),
+            "{verb}: {diagnostics:?}"
+        );
+    }
+    let literal = format!("{prefix}out <- dplyr::group_by(grouped, .add = FALSE)\n");
+    let (_, complete, _) = columns(&literal, "out");
+    assert!(complete, "a literal FALSE has a known grouping effect");
+}
+
+#[test]
+fn by_selection_applies_order_and_empty_selection() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for (selection, expected) in [
+        ("-x", vec!["g", "z"]),
+        ("c(x, -x)", vec!["z"]),
+        ("c(-x, x, -x)", vec!["g", "z"]),
+    ] {
+        let src = format!("{prefix}out <- dplyr::summarise(d, z = 1L, .by = {selection})\n");
+        let (names, complete, diagnostics) = columns(&src, "out");
+        assert_eq!(names, expected, "{selection}: {diagnostics:?}");
+        assert!(complete, "{selection}: {diagnostics:?}");
+    }
+    for verb in ["summarise", "reframe"] {
+        let src =
+            format!("{prefix}out <- dplyr::{verb}(d, z = 1L, .by = c(-x, x))\nvalue <- out$x\n");
+        let (names, complete, diagnostics) = columns(&src, "out");
+        assert_eq!(names, ["g", "x", "z"], "{verb}: {diagnostics:?}");
+        assert!(complete, "{verb}: {diagnostics:?}");
+        let (_, scope) = check_with_scope(&src);
+        assert_eq!(scope.get("value").unwrap().mode, Mode::Integer);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{verb}: {diagnostics:?}"
+        );
+        let empty_src =
+            format!("{prefix}out <- dplyr::{verb}(d, z = 1L, .by = c())\nvalue <- out$x\n");
+        let (names, complete, diagnostics) = columns(&empty_src, "out");
+        assert_eq!(names, ["z"], "{verb}");
+        assert!(complete, "{verb}");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == "RY060" && d.message.contains("`x`")),
+            "{verb}: {diagnostics:?}"
+        );
+    }
+    let (names, complete, _) = columns(
+        &format!("{prefix}out <- dplyr::mutate(d, z = 1L, .keep = 'none', .by = c())\n"),
+        "out",
+    );
+    assert_eq!(names, ["z"]);
+    assert!(complete);
+}
+
+#[test]
 fn control_tags_belong_to_the_specific_verb() {
     let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
     for (call, field) in [

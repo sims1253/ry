@@ -110,18 +110,25 @@ impl Checker {
                             matches!(semantic_argument_name(name), ".add" | ".drop")
                         })
                 });
+                let add = args
+                    .iter()
+                    .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".add"));
                 let retain_groups = source_grouped
-                    && args.iter().any(|arg| {
-                        arg.name.as_deref().map(semantic_argument_name) == Some(".add")
-                            && matches!(arg.value, Expr::Logical(true, _))
-                    });
+                    && add.is_some_and(|arg| matches!(arg.value, Expr::Logical(true, _)));
+                let uncertain_groups = source_grouped
+                    && add.is_some_and(|arg| !matches!(arg.value, Expr::Logical(_, _)));
                 if trusted_receiver && (has_group_spec || retain_groups) {
                     result.class =
                         ClassVector::from_slice(&["grouped_df", "tbl_df", "tbl", "data.frame"]);
-                } else if trusted_receiver {
+                } else if trusted_receiver && !uncertain_groups {
                     result.class = ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
                 } else {
                     result.class = ClassVector::unknown();
+                }
+                if uncertain_groups {
+                    // A dynamic .add may preserve old grouping keys. Later
+                    // summarise/transmute cannot certify their absence.
+                    result = incomplete_schema(result);
                 }
                 result
             }
@@ -362,32 +369,61 @@ fn masked_output_is_dynamic(args: &[&Arg], source: &RType) -> bool {
 
 fn selected_columns_from_source(data_type: &RType, expr: &Expr) -> Option<Vec<(String, RType)>> {
     let source = data_type.columns.as_ref()?;
-    let mut includes = Vec::new();
-    let mut excludes = Vec::new();
-    if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
+    let mut operations = Vec::new();
+    if !collect_ordered_tidy_selection(expr, false, &mut operations) {
         return None;
     }
-    if includes.is_empty() {
-        return Some(
-            source
-                .columns
-                .iter()
-                .filter(|(name, _)| !excludes.contains(name))
-                .cloned()
-                .collect(),
-        );
+    // Tidyselect begins with all columns only when the first selector is
+    // negative. An empty c() therefore selects nothing. Apply operations
+    // in order: c(-x, x) removes x and then reintroduces it.
+    let mut selected = if matches!(operations.first(), Some((true, _))) {
+        source.columns.clone()
+    } else {
+        Vec::new()
+    };
+    for (exclude, name) in operations {
+        let column = source
+            .columns
+            .iter()
+            .find(|(source_name, _)| *source_name == name)?;
+        if exclude {
+            selected.retain(|(selected_name, _)| selected_name != &name);
+        } else if !selected
+            .iter()
+            .any(|(selected_name, _)| selected_name == &name)
+        {
+            selected.push(column.clone());
+        }
     }
-    includes
-        .iter()
-        .filter(|name| !excludes.contains(name))
-        .map(|name| {
-            source
-                .columns
-                .iter()
-                .find(|(column, _)| column == name)
-                .cloned()
-        })
-        .collect()
+    Some(selected)
+}
+
+fn collect_ordered_tidy_selection(
+    expr: &Expr,
+    excluded: bool,
+    operations: &mut Vec<(bool, String)>,
+) -> bool {
+    match expr {
+        Expr::Ident { name, .. } | Expr::String(name, _) => {
+            operations.push((excluded, name.clone()));
+            true
+        }
+        Expr::UnaryOp {
+            op: UnaryOpKind::Neg,
+            expr,
+            ..
+        } if !excluded => collect_ordered_tidy_selection(expr, true, operations),
+        Expr::Call { func, args, .. }
+            if ident_name(func)
+                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
+        {
+            args.iter().all(|arg| {
+                arg.name.is_none()
+                    && collect_ordered_tidy_selection(&arg.value, excluded, operations)
+            })
+        }
+        _ => false,
+    }
 }
 
 fn schema_mutated_type(
@@ -427,6 +463,16 @@ fn schema_mutated_type(
             }
             // "used" and "unused" depend on reads within expressions.
             _ => data_type = incomplete_schema(data_type),
+        }
+    }
+    if mutate_controls {
+        for arg in masked_args.iter().filter(|arg| arg.name.is_none()) {
+            if let Expr::Ident { name, .. } = &arg.value
+                && let Some(ty) = source.columns.as_ref().and_then(|schema| schema.get(name))
+                && ty.columns.is_none()
+            {
+                data_type = type_with_assigned_column(data_type, name, ty);
+            }
         }
     }
     for (name, ty) in named {

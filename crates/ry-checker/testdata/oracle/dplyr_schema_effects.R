@@ -37,6 +37,23 @@ stopifnot(identical(names(dplyr::reframe(small, z = 1L, `.by` = g)), c("g", "z")
 stopifnot(identical(names(dplyr::mutate(small, z = x + 1L, .keep = "none", .by = g)), c("g", "z")))
 stopifnot(identical(names(dplyr::transmute(small, x = 2L, x = NULL)), character()))
 stopifnot(identical(names(dplyr::transmute(small, x, x = NULL)), character()))
+stopifnot(identical(names(dplyr::mutate(small, x, .keep = "none")), "x"))
+stopifnot(identical(names(dplyr::mutate(small, x, z = g + 1L, .keep = "none")), c("x", "z")))
+stopifnot(identical(names(dplyr::mutate(small, x, x = NULL, .keep = "none")), character()))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(-x, x))), c("g", "x", "z")))
+stopifnot(identical(names(dplyr::reframe(small, z = 1L, .by = c(-x, x))), c("g", "x", "z")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = -x)), c("g", "z")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(x, -x))), "z"))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(-x, x, -x))), c("g", "z")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c())), "z"))
+stopifnot(identical(names(dplyr::mutate(small, z = 1L, .keep = "none", .by = c())), "z"))
+
+prior_groups <- dplyr::group_by(small, g)
+add <- TRUE
+dynamic_add <- dplyr::group_by(prior_groups, .add = add)
+stopifnot(identical(names(dplyr::summarise(dynamic_add, n = dplyr::n())), c("g", "n")))
+stopifnot(identical(names(dplyr::transmute(dynamic_add, n = 1L)), c("g", "n")))
+stopifnot(!inherits(dplyr::group_by(prior_groups, .add = FALSE), "grouped_df"))
 
 two_types <- data.frame(x = 1L, y = "a", g = 2L)
 for (out in list(

@@ -2152,6 +2152,12 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_installer_iife.R"),
         include_str!("../../testdata/oracle/assertion_subject_installer_computed_get.R"),
         include_str!("../../testdata/oracle/assertion_subject_installer_literal_selector.R"),
+        include_str!("../../testdata/oracle/assertion_subject_primitive_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_global_primitive_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_reordered_arguments.R"),
+        include_str!("../../testdata/oracle/assertion_subject_called_function_default.R"),
+        include_str!("../../testdata/oracle/assertion_subject_chained_called_defaults_earlier.R"),
+        include_str!("../../testdata/oracle/assertion_subject_chained_called_defaults_later.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_delayed_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default_call.R"),
@@ -2182,6 +2188,7 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         "read_parent <- function() parent.frame(); f <- function(x = 1L) { read_parent(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
         include_str!("../../testdata/oracle/assertion_subject_unused_installer_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_installer_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_installer_argument_controls.R"),
         "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ]
     .into_iter()
@@ -2221,6 +2228,23 @@ fn scalar_proof_rejects_cross_file_caller_binding_helper() {
         diagnostics.iter().any(|d| d.code == "RY032"),
         "cross-file helper can replace the binding: {diagnostics:?}"
     );
+}
+
+#[test]
+fn scalar_assertion_requires_known_ambient_call_identity() {
+    let body = "f <- function(x = NULL) { stopifnot(is.null(x) || (x > 0 && x <= 2L)); if (is.null(x) || x == 1L) TRUE else FALSE }; f()";
+    assert!(
+        check(body).iter().all(|d| d.code != "RY032"),
+        "the unchanged base assertion is a valid scalar guard"
+    );
+    for ambient in ["library(stats)", "attach(list())"] {
+        let source = format!("{ambient}\n{body}");
+        let diagnostics = check(&source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "unknown search-path effects cannot certify the assertion after {ambient}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

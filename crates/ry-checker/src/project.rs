@@ -1082,6 +1082,51 @@ mod tests {
     }
 
     #[test]
+    fn primitive_installer_alias_retracts_after_cross_file_edit() {
+        let mut project = Project::new();
+        project.add_file(
+            "alias.R".into(),
+            parse_file("alias.R", "put <- base::delayedAssign"),
+        );
+        project.add_file(
+            "helper.R".into(),
+            parse_file(
+                "helper.R",
+                "install <- function(env) put('x', { x <- c(1L, 2L); 1L }, assign.env=env, eval.env=env)",
+            ),
+        );
+        project.add_file(
+            "consumer.R".into(),
+            parse_file(
+                "consumer.R",
+                "f <- function(x = NULL) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }",
+            ),
+        );
+        let initial = project.check();
+        assert!(
+            initial
+                .iter()
+                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+            "a cross-file primitive alias can install the caller binding: {initial:?}"
+        );
+        project.update_file(
+            "alias.R".into(),
+            parse_file(
+                "alias.R",
+                "put <- function(x, value, assign.env, eval.env) base::invisible(NULL)",
+            )
+            .into(),
+        );
+        let updated = assert_matches_cold(&mut project);
+        assert!(
+            updated
+                .iter()
+                .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+            "replacing the primitive alias retracts the effect: {updated:?}"
+        );
+    }
+
+    #[test]
     fn function_dependencies_skip_unrelated_callers_and_retain_edges() {
         let mut project = Project::new();
         project.add_file(

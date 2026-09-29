@@ -938,6 +938,21 @@ impl FnTable {
                     .push(alias.clone());
             }
         }
+        // A top-level `put <- delayedAssign` or `put <- makeActiveBinding`
+        // creates a callable installer even though the primitive has no
+        // UserFn entry to seed the ordinary reverse graph. Direct primitive
+        // calls are classified with their actual environment argument during
+        // collection; only aliases enter this conservative graph seed.
+        for primitive in [
+            "delayedAssign",
+            "makeActiveBinding",
+            "base::delayedAssign",
+            "base::makeActiveBinding",
+        ] {
+            if let Some(aliases) = aliases_by_source.get(primitive) {
+                work.extend(aliases.iter().cloned());
+            }
+        }
         let mut reached = HashSet::new();
         while let Some(callee) = work.pop() {
             if !reached.insert(callee.clone()) {

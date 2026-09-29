@@ -26,27 +26,18 @@ fn definitely_local_installer_env(expression: &Expr, local_names: &HashSet<Strin
 }
 
 fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
-    match name {
-        "makeActiveBinding" => args
-            .iter()
-            .find(|arg| {
-                arg.name
-                    .as_deref()
-                    .is_some_and(|name| "env".starts_with(name))
-            })
-            .or_else(|| args.get(2))
-            .map(|arg| &arg.value),
-        "delayedAssign" => args
-            .iter()
-            .find(|arg| {
-                arg.name
-                    .as_deref()
-                    .is_some_and(|name| "assign.env".starts_with(name))
-            })
-            .or_else(|| args.get(3))
-            .map(|arg| &arg.value),
-        _ => None,
-    }
+    let (formals, environment) = match bare_name(name) {
+        "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
+        "delayedAssign" => (["x", "value", "eval.env", "assign.env"].as_slice(), 3),
+        _ => return None,
+    };
+    // Exact names bind first, then unique partial names, then the remaining
+    // unnamed actuals. A raw index is wrong after a later named actual fills
+    // an earlier formal (notably `eval.env =` before `assign.env`).
+    match_arguments(formals, args)
+        .arg_for_param(environment)
+        .and_then(|index| args.get(index))
+        .map(|arg| &arg.value)
 }
 
 /// A small caller-effect summary, collected once with the function body.
@@ -57,6 +48,17 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr
 /// Direct calls let wrappers inherit this conservative summary. A local
 /// installer without a caller-frame route does not taint callers.
 fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<String>) {
+    // Share one budget through recursively reached function-valued defaults.
+    // Exhaustion must withdraw the negative binding-effect proof.
+    let mut remaining_default_bodies = 64;
+    helper_caller_binding_summary_bounded(params, body, &mut remaining_default_bodies)
+}
+
+fn helper_caller_binding_summary_bounded(
+    params: &[Param],
+    body: &[Stmt],
+    remaining_default_bodies: &mut usize,
+) -> (bool, Vec<String>) {
     let default_names: HashSet<&str> = params
         .iter()
         .filter(|param| param.default.is_some())
@@ -118,7 +120,7 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
         }
     }
 
-    let mut installer_environments = Vec::new();
+    let mut call_sites = Vec::new();
     let mut callees = HashSet::new();
     let mut local_aliases: HashMap<String, HashSet<String>> = HashMap::new();
     let mut indirect_call = false;
@@ -143,11 +145,8 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
         }
         if let AstNode::Expr(Expr::Call { func, args, span }) = node {
             if let Some(name) = ident_name(func) {
-                let name = bare_name(name);
                 callees.insert(name.to_string());
-                if let Some(environment) = installer_environment_arg(name, args) {
-                    installer_environments.push((span.start, environment.clone()));
-                }
+                call_sites.push((span.start, name.to_string(), args.clone()));
             } else if !matches!(func.as_ref(), Expr::Function { .. }) {
                 // A computed function value can be a known installer reached
                 // through `get("install")`, indexing, or another expression.
@@ -175,13 +174,67 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
     // A local function-valued alias may be called long after the assignment,
     // including through another alias. Retain every syntactically possible
     // source: a conditional assignment cannot justify discarding a route.
-    let mut pending_aliases: Vec<_> = callees.iter().cloned().collect();
-    while let Some(callee) = pending_aliases.pop() {
-        if let Some(sources) = local_aliases.get(&callee) {
-            for source in sources {
-                if callees.insert(source.clone()) {
-                    pending_aliases.push(source.clone());
+    let expand_aliases = |callees: &mut HashSet<String>| {
+        let mut pending_aliases: Vec<_> = callees.iter().cloned().collect();
+        while let Some(callee) = pending_aliases.pop() {
+            if let Some(sources) = local_aliases.get(&callee) {
+                for source in sources {
+                    if callees.insert(source.clone()) {
+                        pending_aliases.push(source.clone());
+                    }
                 }
+            }
+        }
+    };
+    // A function literal in a default is just a value until the helper calls
+    // that formal. At that point its body executes with access to the outer
+    // environment. A later default can invoke one declared earlier, so keep
+    // discovering callees until no unvisited function default is reachable.
+    let mut visited_defaults = HashSet::new();
+    loop {
+        expand_aliases(&mut callees);
+        let next = params.iter().enumerate().find(|(index, param)| {
+            !visited_defaults.contains(index)
+                && callees.contains(&param.name)
+                && matches!(&param.default, Some(Expr::Function { .. }))
+        });
+        let Some((index, param)) = next else {
+            break;
+        };
+        if *remaining_default_bodies == 0 {
+            indirect_call = true;
+            break;
+        }
+        *remaining_default_bodies -= 1;
+        visited_defaults.insert(index);
+        if let Some(Expr::Function {
+            params: inner_params,
+            body: inner_body,
+            ..
+        }) = &param.default
+        {
+            let (effect, nested_callees) = helper_caller_binding_summary_bounded(
+                inner_params,
+                inner_body,
+                remaining_default_bodies,
+            );
+            indirect_call |= effect;
+            callees.extend(nested_callees);
+        }
+    }
+    let mut installer_environments = Vec::new();
+    for (start, name, args) in &call_sites {
+        let mut possible_names = vec![name.as_str()];
+        let mut seen = HashSet::new();
+        while let Some(candidate) = possible_names.pop() {
+            if !seen.insert(candidate) {
+                continue;
+            }
+            if let Some(environment) = installer_environment_arg(candidate, args) {
+                installer_environments.push((*start, environment.clone()));
+            }
+            if let Some(sources) = local_aliases.get(candidate) {
+                possible_names.extend(sources.iter().map(String::as_str));
             }
         }
     }
@@ -1449,6 +1502,34 @@ mod collect_walker_tests {
                 "install <- function(env, new.env = function() env) makeActiveBinding('x', function() 1L, new.env())",
                 true,
             ),
+            (
+                "install <- function(env) { put <- delayedAssign; put('x', 1L, assign.env=env) }",
+                true,
+            ),
+            (
+                "install <- function(env) { put <- base::delayedAssign; put('x', 1L, assign.env=base::new.env()) }",
+                false,
+            ),
+            (
+                "install <- function(env) delayedAssign('x', 1L, env, eval.env=base::new.env())",
+                true,
+            ),
+            (
+                "install <- function(env) base::delayedAssign('x', 1L, base::new.env(), eval.env=base::new.env())",
+                false,
+            ),
+            (
+                "install <- function(env, act=function() makeActiveBinding('x', function() 1L, env)) act()",
+                true,
+            ),
+            (
+                "install <- function(env, act=function() makeActiveBinding('x', function() 1L, env)) base::invisible(NULL)",
+                false,
+            ),
+            (
+                "install <- function(env, act=function() base::invisible(NULL)) act()",
+                false,
+            ),
         ] {
             let checker = collect(source);
             assert_eq!(
@@ -1456,6 +1537,25 @@ mod collect_walker_tests {
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn deep_called_default_chain_declines_a_binding_stability_proof() {
+        let defaults: Vec<_> = (0..70)
+            .map(|index| {
+                if index == 0 {
+                    "p0=function() base::invisible(NULL)".to_string()
+                } else {
+                    format!("p{index}=function() p{}()", index - 1)
+                }
+            })
+            .collect();
+        let source = format!("install <- function({}) p69()", defaults.join(", "));
+        let checker = collect(&source);
+        assert!(
+            checker.fn_table.fns["install"].may_install_caller_binding,
+            "an exhausted default-call walk must retain uncertainty"
+        );
     }
 
     #[test]

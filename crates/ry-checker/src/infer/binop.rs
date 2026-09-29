@@ -829,8 +829,8 @@ impl Checker {
     fn scalar_assertion_pure_rhs(&self, expr: &Expr, subject: &str, scope: &Scope) -> bool {
         match expr {
             Expr::Ident { name, .. } => {
-                // The subject was forced by `is.null(subject)` before this
-                // point. Another formal can still hold an unevaluated default
+                // The preceding predicate or comparison evaluated the
+                // subject. Another formal can still hold an unevaluated default
                 // whose first read reassigns the subject. A local value is
                 // safe only while no unknown binding effect can replace it
                 // with a delayed or active binding.

@@ -13,6 +13,9 @@ All notable changes to ry are documented in this file.
   lists no longer suppress ry findings; bare ignores still do.
 - Carry scalar-or-NULL facts from successful `stopifnot()` assertions into
   later RY032 checks, removing the guarded purrr `prepend()` false positive.
+  Prior unknown search-path, data-mask, or binding effects can prevent that
+  proof; qualified base local-frame constructors and wrappers retain precision
+  where their identity is known.
   Preserve a proven vector alternative through simple aliases and loop joins
   so RY032 reports a reachable first-iteration or empty-iterator error.
 

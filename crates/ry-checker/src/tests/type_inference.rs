@@ -2154,6 +2154,13 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_installer_literal_selector.R"),
         include_str!("../../testdata/oracle/assertion_subject_primitive_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_global_primitive_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_triple_namespace_primitive_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_quoted_primitive_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_supplied_installer.R"),
+        include_str!("../../testdata/oracle/assertion_subject_supplied_installer_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_overridden_pure_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_forwarded_callback_alias.R"),
+        include_str!("../../testdata/oracle/assertion_subject_passed_default_do_call.R"),
         include_str!("../../testdata/oracle/assertion_subject_reordered_arguments.R"),
         include_str!("../../testdata/oracle/assertion_subject_called_function_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_chained_called_defaults_earlier.R"),
@@ -2189,6 +2196,11 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_unused_installer_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_installer_env.R"),
         include_str!("../../testdata/oracle/assertion_subject_installer_argument_controls.R"),
+        include_str!("../../testdata/oracle/assertion_subject_pure_supplied_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_unused_callable_formal.R"),
+        include_str!("../../testdata/oracle/assertion_subject_omitted_pure_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_passed_default_value_only.R"),
+        include_str!("../../testdata/oracle/assertion_subject_forwarded_pure_callback.R"),
         "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ]
     .into_iter()
@@ -2409,6 +2421,8 @@ fn loop_vector_fact_flows_through_simple_aliases_but_not_safe_overwrites() {
     for source in [
         "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L && TRUE) i; x <- 1L } }",
         "f <- function(xs) { x <- c(1L, 2L); for (i in xs) x <- 1L; y <- x; if (y == 1L && TRUE) y }",
+        include_str!("../../testdata/oracle/loop_mirrored_numeric_lt.R"),
+        include_str!("../../testdata/oracle/loop_mirrored_numeric_eq.R"),
         "f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; z <- y; if (z == 1L && TRUE) i; x <- 1L } }",
     ] {
         let diagnostics = check(source);
@@ -2422,6 +2436,8 @@ fn loop_vector_fact_flows_through_simple_aliases_but_not_safe_overwrites() {
         "f <- function() { x <- c(1L, 2L); for (i in 1L) x <- 1L; y <- x; if (y == 1L && TRUE) y }",
         "`&&` <- function(x, y) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L && TRUE) i; x <- 1L } }",
         "`||` <- function(x, y) TRUE; f <- function(xs) { x <- c(1L, 2L); for (i in xs) { y <- x; if (y == 1L || FALSE) i; x <- 1L } }",
+        include_str!("../../testdata/oracle/loop_mirrored_masked_lt.R"),
+        include_str!("../../testdata/oracle/loop_mirrored_masked_eq.R"),
     ] {
         let diagnostics = check(source);
         assert!(

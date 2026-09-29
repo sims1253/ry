@@ -3,6 +3,44 @@ use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
+fn supplied_callable_may_install_caller_binding(
+    checker: &Checker,
+    function: &UserFn,
+    args: &[Arg],
+    scope: &Scope,
+) -> bool {
+    if function.caller_binding_called_formals.is_empty() {
+        return false;
+    }
+    let param_names: Vec<_> = function
+        .params
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect();
+    let matches = match_argument_names(&param_names, args.iter().map(|arg| arg.name.as_deref()));
+    function.caller_binding_called_formals.iter().any(|called| {
+        function.params.iter().enumerate().any(|(formal, param)| {
+            crate::caller_binding_identity(&param.name).as_deref() == Some(called.as_str())
+                && matches
+                    .arg_for_param(formal)
+                    .and_then(|actual| args.get(actual))
+                    .is_some_and(|actual| {
+                        let known_environment = matches!(
+                            &actual.value,
+                            Expr::Call { func, args, .. }
+                                if args.is_empty()
+                                    && ident_name(func).is_some_and(|name| {
+                                        crate::semantic_lists::bare_name(name) == "environment"
+                                            && checker.resolves_to_base(name, scope)
+                                    })
+                        );
+                        !known_environment
+                            && !crate::collect::inert_caller_binding_actual(&actual.value)
+                    })
+        })
+    })
+}
+
 impl Checker {
     pub(crate) fn infer_call(
         &mut self,
@@ -264,10 +302,10 @@ impl Checker {
         // caller-binding effect on that path too. A formal or nested lexical
         // callable is not certified by the project-wide name table.
         if !scope.is_parameter(&lookup_name)
-            && call
-                .user_function
-                .as_ref()
-                .is_some_and(|function| function.may_install_caller_binding)
+            && call.user_function.as_ref().is_some_and(|function| {
+                function.may_install_caller_binding
+                    || supplied_callable_may_install_caller_binding(self, function, args, scope)
+            })
         {
             scope.dynamic_bindings_unknown = true;
             for name in scope.scalar_asserted_bindings.clone() {

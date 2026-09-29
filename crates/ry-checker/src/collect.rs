@@ -25,6 +25,37 @@ fn definitely_local_installer_env(expression: &Expr, local_names: &HashSet<Strin
     }
 }
 
+/// A supplied callback is safe for this binding-effect check only when its
+/// body cannot read a promise, call another function, or mutate an environment.
+/// This intentionally recognizes a small, closed class of literal no-ops.
+pub(crate) fn inert_caller_binding_actual(expression: &Expr) -> bool {
+    let Expr::Function { body, .. } = expression else {
+        return false;
+    };
+    let inert_value = |value: &Expr| {
+        matches!(
+            value,
+            Expr::Null(_)
+                | Expr::Logical(_, _)
+                | Expr::Integer(_, _)
+                | Expr::Double(_, _)
+                | Expr::String(_, _)
+                | Expr::Na(_, _)
+        )
+    };
+    body.iter().all(|statement| match statement {
+        Stmt::Expr(value) if inert_value(value) => true,
+        Stmt::Return { value, .. } => value.as_ref().is_none_or(&inert_value),
+        Stmt::Expr(Expr::Call { func, args, .. })
+            if ident_name(func)
+                .is_some_and(|name| matches!(name, "base::invisible" | "base::return")) =>
+        {
+            args.len() <= 1 && args.iter().all(|arg| inert_value(&arg.value))
+        }
+        _ => false,
+    })
+}
+
 fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
@@ -47,7 +78,10 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr
 /// are not.
 /// Direct calls let wrappers inherit this conservative summary. A local
 /// installer without a caller-frame route does not taint callers.
-fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<String>) {
+fn helper_caller_binding_summary(
+    params: &[Param],
+    body: &[Stmt],
+) -> (bool, Vec<String>, Vec<String>) {
     // Share one budget through recursively reached function-valued defaults.
     // Exhaustion must withdraw the negative binding-effect proof.
     let mut remaining_default_bodies = 64;
@@ -58,11 +92,11 @@ fn helper_caller_binding_summary_bounded(
     params: &[Param],
     body: &[Stmt],
     remaining_default_bodies: &mut usize,
-) -> (bool, Vec<String>) {
-    let default_names: HashSet<&str> = params
+) -> (bool, Vec<String>, Vec<String>) {
+    let default_names: HashSet<String> = params
         .iter()
         .filter(|param| param.default.is_some())
-        .map(|param| param.name.as_str())
+        .filter_map(|param| caller_binding_identity(&param.name))
         .collect();
     let direct_walk = Walk {
         assign_targets: false,
@@ -79,8 +113,10 @@ fn helper_caller_binding_summary_bounded(
     // value forms (such as `invisible(NULL)`) keeps unused defaults lazy.
     let mut pending = Vec::new();
     let note_default_force = |node: AstNode<'_>, pending: &mut Vec<String>| match node {
-        AstNode::Expr(Expr::Ident { name, .. }) if default_names.contains(name.as_str()) => {
-            pending.push(name.clone());
+        AstNode::Expr(Expr::Ident { name, .. })
+            if caller_binding_identity(name).is_some_and(|name| default_names.contains(&name)) =>
+        {
+            pending.push(caller_binding_identity(name).unwrap());
         }
         AstNode::Expr(Expr::Call { func, .. })
             if !ident_name(func).is_some_and(|name| {
@@ -95,7 +131,7 @@ fn helper_caller_binding_summary_bounded(
                 )
             }) =>
         {
-            pending.extend(default_names.iter().map(|name| (*name).to_string()));
+            pending.extend(default_names.iter().cloned());
         }
         _ => {}
     };
@@ -110,7 +146,7 @@ fn helper_caller_binding_summary_bounded(
         }
         if let Some(default) = params
             .iter()
-            .find(|param| param.name == name)
+            .find(|param| caller_binding_identity(&param.name).as_deref() == Some(name.as_str()))
             .and_then(|param| param.default.as_ref())
         {
             let _ = walk_expr(default, direct_walk, |node, _| {
@@ -122,6 +158,7 @@ fn helper_caller_binding_summary_bounded(
 
     let mut call_sites = Vec::new();
     let mut callees = HashSet::new();
+    let mut potential_callback_arguments = Vec::new();
     let mut local_aliases: HashMap<String, HashSet<String>> = HashMap::new();
     let mut indirect_call = false;
     let mut collect_effect = |node: AstNode<'_>, _| {
@@ -138,15 +175,44 @@ fn helper_caller_binding_summary_bounded(
         if let Some((Expr::Ident { name: target, .. }, Expr::Ident { name: source, .. })) =
             assignment
         {
-            local_aliases
-                .entry(target.clone())
-                .or_default()
-                .insert(source.clone());
+            match (
+                caller_binding_identity(target),
+                caller_binding_identity(source),
+            ) {
+                (Some(target), Some(source)) => {
+                    local_aliases.entry(target).or_default().insert(source);
+                }
+                _ => indirect_call = true,
+            }
         }
         if let AstNode::Expr(Expr::Call { func, args, span }) = node {
-            if let Some(name) = ident_name(func) {
-                callees.insert(name.to_string());
-                call_sites.push((span.start, name.to_string(), args.clone()));
+            if let Some(name) = ident_name(func).and_then(caller_binding_identity) {
+                // An unmodeled callee can invoke a function-valued argument
+                // (`do.call(act, list())`, callbacks, dispatch). Passing a
+                // formal to a known value-only base wrapper does not invoke
+                // it, so that route stays available as a quiet control.
+                if !matches!(
+                    name.as_str(),
+                    "base::invisible"
+                        | "base::return"
+                        | "base::identity"
+                        | "base::force"
+                        | "base::list"
+                        | "base::is.function"
+                ) {
+                    for arg in args {
+                        if let Expr::Ident { name: passed, .. } = &arg.value {
+                            match caller_binding_identity(passed) {
+                                Some(passed) => {
+                                    potential_callback_arguments.push((name.clone(), passed));
+                                }
+                                None => indirect_call = true,
+                            }
+                        }
+                    }
+                }
+                callees.insert(name.clone());
+                call_sites.push((span.start, name, args.clone()));
             } else if !matches!(func.as_ref(), Expr::Function { .. }) {
                 // A computed function value can be a known installer reached
                 // through `get("install")`, indexing, or another expression.
@@ -157,18 +223,30 @@ fn helper_caller_binding_summary_bounded(
     };
     let _ = walk_stmts(body, Walk::ALL, &mut collect_effect);
     for param in params {
-        if forced_defaults.contains(&param.name)
+        if caller_binding_identity(&param.name).is_some_and(|name| forced_defaults.contains(&name))
             && let Some(default) = &param.default
         {
             let _ = walk_expr(default, direct_walk, &mut collect_effect);
         }
     }
+    if params
+        .iter()
+        .any(|param| caller_binding_identity(&param.name).is_none())
+        && !call_sites.is_empty()
+    {
+        indirect_call = true;
+    }
     for param in params {
         if let Some(Expr::Ident { name, .. }) = &param.default {
-            local_aliases
-                .entry(param.name.clone())
-                .or_default()
-                .insert(name.clone());
+            match (
+                caller_binding_identity(&param.name),
+                caller_binding_identity(name),
+            ) {
+                (Some(target), Some(source)) => {
+                    local_aliases.entry(target).or_default().insert(source);
+                }
+                _ => indirect_call = true,
+            }
         }
     }
     // A local function-valued alias may be called long after the assignment,
@@ -186,6 +264,24 @@ fn helper_caller_binding_summary_bounded(
             }
         }
     };
+    for (receiver, passed) in potential_callback_arguments {
+        let mut receiver_sources = HashSet::from([receiver]);
+        expand_aliases(&mut receiver_sources);
+        // Calling a formal already makes its supplied value an effect route.
+        // Its other arguments are not themselves callbacks merely because
+        // that formal might call them; a pure supplied callable cannot do so.
+        if !params.iter().any(|param| {
+            caller_binding_identity(&param.name)
+                .is_some_and(|name| receiver_sources.contains(&name))
+        }) {
+            let mut passed_sources = HashSet::from([passed]);
+            expand_aliases(&mut passed_sources);
+            callees.extend(params.iter().filter_map(|param| {
+                let name = caller_binding_identity(&param.name)?;
+                passed_sources.contains(&name).then_some(name)
+            }));
+        }
+    }
     // A function literal in a default is just a value until the helper calls
     // that formal. At that point its body executes with access to the outer
     // environment. A later default can invoke one declared earlier, so keep
@@ -195,7 +291,7 @@ fn helper_caller_binding_summary_bounded(
         expand_aliases(&mut callees);
         let next = params.iter().enumerate().find(|(index, param)| {
             !visited_defaults.contains(index)
-                && callees.contains(&param.name)
+                && caller_binding_identity(&param.name).is_some_and(|name| callees.contains(&name))
                 && matches!(&param.default, Some(Expr::Function { .. }))
         });
         let Some((index, param)) = next else {
@@ -213,17 +309,44 @@ fn helper_caller_binding_summary_bounded(
             ..
         }) = &param.default
         {
-            let (effect, nested_callees) = helper_caller_binding_summary_bounded(
-                inner_params,
-                inner_body,
-                remaining_default_bodies,
-            );
-            indirect_call |= effect;
+            let (effect, nested_callees, nested_called_formals) =
+                helper_caller_binding_summary_bounded(
+                    inner_params,
+                    inner_body,
+                    remaining_default_bodies,
+                );
+            indirect_call |= effect || !nested_called_formals.is_empty();
             callees.extend(nested_callees);
         }
     }
     let mut installer_environments = Vec::new();
     for (start, name, args) in &call_sites {
+        if name.contains("::")
+            && !name.starts_with("base::")
+            && args.iter().any(|arg| match &arg.value {
+                Expr::Ident { name, .. } => {
+                    let Some(name) = caller_binding_identity(name) else {
+                        return true;
+                    };
+                    let mut sources = HashSet::from([name]);
+                    expand_aliases(&mut sources);
+                    params.iter().any(|param| {
+                        caller_binding_identity(&param.name)
+                            .is_some_and(|name| sources.contains(&name))
+                    })
+                }
+                Expr::Call { func, .. } => ident_name(func)
+                    .is_some_and(|name| matches!(bare_name(name), "environment" | "parent.frame")),
+                _ => false,
+            })
+        {
+            // Without a package identity, `other::install(env)` cannot be
+            // equated to this project's `install`; but a qualified call
+            // receiving a possibly caller-owned frame can still replace
+            // the caller's binding. Keep the effect uncertain instead of
+            // discarding the route from the local wrapper summary.
+            indirect_call = true;
+        }
         let mut possible_names = vec![name.as_str()];
         let mut seen = HashSet::new();
         while let Some(candidate) = possible_names.pop() {
@@ -284,9 +407,17 @@ fn helper_caller_binding_summary_bounded(
             !certified_calls.contains(start)
                 && !definitely_local_installer_env(environment, &HashSet::new())
         });
+    let called_formals = params
+        .iter()
+        .filter_map(|param| {
+            let name = caller_binding_identity(&param.name)?;
+            callees.contains(&name).then_some(name)
+        })
+        .collect();
     (
         uncertain_installer_environment || indirect_call,
         callees.into_iter().collect(),
+        called_formals,
     )
 }
 
@@ -339,11 +470,27 @@ impl Checker {
     fn collect_fns_assign(&mut self, target: &Expr, value: &Expr) {
         if let (Expr::Ident { name: alias, .. }, Expr::Ident { name: source, .. }) = (target, value)
         {
-            Arc::make_mut(&mut self.fn_table)
-                .caller_binding_aliases
-                .entry(alias.clone())
-                .or_default()
-                .insert(source.clone());
+            let table = Arc::make_mut(&mut self.fn_table);
+            match (
+                caller_binding_identity(alias),
+                caller_binding_identity(source),
+            ) {
+                (Some(alias), Some(source)) => {
+                    table
+                        .caller_binding_aliases
+                        .entry(alias)
+                        .or_default()
+                        .insert(source);
+                }
+                (Some(alias), None) => {
+                    table
+                        .caller_binding_aliases
+                        .entry(alias)
+                        .or_default()
+                        .insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+                }
+                (None, _) => table.caller_binding_unresolved_alias_target = true,
+            }
         }
         // Record every identifier-bound top-level assignment in
         // `known_vars`. This is independent of whether the RHS
@@ -582,7 +729,7 @@ impl Checker {
     // allocated return slot so callers can wire up S3 dispatch entries
     // that share the same slot.
     pub(crate) fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) -> usize {
-        let (may_install_caller_binding, caller_binding_callees) =
+        let (may_install_caller_binding, caller_binding_callees, caller_binding_called_formals) =
             helper_caller_binding_summary(params, &body);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
@@ -625,6 +772,7 @@ impl Checker {
                 body,
                 may_install_caller_binding,
                 caller_binding_callees,
+                caller_binding_called_formals,
                 return_slot: slot,
             },
         );

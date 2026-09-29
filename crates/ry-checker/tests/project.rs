@@ -1306,6 +1306,96 @@ fn callback_project(sources: &[(&str, &str)]) -> Project {
 }
 
 #[test]
+fn incremental_caller_binding_alias_retracts_after_a_pure_edit() {
+    let mut sources = [
+        ("alias.R", "`put` <- base:::delayedAssign\n"),
+        (
+            "helper.R",
+            "install <- function(env = parent.frame()) put('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\n",
+        ),
+        (
+            "consumer.R",
+            "f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n",
+        ),
+    ];
+    let mut warm = callback_project(&sources);
+    let initial = warm.check_incremental();
+    assert!(initial.iter().any(|(path, diagnostics)| {
+        path == "consumer.R"
+            && diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+    }));
+
+    sources[0].1 = "`put` <- function(...) NULL\n";
+    warm.update_file("alias.R".into(), Arc::new(parse("alias.R", sources[0].1)));
+    let after = warm.check_incremental();
+    assert_eq!(after, callback_project(&sources).check());
+    assert!(after.iter().all(|(_, diagnostics)| {
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032")
+    }));
+    assert_eq!(warm.check_incremental(), after);
+}
+
+#[test]
+fn qualified_helper_with_a_forwarded_frame_keeps_caller_binding_uncertain() {
+    let mut project = Project::new();
+    project.add_file(
+        "install.R".into(),
+        parse(
+            "install.R",
+            "install <- function(env) delayedAssign('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\n",
+        ),
+    );
+    project.add_file(
+        "wrapper.R".into(),
+        parse(
+            "wrapper.R",
+            "wrapper <- function(env) probeeffect::install(env)\n",
+        ),
+    );
+    project.add_file(
+        "consumer.R".into(),
+        parse(
+            "consumer.R",
+            "f <- function(x = 1L) { wrapper(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n",
+        ),
+    );
+    let findings = project.check();
+    assert!(findings.iter().any(|(path, diagnostics)| {
+        path == "consumer.R"
+            && diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+    }));
+
+    // A qualified name with a literal input is not silently equated with
+    // this project's effectful `install` merely because the bare names match.
+    let mut unrelated = Project::new();
+    unrelated.add_file(
+        "install.R".into(),
+        parse(
+            "install.R",
+            "install <- function(env) delayedAssign('x', 1L, assign.env = env)\n",
+        ),
+    );
+    unrelated.add_file(
+        "consumer.R".into(),
+        parse(
+            "consumer.R",
+            "wrapper <- function() other::install(1L)\nf <- function(x = 1L) { wrapper(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n",
+        ),
+    );
+    assert!(unrelated.check().iter().all(|(_, diagnostics)| {
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032")
+    }));
+}
+
+#[test]
 fn incremental_callback_returns_match_cold_checks() {
     for callback_use in [
         "wrapper <- function() lapply(1, leaf)[[1]]",

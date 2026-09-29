@@ -118,6 +118,27 @@ fn ident_name(expr: &Expr) -> Option<&str> {
     }
 }
 
+const UNKNOWN_CALLER_BINDING_IDENTITY: &str = "\0caller-binding-identity";
+
+/// Use one semantic key for ordinary and simply quoted names in the binding
+/// effect graph. R's escaped backtick contents need a decoder; their identity
+/// stays unknown here rather than treating raw source bytes as a safe alias.
+fn caller_binding_identity(raw: &str) -> Option<String> {
+    if raw.contains('\\') {
+        return None;
+    }
+    let name = infer::semantic_argument_name(raw);
+    if raw.starts_with('`') {
+        return Some(name.to_string());
+    }
+    if let Some(primitive) = name.strip_prefix("base:::")
+        && matches!(primitive, "delayedAssign" | "makeActiveBinding")
+    {
+        return Some(format!("base::{primitive}"));
+    }
+    Some(name.to_string())
+}
+
 fn binding_name(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
@@ -790,6 +811,9 @@ pub(crate) struct UserFn {
     /// Direct call names in this body, used once to propagate the bounded
     /// caller-binding summary through package-local wrappers.
     pub(crate) caller_binding_callees: Vec<String>,
+    /// Formals invoked as callables, directly or through a local alias. A
+    /// supplied actual may differ from a harmless default at this call site.
+    pub(crate) caller_binding_called_formals: Vec<String>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -900,6 +924,9 @@ pub(crate) struct FnTable {
     // Possible top-level function-value aliases. The caller-binding effect
     // graph follows these when a wrapper invokes an alias in another file.
     pub(crate) caller_binding_aliases: FxMap<String, FxSet<String>>,
+    // An escaped alias target cannot be identified without decoding R's
+    // backtick escapes. Its possible caller effect is retained conservatively.
+    pub(crate) caller_binding_unresolved_alias_target: bool,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
     pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
@@ -919,9 +946,14 @@ impl FnTable {
         let mut callers: HashMap<String, Vec<String>> = HashMap::new();
         let mut aliases_by_source: HashMap<String, Vec<String>> = HashMap::new();
         let mut work = Vec::new();
+        let mut unresolved_effectful_function = false;
         for (name, function) in &self.fns {
             if function.may_install_caller_binding {
-                work.push(name.clone());
+                if let Some(identity) = caller_binding_identity(name) {
+                    work.push(identity);
+                } else {
+                    unresolved_effectful_function = true;
+                }
             }
             for callee in &function.caller_binding_callees {
                 callers
@@ -948,9 +980,18 @@ impl FnTable {
             "makeActiveBinding",
             "base::delayedAssign",
             "base::makeActiveBinding",
+            UNKNOWN_CALLER_BINDING_IDENTITY,
         ] {
             if let Some(aliases) = aliases_by_source.get(primitive) {
                 work.extend(aliases.iter().cloned());
+            }
+        }
+        if self.caller_binding_unresolved_alias_target || unresolved_effectful_function {
+            for (name, function) in &mut self.fns {
+                if !function.caller_binding_callees.is_empty() {
+                    function.may_install_caller_binding = true;
+                    work.push(name.clone());
+                }
             }
         }
         let mut reached = HashSet::new();
@@ -967,7 +1008,9 @@ impl FnTable {
                         && !function.may_install_caller_binding
                     {
                         function.may_install_caller_binding = true;
-                        work.push(caller.clone());
+                        if let Some(identity) = caller_binding_identity(caller) {
+                            work.push(identity);
+                        }
                     }
                 }
             }
@@ -1015,6 +1058,8 @@ impl FnTable {
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
+        self.caller_binding_unresolved_alias_target |=
+            collected.caller_binding_unresolved_alias_target;
         for (alias, sources) in &collected.caller_binding_aliases {
             self.caller_binding_aliases
                 .entry(alias.clone())

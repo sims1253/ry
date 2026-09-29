@@ -2173,6 +2173,18 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_wrapped.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_block.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_alias_chain.R"),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_local_do_call_saved_before_overwrite.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_local_do_call_saved_string_before_overwrite.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_local_do_call_saved_wrapped_before_overwrite.R"
+        ),
+        include_str!(
+            "../../testdata/oracle/assertion_subject_local_do_call_saved_block_before_overwrite.R"
+        ),
         include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_do_call_what.R"),
         include_str!("../../testdata/oracle/assertion_subject_named_dots_callback_used.R"),
@@ -2252,6 +2264,8 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_stored_string.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_nested_alias_shadow.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_overwrite_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_saved_after_overwrite_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_local_do_call_saved_block_after_overwrite_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_later_write_pure.R"),
         include_str!("../../testdata/oracle/assertion_subject_local_do_call_shared_pure_aliases.R"),
         include_str!("../../testdata/oracle/assertion_subject_quoted_assign_env_local.R"),

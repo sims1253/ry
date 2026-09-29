@@ -146,6 +146,38 @@ fn expand_block_value_sources(
     resolved
 }
 
+/// Alias entries produced by this scanner contain values captured at the
+/// assignment, rather than names to be resolved again after a later write.
+/// A bare name read before any known local assignment may come from an outer
+/// binding; copying it cannot certify a harmless callable. Formal values are
+/// retained so their supplied callback is checked at the call site.
+fn local_value_sources_at_point(
+    sources: HashSet<String>,
+    aliases: &HashMap<String, HashSet<String>>,
+    formal_names: &HashSet<String>,
+    capture: bool,
+) -> HashSet<String> {
+    let mut resolved = HashSet::new();
+    for source in sources {
+        if let Some(values) = aliases.get(&source) {
+            resolved.extend(values.iter().cloned());
+        } else if capture
+            && source != UNKNOWN_CALLER_BINDING_IDENTITY
+            && !source.contains("::")
+            && !formal_names.contains(&source)
+            && !(formal_names.contains("...") && variadic_callable_source(&source))
+        {
+            resolved.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+        } else {
+            resolved.insert(source);
+        }
+        if resolved.len() > 128 {
+            return HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()]);
+        }
+    }
+    resolved
+}
+
 /// Follow a top-level value only through base operations whose result is the
 /// selected argument. A stored list is not a callable alias; extracting one
 /// of its elements is. An unmodeled value can still be a callable installer,
@@ -217,7 +249,15 @@ pub(crate) fn global_caller_binding_value_sources(
                     } => {
                         if let Some(name) = caller_binding_identity(name) {
                             let sources = global_caller_binding_value_sources(value, remaining - 1);
-                            aliases.insert(name, expand_block_value_sources(sources, &aliases));
+                            aliases.insert(
+                                name,
+                                local_value_sources_at_point(
+                                    sources,
+                                    &aliases,
+                                    &HashSet::new(),
+                                    true,
+                                ),
+                            );
                         } else {
                             uncertain = true;
                         }
@@ -238,7 +278,7 @@ pub(crate) fn global_caller_binding_value_sources(
                 }
                 _ => unknown(),
             };
-            sources = expand_block_value_sources(sources, &aliases);
+            sources = local_value_sources_at_point(sources, &aliases, &HashSet::new(), false);
             if uncertain {
                 sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
             }
@@ -320,6 +360,7 @@ fn note_do_call_sources(
 fn local_do_call_effects(
     body: &[Stmt],
     aliases: &mut HashMap<String, HashSet<String>>,
+    formal_names: &HashSet<String>,
     callees: &mut HashSet<String>,
     indirect_call: &mut bool,
     remaining: &mut usize,
@@ -340,7 +381,14 @@ fn local_do_call_effects(
         // single-statement blocks cannot bypass the total-work limit.
         *remaining -= 1;
         if let Stmt::Expr(Expr::Block { body, .. }) = statement {
-            local_do_call_effects(body, aliases, callees, indirect_call, remaining);
+            local_do_call_effects(
+                body,
+                aliases,
+                formal_names,
+                callees,
+                indirect_call,
+                remaining,
+            );
             continue;
         }
         let direct_assignment = match statement {
@@ -373,7 +421,12 @@ fn local_do_call_effects(
                                     let sources =
                                         global_caller_binding_value_sources(&target.value, 64);
                                     note_do_call_sources(
-                                        expand_block_value_sources(sources, aliases),
+                                        local_value_sources_at_point(
+                                            sources,
+                                            aliases,
+                                            formal_names,
+                                            false,
+                                        ),
                                         callees,
                                         indirect_call,
                                     );
@@ -395,10 +448,13 @@ fn local_do_call_effects(
                 };
                 if let Some((Expr::Ident { name, .. }, value)) = assignment {
                     if let Some(name) = caller_binding_identity(name) {
-                        aliases
-                            .entry(name)
-                            .or_default()
-                            .extend(global_caller_binding_value_sources(value, 64));
+                        let sources = local_value_sources_at_point(
+                            global_caller_binding_value_sources(value, 64),
+                            aliases,
+                            formal_names,
+                            true,
+                        );
+                        aliases.entry(name).or_default().extend(sources);
                     } else {
                         *indirect_call = true;
                     }
@@ -413,7 +469,13 @@ fn local_do_call_effects(
         }
         if let Some((Expr::Ident { name, .. }, value)) = direct_assignment {
             if let Some(name) = caller_binding_identity(name) {
-                aliases.insert(name, global_caller_binding_value_sources(value, 64));
+                let sources = local_value_sources_at_point(
+                    global_caller_binding_value_sources(value, 64),
+                    aliases,
+                    formal_names,
+                    true,
+                );
+                aliases.insert(name, sources);
             } else {
                 *indirect_call = true;
             }
@@ -634,9 +696,14 @@ fn helper_caller_binding_summary_bounded(
     if !do_call_targets.is_empty() {
         let mut local_aliases_at_call = HashMap::new();
         let mut remaining = 4096;
+        let formal_names: HashSet<String> = params
+            .iter()
+            .filter_map(|param| caller_binding_identity(&param.name))
+            .collect();
         local_do_call_effects(
             body,
             &mut local_aliases_at_call,
+            &formal_names,
             &mut callees,
             &mut indirect_call,
             &mut remaining,

@@ -2141,9 +2141,14 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_helper_alias_local.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_environment_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_transformed_env.R"),
+        include_str!("../../testdata/oracle/assertion_subject_expression_environment_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_delayed_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_helper_forced_default_call.R"),
+        include_str!("../../testdata/oracle/assertion_subject_default_iife.R"),
+        include_str!("../../testdata/oracle/assertion_subject_default_local_closure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_default_literal_get.R"),
+        include_str!("../../testdata/oracle/assertion_subject_default_computed_get.R"),
     ]
     .into_iter()
     .enumerate()

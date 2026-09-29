@@ -24,18 +24,31 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
         fn_bodies: false,
         control_tests: true,
     };
-    // A default can itself force another default. Walk that reachable set
-    // from reads in the body, without treating an unused promise as executed.
+    // A default can itself force another default. Direct reads are a useful
+    // positive signal, but their absence is not proof of non-evaluation:
+    // `get("done")` and a called local closure can force `done` without a
+    // direct identifier read in this function's body. Unknown calls leave
+    // every default potentially forced. A body made only of known ordinary
+    // value forms (such as `invisible(NULL)`) keeps unused defaults lazy.
     let mut pending = Vec::new();
-    let note_default_read = |node: AstNode<'_>, pending: &mut Vec<String>| {
-        if let AstNode::Expr(Expr::Ident { name, .. }) = node
-            && default_names.contains(name.as_str())
-        {
+    let note_default_force = |node: AstNode<'_>, pending: &mut Vec<String>| match node {
+        AstNode::Expr(Expr::Ident { name, .. }) if default_names.contains(name.as_str()) => {
             pending.push(name.clone());
         }
+        AstNode::Expr(Expr::Call { func, .. })
+            if !ident_name(func).is_some_and(|name| {
+                matches!(
+                    bare_name(name),
+                    "invisible" | "return" | "force" | "parent.frame" | "environment" | "new.env"
+                )
+            }) =>
+        {
+            pending.extend(default_names.iter().map(|name| (*name).to_string()));
+        }
+        _ => {}
     };
     let _ = walk_stmts(body, direct_walk, |node, _| {
-        note_default_read(node, &mut pending);
+        note_default_force(node, &mut pending);
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
     let mut forced_defaults = HashSet::new();
@@ -49,7 +62,7 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
             .and_then(|param| param.default.as_ref())
         {
             let _ = walk_expr(default, direct_walk, |node, _| {
-                note_default_read(node, &mut pending);
+                note_default_force(node, &mut pending);
                 ControlFlow::<(), Descend>::Continue(Descend::Into)
             });
         }
@@ -60,25 +73,29 @@ fn helper_caller_binding_summary(params: &[Param], body: &[Stmt]) -> (bool, Vec<
     let mut installer_args = HashSet::new();
     let mut alias_targets: HashMap<String, Vec<String>> = HashMap::new();
     let mut callees = HashSet::new();
+    let mut record_alias = |target: &str, value: &Expr| {
+        let _ = walk_expr(value, direct_walk, |child, _| {
+            if let AstNode::Expr(Expr::Ident { name, .. }) = child {
+                alias_targets
+                    .entry(name.clone())
+                    .or_default()
+                    .push(target.to_string());
+            }
+            ControlFlow::<(), Descend>::Continue(Descend::Into)
+        });
+    };
     let mut collect_effect = |node: AstNode<'_>, _| {
         match node {
             AstNode::Stmt(Stmt::Assign {
                 target: Expr::Ident { name: target, .. },
                 value,
                 ..
-            }) => {
-                let mut sources = Vec::new();
-                let _ = walk_expr(value, direct_walk, |child, _| {
-                    if let AstNode::Expr(Expr::Ident { name, .. }) = child {
-                        sources.push(name.clone());
-                    }
-                    ControlFlow::<(), Descend>::Continue(Descend::Into)
-                });
-                for source in sources {
-                    alias_targets
-                        .entry(source)
-                        .or_default()
-                        .push(target.clone());
+            }) => record_alias(target, value),
+            AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. })
+                if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) =>
+            {
+                if let Expr::Ident { name: target, .. } = lhs.as_ref() {
+                    record_alias(target, rhs);
                 }
             }
             AstNode::Expr(Expr::Call { func, args, .. }) => {

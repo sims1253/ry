@@ -9,6 +9,7 @@ pub(crate) struct BindingState {
     pub parameter: bool,
     pub scalar_asserted: bool,
     pub loop_vector: bool,
+    pub uncertain_caller_binding_alias: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
@@ -23,6 +24,8 @@ impl BindingState {
             narrowed: self.narrowed,
             list_origin: self.list_origin,
             default_parameter: self.default_parameter,
+            alias: self.alias.as_deref(),
+            uncertain_caller_binding_alias: self.uncertain_caller_binding_alias,
         }
     }
 
@@ -39,6 +42,7 @@ impl BindingState {
             parameter: scope.parameter_bindings.contains(name),
             scalar_asserted: scope.scalar_asserted_bindings.contains(name),
             loop_vector: scope.loop_vector_bindings.contains(name),
+            uncertain_caller_binding_alias: scope.uncertain_caller_binding_aliases.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
@@ -65,6 +69,11 @@ impl BindingState {
             self.scalar_asserted,
         );
         marker(&mut scope.loop_vector_bindings, &name, self.loop_vector);
+        marker(
+            &mut scope.uncertain_caller_binding_aliases,
+            &name,
+            self.uncertain_caller_binding_alias,
+        );
         marker(&mut scope.list_origin_bindings, &name, self.list_origin);
         marker(
             &mut scope.default_parameter_bindings,
@@ -112,6 +121,7 @@ impl AssignmentUndo {
             &mut scope.list_origin_bindings,
             &mut scope.default_parameter_bindings,
             &mut scope.lexical_functions,
+            &mut scope.uncertain_caller_binding_aliases,
         ];
         for (index, set) in sets.into_iter().enumerate() {
             debug_assert!(!set.contains(&name));
@@ -144,6 +154,7 @@ pub(crate) enum MarkerKind {
     Parameter,
     ScalarAsserted,
     LoopVector,
+    UncertainCallerBindingAlias,
 }
 
 #[derive(Debug)]
@@ -200,6 +211,8 @@ pub(crate) struct BindingView<'a> {
     pub narrowed: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
+    pub alias: Option<&'a str>,
+    pub uncertain_caller_binding_alias: bool,
 }
 
 impl BranchDelta {
@@ -217,6 +230,10 @@ impl BranchDelta {
                 narrowed: base.narrowed_bindings.contains(name),
                 list_origin: base.has_list_origin(name),
                 default_parameter: base.is_default_parameter(name),
+                alias: base.function_alias(name),
+                uncertain_caller_binding_alias: base
+                    .uncertain_caller_binding_aliases
+                    .contains(name),
             }
         }
     }
@@ -286,6 +303,7 @@ impl Scope {
             &mut self.list_origin_bindings,
             &mut self.default_parameter_bindings,
             &mut self.lexical_functions,
+            &mut self.uncertain_caller_binding_aliases,
         ];
         let mut removed_markers = 0;
         // Rollback retains empty tables' capacity. Avoid hashing a name for
@@ -364,6 +382,9 @@ impl Scope {
                 MarkerKind::Parameter => self.parameter_bindings.contains(name),
                 MarkerKind::ScalarAsserted => self.scalar_asserted_bindings.contains(name),
                 MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
+                MarkerKind::UncertainCallerBindingAlias => {
+                    self.uncertain_caller_binding_aliases.contains(name)
+                }
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
@@ -497,6 +518,9 @@ impl Scope {
                         MarkerKind::Parameter => &mut self.parameter_bindings,
                         MarkerKind::ScalarAsserted => &mut self.scalar_asserted_bindings,
                         MarkerKind::LoopVector => &mut self.loop_vector_bindings,
+                        MarkerKind::UncertainCallerBindingAlias => {
+                            &mut self.uncertain_caller_binding_aliases
+                        }
                     };
                     if present {
                         set.insert(name);
@@ -728,6 +752,10 @@ mod tests {
         assert_eq!(left.list_origin_bindings, right.list_origin_bindings);
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.function_aliases, right.function_aliases);
+        assert_eq!(
+            left.uncertain_caller_binding_aliases,
+            right.uncertain_caller_binding_aliases
+        );
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(left.literal_values_unknown, right.literal_values_unknown);

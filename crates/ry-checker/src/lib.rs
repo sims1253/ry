@@ -137,7 +137,7 @@ fn caller_binding_identity(raw: &str) -> Option<String> {
         return Some(name.to_string());
     }
     if let Some(primitive) = name.strip_prefix("base:::")
-        && matches!(primitive, "delayedAssign" | "makeActiveBinding")
+        && matches!(primitive, "assign" | "delayedAssign" | "makeActiveBinding")
     {
         return Some(format!("base::{primitive}"));
     }
@@ -434,6 +434,9 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: FxMap<String, String>,
+    /// Callable values with more than one possible installer source. This is
+    /// effect-only provenance: ordinary call resolution keeps its own alias.
+    pub(crate) uncertain_caller_binding_aliases: FxSet<String>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
@@ -470,6 +473,7 @@ impl Clone for Scope {
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
+            uncertain_caller_binding_aliases: self.uncertain_caller_binding_aliases.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
@@ -550,6 +554,7 @@ impl Scope {
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
                 .chain(self.function_aliases.keys())
+                .chain(self.uncertain_caller_binding_aliases.iter())
                 .cloned()
                 .collect();
             for name in names {
@@ -567,6 +572,7 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
+        self.uncertain_caller_binding_aliases.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
@@ -608,6 +614,9 @@ impl Scope {
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
         }
+        if !self.uncertain_caller_binding_aliases.is_empty() {
+            self.uncertain_caller_binding_aliases.remove(&name);
+        }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
@@ -647,6 +656,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.uncertain_caller_binding_aliases.remove(&name);
         self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
             self.loop_vector_bindings.remove(&name);
@@ -676,6 +686,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.uncertain_caller_binding_aliases.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
         self.loop_vector_bindings.remove(&name);
@@ -733,6 +744,33 @@ impl Scope {
         let name = name.into();
         self.journal_alias(&name);
         self.function_aliases.insert(name, target);
+    }
+
+    pub(crate) fn set_joined_function_alias(&mut self, name: &str, target: Option<String>) {
+        if self.function_alias(name) == target.as_deref() {
+            return;
+        }
+        self.journal_alias(name);
+        if let Some(target) = target {
+            self.function_aliases.insert(name.to_string(), target);
+        } else {
+            self.function_aliases.remove(name);
+        }
+    }
+
+    pub(crate) fn mark_uncertain_caller_binding_alias(&mut self, name: &str) {
+        if !self.uncertain_caller_binding_aliases.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
+            self.uncertain_caller_binding_aliases
+                .insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn clear_uncertain_caller_binding_alias(&mut self, name: &str) {
+        if self.uncertain_caller_binding_aliases.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
+            self.uncertain_caller_binding_aliases.remove(name);
+        }
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {

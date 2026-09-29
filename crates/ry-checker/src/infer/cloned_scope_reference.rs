@@ -34,6 +34,51 @@ impl Checker {
                 self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
             }
         }
+        let then_reaches_alias = !then_scope.unreachable;
+        let else_reaches_alias = has_else && !else_scope.unreachable;
+        let mut alias_names = FxSet::default();
+        for branch in [&*scope, &then_scope, &else_scope] {
+            alias_names.extend(branch.function_aliases.keys().cloned());
+            alias_names.extend(branch.uncertain_caller_binding_aliases.iter().cloned());
+        }
+        let mut caller_alias_updates = Vec::new();
+        if !(scope.loop_frame.is_some() && !then_reaches_alias && !has_else) {
+            for name in alias_names {
+                let then_alias = then_scope.function_alias(&name);
+                let else_alias = else_scope.function_alias(&name);
+                let (alias, uncertain) = if has_else && then_reaches_alias != else_reaches_alias {
+                    let reached = if then_reaches_alias {
+                        &then_scope
+                    } else {
+                        &else_scope
+                    };
+                    (
+                        reached.function_alias(&name).map(str::to_string),
+                        reached.uncertain_caller_binding_aliases.contains(&name),
+                    )
+                } else {
+                    let shared = (then_alias == else_alias)
+                        .then(|| then_alias.map(str::to_string))
+                        .flatten();
+                    let alias_may_install = |alias: &str| {
+                        crate::collect::is_caller_binding_installer_source(alias)
+                            || self.fn_table.fns.get(alias).is_some_and(|function| {
+                                function.may_install_caller_binding
+                                    || !function.caller_binding_called_formals.is_empty()
+                            })
+                    };
+                    let uncertain = then_scope.uncertain_caller_binding_aliases.contains(&name)
+                        || else_scope.uncertain_caller_binding_aliases.contains(&name)
+                        || (then_alias != else_alias
+                            && [then_alias, else_alias]
+                                .into_iter()
+                                .flatten()
+                                .any(alias_may_install));
+                    (shared, uncertain)
+                };
+                caller_alias_updates.push((name, alias, uncertain));
+            }
+        }
         // Merge branch bindings back into the parent scope. In R,
         // assignments inside an `if` branch leak to the enclosing
         // scope, so a name bound conditionally must still be visible
@@ -118,6 +163,14 @@ impl Checker {
             scope.insert_narrowed(name, refined);
         }
         scope.loop_vector_bindings = loop_vectors_after;
+        for (name, alias, uncertain) in caller_alias_updates {
+            scope.set_joined_function_alias(&name, alias);
+            if uncertain {
+                scope.mark_uncertain_caller_binding_alias(&name);
+            } else {
+                scope.clear_uncertain_caller_binding_alias(&name);
+            }
+        }
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {

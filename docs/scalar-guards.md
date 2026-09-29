@@ -26,6 +26,27 @@ that every caller, or a later assignment from an option, supplies a scalar.
 | `is.numeric(x) \|\| all(is.na(x))` before a stub-declared mode demand | RY110 covers this guard side of the empty-input blind spot when the accepted path and the demand are in the same function (#462), including guards returned by a single-formal helper in the same file (`is_numeric_or_na <- function(x) ...`) and applied by the demanding function itself -- directly, via `stopifnot()`, or elementwise through a `map`-family call reduced with `all()` (#479). A guard validated in one function but demanded in another (a validator-summary hop), or applied from another file, keeps its demand invisible: the former flow belongs to the #351 flow-sensitivity cycle, the latter cannot attribute the helper's span to the consuming file. A bare `all(is.na(x))` guard (skip logic, no predicate operand) stays quiet by design, as does a positive guard's continuation (the demand there also runs when the guard is FALSE). |
 | A value copied to a local and then reassigned in a loop | A proven unclassed length-greater-than-one input now survives the alias and loop join as a possible vector path for RY032, including another plain alias inside or after the loop. A custom `&&` or `||` operator does not have base R's scalar requirement. An unknown-length parameter such as tibble's `.rows` remains quiet without a proven vector call path; unknown length alone is not evidence of a vector error. |
 
+For helper-local `do.call()`, ry follows a callable copied into a local at the
+assignment where that copy occurs. Rebinding the old name later does not
+change the copy. A repeated `for`, `while`, or `repeat` body can carry a new
+callable back to an earlier `do.call()` on its next iteration; ry keeps the
+effect uncertain when that path may install a caller binding. A literal
+single-element `for` sequence has no next iteration. The spelling `1:1`
+does not certify one iteration because R permits a masked `:` operator.
+Copying an outer project helper name before its value is established locally
+also stays uncertain, even when that helper is harmless at runtime. Calls
+through a known `delayedAssign` alias, to a helper that uses `assign()` on
+its caller's frame, or to `assign()` with an explicit current-frame target can
+invalidate a successful earlier scalar assertion. A qualified fresh local
+environment remains a quiet control. In a direct call,
+`base::environment()` names the current frame; `base::new.env()` creates a
+distinct frame. The effect check follows simple copied, wrapped, returned,
+and branch-joined callable values. A merely assigned callable is harmless
+until invoked; a conditional alias remains uncertain if one reachable value
+can install a binding. A `do.call()` target and a function-valued formal may
+invoke an installer too, while a proven pure target or a later pure overwrite
+keeps the guarded binding stable.
+
 Other return expressions are covered. For example, the first function above
 receives RY032 even though the expression is outside an `if` condition.
 

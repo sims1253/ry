@@ -16,7 +16,7 @@
 //! single-file use cases (the corpus harness and the existing unit
 //! tests rely on this).
 
-use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
+use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, FxMap, FxSet, ReturnSlots};
 use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
@@ -128,6 +128,9 @@ pub struct Project {
     prev_known_vars: HashSet<String>,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
+    /// Alias-value changes can alter caller binding effects without changing
+    /// any function's return type or signature.
+    prev_caller_binding_aliases: FxMap<String, FxSet<String>>,
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
     prev_escaped_slot_names: bool,
@@ -465,6 +468,7 @@ impl Project {
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.prev_callable_vars.clear();
+        self.prev_caller_binding_aliases.clear();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
@@ -551,6 +555,7 @@ impl Project {
         // no observed dependency exists for that earlier lookup miss.
         if self.callable_names_changed()
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_caller_binding_aliases != self.fn_table.caller_binding_aliases
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
         {
@@ -790,6 +795,7 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_caller_binding_aliases != self.fn_table.caller_binding_aliases
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
         let first_call = !self.has_prev_emit;
@@ -988,6 +994,7 @@ impl Project {
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
+        self.prev_caller_binding_aliases = self.fn_table.caller_binding_aliases.clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
         // Save refined return types keyed by function name for the next

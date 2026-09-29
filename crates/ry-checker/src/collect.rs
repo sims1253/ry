@@ -326,16 +326,64 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
         "delayedAssign" => (["x", "value", "eval.env", "assign.env"].as_slice(), 3),
+        "assign" => (
+            ["x", "value", "envir", "inherits", "immediate"].as_slice(),
+            2,
+        ),
         _ => return Ok(None),
     };
     // Exact names bind first, then unique partial names, then the remaining
     // unnamed actuals. A raw index is wrong after a later named actual fills
     // an earlier formal (notably `eval.env =` before `assign.env`).
-    Ok(crate::match_caller_binding_argument_names(formals, args)
-        .ok_or(())?
+    let matched = crate::match_caller_binding_argument_names(formals, args).ok_or(())?;
+    if bare_name(name) == "assign"
+        && matched
+            .arg_for_param(3)
+            .and_then(|index| args.get(index))
+            .is_some_and(|arg| !matches!(arg.value, Expr::Logical(false, _)))
+    {
+        // `inherits = TRUE` may write through an otherwise fresh local
+        // environment to one of its parents. An unknown value is no proof
+        // that the write stays local either.
+        return Err(());
+    }
+    Ok(matched
         .arg_for_param(environment)
         .and_then(|index| args.get(index))
         .map(|arg| &arg.value))
+}
+
+/// An installer can replace a binding in this frame even after an assertion
+/// has read its old value. Only an explicit qualified fresh constructor
+/// certifies a distinct target frame; `base::environment()` is this frame
+/// here, although it is local to a separately called helper.
+pub(crate) fn is_caller_binding_installer_source(name: &str) -> bool {
+    if name.starts_with(LITERAL_QUALIFIED_CALLER_BINDING_PREFIX) {
+        return false;
+    }
+    let primitive = name
+        .strip_prefix("base:::")
+        .unwrap_or_else(|| bare_name(name));
+    matches!(primitive, "assign" | "delayedAssign" | "makeActiveBinding")
+}
+
+pub(crate) fn installer_may_replace_current_binding(name: &str, args: &[Arg]) -> bool {
+    if !is_caller_binding_installer_source(name) {
+        return false;
+    }
+    let primitive = name
+        .strip_prefix("base:::")
+        .unwrap_or_else(|| bare_name(name));
+    if name.contains("::") && !crate::semantic_lists::is_base_qualified(name) {
+        // Another namespace's function has no certified base argument
+        // contract, even if one actual looks like a fresh environment.
+        return true;
+    }
+    match installer_environment_arg(primitive, args) {
+        Ok(Some(Expr::Call { func, .. })) if ident_name(func) == Some("base::new.env") => false,
+        Ok(Some(_)) => true,
+        Ok(None) | Err(()) => true,
+    }
 }
 
 fn note_do_call_sources(
@@ -357,6 +405,76 @@ fn note_do_call_sources(
             callees.insert(source);
         }
     }
+}
+
+/// A repeated body can call today's value before a later assignment becomes
+/// tomorrow's target. The source-order pass below sees only one iteration;
+/// withdraw its negative proof when the body can write a callable target.
+/// A literal atomic for-sequence has at most one element. A spelled `1:1`
+/// cannot certify that fact because R permits a masked `:` operator.
+fn loop_can_carry_do_call_target(
+    body: &[Stmt],
+    repeated_condition: Option<&Expr>,
+    remaining: &mut usize,
+) -> bool {
+    let policy = Walk {
+        assign_targets: false,
+        assign_operands: true,
+        dollar_args: false,
+        fn_bodies: false,
+        control_tests: true,
+    };
+    let mut targets = HashSet::new();
+    let mut possible_writes = HashSet::new();
+    let mut exhausted = false;
+    let mut visit = |node: AstNode<'_>, _| {
+        if *remaining == 0 {
+            exhausted = true;
+            return ControlFlow::<(), Descend>::Break(());
+        }
+        *remaining -= 1;
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node
+            && ident_name(func).is_some_and(|name| bare_name(name) == "do.call")
+        {
+            match crate::match_caller_binding_argument_names(
+                &["what", "args", "quote", "envir"],
+                args,
+            ) {
+                Some(matched) => {
+                    if let Some(target) = matched.arg_for_param(0).and_then(|index| args.get(index))
+                    {
+                        targets.extend(global_caller_binding_value_sources(&target.value, 64));
+                    }
+                }
+                None => exhausted = true,
+            }
+        }
+        let assignment = match node {
+            AstNode::Stmt(Stmt::Assign { target, value, .. }) => Some((target, value)),
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            }) => Some((lhs.as_ref(), rhs.as_ref())),
+            _ => None,
+        };
+        if let Some((Expr::Ident { name, .. }, value)) = assignment
+            && !global_caller_binding_value_sources(value, 64).is_empty()
+        {
+            if let Some(name) = caller_binding_identity(name) {
+                possible_writes.insert(name);
+            } else {
+                exhausted = true;
+            }
+        }
+        ControlFlow::<(), Descend>::Continue(Descend::Into)
+    };
+    if let Some(condition) = repeated_condition {
+        let _ = walk_expr(condition, policy, &mut visit);
+    }
+    let _ = walk_stmts(body, policy, &mut visit);
+    exhausted || !targets.is_disjoint(&possible_writes)
 }
 
 /// Follow local `do.call` target assignments in source order, in this
@@ -386,6 +504,25 @@ fn local_do_call_effects(
         // Count block nesting as well as visited AST nodes so a chain of
         // single-statement blocks cannot bypass the total-work limit.
         *remaining -= 1;
+        match statement {
+            Stmt::For { iter, body, .. }
+                if !matches!(
+                    iter,
+                    Expr::Integer(..)
+                        | Expr::Double(..)
+                        | Expr::Logical(..)
+                        | Expr::String(..)
+                        | Expr::Na(..)
+                        | Expr::Null(..)
+                ) =>
+            {
+                *indirect_call |= loop_can_carry_do_call_target(body, None, remaining);
+            }
+            Stmt::While { cond, body, .. } => {
+                *indirect_call |= loop_can_carry_do_call_target(body, Some(cond), remaining);
+            }
+            _ => {}
+        }
         if let Stmt::Expr(Expr::Block { body, .. }) = statement {
             local_do_call_effects(
                 body,

@@ -593,6 +593,8 @@ impl Checker {
                     && !ops_chooser::operator_rebound(self, "<-", scope)
                     && !ops_chooser::operator_rebound(self, "=", scope);
                 let function_alias = self.function_alias_target(value, scope);
+                let uncertain_caller_binding_alias =
+                    function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 // A rebound name no longer carries any armed
@@ -645,6 +647,8 @@ impl Checker {
                     }
                     if let Some(alias) = function_alias {
                         scope.set_function_alias(name.to_string(), alias);
+                    } else if uncertain_caller_binding_alias {
+                        scope.mark_uncertain_caller_binding_alias(name);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -1429,6 +1433,7 @@ impl Checker {
         // Compute definite assignments only when both arms change a type,
         // matching the clone merge's lazy AST analysis.
         let mut definitely_rebound = None;
+        let mut caller_alias_updates = Vec::new();
         // Canonical Ops facts were cleared above. The remaining raw-name
         // facts are independent, so each delta type can be consumed once.
         for from_then in [true, false] {
@@ -1456,6 +1461,10 @@ impl Checker {
                     narrowed: scope.narrowed_bindings.contains(name),
                     list_origin: scope.has_list_origin(name),
                     default_parameter: scope.is_default_parameter(name),
+                    alias: scope.function_alias(name),
+                    uncertain_caller_binding_alias: scope
+                        .uncertain_caller_binding_aliases
+                        .contains(name),
                 };
                 let then_binding = then_state
                     .as_deref()
@@ -1463,6 +1472,41 @@ impl Checker {
                 let else_binding = else_state
                     .as_deref()
                     .map_or_else(base_view, |state| state.view());
+                // Ordinary function aliases need a single selected callee.
+                // A branch may instead leave several possible installer
+                // values. Keep that effect-only uncertainty until the value
+                // is invoked, without treating assignment as invocation.
+                let alias_may_install = |alias: &str| {
+                    crate::collect::is_caller_binding_installer_source(alias)
+                        || self.fn_table.fns.get(alias).is_some_and(|function| {
+                            function.may_install_caller_binding
+                                || !function.caller_binding_called_formals.is_empty()
+                        })
+                };
+                let (joined_alias, uncertain_alias) = if has_else && then_reaches != else_reaches {
+                    let reached = if then_reaches {
+                        &then_binding
+                    } else {
+                        &else_binding
+                    };
+                    (
+                        reached.alias.map(str::to_string),
+                        reached.uncertain_caller_binding_alias,
+                    )
+                } else {
+                    let shared = (then_binding.alias == else_binding.alias)
+                        .then(|| then_binding.alias.map(str::to_string))
+                        .flatten();
+                    let uncertain = then_binding.uncertain_caller_binding_alias
+                        || else_binding.uncertain_caller_binding_alias
+                        || (then_binding.alias != else_binding.alias
+                            && [then_binding.alias, else_binding.alias]
+                                .into_iter()
+                                .flatten()
+                                .any(alias_may_install));
+                    (shared, uncertain)
+                };
+                caller_alias_updates.push((name.clone(), joined_alias, uncertain_alias));
                 if has_else && then_reaches != else_reaches {
                     let continuation = if then_reaches {
                         then_binding
@@ -1561,6 +1605,14 @@ impl Checker {
         }
         for name in loop_vectors_after {
             scope.mark_loop_vector(&name);
+        }
+        for (name, alias, uncertain) in caller_alias_updates {
+            scope.set_joined_function_alias(&name, alias);
+            if uncertain {
+                scope.mark_uncertain_caller_binding_alias(&name);
+            } else {
+                scope.clear_uncertain_caller_binding_alias(&name);
+            }
         }
         if has_else && then_delta.unreachable && else_delta.unreachable {
             scope.unreachable = true;
@@ -3073,25 +3125,97 @@ impl Checker {
 impl Checker {
     const MAX_FUNCTION_ALIAS_DEPTH: usize = 8;
 
+    fn uncertain_caller_binding_value(&self, value: &Expr, scope: &Scope) -> bool {
+        // Function literals use the collected helper-body effect summary.
+        // A non-inert body is not by itself evidence that it changes this
+        // caller's frame (for example, it may touch a fresh local frame).
+        if matches!(value, Expr::Function { .. }) {
+            return false;
+        }
+        crate::collect::global_caller_binding_value_sources(value, 64)
+            .iter()
+            .any(|source| {
+                self.caller_binding_source_matches(source, scope, |name| {
+                    name == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+                        || crate::collect::is_caller_binding_installer_source(name)
+                })
+            })
+    }
+
     fn function_alias_target(&self, value: &Expr, scope: &Scope) -> Option<String> {
-        let Expr::Ident { name, .. } = value else {
-            return None;
+        let wrapped_value = !matches!(value, Expr::Ident { .. });
+        let mut target = match value {
+            Expr::Ident { name, .. } => name.clone(),
+            _ => {
+                let mut alternative = false;
+                let mut remaining = 64;
+                let policy = ry_core::walk::Walk {
+                    assign_targets: false,
+                    assign_operands: true,
+                    dollar_args: false,
+                    fn_bodies: false,
+                    control_tests: true,
+                };
+                let _ = ry_core::walk::walk_expr(value, policy, |node, _| {
+                    if remaining == 0 {
+                        alternative = true;
+                        return std::ops::ControlFlow::<(), ry_core::walk::Descend>::Break(());
+                    }
+                    remaining -= 1;
+                    if matches!(
+                        node,
+                        ry_core::walk::AstNode::Expr(Expr::If { .. })
+                            | ry_core::walk::AstNode::Stmt(
+                                Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. }
+                            )
+                    ) {
+                        alternative = true;
+                        std::ops::ControlFlow::<(), ry_core::walk::Descend>::Break(())
+                    } else {
+                        std::ops::ControlFlow::Continue(ry_core::walk::Descend::Into)
+                    }
+                });
+                if alternative {
+                    return None;
+                }
+                let sources = crate::collect::global_caller_binding_value_sources(value, 64);
+                if sources.len() != 1 {
+                    return None;
+                }
+                let source = sources.into_iter().next()?;
+                if source == crate::UNKNOWN_CALLER_BINDING_IDENTITY {
+                    return None;
+                }
+                source
+            }
         };
 
-        let mut target = name.as_str();
         for _ in 0..Self::MAX_FUNCTION_ALIAS_DEPTH {
-            let Some(next) = scope.function_alias(target) else {
+            let Some(next) = scope.function_alias(&target) else {
                 break;
             };
-            target = next;
+            target = next.to_string();
         }
 
-        self.is_aliasable_function(target)
-            .then(|| target.to_string())
+        if wrapped_value
+            && !crate::collect::is_caller_binding_installer_source(&target)
+            && !self
+                .fn_table
+                .fns
+                .get(&target)
+                .is_some_and(|function| function.may_install_caller_binding)
+        {
+            return None;
+        }
+
+        self.is_aliasable_function(&target).then_some(target)
     }
 
     fn is_aliasable_function(&self, name: &str) -> bool {
-        crate::semantic_lists::is_quoting_form(name)
+        matches!(
+            name,
+            "base::assign" | "base:::assign" | "base::delayedAssign" | "base::makeActiveBinding"
+        ) || crate::semantic_lists::is_quoting_form(name)
             || is_nse_symbol_fn(name)
             || self.resolve_typeshed_sig(name).is_some()
             || self

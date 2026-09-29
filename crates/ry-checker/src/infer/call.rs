@@ -84,10 +84,19 @@ impl Checker {
         // general unknown-effect flag: that flag also makes base predicate
         // identity opaque and would hide the existing RY032 warning.
         if callee_name(func).is_some_and(|name| {
-            matches!(
-                crate::semantic_lists::bare_name(&name),
-                "makeActiveBinding" | "delayedAssign"
-            )
+            let semantic = scope.function_alias(&name).unwrap_or(&name);
+            self.caller_binding_source_matches(&name, scope, |source| {
+                crate::collect::installer_may_replace_current_binding(source, args)
+            }) || self.do_call_may_replace_current_binding(semantic, args, scope)
+                || (scope.is_parameter(&name)
+                    && scope.get(&name).is_some_and(|binding| {
+                        matches!(
+                            binding.mode,
+                            ry_core::types::Mode::Function
+                                | ry_core::types::Mode::Opaque
+                                | ry_core::types::Mode::Union
+                        )
+                    }))
         }) {
             scope.dynamic_bindings_unknown = true;
             for name in scope.scalar_asserted_bindings.clone() {
@@ -98,6 +107,87 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         result
+    }
+
+    /// Follow a current scope alias first; only consult project aliases when
+    /// no lexical binding can shadow them. A local pure replacement clears
+    /// its alias in Scope, while a cross-file top-level alias is available in
+    /// the collected project table. Exhaustion withdraws the scalar proof.
+    pub(super) fn caller_binding_source_matches(
+        &self,
+        name: &str,
+        scope: &Scope,
+        matches_source: impl Fn(&str) -> bool,
+    ) -> bool {
+        if matches_source(name) {
+            return true;
+        }
+        if scope.uncertain_caller_binding_aliases.contains(name) {
+            return true;
+        }
+        if let Some(alias) = scope.function_alias(name) {
+            return matches_source(alias);
+        }
+        if scope.get(name).is_some() || scope.is_parameter(name) || scope.is_lexical_function(name)
+        {
+            return false;
+        }
+        let mut pending = vec![name.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(source) = pending.pop() {
+            if matches_source(&source) {
+                return true;
+            }
+            if !seen.insert(source.clone()) {
+                continue;
+            }
+            if seen.len() > 128 {
+                return true;
+            }
+            if let Some(sources) = self.fn_table.caller_binding_aliases.get(&source) {
+                pending.extend(sources.iter().cloned());
+            }
+        }
+        false
+    }
+
+    fn do_call_may_replace_current_binding(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
+        if crate::semantic_lists::bare_name(name) != "do.call" {
+            return false;
+        }
+        let Some(matched) =
+            crate::match_caller_binding_argument_names(&["what", "args", "quote", "envir"], args)
+        else {
+            return true;
+        };
+        let Some(target) = matched.arg_for_param(0).and_then(|index| args.get(index)) else {
+            return false;
+        };
+        let supplied = matched
+            .arg_for_param(1)
+            .and_then(|index| args.get(index))
+            .and_then(|arg| match &arg.value {
+                Expr::Call { func, args, .. } if ident_name(func) == Some("base::list") => {
+                    Some(args.as_slice())
+                }
+                _ => None,
+            });
+        crate::collect::global_caller_binding_value_sources(&target.value, 64)
+            .iter()
+            .any(|source| {
+                scope.is_parameter(source)
+                    || self.caller_binding_source_matches(source, scope, |candidate| {
+                        candidate == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+                            || supplied.map_or_else(
+                                || crate::collect::is_caller_binding_installer_source(candidate),
+                                |supplied| {
+                                    crate::collect::installer_may_replace_current_binding(
+                                        candidate, supplied,
+                                    )
+                                },
+                            )
+                    })
+            })
     }
 
     fn infer_call_inner(

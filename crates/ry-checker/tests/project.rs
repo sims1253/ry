@@ -1374,6 +1374,68 @@ fn incremental_wrapped_global_caller_binding_alias_retracts_after_a_pure_edit() 
 }
 
 #[test]
+fn incremental_composed_callback_routes_retract_after_pure_alias_edits() {
+    let consumer = "f <- function(x = 1L) { install(); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    for (route, installing, pure, helper) in [
+        (
+            "string do.call",
+            "put <- 'delayedAssign'\n",
+            "put <- base::identity(function(...) NULL)\n",
+            "install <- function(env = parent.frame()) base::do.call(put, base::list('x', quote({ x <- c(1L, 2L); 1L }), assign.env = env, eval.env = env))\n",
+        ),
+        (
+            "block alias",
+            "put <- { saved <- base::delayedAssign; saved }\n",
+            "put <- { saved <- function(...) NULL; saved }\n",
+            "install <- function(env = parent.frame()) put('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\n",
+        ),
+        (
+            "callback hop",
+            "action <- base::delayedAssign\n",
+            "action <- function(...) NULL\n",
+            "run <- function(env, action) action('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\ninstall <- function() run(parent.frame(), action)\n",
+        ),
+    ] {
+        let mut warm = callback_project(&[
+            ("alias.R", installing),
+            ("helper.R", helper),
+            ("consumer.R", consumer),
+        ]);
+        let before = warm.check_incremental();
+        assert!(
+            before.iter().any(|(path, diagnostics)| {
+                path == "consumer.R"
+                    && diagnostics
+                        .iter()
+                        .any(|diagnostic| diagnostic.code == "RY032")
+            }),
+            "{route}: {before:?}"
+        );
+
+        warm.update_file("alias.R".into(), Arc::new(parse("alias.R", pure)));
+        let after = warm.check_incremental();
+        assert_eq!(
+            after,
+            callback_project(&[
+                ("alias.R", pure),
+                ("helper.R", helper),
+                ("consumer.R", consumer),
+            ])
+            .check(),
+            "{route}: warm and cold checks differ"
+        );
+        assert!(
+            after.iter().all(|(_, diagnostics)| {
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.code != "RY032")
+            }),
+            "{route}: {after:?}"
+        );
+    }
+}
+
+#[test]
 fn incremental_wrapped_callback_default_retracts_after_a_pure_edit() {
     let helper = "install <- function(env, act = function() makeActiveBinding('x', function() c(1L, 2L), env)) base::do.call(base::identity(act), base::list())\n";
     let pure = "install <- function(env, act = function() NULL) base::do.call(base::identity(act), base::list())\n";

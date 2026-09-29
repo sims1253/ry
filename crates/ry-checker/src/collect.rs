@@ -32,6 +32,10 @@ pub(crate) fn inert_caller_binding_actual(expression: &Expr) -> bool {
     let Expr::Function { body, .. } = expression else {
         return false;
     };
+    inert_caller_binding_body(body)
+}
+
+pub(crate) fn inert_caller_binding_body(body: &[Stmt]) -> bool {
     let inert_value = |value: &Expr| {
         matches!(
             value,
@@ -84,11 +88,41 @@ fn caller_binding_value_sources(expression: &Expr) -> Option<HashSet<String>> {
     (!uncertain).then_some(sources)
 }
 
+fn expand_block_value_sources(
+    sources: HashSet<String>,
+    aliases: &HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
+    let mut pending: Vec<_> = sources.into_iter().collect();
+    let mut seen = HashSet::new();
+    let mut resolved = HashSet::new();
+    while let Some(source) = pending.pop() {
+        if !seen.insert(source.clone()) {
+            resolved.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+            continue;
+        }
+        if seen.len() > 128 {
+            return HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()]);
+        }
+        if let Some(values) = aliases.get(&source) {
+            if values.contains(&source) {
+                resolved.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+            }
+            pending.extend(values.iter().filter(|value| *value != &source).cloned());
+        } else {
+            resolved.insert(source);
+        }
+    }
+    resolved
+}
+
 /// Follow a top-level value only through base operations whose result is the
 /// selected argument. A stored list is not a callable alias; extracting one
 /// of its elements is. An unmodeled value can still be a callable installer,
 /// so it cannot certify that a later invocation leaves the caller untouched.
-fn global_caller_binding_value_sources(expression: &Expr, remaining: usize) -> HashSet<String> {
+pub(crate) fn global_caller_binding_value_sources(
+    expression: &Expr,
+    remaining: usize,
+) -> HashSet<String> {
     let unknown = || HashSet::from([UNKNOWN_CALLER_BINDING_IDENTITY.to_string()]);
     if remaining == 0 {
         return unknown();
@@ -110,38 +144,75 @@ fn global_caller_binding_value_sources(expression: &Expr, remaining: usize) -> H
             kind: IndexKind::Double,
             args,
             ..
-        } if let Expr::Call {
-            func, args: values, ..
-        } = base.as_ref()
-            && ident_name(func) == Some("base::list")
-            && let [
-                Arg {
-                    name: None,
-                    value: Expr::Integer(index, _),
-                    ..
-                },
-            ] = args.as_slice()
-            && *index > 0
-            && let Some(value) = values.get((*index - 1) as usize) =>
-        {
-            let mut sources = global_caller_binding_value_sources(&value.value, remaining - 1);
-            // `[[` uses an ordinary R operator binding even when the list
-            // constructor is qualified. A masked extractor may return a
-            // different callable value than the selected list element.
-            sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
-            sources
+        } => {
+            if let Expr::Call {
+                func, args: values, ..
+            } = base.as_ref()
+                && ident_name(func) == Some("base::list")
+                && let [
+                    Arg {
+                        name: None,
+                        value: Expr::Integer(index, _),
+                        ..
+                    },
+                ] = args.as_slice()
+                && *index > 0
+                && let Some(value) = values.get((*index - 1) as usize)
+            {
+                let mut sources = global_caller_binding_value_sources(&value.value, remaining - 1);
+                // `[[` uses an ordinary R operator binding even when the
+                // list constructor is qualified. A masked extractor may
+                // return a different callable than the selected element.
+                sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+                sources
+            } else {
+                unknown()
+            }
         }
         Expr::BinOp {
             op: BinOpKind::Assign,
             rhs,
             ..
         } => global_caller_binding_value_sources(rhs, remaining - 1),
-        Expr::Block { body, .. } => match body.last() {
-            Some(Stmt::Expr(value) | Stmt::Assign { value, .. }) => {
-                global_caller_binding_value_sources(value, remaining - 1)
+        Expr::Block { body, .. } if body.len() < remaining => {
+            let mut aliases = HashMap::new();
+            let mut uncertain = false;
+            for statement in body.iter().take(body.len().saturating_sub(1)) {
+                match statement {
+                    Stmt::Assign {
+                        target: Expr::Ident { name, .. },
+                        value,
+                        ..
+                    } => {
+                        if let Some(name) = caller_binding_identity(name) {
+                            let sources = global_caller_binding_value_sources(value, remaining - 1);
+                            aliases.insert(name, expand_block_value_sources(sources, &aliases));
+                        } else {
+                            uncertain = true;
+                        }
+                    }
+                    Stmt::Expr(
+                        Expr::Null(_)
+                        | Expr::Logical(_, _)
+                        | Expr::Integer(_, _)
+                        | Expr::Double(_, _)
+                        | Expr::String(_, _),
+                    ) => {}
+                    _ => uncertain = true,
+                }
             }
-            _ => unknown(),
-        },
+            let mut sources = match body.last() {
+                Some(Stmt::Expr(value) | Stmt::Assign { value, .. }) => {
+                    global_caller_binding_value_sources(value, remaining - body.len())
+                }
+                _ => unknown(),
+            };
+            sources = expand_block_value_sources(sources, &aliases);
+            if uncertain {
+                sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
+            }
+            sources
+        }
         Expr::If { then, else_, .. } => {
             let mut sources = global_caller_binding_value_sources(then, remaining - 1);
             if let Some(other) = else_ {
@@ -158,8 +229,8 @@ fn global_caller_binding_value_sources(expression: &Expr, remaining: usize) -> H
         | Expr::Logical(_, _)
         | Expr::Integer(_, _)
         | Expr::Double(_, _)
-        | Expr::String(_, _)
         | Expr::Na(_, _) => HashSet::new(),
+        Expr::String(_, _) => unknown(),
         _ => unknown(),
     }
 }
@@ -197,7 +268,12 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr
 fn helper_caller_binding_summary(
     params: &[Param],
     body: &[Stmt],
-) -> (bool, Vec<String>, Vec<String>) {
+) -> (
+    bool,
+    Vec<String>,
+    Vec<String>,
+    Vec<CallerBindingCallbackCall>,
+) {
     // Share one budget through recursively reached function-valued defaults.
     // Exhaustion must withdraw the negative binding-effect proof.
     let mut remaining_default_bodies = 64;
@@ -208,7 +284,12 @@ fn helper_caller_binding_summary_bounded(
     params: &[Param],
     body: &[Stmt],
     remaining_default_bodies: &mut usize,
-) -> (bool, Vec<String>, Vec<String>) {
+) -> (
+    bool,
+    Vec<String>,
+    Vec<String>,
+    Vec<CallerBindingCallbackCall>,
+) {
     let default_names: HashSet<String> = params
         .iter()
         .filter(|param| param.default.is_some())
@@ -300,6 +381,29 @@ fn helper_caller_binding_summary_bounded(
             }
         }
         if let AstNode::Expr(Expr::Call { func, args, span }) = node {
+            if ident_name(func).is_some_and(|name| bare_name(name) == "do.call")
+                && let Some(target) = match_arguments(&["what", "args", "quote", "envir"], args)
+                    .arg_for_param(0)
+                    .and_then(|index| args.get(index))
+            {
+                // `do.call` accepts both function values and string names.
+                // The latter are data until this invocation, so a literal
+                // string or an unresolved wrapper cannot certify purity.
+                for source in global_caller_binding_value_sources(&target.value, 64) {
+                    if matches!(
+                        source.as_str(),
+                        "delayedAssign"
+                            | "makeActiveBinding"
+                            | "base::delayedAssign"
+                            | "base::makeActiveBinding"
+                            | UNKNOWN_CALLER_BINDING_IDENTITY
+                    ) {
+                        indirect_call = true;
+                    } else {
+                        callees.insert(source);
+                    }
+                }
+            }
             if let Some(name) = ident_name(func).and_then(caller_binding_identity) {
                 // An unmodeled callee can invoke a function-valued argument
                 // (`do.call(act, list())`, callbacks, dispatch). Passing a
@@ -402,6 +506,7 @@ fn helper_caller_binding_summary_bounded(
     // environment. A later default can invoke one declared earlier, so keep
     // discovering callees until no unvisited function default is reachable.
     let mut visited_defaults = HashSet::new();
+    let mut nested_callback_calls = Vec::new();
     loop {
         expand_aliases(&mut callees);
         let next = params.iter().enumerate().find(|(index, param)| {
@@ -424,7 +529,7 @@ fn helper_caller_binding_summary_bounded(
             ..
         }) = &param.default
         {
-            let (effect, nested_callees, nested_called_formals) =
+            let (effect, nested_callees, nested_called_formals, callback_calls) =
                 helper_caller_binding_summary_bounded(
                     inner_params,
                     inner_body,
@@ -432,6 +537,7 @@ fn helper_caller_binding_summary_bounded(
                 );
             indirect_call |= effect || !nested_called_formals.is_empty();
             callees.extend(nested_callees);
+            nested_callback_calls.extend(callback_calls);
         }
     }
     let mut installer_environments = Vec::new();
@@ -539,10 +645,37 @@ fn helper_caller_binding_summary_bounded(
         called_formals.sort_unstable();
         called_formals.dedup();
     }
+    let mut callback_calls = nested_callback_calls;
+    for (_, callee, args) in call_sites {
+        let mut possible = HashSet::from([callee]);
+        expand_aliases(&mut possible);
+        if possible.len() > 128 || callback_calls.len().saturating_add(possible.len()) > 256 {
+            indirect_call = true;
+            break;
+        }
+        let forwarded_only: Vec<bool> = args
+            .iter()
+            .map(|arg| {
+                let sources = global_caller_binding_value_sources(&arg.value, 64);
+                let sources = expand_block_value_sources(sources, &local_aliases);
+                !sources.is_empty() && sources.iter().all(|source| formal_names.contains(source))
+            })
+            .collect();
+        callback_calls.extend(
+            possible
+                .into_iter()
+                .map(|callee| CallerBindingCallbackCall {
+                    callee,
+                    args: args.clone(),
+                    forwarded_only: forwarded_only.clone(),
+                }),
+        );
+    }
     (
         uncertain_installer_environment || indirect_call,
         callees.into_iter().collect(),
         called_formals,
+        callback_calls,
     )
 }
 
@@ -848,8 +981,12 @@ impl Checker {
     // allocated return slot so callers can wire up S3 dispatch entries
     // that share the same slot.
     pub(crate) fn record_fn(&mut self, name: String, params: &[Param], body: Vec<Stmt>) -> usize {
-        let (may_install_caller_binding, caller_binding_callees, caller_binding_called_formals) =
-            helper_caller_binding_summary(params, &body);
+        let (
+            may_install_caller_binding,
+            caller_binding_callees,
+            caller_binding_called_formals,
+            caller_binding_callback_calls,
+        ) = helper_caller_binding_summary(params, &body);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -892,6 +1029,7 @@ impl Checker {
                 may_install_caller_binding,
                 caller_binding_callees,
                 caller_binding_called_formals,
+                caller_binding_callback_calls: Arc::from(caller_binding_callback_calls),
                 return_slot: slot,
             },
         );

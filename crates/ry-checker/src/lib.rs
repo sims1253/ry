@@ -814,10 +814,91 @@ pub(crate) struct UserFn {
     /// Formals invoked as callables, directly or through a local alias. A
     /// supplied actual may differ from a harmless default at this call site.
     pub(crate) caller_binding_called_formals: Vec<String>,
+    /// Calls whose supplied actuals may be invoked through a callee's formal.
+    /// Resolved against the shared table after every file is collected.
+    pub(crate) caller_binding_callback_calls: Arc<[CallerBindingCallbackCall]>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
     pub(crate) return_slot: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CallerBindingCallbackCall {
+    callee: String,
+    args: Vec<Arg>,
+    forwarded_only: Vec<bool>,
+}
+
+fn inert_caller_binding_source(source: &str, table: &FnTable, seen: &mut HashSet<String>) -> bool {
+    if !seen.insert(source.to_string()) || seen.len() > 128 {
+        return false;
+    }
+    if let Some(sources) = table.caller_binding_aliases.get(source) {
+        return !sources.is_empty()
+            && sources
+                .iter()
+                .all(|source| inert_caller_binding_source(source, table, &mut seen.clone()));
+    }
+    table
+        .fns
+        .get(source)
+        .is_some_and(|function| collect::inert_caller_binding_body(&function.body))
+}
+
+fn callback_actual_may_install_caller_binding(actual: &Expr, table: &FnTable) -> bool {
+    collect::global_caller_binding_value_sources(actual, 64)
+        .iter()
+        .any(|source| !inert_caller_binding_source(source, table, &mut HashSet::new()))
+}
+
+fn invoked_callback_actual_may_install(
+    function: &UserFn,
+    call: &CallerBindingCallbackCall,
+    table: &FnTable,
+) -> bool {
+    if function.caller_binding_called_formals.is_empty() {
+        return false;
+    }
+    let param_names: Vec<_> = function
+        .params
+        .iter()
+        .map(|param| param.name.as_str())
+        .collect();
+    let matches = infer::match_arguments(&param_names, &call.args);
+    let dots_actuals: Vec<_> = matches
+        .param_for_arg
+        .iter()
+        .enumerate()
+        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
+        .collect();
+    let may_install = |actual: usize| {
+        !call.forwarded_only.get(actual).copied().unwrap_or(false)
+            && call
+                .args
+                .get(actual)
+                .is_some_and(|arg| callback_actual_may_install_caller_binding(&arg.value, table))
+    };
+    function.caller_binding_called_formals.iter().any(|called| {
+        if let Some(formal) = function.params.iter().position(|param| {
+            caller_binding_identity(&param.name).as_deref() == Some(called.as_str())
+        }) {
+            return matches.arg_for_param(formal).is_some_and(may_install);
+        }
+        if matches.dots.is_none() {
+            return false;
+        }
+        if called == "..." {
+            return dots_actuals.iter().copied().any(may_install);
+        }
+        called
+            .strip_prefix("..")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| dots_actuals.get(index))
+            .copied()
+            .is_some_and(may_install)
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -972,6 +1053,58 @@ impl FnTable {
                     .entry(source.clone())
                     .or_default()
                     .push(alias.clone());
+            }
+        }
+        let mut functions_by_identity: HashMap<String, Vec<&UserFn>> = HashMap::new();
+        for (name, function) in &self.fns {
+            if let Some(identity) = caller_binding_identity(name) {
+                functions_by_identity
+                    .entry(identity)
+                    .or_default()
+                    .push(function);
+            }
+        }
+        let mut callback_affected = HashSet::new();
+        for (caller, function) in &self.fns {
+            for call in function.caller_binding_callback_calls.iter() {
+                let Some(callee) = caller_binding_identity(&call.callee) else {
+                    callback_affected.insert(caller.clone());
+                    continue;
+                };
+                let mut pending = vec![callee];
+                let mut seen = HashSet::new();
+                while let Some(candidate) = pending.pop() {
+                    if !seen.insert(candidate.clone()) || seen.len() > 128 {
+                        if seen.len() > 128 {
+                            callback_affected.insert(caller.clone());
+                        }
+                        continue;
+                    }
+                    if candidate == UNKNOWN_CALLER_BINDING_IDENTITY {
+                        callback_affected.insert(caller.clone());
+                    }
+                    if functions_by_identity
+                        .get(&candidate)
+                        .is_some_and(|functions| {
+                            functions.iter().any(|function| {
+                                invoked_callback_actual_may_install(function, call, self)
+                            })
+                        })
+                    {
+                        callback_affected.insert(caller.clone());
+                    }
+                    if let Some(sources) = self.caller_binding_aliases.get(&candidate) {
+                        pending.extend(sources.iter().cloned());
+                    }
+                }
+            }
+        }
+        for name in callback_affected {
+            if let Some(function) = self.fns.get_mut(&name) {
+                function.may_install_caller_binding = true;
+                if let Some(identity) = caller_binding_identity(&name) {
+                    work.push(identity);
+                }
             }
         }
         // A top-level `put <- delayedAssign` or `put <- makeActiveBinding`

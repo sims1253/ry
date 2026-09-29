@@ -31,6 +31,13 @@ impl Checker {
                     arg_types[index] = self.infer(&argument.value, scope);
                 }
             }
+            if user_dispatch || (data_type.class.known && !trusted_receiver) {
+                // A known custom class/method may replace join's result.
+                return Some(RType::unknown());
+            }
+            // Keep the existing incomplete join modeling for a receiver
+            // with unknown class: it carries source column facts used by
+            // checks later in the same pipeline.
             let matched = match_args_to_params(&sig.params, args, &arg_types);
             return Some(infer_dplyr_join(&matched));
         }
@@ -91,6 +98,14 @@ impl Checker {
             arg_types[index] = inferred;
         }
 
+        if !trusted_receiver {
+            // These effects describe standard data-frame methods, not an
+            // arbitrary S3 override. An incomplete source schema still
+            // asserts types for its named columns; discard those facts
+            // before a custom method can make them false.
+            return Some(RType::unknown());
+        }
+
         let mut result = match effect {
             SchemaEffect::Preserve => data_type,
             SchemaEffect::AddNamedArgs => schema_mutated_type(
@@ -117,10 +132,10 @@ impl Checker {
                     && add.is_some_and(|arg| matches!(arg.value, Expr::Logical(true, _)));
                 let uncertain_groups = source_grouped
                     && add.is_some_and(|arg| !matches!(arg.value, Expr::Logical(_, _)));
-                if trusted_receiver && (has_group_spec || retain_groups) {
+                if has_group_spec || retain_groups {
                     result.class =
                         ClassVector::from_slice(&["grouped_df", "tbl_df", "tbl", "data.frame"]);
-                } else if trusted_receiver && !uncertain_groups {
+                } else if !uncertain_groups {
                     result.class = ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
                 } else {
                     result.class = ClassVector::unknown();
@@ -138,13 +153,9 @@ impl Checker {
             SchemaEffect::Rename => schema_renamed_type(data_type, &tidy_args, true, args),
             SchemaEffect::Relocate => schema_renamed_type(data_type, &tidy_args, false, args),
             SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
-            SchemaEffect::Aggregate => schema_aggregate_type(
-                data_type,
-                &named_results,
-                &masked_args,
-                args,
-                trusted_receiver,
-            ),
+            SchemaEffect::Aggregate => {
+                schema_aggregate_type(data_type, &named_results, &masked_args, args)
+            }
             SchemaEffect::ExpressionValue => match_args_to_params(&sig.params, args, &arg_types)
                 .get(1)
                 .cloned()
@@ -153,23 +164,9 @@ impl Checker {
             SchemaEffect::Pivot => RType::new(Mode::List, Length::Unknown)
                 .with_class(ClassVector::single("data.frame")),
         };
-        if uncertain_tag
-            || unsupported_control
-            || !trusted_receiver
-                && matches!(
-                    effect,
-                    SchemaEffect::AddNamedArgs
-                        | SchemaEffect::GroupBy
-                        | SchemaEffect::Transmute
-                        | SchemaEffect::Rename
-                        | SchemaEffect::Relocate
-                        | SchemaEffect::Select
-                        | SchemaEffect::Aggregate
-                )
-        {
-            // Those verbs are S3 generics. A user method or an unknown
-            // receiver may return a different record shape even when the
-            // visible call supplies literal names.
+        if uncertain_tag || unsupported_control {
+            // Escaped tags and unsupported controls cannot prove a complete
+            // result shape even for a standard data-frame receiver.
             result = incomplete_schema(result);
         }
         Some(result)
@@ -370,7 +367,7 @@ fn masked_output_is_dynamic(args: &[&Arg], source: &RType) -> bool {
 fn selected_columns_from_source(data_type: &RType, expr: &Expr) -> Option<Vec<(String, RType)>> {
     let source = data_type.columns.as_ref()?;
     let mut operations = Vec::new();
-    if !collect_ordered_tidy_selection(expr, false, &mut operations) {
+    if !collect_ordered_tidy_selection(expr, false, false, &mut operations) {
         return None;
     }
     // Tidyselect begins with all columns only when the first selector is
@@ -401,6 +398,7 @@ fn selected_columns_from_source(data_type: &RType, expr: &Expr) -> Option<Vec<(S
 fn collect_ordered_tidy_selection(
     expr: &Expr,
     excluded: bool,
+    inside_combine: bool,
     operations: &mut Vec<(bool, String)>,
 ) -> bool {
     match expr {
@@ -412,14 +410,15 @@ fn collect_ordered_tidy_selection(
             op: UnaryOpKind::Neg,
             expr,
             ..
-        } if !excluded => collect_ordered_tidy_selection(expr, true, operations),
+        } if !excluded => collect_ordered_tidy_selection(expr, true, inside_combine, operations),
         Expr::Call { func, args, .. }
-            if ident_name(func)
-                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
+            if !inside_combine
+                && ident_name(func)
+                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
         {
             args.iter().all(|arg| {
                 arg.name.is_none()
-                    && collect_ordered_tidy_selection(&arg.value, excluded, operations)
+                    && collect_ordered_tidy_selection(&arg.value, excluded, true, operations)
             })
         }
         _ => false,
@@ -656,7 +655,6 @@ fn schema_aggregate_type(
     named: &[(&str, RType)],
     masked_args: &[&Arg],
     args: &[Arg],
-    trusted_receiver: bool,
 ) -> RType {
     let mut schema = ColumnSchema {
         complete: data_type
@@ -677,7 +675,7 @@ fn schema_aggregate_type(
             schema.complete = false;
         }
     }
-    let class = if !trusted_receiver || data_type.class.contains("grouped_df") {
+    let class = if data_type.class.contains("grouped_df") {
         ClassVector::unknown()
     } else if data_type.class.contains("tbl_df") {
         ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"])

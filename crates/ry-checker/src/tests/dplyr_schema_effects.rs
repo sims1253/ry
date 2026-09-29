@@ -100,8 +100,11 @@ fn aggregate_after_group_by_does_not_prove_group_keys_absent() {
     // The tibble constructor is opaque to the current typeshed, so its
     // group_by result must not claim a precisely known class vector.
     assert!(scope.get("grouped").unwrap().class.is_unknown());
-    let schema = scope.get("out").unwrap().columns.as_ref().unwrap().clone();
-    assert!(!schema.complete);
+    let out = scope.get("out").unwrap();
+    assert!(
+        out.columns.as_ref().is_none_or(|schema| !schema.complete),
+        "an unproved receiver cannot yield a complete result schema: {out:?}"
+    );
     assert!(
         diagnostics.iter().all(|d| d.code != "RY060"),
         "{diagnostics:?}"
@@ -141,14 +144,61 @@ fn unknown_and_custom_s3_receivers_do_not_prove_missing_result_fields() {
             "dplyr::group_by(d, n = 1L)",
         ] {
             let src = format!("{source}\nout <- {verb}\nvalue <- out$method_field\n");
-            let (_, complete, diagnostics) = columns(&src, "out");
-            assert!(!complete, "{source}; {verb}: {diagnostics:?}");
+            let (diagnostics, scope) = check_with_scope(&src);
+            let out = scope.get("out").unwrap();
+            assert!(out.columns.is_none(), "{source}; {verb}: {out:?}");
+            assert!(out.class.is_unknown(), "{source}; {verb}: {out:?}");
             assert!(
                 diagnostics.iter().all(|d| d.code != "RY060"),
                 "{source}; {verb}: {diagnostics:?}"
             );
         }
     }
+}
+
+#[test]
+fn custom_s3_rename_and_relocate_do_not_transfer_standard_column_types() {
+    for verb in ["rename", "relocate"] {
+        let src = format!(
+            "{verb}.widget <- function(.data, ...) .data\n\
+             d <- structure(data.frame(x = 'a', y = 1L), class = c('widget', 'data.frame'))\n\
+             out <- dplyr::{verb}(d, y = x)\nvalue <- out$y + 1L\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&src);
+        let out = scope.get("out").unwrap();
+        assert!(out.columns.is_none(), "{verb}: {out:?}");
+        assert!(out.class.is_unknown(), "{verb}: {out:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{verb}: {diagnostics:?}"
+        );
+
+        let standard = format!(
+            "d <- data.frame(x = 'a', y = 1L)\n\
+             out <- dplyr::{verb}(d, y = x)\nvalue <- out$y + 1L\n"
+        );
+        let (diagnostics, _) = check_with_scope(&standard);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "standard {verb} still transfers the proved character type: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn custom_s3_join_does_not_claim_the_standard_join_schema() {
+    let src = "left_join.widget <- function(x, y, ...) data.frame(y = 1L)\n\
+               d <- structure(data.frame(x = 'a'), class = c('widget', 'data.frame'))\n\
+               out <- dplyr::left_join(d, data.frame(x = 'a'), by = 'x')\n\
+               value <- out$y + 1L\n";
+    let (diagnostics, scope) = check_with_scope(src);
+    let out = scope.get("out").unwrap();
+    assert!(out.columns.is_none(), "{out:?}");
+    assert!(out.class.is_unknown(), "{out:?}");
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY060"),
+        "{diagnostics:?}"
+    );
 }
 
 #[test]
@@ -250,12 +300,17 @@ fn unknown_add_keeps_prior_group_keys_uncertain() {
             "{prefix}flag <- TRUE\nregrouped <- dplyr::group_by(grouped, .add = flag)\n\
              out <- {verb}\nvalue <- out$g\n"
         );
-        let (_, grouped_complete, _) = columns(&src, "regrouped");
-        let (_, complete, diagnostics) = columns(&src, "out");
+        let (diagnostics, scope) = check_with_scope(&src);
+        let grouped = scope.get("regrouped").unwrap();
+        let out = scope.get("out").unwrap();
+        let grouped_complete = grouped
+            .columns
+            .as_ref()
+            .is_some_and(|schema| schema.complete);
+        let complete = out.columns.as_ref().is_some_and(|schema| schema.complete);
         assert!(!grouped_complete, "{verb}");
         assert!(!complete, "{verb}: {diagnostics:?}");
-        let (_, scope) = check_with_scope(&src);
-        assert!(scope.get("regrouped").unwrap().class.is_unknown());
+        assert!(grouped.class.is_unknown());
         assert!(
             diagnostics
                 .iter()
@@ -311,6 +366,25 @@ fn by_selection_applies_order_and_empty_selection() {
     );
     assert_eq!(names, ["z"]);
     assert!(complete);
+}
+
+#[test]
+fn nested_by_selection_keeps_result_schema_incomplete() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for selection in ["c(x, c(-x))", "c(c(), -x)"] {
+        for call in [
+            format!("dplyr::summarise(d, z = 1L, .by = {selection})"),
+            format!("dplyr::mutate(d, z = 1L, .keep = 'none', .by = {selection})"),
+        ] {
+            let src = format!("{prefix}out <- {call}\nxread <- out$x\ngread <- out$g\n");
+            let (_, complete, diagnostics) = columns(&src, "out");
+            assert!(!complete, "{call}: {diagnostics:?}");
+            assert!(
+                diagnostics.iter().all(|d| d.code != "RY060"),
+                "{call}: {diagnostics:?}"
+            );
+        }
+    }
 }
 
 #[test]

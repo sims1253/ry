@@ -45,6 +45,10 @@ stopifnot(identical(names(dplyr::reframe(small, z = 1L, .by = c(-x, x))), c("g",
 stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = -x)), c("g", "z")))
 stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(x, -x))), "z"))
 stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(-x, x, -x))), c("g", "z")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(x, c(-x)))), c("x", "g", "z")))
+stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c(c(), -x))), "z"))
+stopifnot(identical(names(dplyr::mutate(small, z = 1L, .keep = "none", .by = c(x, c(-x)))), c("x", "g", "z")))
+stopifnot(identical(names(dplyr::mutate(small, z = 1L, .keep = "none", .by = c(c(), -x))), "z"))
 stopifnot(identical(names(dplyr::summarise(small, z = 1L, .by = c())), "z"))
 stopifnot(identical(names(dplyr::mutate(small, z = 1L, .keep = "none", .by = c())), "z"))
 
@@ -54,6 +58,15 @@ dynamic_add <- dplyr::group_by(prior_groups, .add = add)
 stopifnot(identical(names(dplyr::summarise(dynamic_add, n = dplyr::n())), c("g", "n")))
 stopifnot(identical(names(dplyr::transmute(dynamic_add, n = 1L)), c("g", "n")))
 stopifnot(!inherits(dplyr::group_by(prior_groups, .add = FALSE), "grouped_df"))
+
+rename.widget <- function(.data, ...) .data
+relocate.widget <- function(.data, ...) .data
+widget <- structure(data.frame(x = "a", y = 1L), class = c("widget", "data.frame"))
+stopifnot(identical(dplyr::rename(widget, y = x)$y + 1L, 2L))
+stopifnot(identical(dplyr::relocate(widget, y = x)$y + 1L, 2L))
+left_join.widget <- function(x, y, ...) data.frame(y = 1L)
+join_widget <- structure(data.frame(x = "a"), class = c("widget", "data.frame"))
+stopifnot(identical(dplyr::left_join(join_widget, data.frame(x = "a"), by = "x")$y + 1L, 2L))
 
 two_types <- data.frame(x = 1L, y = "a", g = 2L)
 for (out in list(

@@ -95,23 +95,7 @@ impl Checker {
                 writes.extend(crate::collect::called_function_outward_writes(params, body));
             }
             if writes.remove(crate::collect::UNKNOWN_CAPTURE_BINDING) {
-                // A dynamic target can name any currently adopted literal,
-                // including an as-yet unbound cross-file project function.
-                // Keep the ordinary checker scope untouched when no records
-                // were adopted; for an opted-in check, decline stale exact
-                // identities without disabling unrelated diagnostics.
-                writes.extend(scope.lexical_definitions.keys().cloned());
-                writes.extend(
-                    self.fn_table
-                        .fns
-                        .iter()
-                        .filter(|(_, function)| {
-                            self.declarations
-                                .target(&function.source_path, function.definition_span)
-                                .is_some_and(|decision| decision.signature.is_some())
-                        })
-                        .map(|(name, _)| semantic_argument_name(name).to_string()),
-                );
+                self.invalidate_declaration_identities(scope);
             }
             for name in writes {
                 scope.insert(name, RType::unknown());
@@ -121,6 +105,34 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         result
+    }
+
+    /// Discard declaration-only exact identities after evaluating an
+    /// expression whose binding effects cannot be excluded. Ordinary type
+    /// inference still runs only when declarations were explicitly adopted.
+    pub(crate) fn invalidate_declaration_identities(&self, scope: &mut Scope) {
+        if self.discarding || self.declarations.records().is_empty() {
+            return;
+        }
+        let mut names = scope
+            .lexical_definitions
+            .keys()
+            .cloned()
+            .collect::<FxSet<_>>();
+        names.extend(
+            self.fn_table
+                .fns
+                .iter()
+                .filter(|(_, function)| {
+                    self.declarations
+                        .target(&function.source_path, function.definition_span)
+                        .is_some_and(|decision| decision.signature.is_some())
+                })
+                .map(|(name, _)| semantic_argument_name(name).to_string()),
+        );
+        for name in names {
+            scope.insert(name, RType::unknown());
+        }
     }
 
     fn declaration_known_call_writes(&self, name: &str, scope: &Scope) -> FxSet<String> {
@@ -150,7 +162,13 @@ impl Checker {
         let mut remaining = 64;
         let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
         let mut writes = FxSet::default();
-        if possible.uncertain {
+        if possible.uncertain
+            || self.declaration_unproven_reads(&possible, scope, |name| {
+                params
+                    .iter()
+                    .any(|param| semantic_argument_name(&param.name) == name)
+            })
+        {
             writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
         }
         let mut visiting = FxSet::default();
@@ -167,6 +185,27 @@ impl Checker {
             );
         }
         writes
+    }
+
+    fn declaration_unproven_reads(
+        &self,
+        possible: &crate::collect::PotentialHelperCalls,
+        scope: &Scope,
+        is_formal: impl Fn(&str) -> bool,
+    ) -> bool {
+        possible
+            .read_names
+            .iter()
+            .chain(possible.aliases.values().flat_map(|aliases| aliases.iter()))
+            .any(|name| {
+                name == crate::collect::UNKNOWN_CAPTURE_BINDING
+                    || !(is_formal(name)
+                        || possible.aliases.contains_key(name)
+                        || possible.local_literals.contains_key(name)
+                        || scope.lexical_definition(name).is_some()
+                        || scope.function_alias(name).is_some()
+                        || self.fn_table.fns.contains_key(name))
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -336,7 +375,14 @@ impl Checker {
                 .iter()
                 .map(|param| semantic_argument_name(&param.name).to_string()),
         );
-        if possible.uncertain {
+        if possible.uncertain
+            || self.declaration_unproven_reads(&possible, scope, |name| {
+                function
+                    .params
+                    .iter()
+                    .any(|param| semantic_argument_name(&param.name) == name)
+            })
+        {
             writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
         }
         for name in &possible.calls {

@@ -657,6 +657,14 @@ impl Checker {
                         }
                     }
                 }
+                if matches!(target, Expr::Ident { name, .. } if name.contains('\\')) {
+                    // The parser retains the escaped spelling. Capture
+                    // inventory already treats its decoded target as
+                    // unknown, so an eager write must also decline exact
+                    // declaration identities instead of keeping a stale
+                    // decoded `f` definition under another scope key.
+                    self.invalidate_declaration_identities(scope);
+                }
                 // Named function bodies (`f <- function(...) body`) must
                 // be walked for diagnostics. The function-value inference
                 // path (`Expr::Function` -> `function_value_from_literal`)
@@ -2721,7 +2729,20 @@ impl Checker {
             Expr::String(_, _) => RType::scalar(Mode::Character),
             Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
             Expr::Na(t, _) => t.clone(),
-            Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
+            Expr::Ident { name, span } => {
+                let result = self.infer_identifier(name, span, scope);
+                let name = semantic_argument_name(name);
+                if !scope.is_parameter(name)
+                    && scope.lexical_definition(name).is_none()
+                    && scope.function_alias(name).is_none()
+                {
+                    // A bare external read may force a delayed or active
+                    // binding. Keep the inferred value, then drop any stale
+                    // exact declaration identity for later expressions.
+                    self.invalidate_declaration_identities(scope);
+                }
+                result
+            }
             Expr::BinOp { op, lhs, rhs, span } => {
                 if !scope.literal_values_unknown {
                     let symbol = op_symbol(*op);
@@ -2797,6 +2818,9 @@ impl Checker {
                         && let Some(value) = known_string
                     {
                         scope.set_known_string(name, value);
+                    }
+                    if matches!(lhs.as_ref(), Expr::Ident { name, .. } if name.contains('\\')) {
+                        self.invalidate_declaration_identities(scope);
                     }
                     return rt;
                 }
@@ -2956,6 +2980,7 @@ impl Checker {
                 if *kind == IndexKind::Slot
                     && let Some(result) = self.infer_custom_slot_operator(false, scope)
                 {
+                    self.invalidate_declaration_identities(scope);
                     return result;
                 }
                 let receiver_name = ident_name(base);
@@ -2973,7 +2998,9 @@ impl Checker {
                     if let Some(name) = name {
                         let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
                         if let Some(ty) = scope.get(&key) {
-                            return ty.clone();
+                            let result = ty.clone();
+                            self.invalidate_declaration_identities(scope);
+                            return result;
                         }
                         self.emit(
                             Severity::Warning,
@@ -2981,6 +3008,7 @@ impl Checker {
                             "RY010",
                             format!("variable `{name}` is not bound in this scope"),
                         );
+                        self.invalidate_declaration_identities(scope);
                         return RType::unknown();
                     }
                 }
@@ -2993,7 +3021,9 @@ impl Checker {
                 scope.invalidate_ops_environment();
                 let bt = self.infer(base, scope);
                 scope.invalidate_literal_values_for_dispatch(&bt);
-                self.infer_index(bt, *kind, args, *span, default_null_receiver, scope)
+                let result = self.infer_index(bt, *kind, args, *span, default_null_receiver, scope);
+                self.invalidate_declaration_identities(scope);
+                result
             }
             Expr::Function { params, body, .. } => {
                 // Pass 3: build a `Mode::Function` value with an

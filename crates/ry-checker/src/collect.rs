@@ -270,26 +270,38 @@ pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> b
                     argument.name.as_deref().map(semantic_argument_name) == Some("expr")
                 })
                 .or_else(|| args.iter().find(|argument| argument.name.is_none()));
-            matches!(
+            args.iter().all(|argument| {
+                std::ptr::eq(argument, expression.unwrap_or(argument))
+                    || closed_literal_value(&argument.value)
+            }) && matches!(
                 expression.map(|argument| &argument.value),
                 Some(Expr::Call { func, args, .. })
                     if matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::quote" | "base:::quote"))
-                        && args.first().is_some_and(|arg| matches!(arg.value, Expr::Logical(..) | Expr::Integer(..) | Expr::Double(..) | Expr::String(..) | Expr::Null(..) | Expr::Na(..)))
+                        && args.first().is_some_and(|arg| closed_literal_value(&arg.value))
             )
         }
-        "evalq" | "base::evalq" | "base:::evalq" => args.first().is_some_and(|arg| {
-            matches!(
-                arg.value,
-                Expr::Logical(..)
-                    | Expr::Integer(..)
-                    | Expr::Double(..)
-                    | Expr::String(..)
-                    | Expr::Null(..)
-                    | Expr::Na(..)
-            )
-        }),
+        "evalq" | "base::evalq" | "base:::evalq" => {
+            args.first()
+                .is_some_and(|arg| closed_literal_value(&arg.value))
+                && args
+                    .iter()
+                    .skip(1)
+                    .all(|arg| closed_literal_value(&arg.value))
+        }
         _ => false,
     }
+}
+
+fn closed_literal_value(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..)
+    )
 }
 
 fn collect_immediate_outward_writes(
@@ -390,6 +402,8 @@ pub(crate) struct PotentialHelperCalls {
     pub(crate) unknown_bindings: FxSet<String>,
     pub(crate) certified_calls: FxSet<String>,
     pub(crate) unproven_calls: FxSet<String>,
+    pub(crate) read_names: FxSet<String>,
+    excluded_ident_spans: FxSet<(usize, usize)>,
     pub(crate) uncertain: bool,
 }
 
@@ -408,7 +422,8 @@ fn scan_possible_helper_node(
             return;
         }
         match value {
-            Expr::Ident { name: source, .. } => {
+            Expr::Ident { name: source, span } => {
+                calls.excluded_ident_spans.insert((span.start, span.end));
                 calls
                     .aliases
                     .entry(name.to_string())
@@ -448,7 +463,8 @@ fn scan_possible_helper_node(
             ..
         }) => note_assignment(lhs, rhs),
         AstNode::Expr(Expr::Call { func, args, .. }) => match func.as_ref() {
-            Expr::Ident { name, .. } => {
+            Expr::Ident { name, span } => {
+                calls.excluded_ident_spans.insert((span.start, span.end));
                 let name = capture_identifier_name(name);
                 if name == UNKNOWN_CAPTURE_BINDING {
                     calls.uncertain = true;
@@ -475,6 +491,18 @@ fn scan_possible_helper_node(
             }
             _ => calls.uncertain = true,
         },
+        AstNode::Expr(Expr::Index { .. }) => {
+            // `$`, `[[`, `[`, and slot reads can invoke an active binding or
+            // user accessor even without an explicit call node.
+            calls.uncertain = true;
+        }
+        AstNode::Expr(Expr::Ident { name, span })
+            if !calls.excluded_ident_spans.contains(&(span.start, span.end)) =>
+        {
+            calls
+                .read_names
+                .insert(capture_identifier_name(name).to_string());
+        }
         _ => {}
     }
 }
@@ -491,6 +519,8 @@ fn scan_possible_helper_calls(
             .insert(capture_identifier_name(&parameter.name).to_string());
     }
     let walk = Walk {
+        assign_targets: false,
+        assign_operands: false,
         fn_bodies: false,
         dollar_args: false,
         ..Walk::ALL

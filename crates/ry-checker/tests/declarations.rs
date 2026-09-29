@@ -785,7 +785,7 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
         ("eval(quote(f <- function(x) x), .GlobalEnv)", false),
         ("evalq(f <- function(x) x, envir = .GlobalEnv)", false),
         ("assign(\"f\", function(x) x, envir = new.env())", false),
-        ("eval(base::quote(1L), envir = .GlobalEnv)", true),
+        ("eval(base::quote(1L))", true),
         ("eval(quote(1L), envir = .GlobalEnv)", false),
         ("helper()", true),
     ] {
@@ -1056,6 +1056,110 @@ fn forcing_a_possible_active_or_delayed_binding_drops_stale_contract_identity() 
             .map(|finding| &file.source[finding.span.start..finding.span.end])
             .collect::<Vec<_>>();
         assert_eq!(spans, vec!["\"before\""], "setup: {setup}");
+    }
+}
+
+#[test]
+fn standalone_and_helper_value_reads_can_force_a_replacement() {
+    for (setup, action, expected) in [
+        (
+            "makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
+            "trigger",
+            vec!["\"before\""],
+        ),
+        (
+            "makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
+            "touch <- function() trigger; touch()",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); .GlobalEnv }, e)",
+            "e$trigger",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); .GlobalEnv }, e)",
+            "e[[\"trigger\"]]",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); .GlobalEnv }, e)",
+            "touch <- function() e$trigger; touch()",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); .GlobalEnv }, e)",
+            "base::eval(base::quote(1L), envir = e$trigger)",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); makeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); .GlobalEnv }, e)",
+            "base::evalq(1L, envir = e$trigger)",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); e$trigger <- .GlobalEnv",
+            "base::eval(base::quote(1L), envir = e$trigger)",
+            vec!["\"before\""],
+        ),
+        (
+            "e <- new.env(); e$trigger <- .GlobalEnv",
+            "base::eval(base::quote(1L))",
+            vec!["\"before\"", "\"after\""],
+        ),
+    ] {
+        let source =
+            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
+        let file = parse("forced-value-read.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        assert_eq!(spans, expected, "action: {action}");
+    }
+}
+
+#[test]
+fn warm_helper_value_read_edits_match_cold_declaration_findings() {
+    let source = |body: &str| {
+        format!(
+            "e <- new.env()\nmakeActiveBinding(\"trigger\", function() {{ assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }}, e)\nf <- function(x) x\ntouch <- function() {body}\ntouch()\nf(\"after\")\n"
+        )
+    };
+    let first = parse("reader.R", &source("1L"));
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+
+    for (body, expected) in [("e$trigger", 0), ("1L", 1)] {
+        let edited = parse("reader.R", &source(body));
+        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &first.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -1769,6 +1873,36 @@ fn quoted_binding_replacement_invalidates_a_same_file_deferred_call() {
             "{definition}: {replacement}, findings: {:?}",
             checker.declaration_findings()
         );
+    }
+}
+
+#[test]
+fn escaped_backtick_replacement_cannot_keep_a_decoded_contract() {
+    for source in [
+        "f <- function(x) x\nf(\"before\")\n`\\x66` <- function(x) x\nf(\"after\")\n",
+        "f <- function(x) x\nouter <- function() f(\"bad\")\n`\\x66` <- function(x) x\nouter()\n",
+    ] {
+        let file = parse("escaped-binding.R", source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        let expected = if source.contains("outer <-") {
+            vec![]
+        } else {
+            vec!["\"before\""]
+        };
+        assert_eq!(spans, expected, "source: {source}");
     }
 }
 

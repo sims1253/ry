@@ -31,8 +31,13 @@ pub use reference_facts::{
 };
 pub mod rules;
 pub mod semantic_lists;
+pub mod trace;
 
 pub use project::Project;
+pub use trace::{
+    ProjectTrace, TraceCompletion, TraceEvent, TraceEventKind, TraceFileId, TraceFunctionId,
+    TraceOptions, TraceReason,
+};
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).

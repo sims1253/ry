@@ -31,6 +31,12 @@ definition identities; the ordinary check did not retain that cache. This
 telemetry does not change refinement scheduling. Enable tracing before the
 edit of interest.
 
+For file-order changes, the trace compares the prior and current winning
+definitions after collection. A winner flip records the old definition as the
+invalidated target and the new winner as its trigger, even when the preceding
+full check left no collection cache. Reordering without a winner flip adds no
+definition transition.
+
 For a standalone developer run, pass UTF-8 R files to the example:
 
 ```sh

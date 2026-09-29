@@ -311,6 +311,21 @@ impl TraceRecorder {
             .cloned()
     }
 
+    /// Names whose winning source file changed in the analyzed snapshot.
+    /// File-order changes have no edit callback, and a full check clears the
+    /// production invalidation set, so compare the registered winners here.
+    pub(crate) fn changed_winner_names(&self) -> Vec<String> {
+        self.previous_functions
+            .iter()
+            .filter_map(|(name, previous)| {
+                self.functions
+                    .get(name)
+                    .filter(|current| current.file.path != previous.file.path)
+                    .map(|_| name.clone())
+            })
+            .collect()
+    }
+
     pub(crate) fn collection(&mut self, path: &str, cache_hit: bool) {
         if cache_hit {
             self.summary.collection_cache_hits += 1;

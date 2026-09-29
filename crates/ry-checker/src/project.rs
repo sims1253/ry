@@ -683,17 +683,19 @@ impl Project {
                     },
                 );
             }
-            let mut invalidated: Vec<_> = self
+            let mut invalidated: Vec<String> = self
                 .invalidated_fns
                 .iter()
                 .chain(&self.trace_definition_transitions)
+                .cloned()
                 .collect();
+            invalidated.extend(trace.changed_winner_names());
             invalidated.sort_unstable();
             invalidated.dedup();
             for name in invalidated {
                 trace.definition_invalidation(
-                    name,
-                    if self.fn_table.fns.contains_key(name) {
+                    &name,
+                    if self.fn_table.fns.contains_key(&name) {
                         TraceReason::ReplacedDefinition
                     } else {
                         TraceReason::RemovedDefinition

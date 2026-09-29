@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use ry_checker::{
-    Project, ProjectTrace, TraceCompletion, TraceEventKind, TraceOptions, TraceReason, TraceTrigger,
+    Project, ProjectTrace, TraceCompletion, TraceEventKind, TraceFunctionId, TraceOptions,
+    TraceReason, TraceTrigger,
 };
 use ry_core::{RParser, SourceFile};
 
@@ -639,6 +640,168 @@ fn removed_winning_definition_keeps_old_file_identity_when_shadowing_flips() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn reorder_winner_flip_survives_all_check_modes_and_exact_filters() {
+    fn project() -> Project {
+        let mut project = Project::new();
+        project.add_file("use.R".into(), parsed("use.R", "x <- f() + 1L"));
+        project.add_file("z.R".into(), parsed("z.R", "f <- function() 1L"));
+        project.add_file("a.R".into(), parsed("a.R", "f <- function() 'str'"));
+        project.enable_reference_capture();
+        project
+    }
+
+    fn check_mode(project: &mut Project, cold: bool) -> String {
+        let diagnostics = if cold {
+            project.check()
+        } else {
+            project.check_incremental()
+        };
+        format!("{diagnostics:?}")
+    }
+
+    fn scenario(
+        initial_cold: bool,
+        next_cold: bool,
+        early_trace: bool,
+        file: Option<&str>,
+        function: Option<TraceFunctionId>,
+    ) -> ProjectTrace {
+        let mut traced = project();
+        let mut plain = project();
+        let options = TraceOptions {
+            file: file.map(str::to_owned),
+            function,
+            ..TraceOptions::default()
+        };
+        if early_trace {
+            traced.enable_trace(options.clone()).unwrap();
+        }
+        assert_eq!(
+            check_mode(&mut traced, initial_cold),
+            check_mode(&mut plain, initial_cold)
+        );
+        traced.take_trace();
+        traced.take_reference_facts();
+        plain.take_reference_facts();
+        if !early_trace {
+            traced.enable_trace(options).unwrap();
+        }
+        let order = ["a.R".into(), "use.R".into(), "z.R".into()];
+        traced.reorder_files(&order);
+        plain.reorder_files(&order);
+        assert_eq!(
+            check_mode(&mut traced, next_cold),
+            check_mode(&mut plain, next_cold),
+            "initial cold={initial_cold}, next cold={next_cold}, early trace={early_trace}"
+        );
+        assert_eq!(
+            format!("{:?}", traced.take_reference_facts()),
+            format!("{:?}", plain.take_reference_facts())
+        );
+        traced.take_trace().unwrap()
+    }
+
+    for initial_cold in [false, true] {
+        for next_cold in [false, true] {
+            for early_trace in [false, true] {
+                let full = scenario(initial_cold, next_cold, early_trace, None, None);
+                let flips: Vec<_> = full
+                    .events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event.kind,
+                            TraceEventKind::Invalidation {
+                                reason: TraceReason::ReplacedDefinition
+                            }
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    flips.len(),
+                    1,
+                    "{initial_cold}/{next_cold}/{early_trace}: {full:?}"
+                );
+                let old = flips[0].function.as_ref().unwrap().clone();
+                assert_eq!(old.table_name, "f");
+                assert_eq!(old.file.path, "a.R");
+                assert_eq!(old.file.source_sha256.len(), 64);
+                let new = match flips[0].trigger.as_ref() {
+                    Some(TraceTrigger::Function { identity }) => identity.clone(),
+                    other => panic!("new winning definition must trigger event: {other:?}"),
+                };
+                assert_eq!(new.table_name, "f");
+                assert_eq!(new.file.path, "z.R");
+                assert_ne!(old.file.source_sha256, new.file.source_sha256);
+
+                for file in [Some("a.R"), Some("z.R"), Some("use.R")] {
+                    let filtered = scenario(initial_cold, next_cold, early_trace, file, None);
+                    let retained = filtered
+                        .events
+                        .iter()
+                        .filter(|event| {
+                            matches!(
+                                event.kind,
+                                TraceEventKind::Invalidation {
+                                    reason: TraceReason::ReplacedDefinition
+                                }
+                            )
+                        })
+                        .count();
+                    assert_eq!(retained, usize::from(file == Some("a.R")));
+                }
+                for (function, expected) in [(old, 1), (new, 0)] {
+                    let filtered =
+                        scenario(initial_cold, next_cold, early_trace, None, Some(function));
+                    let retained = filtered
+                        .events
+                        .iter()
+                        .filter(|event| {
+                            matches!(
+                                event.kind,
+                                TraceEventKind::Invalidation {
+                                    reason: TraceReason::ReplacedDefinition
+                                }
+                            )
+                        })
+                        .count();
+                    assert_eq!(retained, expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reorder_without_a_winner_flip_has_no_definition_transition() {
+    for cold in [false, true] {
+        let mut project = Project::new();
+        project.add_file("a.R".into(), parsed("a.R", "f <- function() 1L"));
+        project.add_file("b.R".into(), parsed("b.R", "g <- function() 2L"));
+        project.enable_trace(TraceOptions::default()).unwrap();
+        if cold {
+            project.check();
+        } else {
+            project.check_incremental();
+        }
+        project.take_trace();
+        project.reorder_files(&["b.R".into(), "a.R".into()]);
+        if cold {
+            project.check();
+        } else {
+            project.check_incremental();
+        }
+        let trace = project.take_trace().unwrap();
+        assert!(!trace.events.iter().any(|event| matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::ReplacedDefinition | TraceReason::RemovedDefinition
+            }
+        )));
     }
 }
 

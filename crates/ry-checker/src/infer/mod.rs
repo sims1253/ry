@@ -839,7 +839,32 @@ impl Checker {
         body: &[Stmt],
         scope: &mut Scope,
     ) {
-        index::superassignment_writes(params, body).apply(scope);
+        let writes = index::superassignment_writes(params, body);
+        // The existing value analysis widens an outward binding as soon as a
+        // closure that *could later* write it is constructed. That does not
+        // mean the closure has run. Preserve an adopted literal's source
+        // identity for eager calls until an actual call performs the write;
+        // keep the widened value type and all unannotated behavior intact.
+        let declaration_identities =
+            if !self.discarding && !self.declarations.records().is_empty() && !writes.opaque {
+                writes
+                    .names
+                    .iter()
+                    .filter_map(|name| {
+                        let span = scope.lexical_definition(name)?;
+                        self.declarations
+                            .target(&self.path, span)
+                            .is_some_and(|decision| decision.signature.is_some())
+                            .then(|| (name.clone(), span))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+        writes.apply(scope);
+        for (name, span) in declaration_identities {
+            scope.mark_bound_function_definition(name, span);
+        }
     }
 
     /// Enter a function literal's body and walk it for diagnostics.

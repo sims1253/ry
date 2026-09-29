@@ -793,6 +793,9 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
+    /// Bounded, scope-aware writes outside this function's frame when it
+    /// executes. Eager declaration checks use this precomputed summary.
+    pub(crate) outward_writes: Arc<FxSet<String>>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.

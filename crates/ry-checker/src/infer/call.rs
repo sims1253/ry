@@ -11,6 +11,28 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
+        // Resolve a directly bound helper before inferring its arguments:
+        // R fixes the call head before promises can mutate its binding. The
+        // effect is applied only after the call itself has been checked.
+        let helper_writes = if !self.discarding && !self.declarations.records().is_empty() {
+            callee_name(func).and_then(|name| {
+                let name = semantic_argument_name(&name);
+                if name.contains("::") {
+                    return None;
+                }
+                scope
+                    .lexical_definition(name)
+                    .and_then(|span| self.fn_table.definition(&self.path, span))
+                    .or_else(|| {
+                        (scope.get(name).is_none() && !scope.has_possible_outward_function(name))
+                            .then(|| self.fn_table.fns.get(name))
+                            .flatten()
+                    })
+                    .map(|function| Arc::clone(&function.outward_writes))
+            })
+        } else {
+            None
+        };
         if self.capture_references {
             self.enable_eager_reference_argument(func, args, scope, span);
         }
@@ -23,6 +45,38 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        if !self.discarding && !self.declarations.records().is_empty() {
+            let mut writes = FxSet::default();
+            crate::collect::collect_callable_binding_write(func, args, &mut writes);
+            if let Some(helper_writes) = helper_writes {
+                writes.extend(helper_writes.iter().cloned());
+            }
+            if let Expr::Function { params, body, .. } = func {
+                writes.extend(crate::collect::called_function_outward_writes(params, body));
+            }
+            if writes.remove(crate::collect::UNKNOWN_CAPTURE_BINDING) {
+                // A dynamic target can name any currently adopted literal,
+                // including an as-yet unbound cross-file project function.
+                // Keep the ordinary checker scope untouched when no records
+                // were adopted; for an opted-in check, decline stale exact
+                // identities without disabling unrelated diagnostics.
+                writes.extend(scope.lexical_definitions.keys().cloned());
+                writes.extend(
+                    self.fn_table
+                        .fns
+                        .iter()
+                        .filter(|(_, function)| {
+                            self.declarations
+                                .target(&function.source_path, function.definition_span)
+                                .is_some_and(|decision| decision.signature.is_some())
+                        })
+                        .map(|(name, _)| semantic_argument_name(name).to_string()),
+                );
+            }
+            for name in writes {
+                scope.insert(name, RType::unknown());
+            }
+        }
         if !pure {
             scope.invalidate_ops_environment();
         }

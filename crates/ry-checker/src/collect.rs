@@ -172,7 +172,11 @@ fn collect_rm_targets(args: &[Arg], writes: &mut FxSet<String>) {
     }
 }
 
-fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut FxSet<String>) {
+pub(crate) fn collect_callable_binding_write(
+    func: &Expr,
+    args: &[Arg],
+    writes: &mut FxSet<String>,
+) {
     let Expr::Ident { name, .. } = func else {
         return;
     };
@@ -327,6 +331,16 @@ fn collect_immediate_outward_writes(
             ControlFlow::Continue(Descend::Into)
         },
     );
+}
+
+/// Writes that executing a known function can make outside its own frame.
+/// This is the same bounded inventory used for deferred capture checking;
+/// eager call checking applies it only after that call has been inferred.
+pub(crate) fn called_function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<String> {
+    let mut remaining = MAX_DEFAULT_HELPER_CALLS;
+    let mut writes = collect_default_writes_bounded(params, &mut remaining).1;
+    collect_immediate_outward_writes(body, &mut writes, &mut remaining);
+    writes
 }
 
 /// Defaults are promises evaluated in the called function's frame when
@@ -895,6 +909,7 @@ impl Checker {
         body: Vec<Stmt>,
         span: Span,
     ) -> usize {
+        let outward_writes = Arc::new(called_function_outward_writes(params, &body));
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -935,6 +950,7 @@ impl Checker {
             source_path: self.path.clone(),
             definition_span: span,
             body,
+            outward_writes,
             return_slot: slot,
         };
         fn_table

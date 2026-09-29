@@ -811,6 +811,134 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
 }
 
 #[test]
+fn eager_calls_use_the_binding_before_but_not_after_a_runtime_installation() {
+    for write in [
+        "base::assign(\"f\", function(x) x, envir = .GlobalEnv)",
+        "assign(\"f\", function(x) x, envir = .GlobalEnv)",
+        "base::delayedAssign(\"f\", function(x) x, assign.env = .GlobalEnv)",
+        "methods::setGeneric(\"f\", function(x) standardGeneric(\"f\"))",
+        "methods::setMethod(\"f\", \"ANY\", function(x) x)",
+        "base::rm(f, envir = .GlobalEnv)",
+        "base::assign(target, function(x) x, envir = .GlobalEnv)",
+        "(function() { f <<- function(x) x })()",
+    ] {
+        let source = format!("f <- function(x) x\nf(\"before\")\n{write}\nf(\"after\")\n");
+        let file = parse("eager-installation.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let mismatches = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mismatches.len(),
+            1,
+            "write: {write}, findings: {:?}",
+            checker.declaration_findings()
+        );
+        assert_eq!(
+            &file.source[mismatches[0].span.start..mismatches[0].span.end],
+            "\"before\"",
+            "write: {write}"
+        );
+    }
+}
+
+#[test]
+fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
+    for (body, expected_after_mismatch) in [
+        ("f <<- function(x) x", false),
+        (
+            "base::assign(\"f\", function(x) x, envir = .GlobalEnv)",
+            false,
+        ),
+        ("g <<- function(x) x", true),
+        ("local <- function(x) x", true),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nmutate <- function() {{ {body} }}\nf(\"before\")\nmutate()\nf(\"after\")\n"
+        );
+        let file = parse("invoked-helper-write.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        let mismatch_spans = checker
+            .declaration_findings()
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &file.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>();
+        let expected = if expected_after_mismatch {
+            vec!["\"before\"", "\"after\""]
+        } else {
+            vec!["\"before\""]
+        };
+        assert_eq!(mismatch_spans, expected, "helper body: {body}");
+    }
+}
+
+#[test]
+fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits() {
+    let first = parse(
+        "first.R",
+        "f <- function(x) x\nf(\"before\")\nmutate()\nf(\"after\")\n",
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.add_file(
+        "mutator.R".into(),
+        parse("mutator.R", "mutate <- function() f <<- function(x) x"),
+    );
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    let kinds_in_first = |project: &Project| {
+        project
+            .declaration_findings()
+            .iter()
+            .filter(|(path, _)| *path == first.path)
+            .flat_map(|(_, findings)| findings)
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .map(|finding| &first.source[finding.span.start..finding.span.end])
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds_in_first(&project), vec!["\"before\""]);
+
+    for (body, expected) in [
+        ("mutate <- function() g <<- function(x) x", 2),
+        ("mutate <- function() f <<- function(x) x", 1),
+    ] {
+        let edited = parse("mutator.R", body);
+        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        project.check_incremental();
+        assert_eq!(kinds_in_first(&project).len(), expected, "mutator: {body}");
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
 fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
     let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
     let mut checker = Checker::new(&eager.path);

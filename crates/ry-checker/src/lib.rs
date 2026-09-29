@@ -958,7 +958,13 @@ impl FnTable {
             .iter()
             .chain(&collected.outward_capture_writes)
         {
-            if let Some(definitions) = self.capture_literal_bindings.get(name) {
+            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
+                self.rebound_after_capture.extend(
+                    self.capture_literal_bindings
+                        .values()
+                        .flat_map(|definitions| definitions.iter().cloned()),
+                );
+            } else if let Some(definitions) = self.capture_literal_bindings.get(name) {
                 self.rebound_after_capture
                     .extend(definitions.iter().cloned());
             }
@@ -968,7 +974,14 @@ impl FnTable {
             .iter()
             .chain(&self.outward_capture_writes)
         {
-            if let Some(definitions) = collected.capture_literal_bindings.get(name) {
+            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
+                self.rebound_after_capture.extend(
+                    collected
+                        .capture_literal_bindings
+                        .values()
+                        .flat_map(|definitions| definitions.iter().cloned()),
+                );
+            } else if let Some(definitions) = collected.capture_literal_bindings.get(name) {
                 self.rebound_after_capture
                     .extend(definitions.iter().cloned());
             }

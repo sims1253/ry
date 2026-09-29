@@ -598,6 +598,18 @@ impl Checker {
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
+                    // Preserve ordinary raw-key scope inference. Only the
+                    // opt-in declaration identity uses the decoded spelling
+                    // of an unescaped backtick identifier.
+                    let binding = if !self.discarding
+                        && !self.declarations.records().is_empty()
+                        && matches!(target, Expr::Ident { .. })
+                        && !name.contains('\\')
+                    {
+                        semantic_argument_name(name)
+                    } else {
+                        name
+                    };
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
                     }
@@ -614,10 +626,16 @@ impl Checker {
                     }
                     if let Expr::Function { span, .. } = value {
                         if self.enclosing_formals.is_empty() {
-                            scope.mark_bound_function_definition(name.to_string(), *span);
+                            scope.mark_bound_function_definition(binding.to_string(), *span);
                         } else {
-                            scope.mark_lexical_function(name.to_string(), *span);
+                            scope.mark_lexical_function(binding.to_string(), *span);
                         }
+                    } else if binding != name {
+                        // A quoted write to a former literal erases its
+                        // exact identity, even though the ordinary scope
+                        // still retains its parser spelling.
+                        scope.forget_lexical_definition(binding);
+                        scope.mark_lexical_callable(binding.to_string());
                     }
                     if plain_vector {
                         scope.mark_plain_ops_vector(semantic_argument_name(name).to_string());

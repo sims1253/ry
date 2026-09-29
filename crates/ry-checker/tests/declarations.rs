@@ -732,6 +732,84 @@ fn default_iife_outward_write_is_distinct_from_literal_and_local_write() {
 }
 
 #[test]
+fn forced_default_named_helper_only_invalidates_when_it_can_write_outward() {
+    for (default, expected_mismatch) in [
+        ("{ g <- function() { f <<- function(x) x }; g() }", false),
+        (
+            "{ invisible(g <- function() { f <<- function(x) x }); g() }",
+            false,
+        ),
+        ("{ g <- function() { f <<- function(x) x }; g }", true),
+        ("{ g <- function() { f <- function(x) x }; g() }", true),
+        (
+            "{ g <- function() { h <- function() { f <<- function(x) x }; h() }; g() }",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nouter <- function(z = {default}) {{ z; f(\"bad\") }}\nouter()\n"
+        );
+        let file = parse("default-helper.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            expected_mismatch,
+            "default: {default}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn explicit_global_environment_writes_invalidate_captured_contracts() {
+    for (body, expected_mismatch) in [
+        ("assign(\"f\", function(x) x, envir = .GlobalEnv)", false),
+        ("assign(\"f\", function(x) x, .GlobalEnv)", false),
+        ("assign(\"f\", function(x) x, envir = globalenv())", false),
+        (
+            "env <- .GlobalEnv; assign(\"f\", function(x) x, envir = env)",
+            false,
+        ),
+        (
+            "assign(value = function(x) x, x = \"f\", pos = .GlobalEnv)",
+            false,
+        ),
+        ("eval(quote(f <- function(x) x), envir = .GlobalEnv)", false),
+        ("eval(quote(f <- function(x) x), .GlobalEnv)", false),
+        ("evalq(f <- function(x) x, envir = .GlobalEnv)", false),
+        ("assign(\"f\", function(x) x, envir = new.env())", false),
+        ("eval(quote(1L), envir = .GlobalEnv)", true),
+        ("helper()", true),
+    ] {
+        let source = format!(
+            "f <- function(x) x\nhelper <- function() 1L\nouter <- function() {{ {body}; f(\"bad\") }}\nouter()\n"
+        );
+        let file = parse("global-environment.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            expected_mismatch,
+            "body: {body}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
 fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
     let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
     let mut checker = Checker::new(&eager.path);
@@ -867,6 +945,7 @@ fn project_capture_inventory_includes_global_expression_control_binder_and_outwa
         ("invisible(f <- function(x) { x })", 1),
         ("if ({ f <- function(x) { x }; TRUE }) 1L", 1),
         ("for (f in list(function(x) { x })) 1L", 1),
+        ("for (`f` in list(function(x) { x })) 1L", 1),
         (
             "mutate <- function() { f <<- function(x) { x } }; mutate()",
             1,
@@ -877,6 +956,14 @@ fn project_capture_inventory_includes_global_expression_control_binder_and_outwa
         ),
         (
             "mutate <- function(z = (function() { f <<- function(x) { x } })()) { z }; mutate()",
+            1,
+        ),
+        (
+            "mutate <- function() { env <- .GlobalEnv; assign(\"f\", function(x) x, envir = env) }; mutate()",
+            1,
+        ),
+        (
+            "mutate <- function() { eval(quote(f <- function(x) x), envir = .GlobalEnv) }; mutate()",
             1,
         ),
         (
@@ -944,6 +1031,90 @@ fn project_capture_write_edits_and_removal_match_cold_analysis() {
     project.remove_file("second.R");
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
+}
+
+#[test]
+fn quoted_and_plain_bindings_share_capture_identity_cold_and_warm() {
+    for (first_name, second_write, expected) in [
+        ("f", "`f` <- function(x) x", 0),
+        ("`f`", "f <- function(x) x", 0),
+        ("f", "invisible(`f` <- function(x) x)", 0),
+        (
+            "`f`",
+            "mutate <- function() { `f` <<- function(x) x }; mutate()",
+            0,
+        ),
+        ("f", "g <- function(x) x", 1),
+    ] {
+        let first = parse(
+            "first.R",
+            &format!("{first_name} <- function(x) x\nouter <- function() f(\"bad\")\n"),
+        );
+        let declaration = record(
+            &first,
+            first_name,
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        );
+        let mut project = Project::new();
+        project.add_file(first.path.clone(), first.clone());
+        project.add_file("second.R".into(), parse("second.R", "g <- 1L\n"));
+        project.set_declaration_records(vec![declaration.clone()]);
+        project.check_incremental();
+        assert_eq!(
+            project_mismatch_count(&project, &first.path),
+            1,
+            "initial {first_name}"
+        );
+        let second = parse("second.R", second_write);
+        project.update_file("second.R".into(), Arc::new(second.clone()));
+        project.check_incremental();
+        assert_eq!(
+            project_mismatch_count(&project, &first.path),
+            expected,
+            "{first_name}: {second_write}"
+        );
+
+        let mut cold = Project::new();
+        cold.add_file(first.path.clone(), first.clone());
+        cold.add_file(second.path.clone(), second);
+        cold.set_declaration_records(vec![declaration]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
+fn quoted_binding_replacement_invalidates_a_same_file_deferred_call() {
+    for (definition, replacement, expected) in [
+        ("f", "`f` <- function(x) x", 0),
+        ("`f`", "f <- function(x) x", 0),
+        ("`f`", "g <- function(x) x", 1),
+    ] {
+        let file = parse(
+            "quoted-local.R",
+            &format!(
+                "{definition} <- function(x) x\nouter <- function() f(\"bad\")\n{replacement}\nouter()\n"
+            ),
+        );
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            definition,
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            kinds(&checker)
+                .iter()
+                .filter(|kind| **kind == DeclarationFindingKind::Mismatch)
+                .count(),
+            expected,
+            "{definition}: {replacement}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
 }
 
 #[test]
@@ -1649,25 +1820,66 @@ fn iterator_function_lookup_skips_proven_nonfunctions() {
 }
 
 #[test]
-fn shadowed_definition_does_not_borrow_another_return_slot() {
+fn earlier_same_named_definition_keeps_its_own_independent_return_evidence() {
+    for (first_return, second_return, expected) in [
+        ("\"old\"", "1L", vec![DeclarationFindingKind::Mismatch]),
+        ("1L", "\"new\"", vec![]),
+    ] {
+        let file = parse(
+            "shadowed.R",
+            &format!(
+                "f <- function(x) {{ {first_return} }}\nf <- function(x) {{ {second_return} }}\nf(1L)\n"
+            ),
+        );
+        let declaration = record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            Some(AtomicMode::Integer),
+        );
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![declaration.clone()]);
+        checker.check(&file);
+        assert_eq!(kinds(&checker), expected, "first: {first_return}");
+
+        let mut project = Project::new();
+        project.add_file(file.path.clone(), file.clone());
+        project.set_declaration_records(vec![declaration]);
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &file.path), expected.len());
+    }
+}
+
+#[test]
+fn earlier_definition_return_evidence_survives_warm_annotation_edits() {
     let file = parse(
-        "shadowed.R",
-        "f <- function(x) { \"old\" }\nf <- function(x) { 1L }\nf(1L)\n",
+        "shadowed-warm.R",
+        "f <- function(x) { \"old\" }\nf <- function(x) { 1L }\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
+    let mut declaration = record(
         &file,
         "f",
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         Some(AtomicMode::Integer),
-    )]);
-    checker.check(&file);
-    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Partial]);
-    assert!(
-        checker.declaration_findings()[0]
-            .message
-            .contains("return evidence")
     );
+    let mut project = Project::new();
+    project.add_file(file.path.clone(), file.clone());
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &file.path), 1);
+
+    if let Translation::Exact(signature) = &mut declaration.translation {
+        signature.return_constraint = Some(TypeExpr::atomic(AtomicMode::Character));
+    }
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &file.path), 0);
+
+    let mut cold = Project::new();
+    cold.add_file(file.path.clone(), file);
+    cold.set_declaration_records(vec![declaration]);
+    cold.check();
+    assert_eq!(project.declaration_findings(), cold.declaration_findings());
 }
 
 #[test]

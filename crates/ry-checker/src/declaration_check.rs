@@ -498,11 +498,7 @@ impl crate::Checker {
         else {
             return;
         };
-        let Some(function) =
-            self.fn_table.fns.values().find(|function| {
-                function.source_path == self.path && function.definition_span == span
-            })
-        else {
+        let Some(function) = self.fn_table.definition(&self.path, span).cloned() else {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
@@ -511,7 +507,26 @@ impl crate::Checker {
             ));
             return;
         };
-        let inferred = self.return_slots.get(function.return_slot);
+        let live_definition = self
+            .fn_table
+            .fns
+            .values()
+            .any(|live| live.source_path == self.path && live.definition_span == span);
+        let inferred = if live_definition {
+            self.return_slots.get(function.return_slot)
+        } else {
+            // Pass 2 only refines the last function assigned to each name.
+            // An adopted earlier literal still has independently checkable
+            // body evidence; infer it without seeding its declared entry or
+            // altering the caller-visible last-definition table.
+            let was_discarding = self.discarding;
+            self.discarding = true;
+            let inferred = self
+                .infer_definition_return(function_name.unwrap_or("<function>"), &function)
+                .unwrap_or_else(RType::unknown);
+            self.discarding = was_discarding;
+            inferred
+        };
         if compare(&inferred, declared) == Evidence::Incompatible {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Mismatch,

@@ -11,6 +11,28 @@ fn function_literal_span(value: &Expr) -> Option<Span> {
     }
 }
 
+/// An escaped identifier needs R's escape decoder before it can be equated
+/// with another spelling. Treat such a write as an unknown binding rather
+/// than retaining a false exact captured-function identity.
+pub(crate) const UNKNOWN_CAPTURE_BINDING: &str = "\0";
+
+fn capture_binding_name(target: &Expr) -> &str {
+    match target {
+        Expr::Ident { name, .. } if name.contains('\\') => UNKNOWN_CAPTURE_BINDING,
+        Expr::Ident { name, .. } => semantic_argument_name(name),
+        Expr::String(name, _) => name,
+        _ => UNKNOWN_CAPTURE_BINDING,
+    }
+}
+
+fn capture_identifier_name(name: &str) -> &str {
+    if name.contains('\\') {
+        UNKNOWN_CAPTURE_BINDING
+    } else {
+        semantic_argument_name(name)
+    }
+}
+
 fn note_capture_write(
     current: &mut FxMap<String, Span>,
     name: &str,
@@ -30,9 +52,148 @@ fn note_capture_write(
     }
 }
 
-/// Walk only the body of a literal that is used as a call head. Bodies of
-/// literal values passed around without an immediate call stay deferred.
-fn collect_immediate_outward_writes(body: &[Stmt], outward: &mut FxSet<String>) {
+/// A default may invoke a helper it just bound. Inspect only literal helper
+/// bodies reached by an explicit call; merely constructing or returning a
+/// closure does not execute its outward assignments. The bound also handles
+/// recursive helpers without making declaration collection source-sized per
+/// call chain. Exhaustion makes captured identity uncertain.
+const MAX_DEFAULT_HELPER_CALLS: usize = 64;
+
+fn called_names_in_expr(expr: &Expr) -> FxSet<String> {
+    let mut called = FxSet::default();
+    let _ = walk_expr(
+        expr,
+        Walk {
+            fn_bodies: false,
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Call { func, .. }) = node
+                && let Expr::Ident { name, .. } = func.as_ref()
+            {
+                called.insert(semantic_argument_name(name).to_string());
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    called
+}
+
+fn called_names_in_stmts(stmts: &[Stmt]) -> FxSet<String> {
+    let mut called = FxSet::default();
+    let _ = walk_stmts(
+        stmts,
+        Walk {
+            fn_bodies: false,
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            if let AstNode::Expr(Expr::Call { func, .. }) = node
+                && let Expr::Ident { name, .. } = func.as_ref()
+            {
+                called.insert(semantic_argument_name(name).to_string());
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+    called
+}
+
+fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
+    let _ = walk_expr(
+        expr,
+        Walk {
+            fn_bodies: false,
+            dollar_args: false,
+            ..Walk::ALL
+        },
+        |node, _| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                    if binding_name(target).is_some() {
+                        writes.insert(capture_binding_name(target).to_string());
+                    }
+                }
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) if binding_name(lhs).is_some() => {
+                    writes.insert(capture_binding_name(lhs).to_string());
+                }
+                _ => {}
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+}
+
+fn collect_explicit_global_call(func: &Expr, args: &[Arg], writes: &mut FxSet<String>) {
+    let Expr::Ident { name, .. } = func else {
+        return;
+    };
+    match semantic_argument_name(name) {
+        "assign" => {
+            // `pos`, an environment alias, and omitted `envir` can all
+            // reach a captured frame. Even a `new.env()` spelling is not
+            // proof of freshness when that name can be masked.
+            let target = args
+                .iter()
+                .find(|argument| argument.name.as_deref().map(semantic_argument_name) == Some("x"))
+                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+            let binding = match target.map(|argument| &argument.value) {
+                Some(Expr::String(name, _)) => name.as_str(),
+                _ => UNKNOWN_CAPTURE_BINDING,
+            };
+            writes.insert(binding.to_string());
+        }
+        "eval" => {
+            let expression = args
+                .iter()
+                .find(|argument| {
+                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
+                })
+                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+            if let Some(expression) = expression
+                && let Expr::Call {
+                    func,
+                    args: quote_args,
+                    ..
+                } = &expression.value
+                && matches!(func.as_ref(), Expr::Ident { name, .. } if semantic_argument_name(name) == "quote")
+                && let Some(quoted) = quote_args.first()
+            {
+                collect_quoted_global_writes(&quoted.value, writes);
+            } else {
+                writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+            }
+        }
+        "evalq" => {
+            let expression = args
+                .iter()
+                .find(|argument| {
+                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
+                })
+                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+            if let Some(expression) = expression {
+                collect_quoted_global_writes(&expression.value, writes);
+            } else {
+                writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_immediate_outward_writes(
+    body: &[Stmt],
+    outward: &mut FxSet<String>,
+    remaining: &mut usize,
+) {
+    let called = called_names_in_stmts(body);
+    let mut scanned = FxSet::<(usize, usize)>::default();
     let _ = walk_stmts(
         body,
         Walk {
@@ -42,19 +203,60 @@ fn collect_immediate_outward_writes(body: &[Stmt], outward: &mut FxSet<String>) 
         },
         |node, _| -> ControlFlow<(), Descend> {
             match node {
+                AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
+                    if let Expr::Function { params, body, span } = value
+                        && binding_name(target).is_some()
+                        && called.contains(capture_binding_name(target))
+                        && scanned.insert((span.start, span.end))
+                    {
+                        if *remaining == 0 {
+                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                        } else {
+                            *remaining -= 1;
+                            outward.extend(collect_default_writes_bounded(params, remaining).1);
+                            collect_immediate_outward_writes(body, outward, remaining);
+                        }
+                    }
+                }
                 AstNode::Expr(Expr::BinOp {
                     op: BinOpKind::SuperAssign,
                     lhs,
                     ..
                 }) => {
-                    if let Some(name) = binding_name(lhs) {
-                        outward.insert(name.to_string());
+                    if binding_name(lhs).is_some() {
+                        outward.insert(capture_binding_name(lhs).to_string());
                     }
                 }
-                AstNode::Expr(Expr::Call { func, .. }) => {
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign,
+                    lhs,
+                    rhs,
+                    ..
+                }) => {
+                    if let Expr::Function { params, body, span } = rhs.as_ref()
+                        && binding_name(lhs).is_some()
+                        && called.contains(capture_binding_name(lhs))
+                        && scanned.insert((span.start, span.end))
+                    {
+                        if *remaining == 0 {
+                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                        } else {
+                            *remaining -= 1;
+                            outward.extend(collect_default_writes_bounded(params, remaining).1);
+                            collect_immediate_outward_writes(body, outward, remaining);
+                        }
+                    }
+                }
+                AstNode::Expr(Expr::Call { func, args, .. }) => {
+                    collect_explicit_global_call(func, args, outward);
                     if let Expr::Function { params, body, .. } = func.as_ref() {
-                        outward.extend(collect_default_writes(params).1);
-                        collect_immediate_outward_writes(body, outward);
+                        outward.extend(collect_default_writes_bounded(params, remaining).1);
+                        if *remaining == 0 {
+                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                        } else {
+                            *remaining -= 1;
+                            collect_immediate_outward_writes(body, outward, remaining);
+                        }
                     }
                 }
                 _ => {}
@@ -68,10 +270,20 @@ fn collect_immediate_outward_writes(body: &[Stmt], outward: &mut FxSet<String>) 
 /// forced. Return their ordinary local writes separately from outward `<<-`
 /// writes; neither is an unconditional effect at function definition time.
 pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<String>) {
+    let mut remaining = MAX_DEFAULT_HELPER_CALLS;
+    collect_default_writes_bounded(params, &mut remaining)
+}
+
+fn collect_default_writes_bounded(
+    params: &[Param],
+    remaining: &mut usize,
+) -> (FxSet<String>, FxSet<String>) {
     let mut local = FxSet::default();
     let mut outward = FxSet::default();
     for parameter in params {
         if let Some(default) = &parameter.default {
+            let called = called_names_in_expr(default);
+            let mut scanned = FxSet::<(usize, usize)>::default();
             let _ = walk_expr(
                 default,
                 Walk {
@@ -94,18 +306,55 @@ pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<
                                     ..
                                 } if operation_span == span
                             );
-                            if !wrapped_superassign && let Some(name) = binding_name(target) {
-                                local.insert(name.to_string());
+                            if !wrapped_superassign && binding_name(target).is_some() {
+                                local.insert(capture_binding_name(target).to_string());
+                            }
+                            if let Expr::Function { params, body, span } = value
+                                && binding_name(target).is_some()
+                                && called.contains(capture_binding_name(target))
+                                && scanned.insert((span.start, span.end))
+                            {
+                                if *remaining == 0 {
+                                    outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                                } else {
+                                    *remaining -= 1;
+                                    outward.extend(
+                                        collect_default_writes_bounded(params, remaining).1,
+                                    );
+                                    collect_immediate_outward_writes(body, &mut outward, remaining);
+                                }
                             }
                         }
                         AstNode::Stmt(Stmt::For { name, .. }) => {
-                            local.insert(name.clone());
+                            local.insert(capture_identifier_name(name).to_string());
                         }
-                        AstNode::Expr(Expr::BinOp { op, lhs, .. }) => {
-                            if let Some(name) = binding_name(lhs) {
+                        AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
+                            if binding_name(lhs).is_some() {
+                                let name = capture_binding_name(lhs);
                                 match op {
                                     BinOpKind::Assign => {
                                         local.insert(name.to_string());
+                                        if let Expr::Function { params, body, span } = rhs.as_ref()
+                                            && called.contains(name)
+                                            && scanned.insert((span.start, span.end))
+                                        {
+                                            if *remaining == 0 {
+                                                outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                                            } else {
+                                                *remaining -= 1;
+                                                outward.extend(
+                                                    collect_default_writes_bounded(
+                                                        params, remaining,
+                                                    )
+                                                    .1,
+                                                );
+                                                collect_immediate_outward_writes(
+                                                    body,
+                                                    &mut outward,
+                                                    remaining,
+                                                );
+                                            }
+                                        }
                                     }
                                     BinOpKind::SuperAssign => {
                                         outward.insert(name.to_string());
@@ -114,10 +363,16 @@ pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<
                                 }
                             }
                         }
-                        AstNode::Expr(Expr::Call { func, .. }) => {
+                        AstNode::Expr(Expr::Call { func, args, .. }) => {
+                            collect_explicit_global_call(func, args, &mut outward);
                             if let Expr::Function { params, body, .. } = func.as_ref() {
-                                outward.extend(collect_default_writes(params).1);
-                                collect_immediate_outward_writes(body, &mut outward);
+                                outward.extend(collect_default_writes_bounded(params, remaining).1);
+                                if *remaining == 0 {
+                                    outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                                } else {
+                                    *remaining -= 1;
+                                    collect_immediate_outward_writes(body, &mut outward, remaining);
+                                }
                             }
                         }
                         _ => {}
@@ -216,7 +471,8 @@ impl Checker {
                                 ..
                             } if operation_span == span
                         );
-                        if !wrapped_superassign && let Some(name) = binding_name(target) {
+                        if !wrapped_superassign && binding_name(target).is_some() {
+                            let name = capture_binding_name(target);
                             if function_depth == 0 {
                                 global_writes.insert(name.to_string());
                                 if let Some(span) = function_literal_span(value) {
@@ -234,11 +490,11 @@ impl Checker {
                     }
                     AstNode::Stmt(Stmt::For { name, .. }) => {
                         if function_depth == 0 {
-                            global_writes.insert(name.clone());
+                            global_writes.insert(capture_identifier_name(name).to_string());
                         }
                         note_capture_write(
                             frames.last_mut().expect("top-level frame"),
-                            name,
+                            capture_identifier_name(name),
                             None,
                             &mut rebound,
                             &mut literal_names,
@@ -250,7 +506,8 @@ impl Checker {
                         rhs,
                         ..
                     }) => {
-                        if let Some(name) = binding_name(lhs) {
+                        if binding_name(lhs).is_some() {
+                            let name = capture_binding_name(lhs);
                             if function_depth == 0 {
                                 global_writes.insert(name.to_string());
                                 if let Some(span) = function_literal_span(rhs) {
@@ -271,9 +528,12 @@ impl Checker {
                         lhs,
                         ..
                     }) => {
-                        if let Some(name) = binding_name(lhs) {
-                            superassigned.insert(name.to_string());
+                        if binding_name(lhs).is_some() {
+                            superassigned.insert(capture_binding_name(lhs).to_string());
                         }
+                    }
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        collect_explicit_global_call(func, args, &mut superassigned);
                     }
                     AstNode::Stmt(Stmt::FunctionDef { params, .. })
                     | AstNode::Expr(Expr::Function { params, .. }) => {
@@ -289,6 +549,11 @@ impl Checker {
                 ControlFlow::Continue(Descend::Into)
             },
         );
+        if superassigned.contains(UNKNOWN_CAPTURE_BINDING)
+            || global_writes.contains(UNKNOWN_CAPTURE_BINDING)
+        {
+            rebound.extend(literal_names.values().flatten().copied());
+        }
         for name in &superassigned {
             if let Some(spans) = literal_names.get(name) {
                 rebound.extend(spans.iter().copied());
@@ -623,29 +888,47 @@ impl Checker {
     // body once. Returns are collected from `return(...)` calls and from
     // the trailing expression of the body, then joined.
     pub(crate) fn refine_fn_return(&mut self, name: &str) -> bool {
-        // Pull the body out by reference so we can re-borrow self during
-        // the walk. We can't simply clone the body since that's expensive
-        // for large functions; instead we snapshot the slot index.
-        let (body_clone, params, slot) = match self.fn_table.fns.get(name) {
-            Some(f) => (f.body.clone(), f.params.clone(), f.return_slot),
+        let function = match self.fn_table.fns.get(name) {
+            Some(function) => function.clone(),
             None => return false,
         };
+        let Some(joined) = self.infer_definition_return(name, &function) else {
+            return false;
+        };
+        let changed = self.return_slots.0.get(function.return_slot) != Some(&joined);
+        if changed {
+            Arc::make_mut(&mut self.return_slots).set(function.return_slot, joined);
+        }
+        changed
+    }
+
+    /// Infer one exact definition independently of its adopted contract.
+    /// The ordinary fixpoint calls this for the name-indexed live function;
+    /// declaration checking can also call it for an earlier same-name literal
+    /// whose return slot the ordinary last-definition table never refines.
+    pub(crate) fn infer_definition_return(
+        &mut self,
+        name: &str,
+        function: &UserFn,
+    ) -> Option<RType> {
         // Cycle detection: if this function is already on the inference
         // stack, leave its return as UNKNOWN and bail out. The fixpoint
         // will converge on subsequent iterations.
         if self.inferring.iter().any(|n| n == name) {
-            return false;
+            return None;
         }
         #[cfg(test)]
         {
             *self.refinement_counts.entry(name.to_string()).or_default() += 1;
         }
         self.inferring.push(name.to_string());
+        let body_clone = &function.body;
+        let params = &function.params;
 
         let mut scope = Scope::default();
         // Deferred execution can observe later syntax and constructor changes.
         scope.invalidate_ops_environment();
-        for parameter in &params {
+        for parameter in params {
             scope.insert_parameter(parameter.name.clone(), parameter.type_.clone());
         }
         // The function's own name is in scope as a function value, so
@@ -657,7 +940,7 @@ impl Checker {
         // exit-time lexical context during fixpoint inference as during the
         // final diagnostic walk.
         self.deferred_captures
-            .push(assigned_names_in_body(&body_clone));
+            .push(assigned_names_in_body(body_clone));
 
         let mut returns: Vec<RType> = Vec::new();
         // Walk the body via the unified walker in discarding mode, with
@@ -673,7 +956,7 @@ impl Checker {
         // `trailing_return_type` handles both forms and attaches an
         // inferred `fn_sig` when the trailing expression is itself a
         // function literal (the closure-factory pattern).
-        if let Some(t) = self.trailing_return_type(&body_clone[..], &mut scope, 0) {
+        if let Some(t) = self.trailing_return_type(body_clone, &mut scope, 0) {
             returns.push(t);
         }
 
@@ -688,13 +971,9 @@ impl Checker {
             let first = iter.next().unwrap_or(RType::unknown());
             iter.fold(first, |acc, t| acc.join(t))
         };
-        let changed = self.return_slots.0.get(slot) != Some(&joined);
-        if changed {
-            Arc::make_mut(&mut self.return_slots).set(slot, joined);
-        }
         self.deferred_captures.pop();
         self.inferring.pop();
-        changed
+        Some(joined)
     }
 }
 

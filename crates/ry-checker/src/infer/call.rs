@@ -1318,6 +1318,9 @@ impl Checker {
             frame
                 .possible_default_writes
                 .contains(semantic_argument_name(lookup_name))
+                || frame
+                    .possible_default_writes
+                    .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
         });
         let local_definition = scope.lexical_definition(lookup_name);
         // Function walks start with a copy of the captured scope. An exact
@@ -1325,7 +1328,7 @@ impl Checker {
         // an outward binding, not a new local one: R's closure keeps the
         // environment live after the literal is created.
         let from_outward = local_is_nonfunction
-            || local_binding.is_none()
+            || (local_binding.is_none() && local_definition.is_none())
             || (local_definition.is_some() && local_definition == outward.flatten());
         let exact_definition = if from_outward {
             outward.flatten()

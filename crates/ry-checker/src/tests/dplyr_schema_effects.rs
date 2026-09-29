@@ -388,6 +388,57 @@ fn nested_by_selection_keeps_result_schema_incomplete() {
 }
 
 #[test]
+fn nested_select_combines_decline_a_complete_result_schema() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for selection in ["c(x, c(-x))", "c(c(), -x)"] {
+        let src = format!(
+            "{prefix}out <- dplyr::select(d, {selection})\nxread <- out$x\ngread <- out$g\n"
+        );
+        let (_, complete, diagnostics) = columns(&src, "out");
+        assert!(!complete, "{selection}: {diagnostics:?}");
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY060"),
+            "{selection}: {diagnostics:?}"
+        );
+    }
+    let flat = format!("{prefix}out <- dplyr::select(d, c(x, -x))\nvalue <- out$x\n");
+    let (_, complete, diagnostics) = columns(&flat, "out");
+    assert!(complete);
+    assert!(diagnostics.iter().any(|d| d.code == "RY060"));
+}
+
+#[test]
+fn empty_and_forwarded_group_specs_do_not_assert_a_grouped_class() {
+    let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
+    for call in [
+        "dplyr::group_by(d)",
+        "dplyr::group_by(d, NULL)",
+        "dplyr::group_by(d, c())",
+    ] {
+        let (_, scope) = check_with_scope(&format!("{prefix}out <- {call}\n"));
+        let out = scope.get("out").unwrap();
+        assert!(!out.class.contains("grouped_df"), "{call}: {out:?}");
+        assert!(out.class.contains("tbl_df"), "{call}: {out:?}");
+    }
+    for (groups, definitely_grouped) in [("...", false), ("x, ...", true)] {
+        let src = format!(
+            "wrap <- function(...) {{ {prefix}dplyr::group_by(d, {groups}) }}\nout <- wrap()\n"
+        );
+        let (_, scope) = check_with_scope(&src);
+        let out = scope.get("out").unwrap();
+        if definitely_grouped {
+            assert!(out.class.contains("grouped_df"), "{groups}: {out:?}");
+        } else {
+            assert!(out.class.is_unknown(), "{groups}: {out:?}");
+        }
+        assert!(
+            out.columns.as_ref().is_none_or(|schema| !schema.complete),
+            "{groups}: {out:?}"
+        );
+    }
+}
+
+#[test]
 fn control_tags_belong_to_the_specific_verb() {
     let prefix = "d <- data.frame(x = 1L, g = 2L)\n";
     for (call, field) in [

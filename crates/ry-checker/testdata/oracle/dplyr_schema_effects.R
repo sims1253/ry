@@ -78,3 +78,23 @@ for (out in list(
 }
 stopifnot(identical(names(dplyr::relocate(two_types, g)), c("g", "x", "y")))
 stopifnot(identical(class(dplyr::group_by(small, x)), c("grouped_df", "tbl_df", "tbl", "data.frame")))
+
+# Base's declarative NSE effects also accept lists and atomic vectors.
+stopifnot(identical(base::with(list(x = "a"), x), "a"))
+stopifnot(identical(base::subset(c("a", "b"), TRUE), c("a", "b")))
+stopifnot(identical(base::transform(list(x = "a"), y = x)$y, "a"))
+stopifnot(identical(base::within(list(x = "a"), { y <- x })$y, "a"))
+stopifnot(identical(base::with(list(x = 1L), x) + 1L, 2L))
+stopifnot(identical(base::subset(c(1L, 2L), TRUE) + 1L, c(2L, 3L)))
+
+# Nested tidyselect combinations are valid but are deliberately left
+# incomplete by ry's bounded selector model.
+stopifnot(identical(names(dplyr::select(small, c(x, c(-x)))), c("x", "g")))
+stopifnot(identical(names(dplyr::select(small, c(c(), -x))), character()))
+stopifnot(identical(names(dplyr::select(small, c(x, -x))), character()))
+
+forwarded_groups <- function(...) dplyr::group_by(small, ...)
+stopifnot(!inherits(forwarded_groups(), "grouped_df"))
+stopifnot(inherits(forwarded_groups(x), "grouped_df"))
+stopifnot(!inherits(dplyr::group_by(small, NULL), "grouped_df"))
+stopifnot(!inherits(dplyr::group_by(small, c()), "grouped_df"))

@@ -1,5 +1,6 @@
 use super::*;
 use crate::infer::*;
+use crate::resolve::SchemaProvider;
 
 pub(crate) const DATA_MASK_ACTIVE: &str = "\0ry_data_mask";
 pub(crate) const DATA_MASK_ENV_PREFIX: &str = "\0ry_data_mask_env:";
@@ -16,13 +17,18 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        let sig = self.resolve_schema_sig(name)?;
+        let (sig, provider) = self.resolve_schema_sig(name)?;
         let effect = sig.schema_effect?;
         let data_index = data_mask_source_arg(&sig, args)?;
         let data_type = self.infer(&args[data_index].value, scope);
         let user_dispatch = self.resolve_user_s3_inherited_sig(name).is_some()
             || self.resolves_user_s3_dispatch(name, &data_type);
-        let trusted_receiver = standard_dplyr_frame(&data_type) && !user_dispatch;
+        // Base's declarative effects include with(list, ...),
+        // subset(vector, ...), transform(), and within(). Their contracts
+        // are not restricted to data frames. Package effects model standard
+        // data-frame methods, whose custom dispatch may replace the result.
+        let trusted_receiver = !user_dispatch
+            && (provider == SchemaProvider::Base || standard_dplyr_frame(&data_type));
         let mut arg_types = vec![RType::unknown(); args.len()];
         arg_types[data_index] = data_type.clone();
         if matches!(effect, SchemaEffect::Join) {
@@ -119,12 +125,28 @@ impl Checker {
                 let source_grouped = data_type.class.contains("grouped_df");
                 let mut result =
                     schema_mutated_type(data_type, &named_results, &masked_args, &[], false);
-                let has_group_spec = args.iter().enumerate().any(|(index, arg)| {
-                    index != data_index
+                let group_specs = args.iter().enumerate().filter(|(index, arg)| {
+                    *index != data_index
                         && !arg.name.as_deref().is_some_and(|name| {
                             matches!(semantic_argument_name(name), ".add" | ".drop")
                         })
                 });
+                let mut has_group_spec = false;
+                let mut forwarded_group_spec = false;
+                for (_, arg) in group_specs {
+                    match &arg.value {
+                        Expr::Null(_) => {}
+                        Expr::Call { func, args, .. }
+                            if args.is_empty()
+                                && ident_name(func).is_some_and(|name| {
+                                    crate::semantic_lists::bare_name(name) == "c"
+                                }) => {}
+                        Expr::Ident { name, .. } if name == "..." => {
+                            forwarded_group_spec = true;
+                        }
+                        _ => has_group_spec = true,
+                    }
+                }
                 let add = args
                     .iter()
                     .find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some(".add"));
@@ -135,14 +157,15 @@ impl Checker {
                 if has_group_spec || retain_groups {
                     result.class =
                         ClassVector::from_slice(&["grouped_df", "tbl_df", "tbl", "data.frame"]);
-                } else if !uncertain_groups {
+                } else if !uncertain_groups && !forwarded_group_spec {
                     result.class = ClassVector::from_slice(&["tbl_df", "tbl", "data.frame"]);
                 } else {
                     result.class = ClassVector::unknown();
                 }
-                if uncertain_groups {
+                if uncertain_groups || forwarded_group_spec {
                     // A dynamic .add may preserve old grouping keys. Later
-                    // summarise/transmute cannot certify their absence.
+                    // summarise/transmute cannot certify their absence. A
+                    // forwarded ... may add groups, or contain no arguments.
                     result = incomplete_schema(result);
                 }
                 result
@@ -616,7 +639,7 @@ fn schema_selected_type(mut data_type: RType, args: &[&Arg]) -> RType {
             includes.push((semantic_argument_name(name).to_owned(), old_name.to_owned()));
         } else {
             let mut selected = Vec::new();
-            if !collect_tidy_selection(&arg.value, false, &mut selected, &mut excludes) {
+            if !collect_tidy_selection(&arg.value, false, false, &mut selected, &mut excludes) {
                 return incomplete_schema(data_type);
             }
             includes.extend(selected.into_iter().map(|name| (name.clone(), name)));
@@ -755,6 +778,7 @@ fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
 fn collect_tidy_selection(
     expr: &Expr,
     excluded: bool,
+    inside_combine: bool,
     includes: &mut Vec<String>,
     excludes: &mut Vec<String>,
 ) -> bool {
@@ -771,13 +795,14 @@ fn collect_tidy_selection(
             op: UnaryOpKind::Neg,
             expr,
             ..
-        } => collect_tidy_selection(expr, true, includes, excludes),
+        } => collect_tidy_selection(expr, true, inside_combine, includes, excludes),
         Expr::Call { func, args, .. }
-            if ident_name(func)
-                .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
+            if !inside_combine
+                && ident_name(func)
+                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
         {
             args.iter()
-                .all(|arg| collect_tidy_selection(&arg.value, excluded, includes, excludes))
+                .all(|arg| collect_tidy_selection(&arg.value, excluded, true, includes, excludes))
         }
         _ => false,
     }

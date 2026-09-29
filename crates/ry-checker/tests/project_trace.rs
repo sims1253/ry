@@ -411,6 +411,176 @@ fn late_enable_retains_removed_definition_identity_and_file_filter() {
 }
 
 #[test]
+fn removal_after_cold_check_retains_identity_across_trace_start_and_recheck_modes() {
+    fn project() -> Project {
+        let mut project = Project::new();
+        project.add_file("gone.R".into(), parsed("gone.R", "f <- function() 1L"));
+        project.add_file("keep.R".into(), parsed("keep.R", "g <- function() 2L"));
+        project
+    }
+
+    for enable_before_first_check in [false, true] {
+        for next_is_cold in [false, true] {
+            for file_filter in [None, Some("keep.R"), Some("gone.R")] {
+                let mut traced = project();
+                if enable_before_first_check {
+                    traced
+                        .enable_trace(TraceOptions {
+                            file: file_filter.map(str::to_owned),
+                            ..TraceOptions::default()
+                        })
+                        .unwrap();
+                }
+                traced.check();
+                traced.take_trace();
+                if !enable_before_first_check {
+                    traced
+                        .enable_trace(TraceOptions {
+                            file: file_filter.map(str::to_owned),
+                            ..TraceOptions::default()
+                        })
+                        .unwrap();
+                }
+                traced.remove_file("gone.R");
+                let traced_diagnostics = if next_is_cold {
+                    traced.check()
+                } else {
+                    traced.check_incremental()
+                };
+                let trace = traced.take_trace().unwrap();
+
+                let mut plain = project();
+                plain.check();
+                plain.remove_file("gone.R");
+                let plain_diagnostics = if next_is_cold {
+                    plain.check()
+                } else {
+                    plain.check_incremental()
+                };
+                assert_eq!(
+                    format!("{traced_diagnostics:?}"),
+                    format!("{plain_diagnostics:?}")
+                );
+
+                let removals: Vec<_> = trace
+                    .events
+                    .iter()
+                    .filter(|event| {
+                        matches!(
+                            event.kind,
+                            TraceEventKind::Invalidation {
+                                reason: TraceReason::RemovedDefinition
+                            }
+                        )
+                    })
+                    .collect();
+                if file_filter == Some("keep.R") {
+                    assert!(removals.is_empty());
+                    assert!(trace.events.iter().any(|event| {
+                        event.file.as_ref().is_some_and(|id| id.path == "keep.R")
+                    }));
+                } else {
+                    assert_eq!(removals.len(), 1);
+                    assert!(removals[0].function.as_ref().is_some_and(|id| {
+                        id.table_name == "f"
+                            && id.file.path == "gone.R"
+                            && id.file.source_sha256.len() == 64
+                    }));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn rename_after_cold_check_records_old_definition_without_changing_diagnostics() {
+    let mut traced = pair();
+    let mut plain = pair();
+    traced.check();
+    plain.check();
+    traced.enable_trace(TraceOptions::default()).unwrap();
+    for project in [&mut traced, &mut plain] {
+        project.update_file(
+            "leaf.R".into(),
+            Arc::new(parsed("leaf.R", "renamed <- function() 2L")),
+        );
+    }
+    assert_eq!(
+        format!("{:?}", traced.check_incremental()),
+        format!("{:?}", plain.check_incremental())
+    );
+    let trace = traced.take_trace().unwrap();
+    assert!(trace.events.iter().any(|event| {
+        matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::RemovedDefinition
+            }
+        ) && event
+            .function
+            .as_ref()
+            .is_some_and(|id| id.table_name == "leaf" && id.file.path == "leaf.R")
+    }));
+}
+
+#[test]
+fn removed_winning_definition_keeps_old_file_identity_when_shadowing_flips() {
+    fn changed(file_filter: Option<&str>) -> ProjectTrace {
+        let mut project = Project::new();
+        project.add_file("early.R".into(), parsed("early.R", "f <- function() 1L"));
+        project.add_file("late.R".into(), parsed("late.R", "f <- function() 2L"));
+        project.check();
+        project
+            .enable_trace(TraceOptions {
+                file: file_filter.map(str::to_owned),
+                ..TraceOptions::default()
+            })
+            .unwrap();
+        project.remove_file("late.R");
+        checked(&mut project)
+    }
+
+    let full = changed(None);
+    let replaced = full
+        .events
+        .iter()
+        .find(|event| {
+            matches!(
+                event.kind,
+                TraceEventKind::Invalidation {
+                    reason: TraceReason::ReplacedDefinition
+                }
+            )
+        })
+        .expect("old winning definition invalidated");
+    assert!(
+        replaced
+            .function
+            .as_ref()
+            .is_some_and(|id| { id.table_name == "f" && id.file.path == "late.R" })
+    );
+    assert!(
+        matches!(&replaced.trigger, Some(TraceTrigger::Function { identity }) if identity.table_name == "f" && identity.file.path == "early.R")
+    );
+    assert!(changed(Some("late.R")).events.iter().any(|event| {
+        matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::ReplacedDefinition
+            }
+        )
+    }));
+    assert!(!changed(Some("early.R")).events.iter().any(|event| {
+        matches!(
+            event.kind,
+            TraceEventKind::Invalidation {
+                reason: TraceReason::ReplacedDefinition
+            }
+        )
+    }));
+}
+
+#[test]
 fn scheduling_and_emission_retain_the_actual_cross_file_dependency() {
     fn changed(file_filter: Option<&str>) -> ProjectTrace {
         let mut project = Project::new();

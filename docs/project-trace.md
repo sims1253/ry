@@ -22,7 +22,10 @@ change diagnostic or facts capture settings. `disable_trace` turns it off.
 report. Existing `Project` instances keep their normal collection and emission
 caches while tracing is enabled. When tracing begins after an untraced check,
 `enable_trace` snapshots the current winning definitions so later removals
-retain their previous source identity. Enable it before the edit of interest.
+retain their previous source identity. Edits and removals after `check()` also
+retain trace-only transition names even though that cold entry point does not
+keep the pass-1 collection cache. This telemetry does not change refinement
+scheduling. Enable tracing before the edit of interest.
 
 For a standalone developer run, pass UTF-8 R files to the example:
 
@@ -58,12 +61,15 @@ that actually select work. A dependency-caused `scheduled` or `emission`
 event carries a `trigger`: either the changed function or the return slot read
 by the caller. A return slot includes its snapshot-local numeric index and
 all winning function bindings sharing it. A file/function filter selects the
-event target; a cross-file trigger remains attached. A slot changed in both
-return type and evaluation metadata reports both in its reason. If several dependencies
-could schedule the same target, the stream records the first one selected by
+event target; a cross-file trigger remains attached. An invalidation targets
+the prior winning definition; if removing it exposes an earlier shadowed
+definition, the new winner appears as its trigger. A slot changed in both
+return type and evaluation metadata reports both in its reason. If several
+dependencies could schedule the same target, the stream records the first one selected by
 deterministic traversal, not an exhaustive proof of every cause. An unresolved
 function or file target is marked by its unresolved name/path and cannot pass
-an exact file/function filter as though it were a global event. A `Round` records pending counts,
+an exact file/function filter as though it were a global event. A `Round`
+records pending counts,
 function-body refinement attempts (including repeats), and the number of
 return and evaluation-metadata changes. The summary's `refined_functions`
 also counts attempts, not unique functions or changed results. `FixpointComplete` reports

@@ -345,6 +345,25 @@ impl TraceRecorder {
         self.function_event_with_trigger(name, kind, None);
     }
 
+    pub(crate) fn definition_invalidation(&mut self, name: &str, reason: TraceReason) {
+        // This event describes the definition being invalidated, even when
+        // an earlier file becomes the new winner after a shadowing change.
+        let previous = self.previous_functions.get(name).cloned();
+        let current = self.functions.get(name).cloned();
+        let function = previous.clone().or_else(|| current.clone());
+        let trigger = current
+            .filter(|current| previous.as_ref().is_some_and(|old| old != current))
+            .map(|identity| TraceTrigger::Function { identity });
+        self.push(TraceEvent {
+            kind: TraceEventKind::Invalidation { reason },
+            file: None,
+            unresolved_file: None,
+            unresolved_function: function.is_none().then(|| name.to_owned()),
+            function,
+            trigger,
+        });
+    }
+
     pub(crate) fn function_event_with_trigger(
         &mut self,
         name: &str,

@@ -12,6 +12,9 @@ This document describes the declaration core in [#592], shared checking in
 the audited `typehint` 0.1.0 `#| formal class` comment convention from named,
 braced function bodies. It never runs inspected R code or assumes that a call
 to `check_types()` succeeded.
+The `#|` must begin a source line after indentation; an inline R comment is
+not a provider clause. A comment in a nested function's header, default, or
+unbraced body cannot attach to an enclosing function.
 
 ## Supported canonical vocabulary
 
@@ -98,6 +101,9 @@ against the source AST and current source text before it installs records.
 A matching display name alone does not identify a function. Readers must
 reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
+If distinct native filenames collapse to one display path, CLI checking
+declines their source-record attachment and reports RY117 once for that
+ambiguous path. It does not attach the scoped file's claim to its neighbor.
 Backtick quoting of an AST formal is equivalent to the same unquoted R name;
 structured declaration-record names are literal semantic names. The reader's
 bounded simple clause grammar does not decode encoded or escaped source

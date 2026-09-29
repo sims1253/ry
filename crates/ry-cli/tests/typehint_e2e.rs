@@ -74,6 +74,39 @@ fn adopted_contract_checks_and_exports_the_same_source_record() {
     assert_eq!(annotation["evidence_use"], "adopted_contract");
 }
 
+#[test]
+fn nested_headers_and_inline_comments_cannot_create_an_outer_contract() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    for body in [
+        "g <- function(\n #| x integer\n y) { y }\n x",
+        "g <- function(y = {\n #| x integer\n 1L\n }) { y }\n x",
+        "g <- function(y)\n #| x integer\n y\n x",
+        "NULL #| x integer\n x",
+        "x; #| x integer\n x",
+    ] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!("f <- function(x) {{\n {body}\n}}\nf(\"bad\")\n"),
+        )
+        .unwrap();
+        let codes = check_codes(temp.path());
+        assert!(!codes.iter().any(|code| code == "RY114"), "{body}");
+        assert!(
+            dump(temp.path(), &["--annotations"])["files"][0]["annotations"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "{body}"
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn native_filename_collision_cannot_attach_another_files_contract() {
@@ -97,7 +130,9 @@ fn native_filename_collision_cannot_attach_another_files_contract() {
     fs::write(&unicode, source).unwrap();
     // Both parser paths display as bad�.R with identical definition spans.
     // Neither is safe to attach while the source identities collide.
-    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY114"));
+    let codes = check_codes(temp.path());
+    assert!(!codes.iter().any(|code| code == "RY114"));
+    assert_eq!(codes.iter().filter(|code| *code == "RY117").count(), 1);
 
     fs::remove_file(&raw).unwrap();
     assert_eq!(
@@ -107,6 +142,7 @@ fn native_filename_collision_cannot_attach_another_files_contract() {
             .count(),
         1
     );
+    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY117"));
 }
 
 #[test]
@@ -215,6 +251,42 @@ fn partial_unsupported_and_invalid_source_records_keep_their_status() {
         .collect();
     assert!(residuals.contains(&"dim(1L)"));
     assert!(residuals.contains(&"custom-class"));
+}
+
+#[test]
+fn schema_three_residuals_use_structural_token_offsets_and_unicode_columns() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    for (source, raw, expected_start) in [
+        (
+            "f <- function(x) {\n #| x integer x\n x\n}\n",
+            "x",
+            [2_u64, 15],
+        ),
+        (
+            "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n",
+            "dim(\"λ\")",
+            [2_u64, 15],
+        ),
+    ] {
+        fs::write(temp.path().join("R/main.R"), source).unwrap();
+        let facts = dump(temp.path(), &["--annotations"]);
+        let residual = &facts["files"][0]["annotations"][0]["translation"]["residuals"][0];
+        assert_eq!(residual["raw"], raw);
+        let start = residual["span"]["bytes"][0].as_u64().unwrap() as usize;
+        let end = residual["span"]["bytes"][1].as_u64().unwrap() as usize;
+        assert_eq!(&source[start..end], raw);
+        assert_eq!(residual["span"]["start"], serde_json::json!(expected_start));
+        assert_eq!(
+            residual["span"]["end"][1].as_u64().unwrap(),
+            expected_start[1] + raw.chars().count() as u64
+        );
+    }
 }
 
 #[test]

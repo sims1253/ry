@@ -47,22 +47,46 @@ impl CheckInput {
 pub(crate) fn adopted_records(
     files: &[(PathBuf, Arc<ry_core::SourceFile>)],
     cfg: &config::Config,
-) -> Vec<ry_core::declarations::DeclarationRecord> {
+) -> AdoptedRecords {
     let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
-        return Vec::new();
+        return AdoptedRecords::default();
     };
     let mut display_counts = std::collections::HashMap::new();
     for (_, file) in files {
         *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
     }
-    files
-        .iter()
-        // Project attachment still uses the parser's display path. Two
-        // native filenames can collapse to the same lossy spelling; decline
-        // both rather than attach one file's record to the other.
-        .filter(|(_, file)| display_counts[file.path.as_str()] == 1)
-        .flat_map(|(native, file)| ry_checker::typehint::read_records_at(file, native, &scope))
-        .collect()
+    let mut result = AdoptedRecords::default();
+    let mut ambiguous = std::collections::BTreeSet::new();
+    for (native, file) in files {
+        let records = ry_checker::typehint::read_records_at(file, native, &scope);
+        if display_counts[file.path.as_str()] == 1 {
+            result.records.extend(records);
+        } else if !records.is_empty() {
+            // Project attachment still uses the display path. Decline all
+            // contracts at that path and report the loss once; otherwise a
+            // scoped UTF-8 neighbor could attach to an excluded raw filename.
+            ambiguous.insert(file.path.clone());
+        }
+    }
+    result.diagnostics = ambiguous
+        .into_iter()
+        .map(|path| {
+            ry_checker::Diagnostic::new(
+                ry_checker::Severity::Warning,
+                ry_core::Span::new(0, 1, 0, 0),
+                &path,
+                "RY117",
+                "Native source paths share one display name; typehint attachment is ambiguous and was skipped.",
+            )
+        })
+        .collect();
+    result
+}
+
+#[derive(Default)]
+pub(crate) struct AdoptedRecords {
+    pub records: Vec<ry_core::declarations::DeclarationRecord>,
+    pub diagnostics: Vec<ry_checker::Diagnostic>,
 }
 
 pub(crate) fn check_project_with_records(

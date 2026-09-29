@@ -62,7 +62,7 @@ pub fn read_records_at(
         return Vec::new();
     }
 
-    let mut named = Vec::new();
+    let mut named = BTreeMap::new();
     let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| {
         if let AstNode::Stmt(Stmt::Assign {
             target: Expr::Ident { name, .. },
@@ -70,19 +70,22 @@ pub fn read_records_at(
             ..
         }) = node
         {
-            named.push(NamedFunction {
-                name: name.clone(),
-                span: *span,
-                params: params
-                    .iter()
-                    .map(|param| {
-                        (
-                            semantic_argument_name(&param.name).to_owned(),
-                            param.default.is_some(),
-                        )
-                    })
-                    .collect(),
-            });
+            named.insert(
+                (span.start, span.end),
+                NamedFunction {
+                    name: name.clone(),
+                    span: *span,
+                    params: params
+                        .iter()
+                        .map(|param| {
+                            (
+                                semantic_argument_name(&param.name).to_owned(),
+                                param.default.is_some(),
+                            )
+                        })
+                        .collect(),
+                },
+            );
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
@@ -94,13 +97,41 @@ pub fn read_records_at(
         }
     }
     let mut grouped: BTreeMap<(usize, usize), Vec<Clause<'_>>> = BTreeMap::new();
-    for comment in &file.comments {
-        let Some(start) = line_starts
-            .get(comment.line)
-            .and_then(|line| line.checked_add(comment.col))
-        else {
-            continue;
-        };
+    let mut comments = file
+        .comments
+        .iter()
+        .filter_map(|comment| {
+            line_starts
+                .get(comment.line)
+                .and_then(|line| line.checked_add(comment.col))
+                .map(|start| (start, comment))
+        })
+        .collect::<Vec<_>>();
+    comments.sort_by_key(|(start, _)| *start);
+    let mut next_function = 0;
+    let mut containing = Vec::new();
+    for (start, comment) in comments {
+        while let Some(entry) = file.function_bodies.get(next_function) {
+            if entry.function.start > start {
+                break;
+            }
+            while containing
+                .last()
+                .is_some_and(|active: &&ry_core::ast::FunctionBody| {
+                    active.function.end <= entry.function.start
+                })
+            {
+                containing.pop();
+            }
+            containing.push(entry);
+            next_function += 1;
+        }
+        while containing
+            .last()
+            .is_some_and(|active: &&ry_core::ast::FunctionBody| active.function.end <= start)
+        {
+            containing.pop();
+        }
         let full_end = start.saturating_add(1 + comment.body.len());
         let mut end = full_end.min(start.saturating_add(MAX_ANNOTATION_BYTES));
         while end > start && !file.source.is_char_boundary(end) {
@@ -118,6 +149,17 @@ pub fn read_records_at(
         let Some(after_pipe) = comment.body.strip_prefix('|') else {
             continue;
         };
+        // `typehint` reads printed source lines after trimming indentation.
+        // A trailing `NULL #| ...` or `{ #| ...` comment is ordinary R prose.
+        let Some(line_start) = line_starts.get(comment.line).copied() else {
+            continue;
+        };
+        if !file.source[line_start..start]
+            .bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            continue;
+        }
         // Quarto cell options use `#| key: value`, not typehint's
         // whitespace-separated `#| formal class` grammar.
         if after_pipe
@@ -128,20 +170,20 @@ pub fn read_records_at(
             continue;
         }
         let span = Span::new(start, end, comment.line, comment.col);
-        let Some(innermost) = file
-            .function_bodies
-            .iter()
-            .filter(|entry| entry.body.start < start && end < entry.body.end)
-            .min_by_key(|entry| entry.body.end - entry.body.start)
-        else {
+        let Some(innermost) = containing.last() else {
             continue;
         };
-        if !named.iter().any(|entry| entry.span == innermost.function) {
+        let Some(body) = innermost.body else {
+            continue;
+        };
+        if body.start >= start || end >= body.end {
             continue;
         }
-        let clauses = grouped
-            .entry((innermost.function.start, innermost.function.end))
-            .or_default();
+        let key = (innermost.function.start, innermost.function.end);
+        if !named.contains_key(&key) {
+            continue;
+        }
+        let clauses = grouped.entry(key).or_default();
         // The extra entry records overflow without retaining an unbounded
         // number of annotations from a generated or hostile source file.
         if clauses.len() <= MAX_CLAUSES_PER_FUNCTION {
@@ -156,7 +198,7 @@ pub fn read_records_at(
                     )),
                 }
             } else {
-                parse_clause(after_pipe, span, raw)
+                parse_clause(raw, span)
             };
             clauses.push(clause);
         }
@@ -165,10 +207,7 @@ pub fn read_records_at(
     grouped
         .into_iter()
         .flat_map(|(key, clauses)| {
-            let Some(target) = named
-                .iter()
-                .find(|entry| (entry.span.start, entry.span.end) == key)
-            else {
+            let Some(target) = named.get(&key) else {
                 return Vec::new();
             };
             let mut claims = BTreeMap::new();
@@ -212,11 +251,23 @@ pub fn read_records_at(
         .collect()
 }
 
-fn parse_clause<'a>(text: &'a str, span: Span, raw: &'a str) -> Clause<'a> {
-    let text = text.trim();
-    let mut tokens = text.split_whitespace();
-    let argument = tokens.next();
-    let class = tokens.next();
+fn next_token(raw: &str, after: usize) -> Option<(usize, usize)> {
+    let start = raw[after..]
+        .char_indices()
+        .find(|(_, character)| !character.is_whitespace())
+        .map(|(offset, _)| after + offset)?;
+    let end = raw[start..]
+        .char_indices()
+        .find(|(_, character)| character.is_whitespace())
+        .map_or(raw.len(), |(offset, _)| start + offset);
+    Some((start, end))
+}
+
+fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
+    let argument_range = next_token(raw, 2);
+    let class_range = argument_range.and_then(|(_, end)| next_token(raw, end));
+    let argument = argument_range.map(|(start, end)| &raw[start..end]);
+    let class = class_range.map(|(start, end)| &raw[start..end]);
     let mut clause = Clause {
         span,
         argument,
@@ -231,42 +282,29 @@ fn parse_clause<'a>(text: &'a str, span: Span, raw: &'a str) -> Clause<'a> {
             return clause;
         }
     }
+    let (class_start, class_end) = class_range.expect("validated class token");
     if !valid_class(class.expect("validated class token")) {
-        let class = class.expect("validated class token");
-        if let Some(relative) = raw.find(class) {
-            let start = span.start + relative;
-            clause.residual = Some(ResidualConstraint {
-                raw: raw[relative..].into(),
-                span: Span::new(start, span.end, span.line, span.col + relative),
-                reason: "class spelling is outside the audited simple typehint subset".into(),
-            });
-        } else {
-            clause.error = Some("cannot locate unsupported class in source".into());
-        }
+        let start = span.start + class_start;
+        clause.residual = Some(ResidualConstraint {
+            raw: raw[class_start..].into(),
+            span: Span::new(start, span.end, span.line, span.col + class_start),
+            reason: "class spelling is outside the audited simple typehint subset".into(),
+        });
         return clause;
     }
-    let rest = text
-        .strip_prefix(argument.expect("validated formal"))
-        .map(str::trim_start)
-        .and_then(|tail| tail.strip_prefix(class.expect("validated class")))
-        .map(str::trim)
-        .unwrap_or("");
-    if !rest.is_empty() {
+    if let Some((rest_start, _)) = next_token(raw, class_end) {
         // Preserve the exact unsupported expression and its byte span. The
         // upstream provider evaluates dim/not expressions at runtime; ry
         // neither evaluates them nor silently drops them from an Exact record.
-        if let Some(relative) = raw.find(rest) {
-            let start = span.start + relative;
-            clause.residual = Some(ResidualConstraint {
-                raw: rest.into(),
-                span: Span::new(start, start + rest.len(), span.line, span.col + relative),
-                reason:
-                    "typehint dimension, exclusion, or value expression requires runtime evaluation"
-                        .into(),
-            });
-        } else {
-            clause.error = Some("cannot locate clause expression in source".into());
-        }
+        let rest = raw[rest_start..].trim_end();
+        let start = span.start + rest_start;
+        clause.residual = Some(ResidualConstraint {
+            raw: rest.into(),
+            span: Span::new(start, start + rest.len(), span.line, span.col + rest_start),
+            reason:
+                "typehint dimension, exclusion, or value expression requires runtime evaluation"
+                    .into(),
+        });
     }
     clause
 }
@@ -456,6 +494,61 @@ mod tests {
     }
 
     #[test]
+    fn only_standalone_provider_lines_create_claims() {
+        let records =
+            read("f <- function(x) { #| x integer\n NULL #| x integer\n #| x character\n x\n}\n");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].source.raw, "#| x character");
+        assert!(matches!(records[0].translation, Translation::Exact(_)));
+    }
+
+    #[test]
+    fn inner_headers_defaults_and_unbraced_functions_block_outer_attachment() {
+        for source in [
+            "f <- function(x) {\n g <- function(\n #| x integer\n y) { y }\n x\n}\n",
+            "f <- function(x) {\n g <- function(y = {\n #| x integer\n 1L\n }) { y }\n x\n}\n",
+            "f <- function(x) {\n g <- function(y)\n #| x integer\n y\n x\n}\n",
+            "f <- function(x) {\n lapply(list(1L), function(y = {\n #| x integer\n 1L\n }) y)\n x\n}\n",
+        ] {
+            assert!(read(source).is_empty(), "{source}");
+        }
+
+        let records = read(
+            "f <- function(x) {\n #| x integer\n g <- function(y) {\n #| y character\n y\n }\n x\n}\n",
+        );
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].source.raw, "#| x integer");
+        assert_eq!(records[1].source.raw, "#| y character");
+    }
+
+    #[test]
+    fn repeated_token_text_and_unicode_keep_residual_byte_offsets() {
+        for (source, expected) in [
+            ("f <- function(x) {\n #| x integer x\n x\n}\n", "x"),
+            ("f <- function(xx) {\n #| xx xx xx\n xx\n}\n", "xx"),
+            (
+                "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n",
+                "dim(\"λ\")",
+            ),
+            ("f <- function(x) {\n #| x x-y\n x\n}\n", "x-y"),
+        ] {
+            let records = read(source);
+            let residuals = match &records[0].translation {
+                Translation::Partial { residuals, .. } | Translation::Unsupported { residuals } => {
+                    residuals
+                }
+                other => panic!("expected residual, got {other:?}"),
+            };
+            assert_eq!(residuals[0].raw, expected);
+            assert_eq!(
+                &source[residuals[0].span.start..residuals[0].span.end],
+                expected
+            );
+            assert!(residuals[0].span.start > records[0].source.span.start + 4);
+        }
+    }
+
+    #[test]
     fn parser_recovery_is_not_a_source_of_contracts() {
         let root = tempdir().unwrap();
         let path = root.path().join("R/main.R");
@@ -612,7 +705,7 @@ mod tests {
         let path = root.path().join("R/fuzz.R");
         let scope = ScopedPaths::new(root.path(), &["R/**".into()]).unwrap();
         let mut parser = RParser::new().unwrap();
-        let alphabet = [b'a', b'0', b' ', b'|', b'#', b'(', b')', b'_', b':', b'-'];
+        let alphabet = b"a0 |#()_:-";
         let mut state = 0x3141_5926_u32;
         for _ in 0..512 {
             let mut payload = String::new();

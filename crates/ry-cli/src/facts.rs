@@ -413,7 +413,7 @@ pub(crate) fn run_dump_facts(
                 .iter()
                 .map(|(path, file)| (PathBuf::from(path), Arc::clone(file)))
                 .collect::<Vec<_>>();
-            pipeline::adopted_records(&native_files, &cfg)
+            pipeline::adopted_records(&native_files, &cfg).records
         } else {
             Vec::new()
         };

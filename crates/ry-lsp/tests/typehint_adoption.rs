@@ -61,6 +61,8 @@ fn annotation_only_editor_edits_retract_and_restore_mismatch() {
                 (2, "#| x character", 0),
                 (3, "# ordinary comment", 0),
                 (4, "#| x integer", 1),
+                (5, "NULL #| x integer", 0),
+                (6, "#| x integer", 1),
             ] {
                 let mark = session.publication_mark();
                 session

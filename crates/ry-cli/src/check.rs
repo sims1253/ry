@@ -1093,7 +1093,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
-    let mut not_r_diagnostics = Vec::new();
+    let mut synthetic_diagnostics = Vec::new();
     // Degraded scopes (serialized data over the byte cap), deduplicated and
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -1110,7 +1110,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
         comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
         if is_probably_not_r_source(&parsed_file) {
-            not_r_diagnostics.push(ry_checker::Diagnostic::new(
+            synthetic_diagnostics.push(ry_checker::Diagnostic::new(
                 ry_checker::Severity::Info,
                 ry_core::Span::new(0, 1, 0, 0),
                 &parsed_file.path,
@@ -1134,6 +1134,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     )?;
 
     let adopted = pipeline::adopted_records(&native_files, ctx.resolution_config);
+    synthetic_diagnostics.extend(adopted.diagnostics);
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
         let group_paths: std::collections::HashSet<_> = group
@@ -1143,6 +1144,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
             .map(|(path, _)| path.as_str())
             .collect();
         let records = adopted
+            .records
             .iter()
             .filter(|record| group_paths.contains(record.source.path.as_str()))
             .cloned()
@@ -1177,10 +1179,10 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         let src = srcs.get(path).map_or("", String::as_str);
         *diags = post.pre_demotion(std::mem::take(diags), comments, src);
     }
-    // The synthesized not-R diagnostics have no suppression comments to
+    // File-level synthetic findings have no unambiguous source comment to
     // honor, so they enter the pipeline at the severity filter.
-    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, ctx.filter);
-    all_diagnostics.append(&mut not_r_diagnostics);
+    ry_checker::apply_filter_to_diagnostics(&mut synthetic_diagnostics, ctx.filter);
+    all_diagnostics.append(&mut synthetic_diagnostics);
     for (_path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }

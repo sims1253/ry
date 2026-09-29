@@ -194,18 +194,35 @@ impl Checker {
         scope: &Scope,
         is_formal: impl Fn(&str) -> bool,
     ) -> bool {
-        possible
-            .read_names
-            .iter()
-            .chain(possible.aliases.values().flat_map(|aliases| aliases.iter()))
-            .any(|name| {
-                name == crate::collect::UNKNOWN_CAPTURE_BINDING
-                    || !(is_formal(name)
-                        || possible.aliases.contains_key(name)
-                        || possible.local_literals.contains_key(name)
-                        || scope.lexical_definition(name).is_some()
-                        || scope.function_alias(name).is_some())
-            })
+        possible.read_sites.iter().any(|(name, offset)| {
+            name == crate::collect::UNKNOWN_CAPTURE_BINDING
+                || !(possible.definitely_local_at(name, *offset)
+                    || (!possible
+                        .rebound_bindings
+                        .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
+                        && !possible.rebound_bindings.contains(name)
+                        && (is_formal(name)
+                            || scope.lexical_definition(name).is_some()
+                            || scope.function_alias(name).is_some()
+                            || self.declaration_stable_project_binding(name, scope))))
+        })
+    }
+
+    fn declaration_stable_project_binding(&self, name: &str, scope: &Scope) -> bool {
+        // Project collection can prove a literal remains available across
+        // files only when no collected write may have rebound it. A current
+        // unknown scope entry (for example after rm/active installation)
+        // takes precedence over this static inventory.
+        scope.get(name).is_none()
+            && self
+                .fn_table
+                .capture_literal_bindings
+                .get(name)
+                .is_some_and(|definitions| {
+                    definitions
+                        .iter()
+                        .any(|key| !self.fn_table.rebound_after_capture.contains(key))
+                })
     }
 
     fn declaration_unproven_operators(
@@ -284,6 +301,29 @@ impl Checker {
         let exact_scope_function = scope
             .lexical_definition(name)
             .and_then(|span| self.fn_table.definition(&self.path, span));
+        let local_identity = possible.is_some_and(|possible| {
+            let mut uses = possible
+                .call_sites
+                .iter()
+                .chain(possible.read_sites.iter())
+                .filter(|(used, _)| used == name);
+            uses.next()
+                .is_some_and(|(_, offset)| possible.definitely_local_at(name, *offset))
+                && uses.all(|(_, offset)| possible.definitely_local_at(name, *offset))
+        });
+        let stable_project_identity = self.declaration_stable_project_binding(name, scope);
+        if exact_scope_function.is_none()
+            && scope.function_alias(name).is_none()
+            && !local_identity
+            && !stable_project_identity
+        {
+            // Flat project/capture inventories retain past literals. They
+            // cannot certify the binding read by a call head after removal,
+            // active-binding installation, or a not-yet-executed local write.
+            writes.insert(crate::collect::UNKNOWN_CAPTURE_BINDING.to_string());
+            alias_path.remove(name);
+            return;
+        }
         if let Some(function) = exact_scope_function {
             add(function);
         }

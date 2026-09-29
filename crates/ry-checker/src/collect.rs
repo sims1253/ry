@@ -402,10 +402,24 @@ pub(crate) struct PotentialHelperCalls {
     pub(crate) unknown_bindings: FxSet<String>,
     pub(crate) certified_calls: FxSet<String>,
     pub(crate) unproven_calls: FxSet<String>,
-    pub(crate) read_names: FxSet<String>,
+    pub(crate) read_sites: Vec<(String, usize)>,
+    pub(crate) call_sites: Vec<(String, usize)>,
+    pub(crate) definite_local_bindings: FxMap<String, usize>,
+    pub(crate) rebound_bindings: FxSet<String>,
     pub(crate) operator_symbols: FxSet<&'static str>,
     excluded_ident_spans: FxSet<(usize, usize)>,
     pub(crate) uncertain: bool,
+}
+
+impl PotentialHelperCalls {
+    pub(crate) fn definitely_local_at(&self, name: &str, offset: usize) -> bool {
+        !self.rebound_bindings.contains(UNKNOWN_CAPTURE_BINDING)
+            && !self.rebound_bindings.contains(name)
+            && self
+                .definite_local_bindings
+                .get(name)
+                .is_some_and(|end| *end <= offset)
+    }
 }
 
 fn scan_possible_helper_node(
@@ -429,6 +443,9 @@ fn scan_possible_helper_node(
         match value {
             Expr::Ident { name: source, span } => {
                 calls.excluded_ident_spans.insert((span.start, span.end));
+                calls
+                    .read_sites
+                    .push((capture_identifier_name(source).to_string(), span.start));
                 calls
                     .aliases
                     .entry(name.to_string())
@@ -489,9 +506,11 @@ fn scan_possible_helper_node(
                     calls.uncertain = true;
                 } else {
                     calls.calls.insert(name.to_string());
+                    calls.call_sites.push((name.to_string(), span.start));
                     let mut direct = FxSet::default();
                     collect_callable_binding_write(func, args, &mut direct);
                     if !direct.is_empty() {
+                        calls.rebound_bindings.extend(direct.iter().cloned());
                         calls.handled_calls.insert(name.to_string());
                     } else if certified_literal_effect_free_call(func, args) {
                         calls.certified_calls.insert(name.to_string());
@@ -519,8 +538,8 @@ fn scan_possible_helper_node(
             if !calls.excluded_ident_spans.contains(&(span.start, span.end)) =>
         {
             calls
-                .read_names
-                .insert(capture_identifier_name(name).to_string());
+                .read_sites
+                .push((capture_identifier_name(name).to_string(), span.start));
         }
         _ => {}
     }
@@ -544,6 +563,22 @@ fn scan_possible_helper_calls(
     calls: &mut PotentialHelperCalls,
     remaining: &mut usize,
 ) {
+    // Only unconditional statements in the function's own sequence establish
+    // a binding on every path to a later read. An assignment under `if`, a
+    // loop, or a nested expression cannot certify an earlier/other-path use.
+    for statement in body {
+        if let Stmt::Assign {
+            target: Expr::Ident { name, .. },
+            value: Expr::Function { .. } | Expr::Ident { .. },
+            span,
+        } = statement
+        {
+            calls
+                .definite_local_bindings
+                .entry(capture_identifier_name(name).to_string())
+                .or_insert(span.end);
+        }
+    }
     for parameter in params {
         calls
             .unknown_bindings

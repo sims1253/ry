@@ -102,6 +102,15 @@ argument matching. They skip omitted arguments and unknown evidence. A mixed
 inferred union cannot prove a mismatch. Return checks use independently
 inferred returns; a declaration does not verify itself.
 
+Known-call mismatch checks require a current callable identity. A local
+assignment later in a body does not prove that an earlier read used that
+binding, and a historical function definition does not prove a call head still
+resolves to it after removal or active-binding installation. When an evaluated
+read, call, or operator can change a binding and its effects cannot be proved
+absent, later call checks become inconclusive; source attachment, default
+checks, and independent return evidence remain available. A typeshed
+signature alone does not establish that a call is effect-free.
+
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and
 ambiguous-attachment findings. Parse or encoding errors suppress findings

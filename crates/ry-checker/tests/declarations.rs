@@ -1168,6 +1168,132 @@ fn historical_function_table_name_does_not_certify_a_current_helper_read() {
 }
 
 #[test]
+fn helper_local_bindings_only_prove_reads_after_unconditional_assignment() {
+    for (body, expected) in [
+        ("{ trigger; trigger <- function() 1L }", vec!["\"before\""]),
+        (
+            "{ trigger <- function() 1L; trigger }",
+            vec!["\"before\"", "\"after\""],
+        ),
+        ("{ trigger; trigger <- pure }", vec!["\"before\""]),
+        (
+            "{ trigger <- pure; trigger }",
+            vec!["\"before\"", "\"after\""],
+        ),
+        (
+            "{ if (FALSE) trigger <- function() 1L; trigger }",
+            vec!["\"before\""],
+        ),
+        (
+            "{ for (i in NULL) trigger <- function() 1L; trigger }",
+            vec!["\"before\""],
+        ),
+    ] {
+        let source = format!(
+            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\npure <- function() 1L\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
+        );
+        let file = parse("helper-read-order.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
+    }
+}
+
+#[test]
+fn active_call_heads_cannot_reuse_removed_function_inventory() {
+    for (setup, action, expected) in [
+        (
+            "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { f <<- function(x) x; function() 1L }, .GlobalEnv)",
+            "trigger()",
+            vec!["\"before\""],
+        ),
+        (
+            "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { f <<- function(x) x; function() 1L }, .GlobalEnv)",
+            "touch <- function() trigger()\ntouch()",
+            vec!["\"before\""],
+        ),
+        (
+            "trigger <- function() 1L",
+            "touch <- function() trigger()\ntouch()",
+            vec!["\"before\"", "\"after\""],
+        ),
+        (
+            "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { f <<- function(x) x; function() 1L }, .GlobalEnv)",
+            "touch <- function() { trigger(); trigger <- function() 1L }\ntouch()",
+            vec!["\"before\""],
+        ),
+        (
+            "trigger <- function() 1L",
+            "touch <- function() { trigger <- function() 1L; trigger() }\ntouch()",
+            vec!["\"before\"", "\"after\""],
+        ),
+    ] {
+        let source =
+            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
+        let file = parse("call-head-identity.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert_eq!(
+            mismatch_sources(&checker, &file),
+            expected,
+            "action: {action}"
+        );
+    }
+}
+
+#[test]
+fn warm_helper_binding_order_edits_match_cold_findings() {
+    let source = |body: &str| {
+        format!(
+            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\nf <- function(x) x\ntouch <- function() {{ {body} }}\ntouch()\nf(\"after\")\n"
+        )
+    };
+    let first = parse(
+        "ordered-reader.R",
+        &source("trigger <- function() 1L; trigger"),
+    );
+    let declaration = record(
+        &first,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    let mut project = Project::new();
+    project.add_file(first.path.clone(), first.clone());
+    project.set_declaration_records(vec![declaration.clone()]);
+    project.check_incremental();
+    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+
+    for (body, expected) in [
+        ("trigger; trigger <- function() 1L", 0),
+        ("trigger <- function() 1L; trigger", 1),
+    ] {
+        let edited = parse("ordered-reader.R", &source(body));
+        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
+        project.check_incremental();
+        assert_eq!(project_mismatch_count(&project, &edited.path), expected);
+
+        let mut cold = Project::new();
+        cold.add_file(edited.path.clone(), edited);
+        cold.set_declaration_records(vec![declaration.clone()]);
+        cold.check();
+        assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    }
+}
+
+#[test]
 fn evaluated_assignment_targets_can_replace_a_declared_callable() {
     for (action, expected) in [
         (
@@ -1368,8 +1494,10 @@ fn alias_only_helper_chains_spend_a_shared_effect_budget() {
         for index in 1..=aliases {
             source.push_str(&format!("  a{index} <- a{}\n", index - 1));
         }
+        // Check the unrelated `g` before calling the now-replaced `f`:
+        // that call has no proven current body and may itself affect `g`.
         source.push_str(&format!(
-            "  a{aliases}()\n}}\nf(\"before\")\ng(\"before\")\nbridge()\nf(\"after\")\ng(\"after\")\n"
+            "  a{aliases}()\n}}\nf(\"before\")\ng(\"before\")\nbridge()\ng(\"after\")\nf(\"after\")\n"
         ));
         let file = parse("alias-budget.R", &source);
         let mut checker = Checker::new(&file.path);

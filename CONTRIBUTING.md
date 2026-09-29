@@ -27,6 +27,9 @@ cargo test -p ry-checker --test oracle -- --include-ignored
 Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
 status determines whether R errored; fixtures cannot leak bindings, attached
 packages, or daemon state into later fixtures.
+The [bounded semantic-generation guide](docs/corpus/semantic-generation.md)
+describes the audited condition family, required R gate, reducer, sandboxed
+campaign, and retained case records.
 
 The [instruction-count corpus guide](docs/corpus/instructions.md) explains
 the fixed performance sample, local measurements, and warn-only CI deltas.

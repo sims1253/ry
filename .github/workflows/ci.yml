@@ -126,6 +126,18 @@ jobs:
       # repository together with the stubs; its CI covers them.
       - name: Oracle suite
         run: cargo test -p ry-checker --test oracle --test semantic_lists -- --include-ignored --nocapture
+      - name: Bounded R semantic generation
+        env:
+          RY_SEMANTIC_R_REQUIRED: "1"
+          RY_SEMANTIC_ARTIFACT_DIR: ${{ runner.temp }}/semantic-generation
+        run: cargo test -p ry-checker --test semantic_generation small_r_semantic_batch -- --exact --nocapture
+      - name: Upload semantic generation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: semantic-generation
+          path: ${{ runner.temp }}/semantic-generation/
+          if-no-files-found: ignore
 
   # The Zed extension is excluded from the root workspace because
   # zed_extension_api does not follow ry's MSRV (CONTRIBUTING.md), so

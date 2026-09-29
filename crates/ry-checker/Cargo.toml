@@ -24,6 +24,7 @@ criterion = "0.8"
 insta = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
+libc = "0.2"
 
 [[bench]]
 name = "performance"

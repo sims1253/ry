@@ -2166,6 +2166,9 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_variadic_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_variadic_wrapped_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_second_variadic_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_do_call.R"),
+        include_str!("../../testdata/oracle/assertion_subject_second_variadic_do_call.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_do_call_wrapped_alias.R"),
         include_str!("../../testdata/oracle/assertion_subject_reordered_arguments.R"),
         include_str!("../../testdata/oracle/assertion_subject_called_function_default.R"),
         include_str!("../../testdata/oracle/assertion_subject_chained_called_defaults_earlier.R"),
@@ -2209,6 +2212,8 @@ fn scalar_proof_rejects_a_replaced_literal_default_binding() {
         include_str!("../../testdata/oracle/assertion_subject_variadic_pure_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_variadic_unused_callback.R"),
         include_str!("../../testdata/oracle/assertion_subject_second_variadic_pure_callback.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_do_call_pure.R"),
+        include_str!("../../testdata/oracle/assertion_subject_variadic_do_call_value_only.R"),
         include_str!("../../testdata/oracle/assertion_subject_forwarded_pure_callback.R"),
         "install <- function(env) { target <- base::new.env(); makeActiveBinding('x', function() 1L, target) }; f <- function(x = 1L) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()",
     ]

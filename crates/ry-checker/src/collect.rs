@@ -84,6 +84,14 @@ fn caller_binding_value_sources(expression: &Expr) -> Option<HashSet<String>> {
     (!uncertain).then_some(sources)
 }
 
+fn variadic_callable_source(name: &str) -> bool {
+    name == "..."
+        || name
+            .strip_prefix("..")
+            .and_then(|index| index.parse::<usize>().ok())
+            .is_some_and(|index| index > 0)
+}
+
 fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Option<&'a Expr> {
     let (formals, environment) = match bare_name(name) {
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
@@ -290,21 +298,22 @@ fn helper_caller_binding_summary_bounded(
             }
         }
     };
+    let formal_names: HashSet<String> = params
+        .iter()
+        .filter_map(|param| caller_binding_identity(&param.name))
+        .collect();
+    let has_dots = formal_names.contains("...");
     for (receiver, passed) in potential_callback_arguments {
         let mut receiver_sources = HashSet::from([receiver]);
         expand_aliases(&mut receiver_sources);
         // Calling a formal already makes its supplied value an effect route.
         // Its other arguments are not themselves callbacks merely because
         // that formal might call them; a pure supplied callable cannot do so.
-        if !params.iter().any(|param| {
-            caller_binding_identity(&param.name)
-                .is_some_and(|name| receiver_sources.contains(&name))
-        }) {
+        if receiver_sources.is_disjoint(&formal_names) {
             let mut passed_sources = HashSet::from([passed]);
             expand_aliases(&mut passed_sources);
-            callees.extend(params.iter().filter_map(|param| {
-                let name = caller_binding_identity(&param.name)?;
-                passed_sources.contains(&name).then_some(name)
+            callees.extend(passed_sources.into_iter().filter(|source| {
+                formal_names.contains(source) || (has_dots && variadic_callable_source(source))
             }));
         }
     }
@@ -444,13 +453,7 @@ fn helper_caller_binding_summary_bounded(
         called_formals.extend(
             callees
                 .iter()
-                .filter(|name| {
-                    *name == "..."
-                        || name
-                            .strip_prefix("..")
-                            .and_then(|index| index.parse::<usize>().ok())
-                            .is_some_and(|index| index > 0)
-                })
+                .filter(|name| variadic_callable_source(name))
                 .cloned(),
         );
         called_formals.sort_unstable();

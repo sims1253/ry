@@ -1366,6 +1366,34 @@ fn incremental_wrapped_callback_default_retracts_after_a_pure_edit() {
 }
 
 #[test]
+fn incremental_variadic_callback_invocation_retracts_after_a_value_only_edit() {
+    let invoked =
+        "install <- function(env, ...) base::do.call(base::identity(..1), base::list(env))\n";
+    let value_only = "install <- function(env, ...) base::invisible(base::identity(..1))\n";
+    let consumer = "put <- function(env) delayedAssign('x', { x <- c(1L, 2L); 1L }, assign.env = env, eval.env = env)\nf <- function(x = 1L) { install(environment(), put); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let mut warm = callback_project(&[("helper.R", invoked), ("consumer.R", consumer)]);
+    let before = warm.check_incremental();
+    assert!(before.iter().any(|(path, diagnostics)| {
+        path == "consumer.R"
+            && diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+    }));
+
+    warm.update_file("helper.R".into(), Arc::new(parse("helper.R", value_only)));
+    let after = warm.check_incremental();
+    assert_eq!(
+        after,
+        callback_project(&[("helper.R", value_only), ("consumer.R", consumer)]).check()
+    );
+    assert!(after.iter().all(|(_, diagnostics)| {
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY032")
+    }));
+}
+
+#[test]
 fn qualified_helper_with_a_forwarded_frame_keeps_caller_binding_uncertain() {
     let mut project = Project::new();
     project.add_file(

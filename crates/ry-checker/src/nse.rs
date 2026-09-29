@@ -39,6 +39,7 @@ impl Checker {
             local = local.with_unknown_data_mask();
         }
         let mut named_results = Vec::new();
+        let mut masked_args = Vec::new();
         let mut tidy_args = Vec::new();
         for (index, argument) in args.iter().enumerate() {
             if index == data_index {
@@ -49,11 +50,18 @@ impl Checker {
             let inferred = match mode {
                 EvalMode::Normal => self.infer(&argument.value, scope),
                 EvalMode::DataMask => {
+                    masked_args.push(argument);
                     local.insert(".", RType::unknown());
                     self.infer_with_injection(&argument.value, &mut local, injection)
                 }
                 EvalMode::TidySelect => {
-                    tidy_args.push(&argument.value);
+                    if !argument
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| is_dplyr_control_arg(semantic_argument_name(name)))
+                    {
+                        tidy_args.push(argument);
+                    }
                     self.infer_tidyselect_expr(&argument.value, &mut local, injection)
                 }
                 EvalMode::QuotedSymbol => {
@@ -67,7 +75,10 @@ impl Checker {
             };
             if let Some(raw_name) = argument.name.as_deref() {
                 let column = semantic_argument_name(raw_name);
-                if !is_dplyr_control_arg(column) {
+                if mode == EvalMode::DataMask
+                    && !is_dplyr_control_arg(column)
+                    && !(effect == SchemaEffect::GroupBy && column == ".add")
+                {
                     local.insert(column, inferred.clone());
                     local.insert(
                         format!("{DATA_MASK_COLUMN_PREFIX}{column}"),
@@ -81,19 +92,30 @@ impl Checker {
 
         let result = match effect {
             SchemaEffect::Preserve => data_type,
-            SchemaEffect::AddNamedArgs => named_results
-                .into_iter()
-                .fold(data_type, |result, (name, ty)| {
-                    type_with_assigned_column(result, name, ty)
-                }),
-            SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
-            SchemaEffect::Aggregate => {
-                let mut result = RType::new(Mode::List, Length::One)
-                    .with_class(ClassVector::single("data.frame"));
-                for (name, ty) in named_results {
-                    result = type_with_assigned_column(result, name, ty);
+            SchemaEffect::AddNamedArgs => {
+                schema_mutated_type(data_type, &named_results, &masked_args, args)
+            }
+            SchemaEffect::GroupBy => {
+                let mut result = schema_mutated_type(data_type, &named_results, &masked_args, &[]);
+                let has_group_spec = args.iter().enumerate().any(|(index, arg)| {
+                    index != data_index
+                        && !arg.name.as_deref().is_some_and(|name| {
+                            matches!(semantic_argument_name(name), ".add" | ".drop")
+                        })
+                });
+                if has_group_spec {
+                    result.class = ClassVector::from_slice(&["grouped_df", "data.frame"]);
                 }
                 result
+            }
+            SchemaEffect::Transmute => {
+                schema_transmuted_type(data_type, &named_results, &masked_args)
+            }
+            SchemaEffect::Rename => schema_renamed_type(data_type, &tidy_args, true),
+            SchemaEffect::Relocate => schema_renamed_type(data_type, &tidy_args, false),
+            SchemaEffect::Select => schema_selected_type(data_type, &tidy_args),
+            SchemaEffect::Aggregate => {
+                schema_aggregate_type(data_type, &named_results, &masked_args, args)
             }
             SchemaEffect::ExpressionValue => match_args_to_params(&sig.params, args, &arg_types)
                 .get(1)
@@ -231,18 +253,156 @@ impl Checker {
     }
 }
 
-fn schema_selected_type(mut data_type: RType, args: &[&Expr]) -> RType {
+fn incomplete_schema(mut data_type: RType) -> RType {
+    if let Some(schema) = &data_type.columns {
+        let mut schema = (**schema).clone();
+        schema.complete = false;
+        data_type.columns = Some(Arc::new(schema));
+    }
+    data_type
+}
+
+fn drop_column(mut data_type: RType, name: &str) -> RType {
+    if let Some(schema) = &data_type.columns {
+        let mut schema = (**schema).clone();
+        schema.columns.retain(|(column, _)| column != name);
+        data_type.columns = Some(Arc::new(schema));
+    }
+    data_type
+}
+
+fn masked_output_is_dynamic(args: &[&Arg]) -> bool {
+    args.iter()
+        .any(|arg| arg.name.is_none() && !matches!(arg.value, Expr::Ident { .. }))
+}
+
+fn schema_mutated_type(
+    mut data_type: RType,
+    named: &[(&str, RType)],
+    masked_args: &[&Arg],
+    args: &[Arg],
+) -> RType {
+    if let Some(keep) = args.iter().find(|arg| arg.name.as_deref() == Some(".keep")) {
+        match &keep.value {
+            Expr::String(value, _) if value == "all" => {}
+            Expr::String(value, _) if value == "none" => {
+                let complete = data_type
+                    .columns
+                    .as_ref()
+                    .is_some_and(|schema| schema.complete)
+                    && !data_type.class.contains("grouped_df");
+                data_type.columns = Some(Arc::new(ColumnSchema {
+                    complete,
+                    ..ColumnSchema::default()
+                }));
+            }
+            // "used" and "unused" depend on reads within expressions.
+            _ => data_type = incomplete_schema(data_type),
+        }
+    }
+    for (name, ty) in named {
+        data_type = if ty.mode == Mode::Null {
+            drop_column(data_type, name)
+        } else {
+            type_with_assigned_column(data_type, name, ty.clone())
+        };
+    }
+    if masked_output_is_dynamic(masked_args) {
+        data_type = incomplete_schema(data_type);
+    }
+    data_type
+}
+
+fn schema_transmuted_type(
+    mut data_type: RType,
+    named: &[(&str, RType)],
+    masked_args: &[&Arg],
+) -> RType {
+    let source = data_type.columns.clone();
+    data_type.columns = Some(Arc::new(ColumnSchema {
+        complete: source.as_ref().is_some_and(|schema| schema.complete)
+            && !data_type.class.contains("grouped_df"),
+        ..ColumnSchema::default()
+    }));
+    for arg in masked_args {
+        if arg.name.is_none()
+            && let Expr::Ident { name, .. } = &arg.value
+        {
+            if let Some(ty) = source.as_ref().and_then(|schema| schema.get(name)) {
+                data_type = type_with_assigned_column(data_type, name, ty);
+            } else {
+                data_type = incomplete_schema(data_type);
+            }
+        }
+    }
+    for (name, ty) in named {
+        if ty.mode != Mode::Null {
+            data_type = type_with_assigned_column(data_type, name, ty.clone());
+        }
+    }
+    if masked_output_is_dynamic(masked_args) {
+        data_type = incomplete_schema(data_type);
+    }
+    data_type
+}
+
+fn selected_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
+        _ => None,
+    }
+}
+
+fn schema_renamed_type(mut data_type: RType, args: &[&Arg], require_names: bool) -> RType {
+    let Some(source) = data_type.columns.as_ref() else {
+        return data_type;
+    };
+    let mut schema = (**source).clone();
+    for arg in args {
+        let Some(raw_name) = arg.name.as_deref() else {
+            if require_names || selected_name(&arg.value).is_none() {
+                // An unsupported selector may splice named selections. For
+                // relocate this can rename, even though a plain selector
+                // only changes column order.
+                schema.complete = false;
+            }
+            continue;
+        };
+        let Some(old_name) = selected_name(&arg.value) else {
+            schema.complete = false;
+            continue;
+        };
+        let Some((column, _)) = schema.columns.iter_mut().find(|(name, _)| name == old_name) else {
+            schema.complete = false;
+            continue;
+        };
+        *column = semantic_argument_name(raw_name).to_owned();
+    }
+    data_type.columns = Some(Arc::new(schema));
+    data_type
+}
+
+fn schema_selected_type(mut data_type: RType, args: &[&Arg]) -> RType {
     if args.is_empty() {
         return data_type;
     }
     let Some(schema) = data_type.columns.as_ref() else {
         return data_type;
     };
-    let mut includes = Vec::new();
+    let mut includes: Vec<(String, String)> = Vec::new();
     let mut excludes = Vec::new();
-    for expr in args {
-        if !collect_tidy_selection(expr, false, &mut includes, &mut excludes) {
-            return data_type;
+    for arg in args {
+        if let Some(name) = arg.name.as_deref() {
+            let Some(old_name) = selected_name(&arg.value) else {
+                return incomplete_schema(data_type);
+            };
+            includes.push((semantic_argument_name(name).to_owned(), old_name.to_owned()));
+        } else {
+            let mut selected = Vec::new();
+            if !collect_tidy_selection(&arg.value, false, &mut selected, &mut excludes) {
+                return incomplete_schema(data_type);
+            }
+            includes.extend(selected.into_iter().map(|name| (name.clone(), name)));
         }
     }
     let columns = if includes.is_empty() {
@@ -255,13 +415,13 @@ fn schema_selected_type(mut data_type: RType, args: &[&Expr]) -> RType {
     } else {
         includes
             .iter()
-            .filter(|name| !excludes.contains(name))
-            .filter_map(|name| {
+            .filter(|(_, source)| !excludes.contains(source))
+            .filter_map(|(output, source)| {
                 schema
                     .columns
                     .iter()
-                    .find(|(existing, _)| existing == name)
-                    .cloned()
+                    .find(|(existing, _)| existing == source)
+                    .map(|(_, ty)| (output.clone(), ty.clone()))
             })
             .collect()
     };
@@ -271,6 +431,56 @@ fn schema_selected_type(mut data_type: RType, args: &[&Expr]) -> RType {
         locally_constructed: false,
     }));
     data_type
+}
+
+fn schema_aggregate_type(
+    data_type: RType,
+    named: &[(&str, RType)],
+    masked_args: &[&Arg],
+    args: &[Arg],
+) -> RType {
+    let mut schema = ColumnSchema {
+        complete: !data_type.class.contains("grouped_df") && !masked_output_is_dynamic(masked_args),
+        ..ColumnSchema::default()
+    };
+    if let Some(by) = args.iter().find(|arg| arg.name.as_deref() == Some(".by")) {
+        let mut includes = Vec::new();
+        let mut excludes = Vec::new();
+        if !collect_tidy_selection(&by.value, false, &mut includes, &mut excludes) {
+            schema.complete = false;
+        } else if let Some(source) = &data_type.columns {
+            let selected: Vec<_> = if includes.is_empty() {
+                source
+                    .columns
+                    .iter()
+                    .filter(|(name, _)| !excludes.contains(name))
+                    .cloned()
+                    .collect()
+            } else {
+                includes
+                    .iter()
+                    .filter(|name| !excludes.contains(name))
+                    .filter_map(|name| source.columns.iter().find(|(column, _)| column == name))
+                    .cloned()
+                    .collect()
+            };
+            schema.columns.extend(selected);
+            schema.complete &= source.complete;
+        } else {
+            schema.complete = false;
+        }
+    }
+    let mut result = RType::new(Mode::List, Length::One)
+        .with_class(ClassVector::single("data.frame"))
+        .with_columns(Arc::new(schema));
+    for (name, ty) in named {
+        result = if ty.mode == Mode::Null {
+            drop_column(result, name)
+        } else {
+            type_with_assigned_column(result, name, ty.clone())
+        };
+    }
+    result
 }
 
 fn infer_dplyr_join(arg_types: &[RType]) -> RType {

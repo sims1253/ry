@@ -1099,29 +1099,29 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let parsed = pipeline::parse_files(paths, report_check_parse_failure)
-        .expect("check's parse-failure policy never aborts");
-    parse_errors += paths.len() - parsed.len();
-    let parsed: Vec<Arc<ry_core::SourceFile>> = parsed
-        .into_iter()
-        .filter(|parsed_file| {
-            file_count += 1;
-            srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
-            comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
-            if is_probably_not_r_source(parsed_file) {
-                not_r_diagnostics.push(ry_checker::Diagnostic::new(
-                    ry_checker::Severity::Info,
-                    ry_core::Span::new(0, 1, 0, 0),
-                    &parsed_file.path,
-                    "RY097",
-                    "File does not appear to be R source; diagnostics suppressed.",
-                ));
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
+    let parsed_with_paths =
+        pipeline::parse_files_with_native_paths(paths, report_check_parse_failure)
+            .expect("check's parse-failure policy never aborts");
+    parse_errors += paths.len() - parsed_with_paths.len();
+    let mut parsed = Vec::with_capacity(parsed_with_paths.len());
+    let mut native_files = Vec::with_capacity(parsed_with_paths.len());
+    for (native_path, parsed_file) in parsed_with_paths {
+        file_count += 1;
+        srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
+        comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
+        if is_probably_not_r_source(&parsed_file) {
+            not_r_diagnostics.push(ry_checker::Diagnostic::new(
+                ry_checker::Severity::Info,
+                ry_core::Span::new(0, 1, 0, 0),
+                &parsed_file.path,
+                "RY097",
+                "File does not appear to be R source; diagnostics suppressed.",
+            ));
+        } else {
+            native_files.push((native_path, Arc::clone(&parsed_file)));
+            parsed.push(parsed_file);
+        }
+    }
 
     // Same per-package grouping as `ry dump-types`; check's fallback
     // resolution root for non-package files is the config root (check has
@@ -1133,9 +1133,20 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         &[ctx.repo_root],
     )?;
 
+    let adopted = pipeline::adopted_records(&native_files, ctx.resolution_config);
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
-        let records = pipeline::adopted_records(&group.check_input.files, ctx.resolution_config);
+        let group_paths: std::collections::HashSet<_> = group
+            .check_input
+            .files
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        let records = adopted
+            .iter()
+            .filter(|record| group_paths.contains(record.source.path.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
         per_file_diagnostics.extend(if records.is_empty() {
             check_project(group.check_input)
         } else {

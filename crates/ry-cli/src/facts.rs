@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use miette::{IntoDiagnostic, Result};
 use ry_checker::{ScopeRecord, ScopeRecordKind};
@@ -408,7 +409,11 @@ pub(crate) fn run_dump_facts(
         let imported = workspace.imported_bindings.clone();
         let group_files = input.files.clone();
         let records = if annotations {
-            pipeline::adopted_records(&group_files, &cfg)
+            let native_files = group_files
+                .iter()
+                .map(|(path, file)| (PathBuf::from(path), Arc::clone(file)))
+                .collect::<Vec<_>>();
+            pipeline::adopted_records(&native_files, &cfg)
         } else {
             Vec::new()
         };

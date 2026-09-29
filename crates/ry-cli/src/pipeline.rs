@@ -45,15 +45,23 @@ impl CheckInput {
 }
 
 pub(crate) fn adopted_records(
-    files: &[(String, Arc<ry_core::SourceFile>)],
+    files: &[(PathBuf, Arc<ry_core::SourceFile>)],
     cfg: &config::Config,
 ) -> Vec<ry_core::declarations::DeclarationRecord> {
     let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
         return Vec::new();
     };
+    let mut display_counts = std::collections::HashMap::new();
+    for (_, file) in files {
+        *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
+    }
     files
         .iter()
-        .flat_map(|(_, file)| ry_checker::typehint::read_records(file, &scope))
+        // Project attachment still uses the parser's display path. Two
+        // native filenames can collapse to the same lossy spelling; decline
+        // both rather than attach one file's record to the other.
+        .filter(|(_, file)| display_counts[file.path.as_str()] == 1)
+        .flat_map(|(native, file)| ry_checker::typehint::read_records_at(file, native, &scope))
         .collect()
 }
 
@@ -236,12 +244,22 @@ pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
+    parse_files_with_native_paths(paths, on_failure)
+        .map(|files| files.into_iter().map(|(_, file)| file).collect())
+}
+
+/// Keep the native path alongside the parser's display path. These can differ
+/// for non-UTF-8 filenames, and source adoption must use native identity.
+pub(crate) fn parse_files_with_native_paths(
+    paths: &[PathBuf],
+    on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
+) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path) {
-            Ok(file) => Some(Ok(file)),
+            Ok(file) => Some(Ok((path.clone(), file))),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
                 FailureAction::Abort => Some(Err(failure)),

@@ -19,7 +19,10 @@ use ry_core::declarations::{
 };
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 
+use crate::infer::semantic_argument_name;
+
 const MAX_CLAUSES_PER_FUNCTION: usize = 64;
+const MAX_ANNOTATION_BYTES: usize = 4096;
 
 struct NamedFunction {
     name: String,
@@ -39,7 +42,18 @@ struct Clause<'a> {
 /// input is never evidence for a declaration: its recovered AST may invent a
 /// function boundary, so the ordinary parser diagnostic owns that file.
 pub fn read_records(file: &SourceFile, scope: &ScopedPaths) -> Vec<DeclarationRecord> {
-    if !scope.matches(Path::new(&file.path))
+    read_records_at(file, Path::new(&file.path), scope)
+}
+
+/// Match adoption against the native input path before the parser's
+/// displayable path can lose filename bytes. The record itself retains the
+/// parser path because checker and export source coordinates use that text.
+pub fn read_records_at(
+    file: &SourceFile,
+    native_path: &Path,
+    scope: &ScopedPaths,
+) -> Vec<DeclarationRecord> {
+    if !scope.matches(native_path)
         || !file.parse_errors.is_empty()
         || !file.syntax_violations.is_empty()
         || !file.invalid_utf8.is_empty()
@@ -61,7 +75,12 @@ pub fn read_records(file: &SourceFile, scope: &ScopedPaths) -> Vec<DeclarationRe
                 span: *span,
                 params: params
                     .iter()
-                    .map(|param| (param.name.clone(), param.default.is_some()))
+                    .map(|param| {
+                        (
+                            semantic_argument_name(&param.name).to_owned(),
+                            param.default.is_some(),
+                        )
+                    })
                     .collect(),
             });
         }
@@ -82,15 +101,21 @@ pub fn read_records(file: &SourceFile, scope: &ScopedPaths) -> Vec<DeclarationRe
         else {
             continue;
         };
-        let end = start.saturating_add(1 + comment.body.len());
-        let Some(raw) = file.source.get(start..end) else {
+        let full_end = start.saturating_add(1 + comment.body.len());
+        let mut end = full_end.min(start.saturating_add(MAX_ANNOTATION_BYTES));
+        while end > start && !file.source.is_char_boundary(end) {
+            end -= 1;
+        }
+        let Some(full_raw) = file.source.get(start..full_end) else {
             continue;
         };
-        if !raw.starts_with('#') || &raw[1..] != comment.body {
+        if !full_raw.starts_with('#') || full_raw[1..] != comment.body {
             continue;
         }
-        let body = comment.body.trim_start();
-        let Some(after_pipe) = body.strip_prefix('|') else {
+        let raw = &full_raw[..end - start];
+        // The audited provider requires '#' and '|' to be adjacent. A
+        // regular '# | ...' comment is not a typehint declaration.
+        let Some(after_pipe) = comment.body.strip_prefix('|') else {
             continue;
         };
         // Quarto cell options use `#| key: value`, not typehint's
@@ -114,19 +139,75 @@ pub fn read_records(file: &SourceFile, scope: &ScopedPaths) -> Vec<DeclarationRe
         if !named.iter().any(|entry| entry.span == innermost.function) {
             continue;
         }
-        grouped
+        let clauses = grouped
             .entry((innermost.function.start, innermost.function.end))
-            .or_default()
-            .push(parse_clause(after_pipe, span, raw));
+            .or_default();
+        // The extra entry records overflow without retaining an unbounded
+        // number of annotations from a generated or hostile source file.
+        if clauses.len() <= MAX_CLAUSES_PER_FUNCTION {
+            let clause = if full_end > end {
+                Clause {
+                    span,
+                    argument: None,
+                    class: None,
+                    residual: None,
+                    error: Some(format!(
+                        "typehint clause exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
+                    )),
+                }
+            } else {
+                parse_clause(after_pipe, span, raw)
+            };
+            clauses.push(clause);
+        }
     }
 
     grouped
         .into_iter()
-        .filter_map(|(key, clauses)| {
-            let target = named
+        .flat_map(|(key, clauses)| {
+            let Some(target) = named
                 .iter()
-                .find(|entry| (entry.span.start, entry.span.end) == key)?;
-            Some(build_record(file, target, clauses))
+                .find(|entry| (entry.span.start, entry.span.end) == key)
+            else {
+                return Vec::new();
+            };
+            let mut claims = BTreeMap::new();
+            let conflicting = clauses.iter().any(|clause| {
+                let Some(argument) = clause.argument else {
+                    return false;
+                };
+                let claim = (
+                    clause.class,
+                    clause
+                        .residual
+                        .as_ref()
+                        .map(|residual| residual.raw.as_str()),
+                );
+                claims
+                    .insert(argument, claim)
+                    .is_some_and(|old| old != claim)
+            });
+            let within_reader_budget = clauses.len() <= MAX_CLAUSES_PER_FUNCTION
+                && clauses
+                    .last()
+                    .and_then(|last| {
+                        clauses
+                            .first()
+                            .map(|first| last.span.end.saturating_sub(first.span.start))
+                    })
+                    .is_some_and(|bytes| bytes <= MAX_ANNOTATION_BYTES);
+            if conflicting && within_reader_budget {
+                // Each comment is a faithful claim in its own source span.
+                // Selecting one combined signature would silently choose a
+                // side; the shared resolver sees distinct exact signatures
+                // and emits an explicit conflict instead.
+                clauses
+                    .into_iter()
+                    .map(|clause| build_record(file, target, vec![clause]))
+                    .collect()
+            } else {
+                vec![build_record(file, target, clauses)]
+            }
         })
         .collect()
 }
@@ -144,11 +225,25 @@ fn parse_clause<'a>(text: &'a str, span: Span, raw: &'a str) -> Clause<'a> {
         error: None,
     };
     match (argument, class) {
-        (Some(argument), Some(class)) if valid_formal(argument) && valid_class(class) => {}
+        (Some(argument), Some(_)) if valid_formal(argument) => {}
         _ => {
-            clause.error = Some("expected `#| formal class` with simple class spelling".into());
+            clause.error = Some("expected `#| formal class`".into());
             return clause;
         }
+    }
+    if !valid_class(class.expect("validated class token")) {
+        let class = class.expect("validated class token");
+        if let Some(relative) = raw.find(class) {
+            let start = span.start + relative;
+            clause.residual = Some(ResidualConstraint {
+                raw: raw[relative..].into(),
+                span: Span::new(start, span.end, span.line, span.col + relative),
+                reason: "class spelling is outside the audited simple typehint subset".into(),
+            });
+        } else {
+            clause.error = Some("cannot locate unsupported class in source".into());
+        }
+        return clause;
     }
     let rest = text
         .strip_prefix(argument.expect("validated formal"))
@@ -160,7 +255,7 @@ fn parse_clause<'a>(text: &'a str, span: Span, raw: &'a str) -> Clause<'a> {
         // Preserve the exact unsupported expression and its byte span. The
         // upstream provider evaluates dim/not expressions at runtime; ry
         // neither evaluates them nor silently drops them from an Exact record.
-        if let Some(relative) = raw.find(&rest) {
+        if let Some(relative) = raw.find(rest) {
             let start = span.start + relative;
             clause.residual = Some(ResidualConstraint {
                 raw: rest.into(),
@@ -199,13 +294,24 @@ fn build_record(
 ) -> DeclarationRecord {
     let first = clauses.first().expect("group is nonempty").span;
     let last = clauses.last().expect("group is nonempty").span;
-    let source_span = Span::new(first.start, last.end, first.line, first.col);
+    let full_span = Span::new(first.start, last.end, first.line, first.col);
+    let source_span = if full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES {
+        first
+    } else {
+        full_span
+    };
     let mut parameters = Vec::new();
     let mut residuals = Vec::new();
     let mut invalid = None;
+    let mut ambiguous = None;
     if clauses.len() > MAX_CLAUSES_PER_FUNCTION {
         invalid = Some(format!(
             "more than {MAX_CLAUSES_PER_FUNCTION} typehint clauses for one function"
+        ));
+    }
+    if full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES {
+        invalid = Some(format!(
+            "typehint annotation range exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
         ));
     }
     for clause in clauses {
@@ -220,14 +326,27 @@ fn build_record(
             continue;
         };
         let Some((_, defaulted)) = target.params.iter().find(|formal| formal.0 == argument) else {
-            invalid.get_or_insert(format!("`{argument}` is not a formal of `{}`", target.name));
+            if target.params.iter().any(|formal| formal.0.contains('\\')) {
+                ambiguous.get_or_insert(
+                    "an encoded or escaped R formal cannot be matched by the static typehint reader"
+                        .to_owned(),
+                );
+            } else {
+                invalid.get_or_insert(format!("`{argument}` is not a formal of `{}`", target.name));
+            }
             continue;
         };
+        if let Some(residual) = clause.residual {
+            residuals.push(residual);
+        }
+        if !valid_class(class) {
+            continue;
+        }
         if parameters
             .iter()
             .any(|parameter: &DeclaredParameter| parameter.name == argument)
         {
-            invalid.get_or_insert(format!("duplicate typehint clause for `{argument}`"));
+            // Repeated identical clauses do not add a new claim.
             continue;
         }
         parameters.push(DeclaredParameter {
@@ -241,9 +360,6 @@ fn build_record(
             evaluation: EvaluationSemantics::Promise,
             constraint: Some(TypeExpr::ExactClass(class.into())),
         });
-        if let Some(residual) = clause.residual {
-            residuals.push(residual);
-        }
     }
     parameters.sort_by_key(|parameter| {
         target
@@ -259,10 +375,14 @@ fn build_record(
     };
     let translation = if let Some(reason) = invalid {
         Translation::InvalidSyntax(reason)
+    } else if let Some(reason) = ambiguous {
+        Translation::AmbiguousAttachment(reason)
     } else if let Err(error) = signature.validate() {
         Translation::InvalidSyntax(error.to_string())
     } else if residuals.is_empty() {
         Translation::Exact(signature)
+    } else if signature.parameters.is_empty() {
+        Translation::Unsupported { residuals }
     } else {
         Translation::Partial {
             supported: signature,
@@ -294,7 +414,9 @@ fn build_record(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DeclarationFindingKind, Project};
     use ry_core::RParser;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn read(source: &str) -> Vec<DeclarationRecord> {
@@ -326,11 +448,25 @@ mod tests {
     #[test]
     fn ignores_quarto_options_strings_header_and_ordinary_comments() {
         let records = read(
-            "f <- function(\n  x = { #| x integer\n    1L\n  }\n) {\n  text <- \"#| x character\"\n  #| label: sample\n  # ordinary comment\n  #| x integer\n}\n",
+            "f <- function(\n  x = { #| x integer\n    1L\n  }\n) {\n  text <- \"#| x character\"\n  #| label: sample\n  # | x character\n  # ordinary comment\n  #| x integer\n}\n",
         );
         assert_eq!(records.len(), 1, "{records:?}");
         assert!(matches!(records[0].translation, Translation::Exact(_)));
         assert_eq!(records[0].source.raw, "#| x integer");
+    }
+
+    #[test]
+    fn parser_recovery_is_not_a_source_of_contracts() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("R/main.R");
+        let source = "f <- function(x) {\n #| x integer\n x\n}\ny <- (\n";
+        let file = RParser::new()
+            .unwrap()
+            .parse(path.to_str().unwrap(), source)
+            .unwrap();
+        assert!(!file.parse_errors.is_empty());
+        let scope = ScopedPaths::new(root.path(), &["R/**".into()]).unwrap();
+        assert!(read_records(&file, &scope).is_empty());
     }
 
     #[test]
@@ -370,5 +506,191 @@ mod tests {
             invalid[0].translation,
             Translation::InvalidSyntax(_)
         ));
+    }
+
+    #[test]
+    fn plain_backtick_formals_attach_by_semantic_name_but_encoded_names_decline() {
+        let quoted = read("f <- function(`x`) {\n #| x integer\n `x`\n}\n");
+        assert!(matches!(quoted[0].translation, Translation::Exact(_)));
+        let non_syntactic = read("f <- function(`a b`) {\n #| a b integer\n `a b`\n}\n");
+        assert!(matches!(
+            non_syntactic[0].translation,
+            Translation::InvalidSyntax(_)
+        ));
+        let escaped = read("f <- function(`\\x78`) {\n #| x integer\n `\\x78`\n}\n");
+        assert!(matches!(
+            escaped[0].translation,
+            Translation::AmbiguousAttachment(_)
+        ));
+    }
+
+    #[test]
+    fn unsupported_class_spelling_remains_a_source_residual() {
+        let source = "f <- function(x) {\n #| x some-class\n x\n}\n";
+        let records = read(source);
+        let Translation::Unsupported { residuals } = &records[0].translation else {
+            panic!("unsupported class must stay visible: {records:?}");
+        };
+        assert_eq!(residuals.len(), 1);
+        assert_eq!(residuals[0].raw, "some-class");
+        assert_eq!(
+            &source[residuals[0].span.start..residuals[0].span.end],
+            residuals[0].raw
+        );
+    }
+
+    #[test]
+    fn contradictory_comments_remain_distinct_records_and_identical_repeats_do_not_conflict() {
+        let records = read("f <- function(x) {\n #| x integer\n #| x character\n x\n}\n");
+        assert_eq!(records.len(), 2);
+        assert!(
+            records
+                .iter()
+                .all(|record| matches!(record.translation, Translation::Exact(_)))
+        );
+        assert_eq!(records[0].source.raw, "#| x integer");
+        assert_eq!(records[1].source.raw, "#| x character");
+
+        let repeated = read("f <- function(x) {\n #| x integer\n #| x integer\n x\n}\n");
+        assert_eq!(repeated.len(), 1);
+        assert!(matches!(repeated[0].translation, Translation::Exact(_)));
+    }
+
+    #[test]
+    fn reader_limits_clause_bytes_range_and_count() {
+        let long_class = "a".repeat(MAX_ANNOTATION_BYTES + 1);
+        let records = read(&format!("f <- function(x) {{\n #| x {long_class}\n}}\n"));
+        assert!(matches!(
+            records[0].translation,
+            Translation::InvalidSyntax(_)
+        ));
+        assert!(records[0].source.raw.len() <= MAX_ANNOTATION_BYTES);
+
+        let separated = format!(
+            "f <- function(x) {{\n #| x integer\n {}#| x integer\n}}\n",
+            " ".repeat(MAX_ANNOTATION_BYTES)
+        );
+        let records = read(&separated);
+        assert!(matches!(
+            records[0].translation,
+            Translation::InvalidSyntax(_)
+        ));
+        assert!(records[0].source.raw.len() <= MAX_ANNOTATION_BYTES);
+
+        let many = format!(
+            "f <- function(x) {{\n{} }}\n",
+            " #| x integer\n".repeat(MAX_CLAUSES_PER_FUNCTION + 20)
+        );
+        let records = read(&many);
+        assert!(matches!(
+            records[0].translation,
+            Translation::InvalidSyntax(_)
+        ));
+        assert!(records[0].source.raw.len() <= MAX_ANNOTATION_BYTES);
+
+        let alternating = format!(
+            "f <- function(x) {{\n{} }}\n",
+            (0..MAX_CLAUSES_PER_FUNCTION + 20)
+                .map(|index| if index % 2 == 0 {
+                    " #| x integer\n"
+                } else {
+                    " #| x character\n"
+                })
+                .collect::<String>()
+        );
+        let records = read(&alternating);
+        assert_eq!(records.len(), 1);
+        assert!(matches!(
+            records[0].translation,
+            Translation::InvalidSyntax(_)
+        ));
+    }
+
+    #[test]
+    fn short_comment_fuzz_keeps_spans_and_statuses_bounded() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("R/fuzz.R");
+        let scope = ScopedPaths::new(root.path(), &["R/**".into()]).unwrap();
+        let mut parser = RParser::new().unwrap();
+        let alphabet = [b'a', b'0', b' ', b'|', b'#', b'(', b')', b'_', b':', b'-'];
+        let mut state = 0x3141_5926_u32;
+        for _ in 0..512 {
+            let mut payload = String::new();
+            for _ in 0..32 {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                payload.push(alphabet[(state as usize) % alphabet.len()] as char);
+            }
+            let source = format!("f <- function(x) {{\n #| {payload}\n x\n}}\n");
+            let file = parser.parse(path.to_str().unwrap(), &source).unwrap();
+            let records = read_records(&file, &scope);
+            assert!(records.len() <= 1);
+            for record in records {
+                assert_eq!(
+                    source.get(record.source.span.start..record.source.span.end),
+                    Some(record.source.raw.as_str())
+                );
+                assert!(record.source.raw.len() <= MAX_ANNOTATION_BYTES);
+                if let Translation::Exact(signature)
+                | Translation::Partial {
+                    supported: signature,
+                    ..
+                } = &record.translation
+                {
+                    assert!(signature.canonical().is_ok());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn annotation_only_warm_edits_retract_and_restore_provider_findings() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("R/main.R");
+        let scope = ScopedPaths::new(root.path(), &["R/**".into()]).unwrap();
+        let mut parser = RParser::new().unwrap();
+        let source =
+            |comment: &str| format!("f <- function(x) {{\n {comment}\n x\n}}\nf(\"bad\")\n");
+        let original = parser
+            .parse(path.to_str().unwrap(), &source("#| x integer"))
+            .unwrap();
+        let mut warm = Project::new();
+        warm.add_file(original.path.clone(), original.clone());
+        warm.set_declaration_records(read_records(&original, &scope));
+        warm.check_incremental();
+        assert_eq!(
+            warm.declaration_findings()
+                .iter()
+                .flat_map(|(_, findings)| findings)
+                .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+                .count(),
+            1
+        );
+
+        for (comment, expected) in [
+            ("#| x character", 0),
+            ("# ordinary comment", 0),
+            ("#| x integer", 1),
+        ] {
+            let edited = parser
+                .parse(path.to_str().unwrap(), &source(comment))
+                .unwrap();
+            let records = read_records(&edited, &scope);
+            warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
+            warm.set_declaration_records(records.clone());
+            warm.check_incremental();
+            let findings = warm
+                .declaration_findings()
+                .iter()
+                .flat_map(|(_, findings)| findings)
+                .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+                .count();
+            assert_eq!(findings, expected, "{comment}");
+
+            let mut cold = Project::new();
+            cold.add_file(edited.path.clone(), edited);
+            cold.set_declaration_records(records);
+            cold.check();
+            assert_eq!(warm.declaration_findings(), cold.declaration_findings());
+        }
     }
 }

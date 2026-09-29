@@ -7,10 +7,11 @@ scope exit describes one analysis snapshot. A declaration describes a
 provider's claim about a function, with its original source and attachment.
 Neither a compact hint nor an inferred fact silently becomes a contract.
 
-This document describes the declaration core in [#592] and shared checking in
-[#593]. The first external reader and public `dump-facts` annotation export
-belong to [#594]. Until then, `dump-facts` keeps schema versions 1 and 2 and
-has no annotation flag or empty annotation placeholder.
+This document describes the declaration core in [#592], shared checking in
+[#593], and the first source adapter in [#594]. The adapter is opt-in and reads
+the audited `typehint` 0.1.0 `#| formal class` comment convention from named,
+braced function bodies. It never runs inspected R code or assumes that a call
+to `check_types()` succeeded.
 
 ## Supported canonical vocabulary
 
@@ -20,6 +21,13 @@ not treat `numeric` as an alias: an adapter must establish its provider's
 predicate semantics first. `unknown` records an explicit lack of a type claim;
 it is not a request to skip checking. `none` in a signature means no
 constraint was supplied, distinct from an explicit `unknown` constraint.
+
+The `typehint` adapter also supports `class["name"]`: one exact effective R
+`class()` value. This is distinct from storage mode and from evidence that an
+explicit class attribute exists. A double or character value with an explicit
+`"integer"` class can satisfy `class["integer"]`; ordinary `1` does not, while
+ordinary `1L` does. Unknown, incomplete, or dimension-dependent class facts
+cannot prove a mismatch. A class clause does not seed a body-entry type.
 
 An atomic constraint can omit length, specify an exact nonnegative length, or
 specify `1+` for nonempty. `null` can only have length zero. Unions contain
@@ -49,6 +57,11 @@ or `unknown`. Evaluation behavior is `value`, `promise`, `quoted`, or
 `unknown`. These are metadata about a provider's semantics, not claims that
 ry implements the corresponding runtime behavior. Unsupported effects must
 remain explicit rather than being translated into a plain entry condition.
+`defaulted_supplied_only` means the provider constrains an explicitly supplied
+actual but does not check an omitted formal's default. The typehint adapter
+uses this status because its pinned `check_types()` implementation iterates
+supplied actuals. A contrary authored default is therefore not a mismatch
+unless the caller explicitly supplies that value.
 
 Parsing and formatting cap a declaration at 4096 bytes, 16 type nesting
 levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
@@ -85,6 +98,10 @@ against the source AST and current source text before it installs records.
 A matching display name alone does not identify a function. Readers must
 reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
+Backtick quoting of an AST formal is equivalent to the same unquoted R name;
+structured declaration-record names are literal semantic names. The reader's
+bounded simple clause grammar does not decode encoded or escaped source
+spellings; unsupported attachment stays ambiguous rather than guessing.
 
 Only an explicitly adopted, exact `entry_only` signature can supply a body
 entry type. Its declared parameters must be an ordered subset of the R formals,
@@ -119,7 +136,10 @@ that closure; they cannot certify a later read in its caller.
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and
 ambiguous-attachment findings. Parse or encoding errors suppress findings
 from a repaired source tree. These findings are separate from public RY rule
-codes; [#594] maps them after a real source reader supplies records.
+codes. The typehint adapter maps known call mismatches to RY114, limited or
+unsupported checking to RY115, conflicts to RY116, and invalid or ambiguous
+source records to RY117. Recognition and translation fidelity remain separate
+from how much static checking is possible.
 
 ## Export boundary
 
@@ -138,12 +158,11 @@ union whose outer length is not carried by its members becomes a proposal
 with that loss stated explicitly. Very wide schemas are not scanned in full;
 their field identity remains unverified in the proposal.
 
-The annotation serializer is tested with populated exact/partial/unsupported
-records and validates same-file source/residual spans. [#594] will wire real
-adopted source records into a public schema-3 `dump-facts` option, include
-translation and evidence status per record, and keep the existing
-`declaration` field's source-definition meaning unchanged. Schema 1 and 2
-consumers need no migration until they opt into that option.
+The annotation serializer validates same-file source and residual spans.
+`dump-facts --annotations` exports real adopted records in schema 3 with
+translation, provenance, and evidence status. The existing `declaration`
+field retains its source-definition meaning. Schema 1 and 2 output remains
+unchanged for callers that do not request annotations.
 
 [#592]: https://github.com/sims1253/ry/issues/592
 [#593]: https://github.com/sims1253/ry/issues/593

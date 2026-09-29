@@ -106,13 +106,14 @@ pub struct TypehintConfig {
     pub root: Option<PathBuf>,
 }
 
-/// A strict, reusable config-root-relative glob scope. Relative source
-/// paths are anchored at the process working directory, then matched only
-/// when they remain under the owning config directory. No filesystem reads
-/// or symlink resolution are required, so editor overlays use the same rule.
+/// A strict, reusable config-root-relative glob scope. Both the config root
+/// and source use physical filesystem identity: existing paths resolve their
+/// symlinks, while an unsaved path retains its unresolved normal suffix after
+/// the deepest existing ancestor. A `..` after a missing ancestor is
+/// ambiguous and does not match.
 #[derive(Debug, Clone)]
 pub struct ScopedPaths {
-    root: PathBuf,
+    root: Option<PathBuf>,
     patterns: Vec<glob::Pattern>,
 }
 
@@ -120,42 +121,85 @@ impl ScopedPaths {
     pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
         let patterns = patterns
             .iter()
-            .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
+            .map(String::as_str)
+            .map(compile_scoped_pattern)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self {
-            root: root.to_path_buf(),
-            patterns,
-        })
+        let root = scoped_path_identity(root);
+        Ok(Self { root, patterns })
     }
 
     pub fn matches(&self, source: &Path) -> bool {
-        let Ok(source) = std::path::absolute(source) else {
+        let Some(root) = &self.root else {
             return false;
         };
-        let Ok(relative) = source.strip_prefix(&self.root) else {
+        let Some(source) = scoped_path_identity(source) else {
             return false;
         };
-        // A lexical `..` after the root can escape its ownership. Decline
-        // such ambiguous spellings rather than treating them as in-scope.
-        if relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
+        let Ok(relative) = source.strip_prefix(root) else {
             return false;
-        }
-        let relative = relative
-            .to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "/");
+        };
+        // A lossy replacement character can collide with a real Unicode
+        // filename, so an unrepresentable native path cannot match a scope.
+        let Some(relative) = relative.to_str() else {
+            return false;
+        };
+        let relative = relative.replace(std::path::MAIN_SEPARATOR, "/");
         self.patterns.iter().any(|pattern| {
             pattern.matches_with(
                 &relative,
                 glob::MatchOptions {
                     require_literal_separator: true,
-                    ..glob::MatchOptions::default()
+                    ..Default::default()
                 },
             )
         })
     }
+}
+
+fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
+    let pattern = if cfg!(windows) {
+        pattern.replace('\\', "/")
+    } else {
+        pattern.to_owned()
+    };
+    glob::Pattern::new(&pattern)
+}
+
+/// Resolve the longest existing prefix with filesystem semantics. This
+/// preserves the meaning of `symlink/..` and of final symlink files while
+/// still matching unsaved files and virtual descendants under an existing
+/// folder. Parent components after a missing prefix cannot be resolved
+/// faithfully by the filesystem and are declined.
+fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut suffix = Vec::new();
+    for ancestor in absolute.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in suffix.into_iter().rev() {
+                    match component {
+                        std::path::Component::Normal(name) => resolved.push(name),
+                        std::path::Component::CurDir => {}
+                        _ => return None,
+                    }
+                }
+                return Some(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // A dangling symlink exists but its physical target does not.
+                // It is not an ordinary unsaved component to append.
+                if ancestor
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+        suffix.push(ancestor.components().next_back()?);
+    }
+    None
 }
 
 impl TypehintConfig {
@@ -341,7 +385,7 @@ impl Config {
                 })?,
             );
         for pattern in &cfg.annotations.typehint.paths {
-            glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
+            compile_scoped_pattern(pattern).map_err(|source| {
                 ConfigError::InvalidAnnotationPattern {
                     path: path.to_path_buf(),
                     pattern: pattern.clone(),

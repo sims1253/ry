@@ -30,11 +30,12 @@ struct Probe {
 /// rule, and a recovered tree is exactly how the checker sees broken input.
 fn run(src: &str) -> Vec<(&'static str, Severity)> {
     let mut parser = RParser::new().expect("parser init");
+    let path = format!("{}/testdata/oracle/probe.R", env!("CARGO_MANIFEST_DIR"));
     // tree-sitter recovers from broken syntax, so `parse` succeeds and
     // records the errors on the file; only a catastrophic init failure
     // (out of memory) would fail here.
-    let file = parser.parse("probe.R", src).expect("parse probe");
-    let mut checker = Checker::new("probe.R");
+    let file = parser.parse(&path, src).expect("parse probe");
+    let mut checker = Checker::new(&path);
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -300,6 +301,12 @@ static PROBES: &[Probe] = &[
         note: "`TRUE`/`FALSE` call argument for an identically-named formal of an enclosing function (callee has the formal)",
         positive: "f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n",
         negative: "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n",
+    },
+    Probe {
+        code: "RY118",
+        note: "a complete local box module proves a selected export is absent",
+        positive: "box::use(./box_module/hello[missing])\n",
+        negative: "box::use(./box_module/hello[foo])\n",
     },
 ];
 

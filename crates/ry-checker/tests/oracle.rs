@@ -304,15 +304,16 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
 /// UTF-8 gets its encoding RY000 and the whole-file suppression that
 /// follows from it.
 fn checker_diagnostics(
-    name: &str,
+    path: &std::path::Path,
     decoded: ry_workspace::DecodedRSource,
 ) -> Vec<(String, Severity)> {
+    let name = path.to_string_lossy();
     let mut parser = RParser::new().expect("parser init");
     let mut file = parser
-        .parse(name, &decoded.text)
+        .parse(&name, &decoded.text)
         .unwrap_or_else(|e| panic!("parse {name}: {e}"));
     decoded.attach_boundary_findings(&mut file);
-    let mut c = Checker::new(name);
+    let mut c = Checker::new(&name);
     c.check(&file);
     let diags = c.take_diagnostics();
     diags
@@ -400,7 +401,7 @@ fn oracle_check_each_fixture() {
         total += 1;
 
         let (r_errored, r_message) = r_errors(&path);
-        let diagnostics = checker_diagnostics(&name, decoded);
+        let diagnostics = checker_diagnostics(&path, decoded);
         let errs: Vec<&str> = diagnostics
             .iter()
             .filter(|(_, severity)| *severity == Severity::Error)
@@ -676,7 +677,7 @@ fn must_flag_only_fixtures_emit_exactly_ry000() {
                 continue;
             }
         }
-        let diagnostics = checker_diagnostics(name, decoded);
+        let diagnostics = checker_diagnostics(std::path::Path::new(name), decoded);
         let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
         // The same predicate the harness arm uses, so the pin cannot
         // drift from the real `must-flag-only` semantics.

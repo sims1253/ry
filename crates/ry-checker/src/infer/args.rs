@@ -378,6 +378,16 @@ impl CallFormal for UserParam {
     }
 }
 
+impl CallFormal for crate::box_imports::BoxParam {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn required(&self) -> bool {
+        self.required
+    }
+}
+
 /// `match_arguments` over a signature's formal specs: collect the formal
 /// names once and run R's three-pass matching. Callers that need the
 /// names themselves (message text, eval-mode lookup) keep their own
@@ -426,6 +436,17 @@ pub(crate) fn match_args_to_params(
 }
 
 impl Checker {
+    pub(crate) fn check_box_call_arguments(
+        &mut self,
+        function_name: &str,
+        params: &[crate::box_imports::BoxParam],
+        args: &[Arg],
+        bindings: &ArgumentMatch,
+        call_span: Span,
+    ) {
+        self.check_call_arity(function_name, params, args, bindings, true, call_span);
+    }
+
     pub(crate) fn is_forwarded_dots(&self, argument: &Arg) -> bool {
         let Expr::Ident { name, span } = &argument.value else {
             return false;

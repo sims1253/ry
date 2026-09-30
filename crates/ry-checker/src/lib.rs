@@ -12,6 +12,7 @@
 // higher_order.rs, and collect.rs.
 #![allow(clippy::collapsible_if)]
 
+mod box_imports;
 mod collect;
 pub mod diagnostics;
 mod fixpoint;
@@ -90,6 +91,7 @@ use ry_typeshed::{
     load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 fn string_literals(expr: &Expr) -> Vec<String> {
@@ -396,6 +398,9 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: FxMap<String, String>,
+    /// Module/package objects introduced by a lexical `box::use()` call.
+    /// The binding journal restores these with the value on branch exit.
+    pub(crate) box_objects: FxMap<String, box_imports::BoxObject>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
@@ -429,6 +434,7 @@ impl Clone for Scope {
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
+            box_objects: self.box_objects.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
@@ -503,6 +509,7 @@ impl Scope {
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
                 .chain(self.function_aliases.keys())
+                .chain(self.box_objects.keys())
                 .cloned()
                 .collect();
             for name in names {
@@ -518,6 +525,7 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
+        self.box_objects.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
@@ -559,6 +567,9 @@ impl Scope {
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
         }
+        if !self.box_objects.is_empty() {
+            self.box_objects.remove(&name);
+        }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
@@ -590,6 +601,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.box_objects.remove(&name);
         self.lexical_functions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
@@ -616,6 +628,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.box_objects.remove(&name);
         self.narrowed_bindings.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
@@ -645,6 +658,16 @@ impl Scope {
         let name = name.into();
         self.journal_alias(&name);
         self.function_aliases.insert(name, target);
+    }
+
+    pub(crate) fn set_box_object(
+        &mut self,
+        name: impl Into<String>,
+        object: box_imports::BoxObject,
+    ) {
+        let name = name.into();
+        self.journal_binding(&name);
+        self.box_objects.insert(name, object);
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
@@ -716,6 +739,9 @@ pub struct ScopeRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct UserFn {
     pub(crate) params: Vec<UserParam>,
+    /// Source path of the definition, needed for relative quoted imports
+    /// while the pooled project fixpoint checks its body.
+    pub(crate) origin_path: String,
     // The function body, shared via `Arc` so the per-fixpoint-iteration
     // clone in `refine_fn_return` is a cheap refcount bump rather than a
     // deep clone of every statement. The body is immutable after
@@ -926,6 +952,11 @@ pub struct Checker {
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Editor/project buffers take precedence over the disk copy of a
+    /// relative box module. Keys use the existing ancestor's identity.
+    box_sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>,
+    box_module_cache: HashMap<PathBuf, Option<Arc<box_imports::BoxInventory>>>,
+    box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
     /// Source text corresponding to `path`, set at every production check seam.
@@ -1111,6 +1142,7 @@ impl Checker {
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
         self.source.clone_from(&file.source);
+        self.box_module_cache.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1178,6 +1210,9 @@ impl Checker {
         Self {
             typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
+            box_sources: Arc::new(HashMap::new()),
+            box_module_cache: HashMap::new(),
+            box_depth: 0,
             diagnostics: Vec::new(),
             path: path.to_string(),
             source: String::new(),
@@ -1524,6 +1559,11 @@ impl Checker {
             .map(Arc::new)
             .unwrap_or_else(embedded_base);
         self.user_stubs = stubs;
+    }
+
+    pub(crate) fn set_box_sources(&mut self, sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>) {
+        self.box_sources = sources;
+        self.box_module_cache.clear();
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {

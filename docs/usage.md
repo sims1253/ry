@@ -110,13 +110,17 @@ package's installed `NAMESPACE` exports and ry's bundled function stubs.
 The import does not attach the package to the ordinary search path.
 
 Local paths resolve from the file containing the import. ry checks `.r`,
-`.R`, `__init__.r`, then `__init__.R`, and uses open editor buffers when
-available. It recognizes roxygen `@export` tags and literal
-`box::export()` declarations; explicit declarations override tags. A module
+`.R`, `__init__.r`, then `__init__.R`, appending an extension to the full
+module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file that
+cannot be analyzed stays opaque rather than making a lower-priority file
+stand in for it. ry uses open editor buffers when available. It recognizes
+roxygen `@export` tags and literal `box::export()` declarations; explicit
+declarations override tags. A module
 with neither exports its own non-dot top-level bindings. ry can report RY118
 when a complete local inventory proves a selected name or `$` member is
-missing. Computed imports, dynamic exports, unreadable or deeply nested
-modules, and incomplete package metadata stay opaque, so an absent name
+missing. Computed imports, dynamic exports, module-load calls that may write
+bindings, unreadable or deeply nested modules, and incomplete package
+metadata stay opaque, so an absent name
 there does not trigger RY118. This static model does not execute module
 initialization or evaluate arbitrary R expressions.
 

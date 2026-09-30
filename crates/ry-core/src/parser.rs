@@ -89,6 +89,7 @@ impl RParser {
         Ok((
             SourceFile {
                 path: path.to_string(),
+                native_path: None,
                 source: src.to_string(),
                 stmts,
                 parse_errors,

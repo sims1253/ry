@@ -4,7 +4,7 @@
 
 use crate::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -187,6 +187,23 @@ fn parse_import(argument: &Arg) -> Option<Import> {
     })
 }
 
+/// Project invalidation needs to know whether an unchanged file may import
+/// an edited module. Search parsed calls, not arbitrary `box` text in
+/// comments, identifiers such as `boxplot`, or string literals.
+pub(crate) fn has_box_use(file: &SourceFile) -> bool {
+    if !file.source.contains("box") {
+        return false;
+    }
+    walk_stmts(&file.stmts, Walk::ALL, |node, _| {
+        if matches!(node, AstNode::Expr(Expr::Call { func, .. }) if ident_name(func) == Some("box::use")) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(Descend::Into)
+        }
+    })
+    .is_break()
+}
+
 /// An existing file's physical identity, or the physical identity of its
 /// nearest existing ancestor plus an unsaved final path. This lets a module
 /// opened in an editor match its on-disk caller even with a symlinked root.
@@ -215,12 +232,104 @@ fn module_candidates(caller: &str, segments: &[String]) -> Option<[PathBuf; 4]> 
         }
         stem.push(segment);
     }
+    // `with_extension` replaces the suffix of `./foo.bar`, but box appends
+    // `.r` to the entire module name and loads `foo.bar.r`.
+    let suffixed = |extension: &str| {
+        let mut path = stem.as_os_str().to_os_string();
+        path.push(extension);
+        PathBuf::from(path)
+    };
     Some([
-        stem.with_extension("r"),
-        stem.with_extension("R"),
+        suffixed(".r"),
+        suffixed(".R"),
         stem.join("__init__.r"),
         stem.join("__init__.R"),
     ])
+}
+
+/// Calls made while loading a legacy module may create caller-frame
+/// bindings, including through qualified writers and sourced files. We do
+/// not execute them, so a missing syntactic assignment is not proof that a
+/// name is absent. Function bodies are inert until called; box's quoted
+/// import declaration itself does not write an own-module binding.
+fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
+    let mut uncertain = false;
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| {
+            match node {
+                AstNode::Expr(Expr::Function { .. }) => {
+                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
+                }
+                AstNode::Expr(Expr::Call { func, .. }) if ident_name(func) == Some("box::use") => {
+                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
+                }
+                AstNode::Expr(Expr::Call { func, args, .. })
+                    if ident_name(func) == Some("box::export")
+                        && args
+                            .iter()
+                            .all(|argument| static_name(&argument.value).is_some()) =>
+                {
+                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
+                }
+                AstNode::Expr(Expr::Call { .. }) => uncertain = true,
+                _ => {}
+            }
+            ControlFlow::<(), Descend>::Continue(Descend::Into)
+        },
+    );
+    uncertain
+}
+
+/// The collector indexes literal functions by spelling. A later wrapper
+/// assignment can leave the final value callable while the indexed literal
+/// is no longer its definition. Retain the collected signature only for a
+/// single direct literal binding with no other module-load assignment to the
+/// same name. Control-flow bindings are counted; nested function bodies have
+/// their own lexical scope and are excluded.
+fn stable_direct_function_bindings(
+    file: &SourceFile,
+    unmodeled_load_effects: bool,
+) -> HashSet<String> {
+    if unmodeled_load_effects {
+        return HashSet::new();
+    }
+    let mut direct_literals = HashSet::new();
+    for statement in &file.stmts {
+        if let Stmt::Assign {
+            target,
+            value: Expr::Function { .. },
+            ..
+        } = statement
+            && let Some(name) = binding_name(target)
+        {
+            direct_literals.insert(infer::semantic_argument_name(name).to_string());
+        }
+    }
+    let mut bindings: HashMap<String, usize> = HashMap::new();
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        |node, _| {
+            if let AstNode::Stmt(Stmt::Assign { target, .. }) = node
+                && let Some(name) = binding_name(target)
+            {
+                *bindings
+                    .entry(infer::semantic_argument_name(name).to_string())
+                    .or_default() += 1;
+            }
+            ControlFlow::<(), Descend>::Continue(Descend::Into)
+        },
+    );
+    direct_literals.retain(|name| bindings.get(name) == Some(&1));
+    direct_literals
 }
 
 fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
@@ -255,6 +364,7 @@ fn declared_exports(
     file: &SourceFile,
     assigned: &HashSet<String>,
     roxygen: HashSet<String>,
+    unmodeled_load_effects: bool,
 ) -> (HashSet<String>, bool) {
     let mut explicit = false;
     let mut complete = true;
@@ -297,7 +407,7 @@ fn declared_exports(
     // Legacy modules export their own non-dot bindings. Imported names live
     // in an attachment environment and are not implicitly re-exported.
     // Dynamic writes or control flow make absence uncertain.
-    complete &= !file.stmts.iter().any(|statement| {
+    complete &= !unmodeled_load_effects && !file.stmts.iter().any(|statement| {
         matches!(statement, Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. })
             || matches!(statement, Stmt::Expr(Expr::Call { func, .. }) if matches!(ident_name(func), Some("assign" | "delayedAssign" | "makeActiveBinding")))
     });
@@ -345,9 +455,7 @@ impl Checker {
             return None;
         }
         for candidate in module_candidates(&self.path, segments)? {
-            let Some(identity) = path_identity(&candidate) else {
-                continue;
-            };
+            let identity = path_identity(&candidate)?;
             if let Some(inventory) = self.box_module_cache.get(&identity) {
                 return inventory.clone();
             }
@@ -357,12 +465,18 @@ impl Checker {
                 }
                 Arc::clone(source)
             } else {
-                let metadata = match std::fs::metadata(&candidate) {
-                    Ok(metadata) if metadata.len() <= MAX_MODULE_BYTES => metadata,
-                    _ => continue,
-                };
-                if !metadata.is_file() {
-                    continue;
+                // Only an absent candidate permits the next spelling.
+                // Existing but unreadable/unsupported preferred `.r` is the
+                // module box selects; consulting `.R` would invent facts
+                // about a different module.
+                match std::fs::symlink_metadata(&candidate) {
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(_) => return None,
+                }
+                let metadata = std::fs::metadata(&candidate).ok()?;
+                if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
+                    return None;
                 }
                 // Bound the actual read as well as the metadata precheck:
                 // the file can grow or be replaced between those operations.
@@ -386,7 +500,10 @@ impl Checker {
                 return None;
             }
             let (assigned, roxygen) = top_level_bindings(&file);
-            let (exported, complete) = declared_exports(&file, &assigned, roxygen);
+            let unmodeled_load_effects = has_unmodeled_load_effects(&file);
+            let stable_functions = stable_direct_function_bindings(&file, unmodeled_load_effects);
+            let (exported, complete) =
+                declared_exports(&file, &assigned, roxygen, unmodeled_load_effects);
             let mut nested = Checker::new(&file.path);
             nested.box_depth = self.box_depth + 1;
             nested.box_sources = Arc::clone(&self.box_sources);
@@ -409,6 +526,9 @@ impl Checker {
                         return Some((name.clone(), Arc::clone(function)));
                     }
                     if scope.function_alias(name).is_some() {
+                        return None;
+                    }
+                    if !stable_functions.contains(name) {
                         return None;
                     }
                     let function = nested.fn_table.fns.get(name)?;

@@ -144,3 +144,45 @@ fn package_local_module_and_dplyr_import_reach_lsp_pipeline() {
         .unwrap();
     client.notify("exit", Value::Null).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn native_module_path_survives_lossy_display_collision_in_cli() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let raw = root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"bad\xff.r".to_vec()));
+    let unicode = root.path().join("bad�.r");
+    let caller = root.path().join("run.R");
+    std::fs::write(&raw, "answer <- function() 'wrong'\n").unwrap();
+    std::fs::write(&unicode, "answer <- function() 1L\n").unwrap();
+    std::fs::write(
+        &caller,
+        "box::use(m = ./`bad�`)\nvalue <- m$answer() + 1L\n",
+    )
+    .unwrap();
+    let check = |paths: &[&std::path::Path]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["check", "--output-format", "json", "--exit-zero"])
+            .args(paths)
+            .env("RY_NO_INSTALLED_LIBRARIES", "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic["path"] != caller.to_string_lossy().as_ref()
+                    || diagnostic["code"] != "RY040"
+            }),
+            "{diagnostics:#?}"
+        );
+    };
+    check(&[root.path()]);
+    check(&[&raw, &unicode, &caller]);
+    check(&[&unicode, &raw, &caller]);
+    std::fs::remove_file(&raw).unwrap();
+    check(&[root.path()]);
+}

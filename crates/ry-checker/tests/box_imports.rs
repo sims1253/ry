@@ -89,6 +89,31 @@ fn project_module_overlay_replaces_disk_inventory_on_incremental_check() {
     assert!(missing[0].1.iter().all(|d| d.code != "RY118"));
 }
 
+#[test]
+fn ordinary_box_text_does_not_invalidate_unrelated_project_files() {
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("a.R");
+    let b = root.path().join("b.R");
+    let mut project = Project::new();
+    project.add_file(
+        a.to_string_lossy().into_owned(),
+        parse(&a, "x <- 1L # toolbox text\n"),
+    );
+    project.add_file(
+        b.to_string_lossy().into_owned(),
+        parse(&b, "boxplot(1:3)\n"),
+    );
+    project.check();
+    assert_eq!(project.emit_count, 2);
+    project.update_file(
+        a.to_string_lossy().into_owned(),
+        Arc::new(parse(&a, "x <- 2L # toolbox text\n")),
+    );
+    let warm = project.check_incremental();
+    assert_eq!(project.emit_count, 1, "unrelated file stays cached");
+    assert_eq!(warm, project.check(), "warm and cold results agree");
+}
+
 #[cfg(unix)]
 #[test]
 fn unsaved_module_overlay_matches_symlinked_caller_root() {
@@ -116,6 +141,47 @@ fn unsaved_module_overlay_matches_symlinked_caller_root() {
         !module.exists(),
         "the editor overlay must not write the module"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn unsaved_unicode_module_overlay_does_not_borrow_raw_filename_source() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let raw = root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"bad\xff.r".to_vec()));
+    let unicode = root.path().join("bad�.r");
+    let caller = root.path().join("run.R");
+    fs::write(&raw, "answer <- function() 'wrong'\n").unwrap();
+    fs::write(&unicode, "answer <- function() 'disk is stale'\n").unwrap();
+    let caller_source = "box::use(m = ./`bad�`)\nm$answer() + 1L\n";
+    for reverse in [false, true] {
+        let mut raw_file = parse(&raw, "answer <- function() 'wrong'\n");
+        raw_file.native_path = Some(raw.clone());
+        let unsaved = parse(&unicode, "answer <- function() 1L\n");
+        let mut project = Project::new();
+        if reverse {
+            project.add_file(unicode.to_string_lossy().into_owned(), unsaved);
+            project.add_file(raw.to_string_lossy().into_owned(), raw_file);
+        } else {
+            project.add_file(raw.to_string_lossy().into_owned(), raw_file);
+            project.add_file(unicode.to_string_lossy().into_owned(), unsaved);
+        }
+        project.add_file(
+            caller.to_string_lossy().into_owned(),
+            parse(&caller, caller_source),
+        );
+        let checked = project.check();
+        let diagnostics = &checked.last().unwrap().1;
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY040"),
+            "reverse={reverse}: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]
@@ -363,6 +429,137 @@ fn explicit_reexport_keeps_package_data_mask_signature() {
     );
     assert!(
         diagnostics.iter().all(|(code, _, _)| code != "RY010"),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn legacy_absence_needs_proof_that_module_load_cannot_write_names() {
+    let root = tempfile::tempdir().unwrap();
+    for (module, source) in [
+        ("qualified", "base::assign('foo', function() 1L)\n"),
+        ("source", "source('extra.R', local = TRUE)\n"),
+        (
+            "sys_source",
+            "base::sys.source('extra.R', envir = environment())\n",
+        ),
+        ("load", "load('values.RData', envir = environment())\n"),
+        ("computed", "initialize_module()\n"),
+    ] {
+        fs::write(root.path().join(format!("{module}.r")), source).unwrap();
+        let diagnostics = codes_for(root.path(), &format!("box::use(./{module}[foo])\nfoo\n"));
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    // A call in an uninvoked function body cannot create a load-time name.
+    fs::write(
+        root.path().join("inert.r"),
+        "setup <- function() base::assign('foo', 1L)\n",
+    )
+    .unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./inert[foo])\n")
+            .iter()
+            .any(|(code, _, _)| code == "RY118")
+    );
+    fs::write(root.path().join("known.r"), "present <- 1L\n").unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./known[absent])\n")
+            .iter()
+            .any(|(code, _, _)| code == "RY118")
+    );
+}
+
+#[test]
+fn exported_function_signature_requires_a_surviving_direct_definition() {
+    let root = tempfile::tempdir().unwrap();
+    for (module, source) in [
+        (
+            "wrapped",
+            "foo <- function() 'old'\nfoo <- base::identity(function() 1L)\nbox::export(foo)\n",
+        ),
+        (
+            "alias",
+            "foo <- function() 'old'\nreplacement <- function() 1L\nfoo <- replacement\nbox::export(foo)\n",
+        ),
+        (
+            "removed",
+            "foo <- function() 'old'\nrm(foo)\nfoo <- base::identity(function() 1L)\nbox::export(foo)\n",
+        ),
+        (
+            "direct_overwrite",
+            "foo <- function() 'old'\nfoo <- function() 1L\nbox::export(foo)\n",
+        ),
+        (
+            "nested",
+            "foo <- function() 'old'\nif (TRUE) foo <- function() 1L\nbox::export(foo)\n",
+        ),
+    ] {
+        fs::write(root.path().join(format!("{module}.r")), source).unwrap();
+        let diagnostics = codes_for(
+            root.path(),
+            &format!("box::use(./{module}[foo])\nfoo() + 1L\n"),
+        );
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY040"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    fs::write(
+        root.path().join("direct.r"),
+        "foo <- function() 'old'\nbox::export(foo)\n",
+    )
+    .unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./direct[foo])\nfoo() + 1L\n")
+            .iter()
+            .any(|(code, _, _)| code == "RY040")
+    );
+}
+
+#[test]
+fn preferred_module_limits_do_not_select_a_different_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("mod.r"), vec![b' '; 1_048_577]).unwrap();
+    fs::write(root.path().join("mod.R"), "foo <- function() 'wrong'\n").unwrap();
+    let diagnostics = codes_for(root.path(), "box::use(./mod[foo, missing])\nfoo() + 1L\n");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _, _)| code != "RY040" && code != "RY118"),
+        "{diagnostics:#?}"
+    );
+    fs::remove_file(root.path().join("mod.r")).unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./mod[foo])\nfoo() + 1L\n")
+            .iter()
+            .any(|(code, _, _)| code == "RY040")
+    );
+    fs::write(root.path().join("mod.r"), vec![0xff]).unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./mod[foo])\nfoo() + 1L\n")
+            .iter()
+            .all(|(code, _, _)| code != "RY040")
+    );
+}
+
+#[test]
+fn dotted_module_basename_keeps_its_full_name_before_suffix() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("foo.bar.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(root.path().join("foo.r"), "foo <- function() 'wrong'\n").unwrap();
+    let diagnostics = codes_for(root.path(), "box::use(./foo.bar[foo])\nfoo() + 1L\n");
+    assert!(
+        diagnostics.iter().all(|(code, _, _)| code != "RY040"),
+        "{diagnostics:#?}"
+    );
+    fs::remove_file(root.path().join("foo.bar.r")).unwrap();
+    fs::write(root.path().join("foo.bar.R"), "foo <- function() 1L\n").unwrap();
+    let diagnostics = codes_for(root.path(), "box::use(./foo.bar[foo])\nfoo() + 1L\n");
+    assert!(
+        diagnostics.iter().all(|(code, _, _)| code != "RY040"),
         "{diagnostics:#?}"
     );
 }

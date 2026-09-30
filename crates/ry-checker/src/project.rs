@@ -219,7 +219,7 @@ impl Project {
         if self
             .files
             .iter()
-            .any(|(_, source)| source.source.contains("box"))
+            .any(|(_, source)| crate::box_imports::has_box_use(source))
         {
             self.mark_all_dirty();
         }
@@ -662,20 +662,26 @@ impl Project {
     }
 
     fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // The cheap textual gate is deliberately a superset of `box::use`
-        // syntax (including spaced `box :: use`). Avoid filesystem identity
-        // calls on the ordinary project path with no box imports.
+        // Avoid filesystem identity calls on projects with no parsed box
+        // imports. This also covers the spaced `box :: use` spelling.
         let box_sources = Arc::new(
             if self
                 .files
                 .iter()
-                .any(|(_, source)| source.source.contains("box"))
+                .any(|(_, source)| crate::box_imports::has_box_use(source))
             {
                 self.files
                     .iter()
                     .filter_map(|(path, file)| {
-                        crate::box_imports::path_identity(Path::new(path))
-                            .map(|identity| (identity, Arc::clone(file)))
+                        // The logical diagnostic path may be lossy for a
+                        // non-UTF-8 disk filename. Keep native identity for
+                        // box overlays so it cannot collide with a distinct
+                        // genuine Unicode module. Unsaved buffers still use
+                        // their logical source path.
+                        crate::box_imports::path_identity(
+                            file.native_path.as_deref().unwrap_or(Path::new(path)),
+                        )
+                        .map(|identity| (identity, Arc::clone(file)))
                     })
                     .collect()
             } else {

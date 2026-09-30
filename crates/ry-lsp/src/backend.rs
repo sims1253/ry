@@ -2062,6 +2062,7 @@ impl Backend {
                 let path_string = read_path.to_string_lossy().into_owned();
                 let mut parser = RParser::new().ok()?;
                 let mut file = parser.parse(&path_string, &decoded.text).ok()?;
+                file.native_path = Some(read_path);
                 decoded.attach_boundary_findings(&mut file);
                 Some((path_string, Arc::new(file)))
             })

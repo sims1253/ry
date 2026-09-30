@@ -1219,6 +1219,132 @@ fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
     );
 }
 
+#[test]
+fn parser_limit_is_reported_and_repair_restores_a_known_empty_inventory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(
+        pkg.join("R/use.R"),
+        "ok <- sysdata\nbad <- genuinely_missing\n",
+    )
+    .unwrap();
+    let serialized = pkg.join("R/sysdata.rda");
+    let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
+    assert!(nested.len() < 16 * 1024 * 1024);
+    fs::write(&serialized, nested).unwrap();
+
+    let run_check = || {
+        Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(pkg)
+            .args(["check", "R/use.R"])
+            .output()
+            .unwrap()
+    };
+    let run_facts = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(pkg)
+            .args(["dump-facts", "R/use.R"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+
+    let failed = run_check();
+    let diagnostics = String::from_utf8_lossy(&failed.stdout);
+    let notice = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        notice.contains("sysdata.rda (serialized parser resource limit exceeded)"),
+        "{notice}"
+    );
+    assert!(diagnostics.contains("genuinely_missing"), "{diagnostics}");
+    assert!(
+        !diagnostics.contains("variable `sysdata` is not bound"),
+        "{diagnostics}"
+    );
+    let facts = run_facts();
+    let degraded = &facts["contexts"][0]["inputs"]["degraded_scopes"];
+    assert_eq!(degraded.as_array().unwrap().len(), 1);
+    assert_eq!(degraded[0][1], "serialized parser resource limit exceeded");
+
+    fs::write(
+        &serialized,
+        include_bytes!("../../../testdata/serialized/empty.rda"),
+    )
+    .unwrap();
+    let repaired = run_check();
+    let diagnostics = String::from_utf8_lossy(&repaired.stdout);
+    let notice = String::from_utf8_lossy(&repaired.stderr);
+    assert!(!notice.contains("degraded scope"), "{notice}");
+    assert!(
+        diagnostics.contains("variable `sysdata` is not bound"),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains("genuinely_missing"), "{diagnostics}");
+    let repaired_facts = run_facts();
+    assert_eq!(
+        repaired_facts["contexts"][0]["inputs"]["degraded_scopes"],
+        serde_json::json!([])
+    );
+
+    // This is a real R-produced empty workspace in ASCII serialization.
+    // Static XDR inventory cannot read it, but its valid envelope must not
+    // be mislabeled as corrupt by the upstream parser's generic error.
+    fs::write(
+        &serialized,
+        include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+    )
+    .unwrap();
+    let unsupported = run_check();
+    let notice = String::from_utf8_lossy(&unsupported.stderr);
+    assert!(
+        notice.contains("sysdata.rda (unsupported serialized input)"),
+        "{notice}"
+    );
+    assert!(!notice.contains("malformed serialized input"), "{notice}");
+    let unsupported_facts = run_facts();
+    assert_eq!(
+        unsupported_facts["contexts"][0]["inputs"]["degraded_scopes"][0][1],
+        "unsupported serialized input"
+    );
+}
+
+#[test]
+fn missing_load_target_is_unavailable_but_absent_optional_sysdata_is_normal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(pkg.join("R/use.R"), "load('missing.rda')\n").unwrap();
+    fs::write(pkg.join("R/other.R"), "genuinely_missing\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(pkg)
+        .args(["check", "R/"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("missing.rda (serialized input could not be read)"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("sysdata.rda"),
+        "optional absent sysdata is normal: {stderr}"
+    );
+    assert!(
+        stdout.contains("genuinely_missing"),
+        "unrelated RY010 must remain: {stdout}"
+    );
+}
+
 /// A package root is re-resolved once per file in it, so an oversized
 /// dataset used to be pushed onto the degraded list once per file and
 /// printed that many times. The report is per file, not per reader.

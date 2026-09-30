@@ -1022,8 +1022,7 @@ impl CheckResult {
     }
 
     /// Surface scopes whose RY010 (unbound-variable) precision dropped
-    /// because a serialized data file exceeded the byte cap and was reduced
-    /// to a file-stem binding. Printed to stderr (never the stdout
+    /// because a serialized data file could not be inventoried. Printed to stderr (never the stdout
     /// diagnostic stream) so it is visible in both the human summary and
     /// `--statistics` without disturbing machine-readable output.
     fn print_degraded(&self) {
@@ -1031,13 +1030,15 @@ impl CheckResult {
             return;
         }
         eprintln!(
-            "ry: {} degraded scope(s) — serialized data file(s) over the byte cap fell back to file stems; RY010 precision reduced:",
+            "ry: {} degraded scope(s) — serialized inventory unavailable; RY010 precision may be reduced:",
             self.degraded.len()
         );
         for note in &self.degraded {
             eprintln!("  - {note}");
         }
-        eprintln!("ry: raise `max-serialized-bytes` in ry.toml to enumerate them precisely");
+        eprintln!(
+            "ry: inspect the listed files; raise `max-serialized-bytes` only for decoded-byte limit failures"
+        );
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
@@ -1094,7 +1095,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
-    // Degraded scopes (serialized data over the byte cap), deduplicated and
+    // Degraded serialized scopes, deduplicated and
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -1137,7 +1138,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     for group in groups {
         per_file_diagnostics.extend(check_project(group.check_input));
         for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason));
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
     }
 

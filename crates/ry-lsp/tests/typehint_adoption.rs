@@ -981,6 +981,96 @@ fn colliding_buffers_keep_independent_suppression_and_version() {
 
 #[cfg(unix)]
 #[test]
+fn aborted_collision_edits_keep_active_uri_and_valid_prefix_still_commits() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::time::Duration;
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            std::fs::create_dir(fixture.path("R")).unwrap();
+            let paths = [b"bad\xff.R".as_slice(), b"bad\xfe.R".as_slice()].map(|name| {
+                fixture
+                    .path("R")
+                    .join(std::ffi::OsString::from_vec(name.to_vec()))
+            });
+            std::fs::write(&paths[0], "x <- 1L\n").unwrap();
+            std::fs::write(&paths[1], "b <- genuinely_missing_name\n").unwrap();
+            let uris = paths.map(|path| file_uri(&path).unwrap());
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            session.open(&uris[0], 1, "x <- 1L\n").await.unwrap();
+            let mark = session.publication_mark();
+            session
+                .open(&uris[1], 1, "b <- genuinely_missing_name\n")
+                .await
+                .unwrap();
+            let active = session
+                .published_diagnostics_after(&uris[1], mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&active, "RY010"), 1, "{active}");
+
+            let invalid = json!({"start": {"line": 99, "character": 0},
+                                 "end": {"line": 99, "character": 1}});
+            for (version, batch) in [
+                (2, json!([{"range": invalid, "text": "changed"}])),
+                (3, json!([])),
+            ] {
+                sync_barrier(&mut session, &uris[1]).await;
+                let mark = session.publication_mark();
+                session.change(&uris[0], version, batch).await.unwrap();
+                assert!(
+                    tokio::time::timeout(
+                        Duration::from_millis(400),
+                        session.published_diagnostics_after(&uris[1], mark)
+                    )
+                    .await
+                    .is_err(),
+                    "inactive aborted edit cleared active diagnostics"
+                );
+            }
+
+            let mark = session.publication_mark();
+            session
+                .change(
+                    &uris[0],
+                    4,
+                    json!([
+                        {"text": "a <- another_missing\n"},
+                        {"range": invalid, "text": "discarded"}
+                    ]),
+                )
+                .await
+                .unwrap();
+            let prefix = session
+                .published_diagnostics_after(&uris[0], mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&prefix, "RY010"), 1, "{prefix}");
+            assert!(prefix.to_string().contains("another_missing"), "{prefix}");
+
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": uris[0]}}),
+                )
+                .await
+                .unwrap();
+            let restored = session
+                .published_diagnostics_after(&uris[1], mark)
+                .await
+                .unwrap();
+            assert_eq!(count_code(&restored, "RY010"), 1, "{restored}");
+            join_session(session, server).await;
+        });
+}
+
+#[cfg(unix)]
+#[test]
 fn colliding_sources_cannot_offer_other_buffers_quickfix() {
     use std::os::unix::ffi::OsStringExt;
     use std::time::Duration;

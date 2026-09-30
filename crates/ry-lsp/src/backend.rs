@@ -459,6 +459,7 @@ impl State {
         // An invalid UTF-16 range stops the batch. Prior valid edits remain
         // committed, as before; later ranges refer to text we could not
         // produce and must not be applied independently.
+        let mut applied = false;
         for change in changes.drain(..) {
             if let Some(range) = change.range
                 && let Some(old_text) = self.docs.get(path).cloned()
@@ -492,6 +493,7 @@ impl State {
                 } else {
                     self.trees.remove(path);
                 }
+                applied = true;
             } else {
                 // Full replacement, or a ranged edit without old text:
                 // the protocol's fallback replaces the whole document.
@@ -500,9 +502,14 @@ impl State {
                 self.parsed.remove(path);
                 self.hints.remove(path);
                 self.trees.remove(path);
+                applied = true;
             }
         }
-        CollisionChangeResult::Applied
+        if applied {
+            CollisionChangeResult::Applied
+        } else {
+            CollisionChangeResult::Rejected
+        }
     }
 
     /// Apply a whole `didChange` batch to one original URI while holding the
@@ -532,6 +539,7 @@ impl State {
             tracing::warn!(%uri, "missing colliding URI buffer snapshot");
             return CollisionChangeResult::Rejected;
         };
+        let mut applied = false;
         for change in changes.drain(..) {
             if let Some(range) = change.range {
                 let Some((start, end)) = range_byte_span(&text, range) else {
@@ -546,6 +554,12 @@ impl State {
                 text = change.text;
             }
             installed_version = version;
+            applied = true;
+        }
+        if !applied {
+            // Neither an empty notification nor a batch rejected at its
+            // first range transfers ownership from the active URI.
+            return CollisionChangeResult::Rejected;
         }
         // The one-key incremental tree may describe another native source.
         self.docs.insert(path.to_string(), text.clone());
@@ -879,7 +893,7 @@ mod colliding_change_tests {
         ];
         assert_eq!(
             state.apply_document_changes(&path, &uri, &mut invalid, 3),
-            CollisionChangeResult::Applied
+            CollisionChangeResult::Rejected
         );
         assert_eq!(state.docs[&path], expected);
         assert_eq!(state.versions[&path], 2);

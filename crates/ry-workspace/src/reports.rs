@@ -264,6 +264,31 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
     Ok(fields)
 }
 
+/// Classify only simple one-line root flow mappings. Nested values stay
+/// opaque: a metadata value cannot promote its keys to document settings,
+/// whereas a root execution or format key makes execution uncertain. Other
+/// root flow syntax is refused rather than treated as ordinary block YAML.
+fn root_flow_execution(line: &str) -> Result<bool, ()> {
+    let inner = line
+        .trim()
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+        .ok_or(())?;
+    if inner.len() > MAX_HEADER_BYTES {
+        return Err(());
+    }
+    for field in header_fields(inner).map_err(|_| ())? {
+        let (key, _) = yaml_key_value(field)?.ok_or(())?;
+        if key.is_empty() || key.starts_with(['?', '!', '&', '*', '[', '{', '<', '>']) {
+            return Err(());
+        }
+        if matches!(key, "execute" | "knitr" | "eval" | "format" | "<<") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn header_options(
     parser: &mut RParser,
     path: &str,
@@ -343,6 +368,23 @@ pub fn parse_report_with_tree(
             while first < rows.len() && rows[first].text.trim() != "---" {
                 let raw = rows[first].text.trim_end_matches(['\r', '\n']);
                 let indent = raw.len() - raw.trim_start_matches(' ').len();
+                let content = raw.trim_start_matches(' ');
+                if indent == 0 && content.starts_with('{') {
+                    match root_flow_execution(content) {
+                        Ok(false) => {
+                            first += 1;
+                            continue;
+                        }
+                        Ok(true) | Err(()) => {
+                            issues.push(issue(rows[first].offset, first, "RY121", "root flow YAML execution settings cannot be classified safely; no chunks are assumed executable"));
+                            break;
+                        }
+                    }
+                }
+                if indent == 0 && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
+                    issues.push(issue(rows[first].offset, first, "RY121", "report YAML root syntax cannot be classified safely; no chunks are assumed executable"));
+                    break;
+                }
                 match yaml_key_value(raw) {
                     Ok(Some((key, value))) => {
                         if indent == 0 {
@@ -770,6 +812,11 @@ mod tests {
         for front_matter in [
             "\"execute\":\n  \"eval\": false",
             "format:\n  html:\n    execute:\n      eval: false",
+            "{execute: {eval: false}}",
+            "{format: {html: {execute: {eval: false}}}}",
+            "{\"exec\\u0075te\": {eval: false}}",
+            "{format:\n  {html: {execute: {eval: false}}}}",
+            "!!map {execute: {eval: false}}",
             "format: {html: {execute: {eval: false}}}",
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nformat: *fmt",
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nformat:\n  <<: *fmt",
@@ -788,6 +835,7 @@ mod tests {
 
         for front_matter in [
             "metadata: {eval: false}",
+            "{title: \"test\", metadata: {execute: {eval: false}}}",
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nmetadata:\n  default: *fmt",
             "format:\n  html:\n    toc: true",
         ] {

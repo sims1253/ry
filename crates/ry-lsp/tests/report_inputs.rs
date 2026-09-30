@@ -33,7 +33,9 @@ fn warm_report_execution_identity_edits_republish_the_same_uri() {
                 ("😀 prose\r\n```{r, eval=FALSE}\r\n'a' + 1L\r\n```\r\n", false, false),
                 ("😀 prose\r\n```{r}\r\nknitr::`opts_\\x63hunk`$set(eval=FALSE)\r\n```\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
                 ("---\r\nformat: {html: {execute: {eval: false}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
+                ("---\r\n{format: {html: {execute: {eval: false}}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
                 ("---\r\nmetadata: {eval: false}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", true, false),
+                ("---\r\n{title: \"test\", metadata: {execute: {eval: false}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", true, false),
             ];
             for (index, (source, expect_type, expect_boundary)) in cases.iter().enumerate() {
                 let mark = session.publication_mark();

@@ -79,7 +79,9 @@ runtime references to knitr's chunk-option object, also stop static
 analysis with RY121. Complex `format` values such as flow mappings, aliases,
 anchors, and merges are refused visibly because their inherited execution
 settings cannot be resolved by this bounded reader; unrelated `metadata`
-values remain metadata. Malformed R code in an admitted chunk gets the usual
+values remain metadata. Simple one-line root flow metadata remains active;
+root flow execution/format keys and unclassifiable root YAML forms are refused
+visibly. Malformed R code in an admitted chunk gets the usual
 RY000 parse finding; a malformed R fence gets RY120.
 Directory discovery applies `index.max-file-bytes` before parsing and reports
 oversized skipped reports on stderr. An explicitly selected oversized report

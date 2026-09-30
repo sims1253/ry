@@ -216,6 +216,10 @@ fn format_inheritance_and_option_name_case_keep_execution_truthful() {
     fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
     let report = root.path().join("format.qmd");
     for yaml in [
+        "{execute: {eval: false}}",
+        "{format: {html: {execute: {eval: false}}}}",
+        "{\"exec\\u0075te\": {eval: false}}",
+        "!!map {execute: {eval: false}}",
         "format: {html: {execute: {eval: false}}}",
         "settings: &fmt\n  html:\n    execute:\n      eval: false\nformat: *fmt",
         "settings: &fmt\n  execute:\n    eval: false\nformat:\n  html:\n    <<: *fmt",
@@ -236,6 +240,14 @@ fn format_inheritance_and_option_name_case_keep_execution_truthful() {
             "{yaml}: {diagnostics:?}"
         );
     }
+    fs::write(
+        &report,
+        "---\n{title: \"test\", metadata: {execute: {eval: false}}}\n---\n```{r}\n'a' + 1L\n```\n",
+    )
+    .unwrap();
+    let benign = check(root.path());
+    assert_eq!(code(&benign, "RY040").len(), 1, "{benign:?}");
+    assert!(code(&benign, "RY121").is_empty(), "{benign:?}");
     for header in ["{r, Eval=FALSE}", "{r}\n#| Eval: false"] {
         fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
         let diagnostics = check(root.path());

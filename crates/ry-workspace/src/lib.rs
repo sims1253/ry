@@ -16,7 +16,8 @@ use discovery::{is_r_source_name, is_testthat_code_name};
 pub mod packages;
 mod serialized;
 
-use serialized::serialized_inventory;
+pub use serialized::InventoryFailure;
+use serialized::{InventoryStatus, serialized_inventory};
 
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
@@ -97,7 +98,7 @@ pub struct WorkspaceContext {
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
-    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+    pub degraded_scopes: Vec<(PathBuf, InventoryFailure)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -110,11 +111,11 @@ pub enum ResolveError {
 
 /// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
 /// `bindings` aggregates the per-file object names (or file-stem
-/// fallbacks); `degraded` lists files that exceeded the byte cap.
+/// fallbacks); `degraded` lists files whose inventories were unavailable.
 #[derive(Clone, Default)]
 struct DataInventory {
     bindings: HashSet<String>,
-    degraded: Vec<PathBuf>,
+    degraded: Vec<(PathBuf, InventoryFailure)>,
 }
 
 /// A single file-stem binding, used as the conservative fallback when a
@@ -333,7 +334,7 @@ pub fn resolve_workspace_context<'a>(
     // A package root is visited once per file in it, so a single oversized
     // dataset would otherwise be reported once per file. Deduplicate on the
     // (path, reason) pair; the CLI prints one line per entry.
-    let mut degraded: BTreeSet<(PathBuf, &'static str)> = BTreeSet::new();
+    let mut degraded: BTreeSet<(PathBuf, InventoryFailure)> = BTreeSet::new();
     let project_attached: HashSet<String> = configured_packages
         .iter()
         .cloned()
@@ -464,15 +465,17 @@ pub fn resolve_workspace_context<'a>(
                     .or_insert_with(|| source_package_datasets(&root, max_serialized_bytes))
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
-                for path in &datasets.degraded {
-                    degraded.insert((path.clone(), "oversized dataset in data/"));
+                for (path, reason) in &datasets.degraded {
+                    degraded.insert((path.clone(), *reason));
                 }
             }
             let sysdata = root.join("R/sysdata.rda");
+            // This file is optional. The inventory's single open decides
+            // absence; a separate existence probe would race that open.
             let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
             file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
-            if sysdata_inventory.degraded {
-                degraded.insert((sysdata, "oversized R/sysdata.rda"));
+            if let InventoryStatus::Unavailable(reason) = sysdata_inventory.status {
+                degraded.insert((sysdata, reason));
             }
             let loaded = loaded_serialized_bindings(
                 file,
@@ -481,8 +484,8 @@ pub fn resolve_workspace_context<'a>(
                 user_stubs,
                 max_serialized_bytes,
             );
-            for path in &loaded.degraded {
-                degraded.insert((path.clone(), "oversized load() target"));
+            for (path, reason) in &loaded.degraded {
+                degraded.insert((path.clone(), *reason));
             }
             load_bindings.insert(file.path.clone(), loaded.per_span);
 
@@ -859,8 +862,12 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                 } else {
                     out.bindings.extend(inventory.bindings);
                 }
-                if inventory.degraded {
-                    out.degraded.push(path);
+                match inventory.status {
+                    InventoryStatus::Missing => {
+                        out.degraded.push((path, InventoryFailure::ReadFailure));
+                    }
+                    InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
+                    InventoryStatus::Complete => {}
                 }
             }
             "rds" => {
@@ -895,10 +902,10 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
 
 /// Per-file `load()` resolution result. `per_span` maps each `load()`
 /// call's start span to the bindings it introduces; `degraded` lists any
-/// target workspaces that exceeded the byte cap.
+/// target workspaces whose inventories were unavailable.
 struct LoadedInventory {
     per_span: HashMap<usize, HashSet<String>>,
-    degraded: Vec<PathBuf>,
+    degraded: Vec<(PathBuf, InventoryFailure)>,
 }
 
 fn loaded_serialized_bindings(
@@ -982,8 +989,12 @@ fn loaded_serialized_bindings(
             )
         }) {
             let inventory = serialized_inventory(&path, max_serialized_bytes);
-            if inventory.degraded {
-                out.degraded.push(path);
+            match inventory.status {
+                InventoryStatus::Missing => {
+                    out.degraded.push((path, InventoryFailure::ReadFailure));
+                }
+                InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
+                InventoryStatus::Complete => {}
             }
             out.per_span.insert(span.start, inventory.bindings);
         }

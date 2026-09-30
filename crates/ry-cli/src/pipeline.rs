@@ -265,7 +265,7 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
     pub check_input: CheckInput,
-    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+    pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
 }
 
 /// Resolve parsed files into per-package checker inputs, shared by

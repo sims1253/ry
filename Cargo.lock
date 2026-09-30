@@ -1389,6 +1389,7 @@ dependencies = [
  "criterion",
  "hashbrown 0.17.1",
  "insta",
+ "libc",
  "proptest",
  "rayon",
  "ry-config",
@@ -1398,6 +1399,7 @@ dependencies = [
  "ry-workspace",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tracing",
 ]

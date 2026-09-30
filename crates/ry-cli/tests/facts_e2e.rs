@@ -76,6 +76,24 @@ fn scope_exit_and_first_assignment_are_not_reference_facts() {
 }
 
 #[test]
+fn classed_union_retains_union_level_facts() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("union.R"),
+        "f <- function(flag) { x <- structure(if (flag) 1L else \"a\", class = \"tagged\"); x }\n",
+    )
+    .unwrap();
+    let output = facts(dir.path(), &["union.R"]);
+    let scopes = output["files"][0]["scopes"].as_array().unwrap();
+    let inner = scopes.iter().find(|scope| scope["name"] == "f").unwrap();
+    let ty = &binding(inner, "x")["type"];
+    assert_eq!(ty["mode"], "union");
+    assert_eq!(ty["class"]["names"], json!(["tagged"]));
+    assert_eq!(ty["members"]["kind"], "known");
+    assert_eq!(ty["members"]["types"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn byte_spans_round_trip_unicode_tabs_and_multiline_functions() {
     let dir = tempfile::tempdir().unwrap();
     let source = "é <- 1L\r\nf <- function(λ) {\r\n\t結果 <- λ\r\n\t結果\r\n}\r\n`空 白` <- 1L\r\n";

@@ -4,6 +4,7 @@
 
 - [Checking files and CI](#checking-files-and-ci)
 - [Package awareness](#package-awareness)
+- [uvr project libraries](#uvr-project-libraries)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
 - [Exporting analysis facts](#exporting-analysis-facts)
@@ -39,6 +40,9 @@ can run:
 ``` yaml
 - run: ry check --output-format github .
 ```
+
+For a pinned release install, a project-wide pre-commit/prek hook, and a
+complete workflow, see the [project-check example](examples/project-check/README.md).
 
 ## Package awareness
 
@@ -96,6 +100,63 @@ bad <- map_dbl(1:4, function(i) as.character(i))
 
 ry reports RY080 because the callback returns character values where `map_dbl`
 requires doubles. `in_parallel()` preserves the callback's inferred type.
+
+## uvr project libraries
+
+[uvr](https://github.com/nbafrank/uvr/blob/main/README.md) installs a project's
+packages in `.uvr/library/`. Provision that library with uvr first. Then pass
+its path to ry through the existing `R_LIBS` environment variable. From the
+project directory, use this POSIX shell recipe:
+
+```sh
+uvr sync
+R_LIBS="$PWD/.uvr/library" ry check .
+```
+
+In PowerShell on Windows, use:
+
+```powershell
+uvr sync
+$env:R_LIBS = Join-Path (Get-Location) '.uvr\library'
+ry check .
+```
+
+Both recipes keep a path with spaces as one library root. `uvr sync` provisions
+the packages; ry only reads static package metadata. To give the editor the
+same library, start a new editor process from a shell with the same `R_LIBS`,
+or set `R_LIBS` in the editor's language-server process environment. A desktop
+launcher may not inherit your terminal's variables. After changing that
+environment, restart the editor or language server; changing a shell variable
+does not update a running server.
+
+An installed package is not automatically attached. ry uses its installed
+`NAMESPACE` exports when checked source calls `library()` or `require()`, or
+when a source package imports it in its own `NAMESPACE`. A `uvr.toml` or
+`uvr.lock` dependency by itself does not add unqualified names. If the host
+attaches a package outside the checked source, declare it in `ry.toml` with
+`packages = ["name"]`. A stub can supply types, but ry does not verify that
+the stub matches the installed package version or API.
+
+ry searches a nearby `renv/library` before `R_LIBS`, then searches `R_LIBS_USER`
+and `R_LIBS_SITE` in that order. It checks each variable's paths in their
+listed order. It then checks `R_HOME/library`, platform library locations, and
+home-directory library locations. The first found `NAMESPACE` for a package
+wins; ry does not merge exports from multiple installed versions. A missing
+library path is skipped, so a later root can still supply the package. Within
+a root, a direct package
+directory wins before versioned subdirectories. For a path with a `%`
+placeholder, ry searches a bounded set of subdirectories under the prefix;
+it prefers a directory matching the inferred R minor version when that
+version is available, then uses descending directory names. This static
+search is not a full reproduction of R's `.libPaths()` or uvr's resolution.
+
+Run `ry check . --explain-files` to inspect which source files ry checks.
+The `.uvr/library/` tree supplies metadata and is not recursively checked as
+project source. `ry dump-facts --format json .` records a context hash for the
+library inventory used by an analysis. The same source can have a different
+context hash under a different `R_LIBS`; compare that input when CLI and editor
+results differ. ry does not read uvr lockfiles, activate environments, run
+`.Rprofile`, or execute installed package code.
 
 ## Data masking and NSE
 

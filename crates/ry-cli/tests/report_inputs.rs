@@ -477,4 +477,27 @@ fn oversized_report_is_visible_for_direct_and_directory_inputs() {
         String::from_utf8_lossy(&discovered.stderr).contains("per-file size cap"),
         "{discovered:?}"
     );
+
+    // The default formatter slices the original source line using the issue
+    // span. A one-byte RY120 span inside this first character used to panic.
+    fs::write(
+        &path,
+        format!("é\n{}", " ".repeat(ry_workspace::reports::MAX_REPORT_BYTES)),
+    )
+    .unwrap();
+    let human = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("check")
+        .arg(&path)
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    assert!(human.status.success(), "{human:?}");
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&human.stdout),
+        String::from_utf8_lossy(&human.stderr)
+    );
+    assert!(output.contains("RY120"), "{output}");
+    assert!(output.contains("é"), "{output}");
+    assert!(!output.contains("panicked"), "{output}");
 }

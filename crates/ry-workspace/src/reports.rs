@@ -45,9 +45,26 @@ fn lines(source: &str) -> Vec<Line<'_>> {
         .collect()
 }
 
-fn issue(offset: usize, line: usize, code: &'static str, message: &str) -> InputIssue {
+/// Anchor an input finding to one complete source character. The human
+/// formatter slices the original line using this span, so a one-byte range
+/// inside a multibyte character would panic.
+fn source_issue(
+    source: &str,
+    offset: usize,
+    line: usize,
+    code: &'static str,
+    message: &str,
+) -> InputIssue {
+    let mut start = offset.min(source.len());
+    while !source.is_char_boundary(start) {
+        start -= 1;
+    }
+    let end = source[start..]
+        .chars()
+        .next()
+        .map_or(start, |character| start + character.len_utf8());
     InputIssue {
-        span: Span::new(offset, offset.saturating_add(1), line, 0),
+        span: Span::new(start, end, line, 0),
         code,
         message: message.to_owned(),
     }
@@ -342,6 +359,7 @@ pub fn parse_report_with_tree(
     source: &str,
     old_tree: Option<&Tree>,
 ) -> Result<(SourceFile, Tree), ry_core::parser::ParseError> {
+    let issue = |offset, line, code, message| source_issue(source, offset, line, code, message);
     if source.len() > MAX_REPORT_BYTES {
         let (mut file, tree) = parser.parse_with_tree(path, "", None)?;
         file.source = source.to_owned();
@@ -590,6 +608,27 @@ pub fn parse_report_with_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_issue_spans_end_on_original_character_boundaries() {
+        let source = "é🙂\n";
+        for (offset, expected) in [
+            (0, (0, 2)),
+            (1, (0, 2)),
+            (2, (2, 6)),
+            (4, (2, 6)),
+            (6, (6, 7)),
+            (7, (7, 7)),
+            (usize::MAX, (7, 7)),
+        ] {
+            let span = source_issue(source, offset, 0, "RY120", "limit").span;
+            assert_eq!((span.start, span.end), expected, "offset {offset}");
+            assert!(source.is_char_boundary(span.start));
+            assert!(source.is_char_boundary(span.end));
+        }
+        assert_eq!(source_issue("", 0, 0, "RY120", "limit").span.end, 0);
+        assert_eq!(source_issue("a", 0, 0, "RY120", "limit").span.end, 1);
+    }
 
     #[test]
     fn report_mask_keeps_original_offsets_and_execution_boundaries() {
@@ -892,6 +931,7 @@ mod tests {
             parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &huge, None).unwrap();
         assert!(file.stmts.is_empty());
         assert_eq!(file.input_issues[0].code, "RY120");
+        assert_eq!(file.input_issues[0].span.end, "é".len());
     }
 
     #[test]
@@ -919,11 +959,12 @@ mod tests {
                 parse_report_with_tree(&mut RParser::new().unwrap(), "f.qmd", &source, None)
                     .unwrap();
             assert_eq!(file.source, source);
-            assert!(
-                file.input_issues
-                    .iter()
-                    .all(|issue| issue.span.start <= source.len())
-            );
+            assert!(file.input_issues.iter().all(|issue| {
+                issue.span.start <= issue.span.end
+                    && issue.span.end <= source.len()
+                    && source.is_char_boundary(issue.span.start)
+                    && source.is_char_boundary(issue.span.end)
+            }));
             assert!(
                 file.parse_errors
                     .iter()

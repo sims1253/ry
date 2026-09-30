@@ -759,6 +759,10 @@ impl LanguageServer for Backend {
         }
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
+        if ry_workspace::reports::is_report_path(std::path::Path::new(&path)) {
+            // Masked prose and cell metadata are not editable R source.
+            return Ok(None);
+        }
 
         {
             let state = self.state.lock().await;

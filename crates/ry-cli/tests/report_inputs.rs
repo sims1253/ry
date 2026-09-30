@@ -1,0 +1,116 @@
+//! Report input runs through the same discovery and checker path as R files.
+
+use std::fs;
+use std::process::Command;
+
+fn check(root: &std::path::Path) -> Vec<serde_json::Value> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(root)
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
+}
+
+fn code<'a>(diags: &'a [serde_json::Value], code: &str) -> Vec<&'a serde_json::Value> {
+    diags.iter().filter(|diag| diag["code"] == code).collect()
+}
+
+#[test]
+fn opt_in_reports_keep_chunk_order_and_report_environments_separate() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(
+        root.path().join("first.qmd"),
+        "é prose\r\n```{r}\r\nx <- \"a\"\r\n```\r\n```{r}\r\nx + 1L\r\n```\r\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("second.Rmd"), "```{r}\nx + 1L\n```\n").unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY040").len(), 1, "{diagnostics:?}");
+    assert_eq!(code(&diagnostics, "RY010").len(), 1, "{diagnostics:?}");
+    let bad = code(&diagnostics, "RY040")[0];
+    assert!(bad.to_string().contains("first.qmd"), "{bad}");
+    assert_eq!(bad["line"], 6, "{bad}");
+}
+
+#[test]
+fn disabled_and_uncertain_chunks_have_visible_boundaries() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(root.path().join("a.qmd"), "```{r}\nknown <- 1L\n```\n```{r}\n#| eval: false\nknown <- \"hidden\"\n```\n```{r, eval=choose()}\nuncertain <- 1L\n```\n```{r}\nuncertain + \"x\"\n```\n").unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY121").len(), 1, "{diagnostics:?}");
+    assert!(code(&diagnostics, "RY040").is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn report_input_is_disabled_by_default_and_r_files_remain_checked() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.qmd"), "```{r}\n\"a\" + 1L\n```\n").unwrap();
+    fs::write(root.path().join("a.R"), "\"a\" + 1L\n").unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY040").len(), 1, "{diagnostics:?}");
+    assert!(diagnostics.iter().all(|d| !d.to_string().contains("a.qmd")));
+}
+
+#[test]
+fn split_r_syntax_reports_each_chunk_at_original_crlf_line() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(
+        root.path().join("broken.qmd"),
+        "😀 intro\r\n```{r}\r\nx <- (\r\n```\r\n```{r}\r\n1L)\r\n```\r\n",
+    )
+    .unwrap();
+    let diagnostics = check(root.path());
+    let errors = code(&diagnostics, "RY000");
+    assert_eq!(errors.len(), 2, "{diagnostics:?}");
+    assert_eq!(errors[0]["line"], 3);
+    assert_eq!(errors[0]["column"], 3);
+    assert_eq!(errors[1]["line"], 6);
+}
+
+#[test]
+fn fact_source_hash_tracks_original_prose_and_uncertain_reports_refuse_export() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let path = root.path().join("memo.qmd");
+    let dump = || {
+        Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["dump-facts", "--format", "json"])
+            .arg(&path)
+            .output()
+            .unwrap()
+    };
+    fs::write(&path, "😀 prose\n```{r}\nx <- 1L\n```\n").unwrap();
+    let first = dump();
+    assert!(first.status.success(), "{first:?}");
+    let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    fs::write(&path, "界 prose\n```{r}\nx <- 1L\n```\n").unwrap();
+    let second = dump();
+    assert!(second.status.success(), "{second:?}");
+    let second: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_ne!(
+        first["files"][0]["source_hash"],
+        second["files"][0]["source_hash"]
+    );
+    fs::write(&path, "```{r, eval=choose()}\nx <- 1L\n```\n").unwrap();
+    let uncertain = dump();
+    assert!(!uncertain.status.success());
+    assert!(String::from_utf8_lossy(&uncertain.stderr).contains("uncertain input boundary"));
+}
+
+#[test]
+fn source_call_keeps_report_origin_without_executing_helper_file() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(root.path().join("helper.R"), "from_helper <- function() 1L\n").unwrap();
+    fs::write(root.path().join("memo.qmd"), "```{r}\nsource('helper.R')\nfrom_helper()\n```\n").unwrap();
+    let diagnostics = check(root.path());
+    let unresolved = code(&diagnostics, "RY010");
+    assert_eq!(unresolved.len(), 1, "{diagnostics:?}");
+    assert!(unresolved[0]["path"].as_str().unwrap().ends_with("memo.qmd"));
+    assert!(unresolved[0]["message"].as_str().unwrap().contains("from_helper"));
+}

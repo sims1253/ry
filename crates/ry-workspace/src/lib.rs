@@ -6,6 +6,7 @@
 
 mod discovery;
 mod native;
+pub mod reports;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible_with_limits, is_r_source_path, is_single_file_walk_admitted,
@@ -52,6 +53,27 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Reports have their own ordered R environment even when they share a
+/// package directory. Ordinary source files retain package grouping.
+pub fn analysis_group_key(path: &Path) -> Option<PathBuf> {
+    if reports::is_report_path(path) {
+        Some(path.to_path_buf())
+    } else {
+        enclosing_package_root(path)
+    }
+}
+
+/// A report's unique group key is its file path, not a filesystem root.
+pub fn resolution_root_for_group<'a>(group: Option<&'a Path>, fallback: &'a Path) -> PathBuf {
+    match group {
+        Some(path) if reports::is_report_path(path) => {
+            enclosing_package_root(path).unwrap_or_else(|| fallback.to_path_buf())
+        }
+        Some(path) => path.to_path_buf(),
+        None => fallback.to_path_buf(),
+    }
+}
+
 /// Group path strings by enclosing package root, keeping each group's
 /// input indices in ascending order. Each R package is a separate
 /// library scope: pooling multiple package roots into one project lets
@@ -79,10 +101,14 @@ where
         } else {
             path.parent()
         };
-        let root = root_cache
-            .entry(key)
-            .or_insert_with(|| enclosing_package_root(path))
-            .clone();
+        let root = if reports::is_report_path(path) {
+            Some(path.to_path_buf())
+        } else {
+            root_cache
+                .entry(key)
+                .or_insert_with(|| enclosing_package_root(path))
+                .clone()
+        };
         groups.entry(root).or_default().push(index);
     }
     groups

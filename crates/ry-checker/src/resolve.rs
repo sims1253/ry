@@ -599,6 +599,14 @@ impl Checker {
     // collected from error-free trees, so the file's other diagnostics
     // remain real.
     pub(crate) fn emit_parse_errors(&mut self, file: &SourceFile) {
+        for issue in &file.input_issues {
+            self.emit(
+                Severity::Warning,
+                issue.span,
+                issue.code,
+                issue.message.clone(),
+            );
+        }
         for span in &file.parse_errors {
             self.emit(
                 Severity::Error,

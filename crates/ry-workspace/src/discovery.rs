@@ -392,7 +392,7 @@ pub fn is_r_source_path(path: &Path) -> bool {
 fn is_source_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
-        Some("R" | "r" | "S" | "s" | "q")
+        Some("R" | "r" | "S" | "s" | "q" | "Rmd" | "rmd" | "qmd")
     )
 }
 
@@ -434,7 +434,11 @@ pub fn discover_r_files(
     // package rules: it is the explicit subject of the analysis.
     if walk_root.is_file() {
         return DiscoveryResult {
-            files: vec![walk_root.to_path_buf()],
+            files: if !crate::reports::is_report_path(walk_root) || config.reports.enabled {
+                vec![walk_root.to_path_buf()]
+            } else {
+                Vec::new()
+            },
             ..Default::default()
         };
     }
@@ -467,6 +471,7 @@ pub fn discover_r_files(
         package_root.as_deref(),
         &buildignore,
         check_test_fixtures,
+        config.reports.enabled,
         0,
         &limits,
         &excludes,
@@ -568,6 +573,7 @@ fn discover_recursive(
     package_root: Option<&Path>,
     buildignore: &[glob::Pattern],
     check_test_fixtures: bool,
+    reports_enabled: bool,
     depth: usize,
     limits: &DiscoveryLimits,
     excludes: &ry_config::Excludes,
@@ -666,6 +672,7 @@ fn discover_recursive(
                 nested_package_root.as_deref(),
                 &nested_buildignore,
                 check_test_fixtures,
+                reports_enabled,
                 depth + 1,
                 limits,
                 excludes,
@@ -673,6 +680,9 @@ fn discover_recursive(
                 exclude_root,
             );
         } else if is_source_path(&path) {
+            if crate::reports::is_report_path(&path) && !reports_enabled {
+                continue;
+            }
             if !check_test_fixtures && is_test_fixture(&path) {
                 skipped.record(&path, false, "test fixture", limits.max_files);
                 continue;

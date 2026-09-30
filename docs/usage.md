@@ -3,6 +3,7 @@
 [Getting started](../README.md) · [Configuration](configuration.md) · [Rules](rules.md)
 
 - [Checking files and CI](#checking-files-and-ci)
+- [R Markdown and Quarto inputs](#r-markdown-and-quarto-inputs)
 - [Package awareness](#package-awareness)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
@@ -39,6 +40,38 @@ can run:
 ``` yaml
 - run: ry check --output-format github .
 ```
+
+## R Markdown and Quarto inputs
+
+Set `reports.enabled = true` in `ry.toml` to check ordinary fenced R chunks
+in `.Rmd` and `.qmd` files. The setting applies to `ry check` and the language
+server. Each report has its own ordered R environment. An active chunk can
+define a name used by a later active chunk in the same report; another report
+does not inherit that name. ry keeps the original report path and text for
+diagnostic positions, source hashes, and existing conservative `source()`
+handling. It does not render or run a report.
+
+```toml
+[reports]
+enabled = true
+```
+
+ry checks literal `eval = TRUE` and `#| eval: true` chunks. Literal false
+forms disable a chunk. `include = FALSE`, `echo = FALSE`, and their Quarto
+forms still leave the chunk active. R chunks inside a longer non-R fence and
+double-brace documentation examples stay inert. A chunk must close with the
+same fence kind and at least the opening length. ry parses each R chunk on
+its own, then checks admitted chunks in document order.
+
+RY120 marks an unclosed R fence or a report over the 2 MiB or 128-chunk
+input limit. RY121 marks dynamic or conflicting execution options. After an
+uncertain option, ry does not assume that later chunks ran. Report-level
+execution options in YAML and runtime chunk-option changes also stop static
+analysis with RY121. A malformed R chunk gets the usual RY000 parse finding.
+These are bounded static checks; inline R, child documents, notebooks,
+hooks, and renderer or project options are outside this input subset.
+Source-edit actions are withheld for reports because edits through a masked
+document have not been proven safe. Direct `.R` checking is unchanged.
 
 ## Package awareness
 

@@ -17,6 +17,7 @@ bzip2 = { workspace = true }
 flate2 = { workspace = true }
 liblzma = { workspace = true }
 glob = { workspace = true }
+tree-sitter = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

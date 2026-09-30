@@ -1365,8 +1365,12 @@ impl Backend {
                     .collect();
                 let diagnostic_uri = path_to_uri(&diagnostic_path);
                 let non_empty = !diagnostics.is_empty();
+                // The version identifies the open-buffer snapshot even when
+                // this pass clears its diagnostics. Closed files and lifecycle
+                // clears have no document version.
+                let version = diagnostic_versions.get(&diagnostic_path).copied();
                 self.client
-                    .publish_diagnostics(diagnostic_uri, diagnostics, None)
+                    .publish_diagnostics(diagnostic_uri, diagnostics, version)
                     .await;
                 published.push((diagnostic_path, non_empty));
             }

@@ -3,6 +3,70 @@ use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
+struct HelperCallEffects<'a> {
+    params: &'a [String],
+    may_install: bool,
+    called_formals: &'a [String],
+    fresh_target_formal: Option<&'a str>,
+    fresh_target_needs_base_c: bool,
+    forwarded_installer: Option<&'a str>,
+}
+
+fn supplied_callable_may_install_caller_binding(
+    checker: &Checker,
+    function: &UserFn,
+    args: &[Arg],
+    scope: &Scope,
+) -> bool {
+    if function.caller_binding_called_formals.is_empty() {
+        return false;
+    }
+    let Some((param_names, matches)) = crate::match_caller_binding_arguments(function, args) else {
+        return true;
+    };
+    let dots_actuals: Vec<_> = matches
+        .param_for_arg
+        .iter()
+        .enumerate()
+        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
+        .collect();
+    let actual_may_install = |actual: usize| {
+        args.get(actual).is_some_and(|actual| {
+            let known_environment = matches!(
+                &actual.value,
+                Expr::Call { func, args, .. }
+                    if args.is_empty()
+                        && ident_name(func).is_some_and(|name| {
+                            crate::semantic_lists::bare_name(name) == "environment"
+                                && checker.resolves_to_base(name, scope)
+                        })
+            );
+            !known_environment && !crate::collect::inert_caller_binding_actual(&actual.value)
+        })
+    };
+    function.caller_binding_called_formals.iter().any(|called| {
+        let named = param_names.iter().enumerate().any(|(formal, param)| {
+            param == called
+                && matches
+                    .arg_for_param(formal)
+                    .is_some_and(actual_may_install)
+        });
+        if named || matches.dots.is_none() {
+            return named;
+        }
+        if called == "..." {
+            return dots_actuals.iter().copied().any(actual_may_install);
+        }
+        called
+            .strip_prefix("..")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| dots_actuals.get(index))
+            .copied()
+            .is_some_and(actual_may_install)
+    })
+}
+
 impl Checker {
     pub(crate) fn infer_call(
         &mut self,
@@ -22,11 +86,411 @@ impl Checker {
             scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
+        // R selects a named callable before forcing its arguments too. Capture
+        // installer and formal provenance before an argument can overwrite
+        // the selected name. The target of do.call is different: its `what`
+        // argument is evaluated by do.call, so retain that check below.
+        let named_installer = callee_name(func).is_some_and(|name| {
+            self.caller_binding_source_matches(&name, scope, |source| {
+                crate::collect::installer_may_replace_current_binding(source, args)
+                    || self.named_helper_may_replace_current_binding(source, args, scope)
+            }) || (scope.is_parameter(&name)
+                && scope.get(&name).is_some_and(|binding| {
+                    matches!(
+                        binding.mode,
+                        ry_core::types::Mode::Function
+                            | ry_core::types::Mode::Opaque
+                            | ry_core::types::Mode::Union
+                    )
+                }))
+        });
+        // R selects the dispatcher before evaluating its arguments. Its
+        // `what` value is selected later by do.call itself, so only freeze
+        // the dispatcher's identity here.
+        let selected_do_call =
+            callee_name(func).is_some_and(|name| self.selected_base_do_call(&name, scope));
+        let selected_immediate_assign = named_installer
+            && callee_name(func)
+                .is_some_and(|name| self.loop_selected_immediate_assign(&name, scope));
+        // A value-valued head is also evaluated before its arguments. Capture
+        // possible sources before an argument overwrites a copied function.
+        let computed_installer = callee_name(func).is_none()
+            && self.computed_head_may_replace_current_binding(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        // These primitives can install an active binding or a promise after
+        // an earlier value was read. A scalar assertion about that value
+        // cannot certify the later binding. Keep this narrower than the
+        // general unknown-effect flag: that flag also makes base predicate
+        // identity opaque and would hide the existing RY032 warning.
+        let do_call_installer =
+            selected_do_call && self.do_call_may_replace_current_binding(args, scope);
+        if named_installer || computed_installer || do_call_installer {
+            // A loop-carried value proven to be only an immediate base assign
+            // can spoil an earlier assertion, but leaves no lazy or active
+            // binding behind. A successful later assertion may prove a new
+            // scalar fact. All other effect routes retain uncertainty.
+            if !selected_immediate_assign || computed_installer || do_call_installer {
+                scope.dynamic_bindings_unknown = true;
+            }
+            for name in scope.scalar_asserted_bindings.clone() {
+                scope.clear_scalar_asserted(&name);
+            }
+        }
         if !pure {
             scope.invalidate_ops_environment();
         }
         result
+    }
+
+    /// Resolve the value of an indirect call head through the same bounded
+    /// callable-source transport used for aliases and `do.call`. An opaque
+    /// source cannot certify that the earlier assertion still describes the
+    /// current binding. This is deliberately effect-only: return inference
+    /// and ordinary callee diagnostics keep their existing resolution.
+    fn computed_head_may_replace_current_binding(
+        &self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        let mut completed = HashMap::new();
+        let mut visiting = HashSet::new();
+        let mut remaining = 128;
+        crate::collect::global_caller_binding_value_sources(func, 64)
+            .iter()
+            .any(|source| {
+                self.computed_source_may_replace_current_binding(
+                    source,
+                    args,
+                    scope,
+                    &mut completed,
+                    &mut visiting,
+                    &mut remaining,
+                )
+            })
+    }
+
+    pub(super) fn computed_source_may_replace_current_binding(
+        &self,
+        source: &str,
+        args: &[Arg],
+        scope: &Scope,
+        completed: &mut HashMap<String, bool>,
+        visiting: &mut HashSet<String>,
+        remaining: &mut usize,
+    ) -> bool {
+        if let Some(effect) = completed.get(source) {
+            return *effect;
+        }
+        if *remaining == 0 || !visiting.insert(source.to_string()) {
+            return true;
+        }
+        *remaining -= 1;
+        let effect = if let Some(sources) = scope.bounded_caller_binding_sources.get(source) {
+            sources.iter().any(|candidate| {
+                self.computed_source_may_replace_current_binding(
+                    candidate, args, scope, completed, visiting, remaining,
+                )
+            })
+        } else if source == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+            || scope.uncertain_caller_binding_aliases.contains(source)
+        {
+            true
+        } else if source.contains("::")
+            && !source.starts_with(crate::LITERAL_QUALIFIED_CALLER_BINDING_PREFIX)
+        {
+            // Namespace lookup is independent of a same-spelled lexical
+            // binding. Other packages have no certified binding contract.
+            if !crate::semantic_lists::is_base_qualified(source) {
+                true
+            } else if crate::collect::is_caller_binding_installer_source(source) {
+                crate::collect::installer_may_replace_current_binding(source, args)
+            } else {
+                !matches!(
+                    crate::semantic_lists::bare_name(source),
+                    "identity" | "invisible" | "force"
+                )
+            }
+        } else if scope.local_caller_binding_functions.contains_key(source) {
+            self.named_helper_may_replace_current_binding(source, args, scope)
+        } else if !scope.dynamic_bindings_unknown
+            && scope.inert_caller_binding_functions.contains(source)
+        {
+            false
+        } else if let Some(alias) = scope.function_alias(source) {
+            self.computed_source_may_replace_current_binding(
+                alias, args, scope, completed, visiting, remaining,
+            )
+        } else if scope.is_parameter(source) || scope.is_lexical_function(source) {
+            true
+        } else if let Some(function) = self.fn_table.fns.get(source) {
+            self.named_helper_may_replace_current_binding(source, args, scope)
+                || supplied_callable_may_install_caller_binding(self, function, args, scope)
+        } else if let Some(aliases) = self.fn_table.caller_binding_aliases.get(source) {
+            aliases.iter().any(|alias| {
+                self.computed_source_may_replace_current_binding(
+                    alias, args, scope, completed, visiting, remaining,
+                )
+            })
+        } else if scope.get(source).is_some() {
+            // A local callable without captured provenance may run an
+            // arbitrary body, regardless of its inferred function mode.
+            true
+        } else if crate::collect::is_caller_binding_installer_source(source) {
+            // An unqualified name needs the ordinary base-identity proof.
+            !self.resolves_to_base(source, scope)
+                || crate::collect::installer_may_replace_current_binding(source, args)
+        } else if matches!(
+            crate::semantic_lists::bare_name(source),
+            "identity" | "invisible" | "force"
+        ) && self.resolves_to_base(source, scope)
+        {
+            false
+        } else {
+            // A known name is not proof of purity: base::eval, a foreign
+            // namespace callable, or a masked helper can write here.
+            true
+        };
+        visiting.remove(source);
+        completed.insert(source.to_string(), effect);
+        effect
+    }
+
+    /// Follow a current scope alias first; only consult project aliases when
+    /// no lexical binding can shadow them. A local pure replacement clears
+    /// its alias in Scope, while a cross-file top-level alias is available in
+    /// the collected project table. Exhaustion withdraws the scalar proof.
+    pub(super) fn caller_binding_source_matches(
+        &self,
+        name: &str,
+        scope: &Scope,
+        matches_source: impl Fn(&str) -> bool,
+    ) -> bool {
+        if let Some(sources) = scope.bounded_caller_binding_sources.get(name) {
+            return sources.iter().any(|source| matches_source(source));
+        }
+        if matches_source(name) {
+            return true;
+        }
+        if scope.uncertain_caller_binding_aliases.contains(name) {
+            return true;
+        }
+        if let Some(alias) = scope.function_alias(name) {
+            return matches_source(alias);
+        }
+        if scope.get(name).is_some() || scope.is_parameter(name) || scope.is_lexical_function(name)
+        {
+            return false;
+        }
+        let mut pending = vec![name.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(source) = pending.pop() {
+            if matches_source(&source) {
+                return true;
+            }
+            if !seen.insert(source.clone()) {
+                continue;
+            }
+            if seen.len() > 128 {
+                return true;
+            }
+            if let Some(sources) = self.fn_table.caller_binding_aliases.get(&source) {
+                pending.extend(sources.iter().cloned());
+            }
+        }
+        false
+    }
+
+    fn helper_effect_with_actuals(
+        &self,
+        effects: HelperCallEffects<'_>,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        if let Some(installer) = effects.forwarded_installer {
+            return crate::collect::installer_may_replace_current_binding(installer, args);
+        }
+        if !effects.may_install && effects.called_formals.is_empty() {
+            return false;
+        }
+        let formal_refs: Vec<_> = effects.params.iter().map(String::as_str).collect();
+        let matched = crate::match_caller_binding_argument_names(&formal_refs, args);
+        if effects.may_install
+            && let Some(formal) = effects.fresh_target_formal
+            && let Some(index) = effects.params.iter().position(|name| name == formal)
+            && let Some(actual) = matched
+                .as_ref()
+                .and_then(|bindings| bindings.arg_for_param(index))
+                .and_then(|index| args.get(index))
+            && crate::collect::definitely_fresh_installer_env(&actual.value)
+            && (!effects.fresh_target_needs_base_c || self.resolves_to_base("c", scope))
+            && !scope.effects_unknown
+        {
+            return false;
+        }
+        if effects.may_install {
+            return true;
+        }
+        let Some(matched) = matched else {
+            return true;
+        };
+        effects.called_formals.iter().any(|called| {
+            let Some(index) = effects.params.iter().position(|name| name == called) else {
+                return true;
+            };
+            let Some(actual) = matched
+                .arg_for_param(index)
+                .and_then(|index| args.get(index))
+            else {
+                return true;
+            };
+            !inert_caller_binding_value(&actual.value, scope)
+        })
+    }
+
+    fn named_helper_may_replace_current_binding(
+        &self,
+        source: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        if let Some(function) = scope.local_caller_binding_functions.get(source) {
+            return self.helper_effect_with_actuals(
+                HelperCallEffects {
+                    params: &function.params,
+                    may_install: function.may_install,
+                    called_formals: &function.called_formals,
+                    fresh_target_formal: function.fresh_target_formal.as_deref(),
+                    fresh_target_needs_base_c: function.fresh_target_needs_base_c,
+                    forwarded_installer: function.forwarded_installer.as_deref(),
+                },
+                args,
+                scope,
+            );
+        }
+        if scope.function_alias(source).is_some() {
+            return false;
+        }
+        if !source.contains("::") && scope.is_lexical_function(source) {
+            return !scope.inert_caller_binding_functions.contains(source)
+                && scope.get(source).is_some_and(|ty| {
+                    matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+                });
+        }
+        let Some(function) = self.fn_table.fns.get(source) else {
+            return false;
+        };
+        let params: Vec<_> = function
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        let fresh_target = crate::collect::helper_fresh_target_formal(&params, &function.body);
+        let forwarded_installer =
+            crate::collect::helper_forwarded_installer(&params, &function.body);
+        self.helper_effect_with_actuals(
+            HelperCallEffects {
+                params: &params,
+                may_install: function.may_install_caller_binding,
+                called_formals: &[],
+                fresh_target_formal: fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
+                fresh_target_needs_base_c: fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
+                forwarded_installer: forwarded_installer.as_deref(),
+            },
+            args,
+            scope,
+        )
+    }
+
+    /// Resolve only an actual dispatcher source. An effect-uncertain local
+    /// callable is not evidence that its selected value is `do.call`; the
+    /// ordinary caller-binding check already handles that uncertainty.
+    fn selected_base_do_call(&self, name: &str, scope: &Scope) -> bool {
+        let is_dispatcher = |source: &str| {
+            crate::semantic_lists::bare_name(source) == "do.call"
+                && self.resolves_to_base(source, scope)
+        };
+        if let Some(alias) = scope.function_alias(name) {
+            return is_dispatcher(alias);
+        }
+        if is_dispatcher(name) {
+            return true;
+        }
+        if scope.get(name).is_some() || scope.is_parameter(name) || scope.is_lexical_function(name)
+        {
+            return false;
+        }
+        let mut pending = vec![name.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(source) = pending.pop() {
+            if !seen.insert(source.clone()) {
+                continue;
+            }
+            if seen.len() > 128 {
+                return true;
+            }
+            if is_dispatcher(&source) {
+                return true;
+            }
+            if let Some(aliases) = self.fn_table.caller_binding_aliases.get(&source) {
+                pending.extend(aliases.iter().cloned());
+            }
+        }
+        false
+    }
+
+    fn do_call_may_replace_current_binding(&self, args: &[Arg], scope: &Scope) -> bool {
+        let Some(matched) =
+            crate::match_caller_binding_argument_names(&["what", "args", "quote", "envir"], args)
+        else {
+            return true;
+        };
+        let Some(target) = matched.arg_for_param(0).and_then(|index| args.get(index)) else {
+            return false;
+        };
+        let supplied = matched
+            .arg_for_param(1)
+            .and_then(|index| args.get(index))
+            .and_then(|arg| {
+                let value = match &arg.value {
+                    Expr::Block { body, .. } => match body.last() {
+                        Some(Stmt::Expr(value)) => value,
+                        _ => &arg.value,
+                    },
+                    value => value,
+                };
+                match value {
+                    Expr::Call { func, args, .. } if ident_name(func) == Some("base::list") => {
+                        Some(args.as_slice())
+                    }
+                    _ => None,
+                }
+            });
+        crate::collect::global_caller_binding_value_sources(&target.value, 64)
+            .iter()
+            .any(|source| {
+                scope.is_parameter(source)
+                    || self.caller_binding_source_matches(source, scope, |candidate| {
+                        candidate == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+                            || supplied.map_or_else(
+                                || {
+                                    crate::collect::is_caller_binding_installer_source(candidate)
+                                        || self.named_helper_may_replace_current_binding(
+                                            candidate,
+                                            &[],
+                                            scope,
+                                        )
+                                },
+                                |supplied| {
+                                    crate::collect::installer_may_replace_current_binding(
+                                        candidate, supplied,
+                                    ) || self.named_helper_may_replace_current_binding(
+                                        candidate, supplied, scope,
+                                    )
+                                },
+                            )
+                    })
+            })
     }
 
     fn infer_call_inner(
@@ -243,6 +707,21 @@ impl Checker {
 
         // The argument-inference stage.
         let mut call = self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope);
+        // A top-level helper may be reached through a function-valued scope
+        // binding before the FnTable return stage. Preserve its bounded
+        // caller-binding effect on that path too. A formal or nested lexical
+        // callable is not certified by the project-wide name table.
+        if !scope.is_parameter(&lookup_name)
+            && call.user_function.as_ref().is_some_and(|function| {
+                self.named_helper_may_replace_current_binding(&lookup_name, args, scope)
+                    || supplied_callable_may_install_caller_binding(self, function, args, scope)
+            })
+        {
+            scope.dynamic_bindings_unknown = true;
+            for name in scope.scalar_asserted_bindings.clone() {
+                scope.clear_scalar_asserted(&name);
+            }
+        }
 
         // The argument-validation stage.
         self.check_call_arguments(&lookup_name, &call, args, span);
@@ -1643,9 +2122,16 @@ impl Checker {
     /// The assertion-predicate stage: `stopifnot(...)` and `assert_that(...)`
     /// narrow the enclosing scope with each predicate's positive-path fact.
     fn apply_assertion_predicates(&mut self, name: &str, args: &[Arg], scope: &mut Scope) {
-        let assertion_predicates =
-            name == "stopifnot" || name == "assert_that" || name == "assertthat::assert_that";
-        if assertion_predicates {
+        if name == "stopifnot" && self.resolves_to_base_lenient("stopifnot", scope) {
+            // Earlier predicates can become stale while a later argument is
+            // evaluated. The exact `local`/`exprs`/`exprObject` names bind
+            // controls; every other named argument is a predicate in `...`.
+            if let Some(last) = args.last().filter(|arg| stopifnot_predicate_arg(arg)) {
+                let narrowing = self.extract_type_narrowing(&last.value, scope);
+                apply_narrowing_branch(scope, &narrowing, NarrowingBranch::Then);
+                self.mark_scalar_assertions(args, scope);
+            }
+        } else if name == "assert_that" || name == "assertthat::assert_that" {
             for argument in args {
                 if name.ends_with("assert_that") && argument.name.as_deref() == Some("msg") {
                     continue;

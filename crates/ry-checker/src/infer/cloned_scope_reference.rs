@@ -11,6 +11,7 @@ impl Checker {
         mut returns: Option<&mut Vec<RType>>,
     ) {
         let has_else = else_.is_some();
+        let base_loop_vectors = scope.loop_vector_bindings.clone();
         let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, narrowing);
         // Pre-`if` views of the guard-narrowed names, captured before the
         // merge below replaces them: the union-guard refinement compares
@@ -33,6 +34,83 @@ impl Checker {
                 self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
             }
         }
+        let then_reaches_alias = !then_scope.unreachable;
+        let else_reaches_alias = has_else && !else_scope.unreachable;
+        let mut alias_names = FxSet::default();
+        for branch in [&*scope, &then_scope, &else_scope] {
+            alias_names.extend(branch.function_aliases.keys().cloned());
+            alias_names.extend(branch.uncertain_caller_binding_aliases.iter().cloned());
+            alias_names.extend(branch.inert_caller_binding_functions.iter().cloned());
+            alias_names.extend(branch.local_caller_binding_functions.keys().cloned());
+        }
+        let mut caller_alias_updates = Vec::new();
+        if !(scope.loop_frame.is_some() && !then_reaches_alias && !has_else) {
+            for name in alias_names {
+                let then_alias = then_scope.function_alias(&name);
+                let else_alias = else_scope.function_alias(&name);
+                let (alias, mut uncertain) = if has_else && then_reaches_alias != else_reaches_alias
+                {
+                    let reached = if then_reaches_alias {
+                        &then_scope
+                    } else {
+                        &else_scope
+                    };
+                    (
+                        reached.function_alias(&name).map(str::to_string),
+                        reached.uncertain_caller_binding_aliases.contains(&name),
+                    )
+                } else {
+                    let shared = (then_alias == else_alias)
+                        .then(|| then_alias.map(str::to_string))
+                        .flatten();
+                    let alias_may_install = |alias: &str| {
+                        crate::collect::is_caller_binding_installer_source(alias)
+                            || self.fn_table.fns.get(alias).is_some_and(|function| {
+                                function.may_install_caller_binding
+                                    || !function.caller_binding_called_formals.is_empty()
+                            })
+                    };
+                    let uncertain = then_scope.uncertain_caller_binding_aliases.contains(&name)
+                        || else_scope.uncertain_caller_binding_aliases.contains(&name)
+                        || (then_alias != else_alias
+                            && [then_alias, else_alias]
+                                .into_iter()
+                                .flatten()
+                                .any(alias_may_install));
+                    (shared, uncertain)
+                };
+                let then_local = then_scope.local_caller_binding_functions.get(&name);
+                let else_local = else_scope.local_caller_binding_functions.get(&name);
+                let local_function = if has_else && then_reaches_alias != else_reaches_alias {
+                    if then_reaches_alias {
+                        then_local.cloned()
+                    } else {
+                        else_local.cloned()
+                    }
+                } else if then_local == else_local {
+                    then_local.cloned()
+                } else {
+                    uncertain |= [then_local, else_local]
+                        .into_iter()
+                        .flatten()
+                        .any(|function| {
+                            function.may_install || !function.called_formals.is_empty()
+                        });
+                    None
+                };
+                let inert_function = if has_else && then_reaches_alias != else_reaches_alias {
+                    if then_reaches_alias {
+                        then_scope.inert_caller_binding_functions.contains(&name)
+                    } else {
+                        else_scope.inert_caller_binding_functions.contains(&name)
+                    }
+                } else {
+                    then_scope.inert_caller_binding_functions.contains(&name)
+                        && else_scope.inert_caller_binding_functions.contains(&name)
+                };
+                caller_alias_updates.push((name, alias, uncertain, inert_function, local_function));
+            }
+        }
         // Merge branch bindings back into the parent scope. In R,
         // assignments inside an `if` branch leak to the enclosing
         // scope, so a name bound conditionally must still be visible
@@ -48,6 +126,17 @@ impl Checker {
             || self.block_diverges_for_continuation(then);
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        let mut loop_vectors_after = FxSet::default();
+        if !then_diverges {
+            loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
+        }
+        if !else_diverges {
+            loop_vectors_after.extend(if has_else {
+                else_scope.loop_vector_bindings.iter().cloned()
+            } else {
+                base_loop_vectors.iter().cloned()
+            });
+        }
         let continuation = match (then_diverges, else_, else_diverges) {
             (true, Some(_), false) | (true, None, _) => Some(&else_scope),
             (false, Some(_), true) => Some(&then_scope),
@@ -105,6 +194,24 @@ impl Checker {
             };
             scope.insert_narrowed(name, refined);
         }
+        scope.loop_vector_bindings = loop_vectors_after;
+        for (name, alias, uncertain, inert_function, local_function) in caller_alias_updates {
+            scope.clear_local_caller_binding_function(&name);
+            if let Some(function) = local_function {
+                scope.set_local_caller_binding_function(&name, function);
+            }
+            scope.set_joined_function_alias(&name, alias);
+            if uncertain {
+                scope.mark_uncertain_caller_binding_alias(&name);
+            } else {
+                scope.clear_uncertain_caller_binding_alias(&name);
+            }
+            if inert_function {
+                scope.mark_inert_caller_binding_function(&name);
+            } else {
+                scope.clear_inert_caller_binding_function(&name);
+            }
+        }
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {
@@ -131,6 +238,10 @@ impl Checker {
             then_scope.literal_values_unknown || else_scope.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
+        scope.scalar_asserted_bindings.retain(|name| {
+            then_scope.scalar_asserted_bindings.contains(name)
+                && (!has_else || else_scope.scalar_asserted_bindings.contains(name))
+        });
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

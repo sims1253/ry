@@ -42,6 +42,9 @@ pub(crate) enum Narrowing {
     /// proves that `x` has length one. A negated type predicate over the same
     /// variable (for example `!is.numeric(x)`) may additionally prove mode.
     ScalarElse { var: String, target: Option<RType> },
+    /// A true guard proves that the loop-carried vector alternative cannot
+    /// reach its body. This does not rewrite the binding's general RType.
+    ScalarThen { var: String },
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -595,6 +598,9 @@ fn apply_single_narrowing_branch<'a>(
                 }
             }
         }
+        (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
+            scope.clear_loop_vector(var);
+        }
         _ => {}
     }
     None
@@ -691,6 +697,15 @@ impl Checker {
     /// only when ordinary typeshed resolution establishes their provenance.
     pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
+        if !scope.loop_vector_bindings.is_empty()
+            && let Some(var) = self.scalar_assertion_subject(cond, scope)
+        {
+            return Narrowing::Compound {
+                base: Box::new(built_in),
+                on_true: vec![Narrowing::ScalarThen { var }],
+                on_false: Vec::new(),
+            };
+        }
         let mut compound = cond;
         while let Expr::UnaryOp {
             op: UnaryOpKind::Not,
@@ -876,7 +891,8 @@ mod selected_branch_tests {
         assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Double));
         assert!(scope.is_parameter("x") && scope.is_default_parameter("x"));
         assert!(scope.has_list_origin("x") && scope.narrowed_bindings.contains("x"));
-        assert!(scope.function_alias("x").is_none() && !scope.is_lexical_function("x"));
+        assert_eq!(scope.function_alias("x"), Some("base::identity"));
+        assert!(scope.is_lexical_function("x"));
         assert_eq!(
             scope.get("untouched").map(|ty| ty.mode),
             Some(Mode::Integer)

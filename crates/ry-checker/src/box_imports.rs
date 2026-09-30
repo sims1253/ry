@@ -470,9 +470,30 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
                 }
             }
         }
-        let Stmt::Assign { target, span, .. } = statement else {
+        let Stmt::Assign {
+            target,
+            value,
+            span,
+        } = statement
+        else {
             continue;
         };
+        // The parser wraps a direct `foo <<- value` or `value ->> foo`
+        // statement in Stmt::Assign with a SuperAssign expression spanning
+        // the whole statement. It writes through the module environment,
+        // not to an own binding. An ordinary `foo <- (bar <<- value)` has a
+        // smaller inner span and still creates its outer own binding.
+        if matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
+            if marker == span && binding_name(lhs) == binding_name(target))
+        {
+            if has_export_tag(&lines, span.line) {
+                // box rejects a tag on a missing own binding at load time.
+                // Its inventory cannot prove any requested name absent.
+                roxygen.tagged = true;
+                roxygen.complete = false;
+            }
+            continue;
+        }
         let Some(name) = binding_name(target) else {
             continue;
         };

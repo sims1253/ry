@@ -727,6 +727,43 @@ fn legacy_expression_assignments_are_own_module_exports() {
     );
 }
 
+#[test]
+fn direct_superassignment_does_not_create_a_box_module_export() {
+    let root = tempfile::tempdir().unwrap();
+    for (module, source) in [
+        ("left", "foo <<- 1L\n"),
+        ("right", "1L ->> foo\n"),
+        ("parenthesized", "(foo <<- 1L)\n"),
+        ("chained", "dummy <- (foo <<- 1L)\n"),
+    ] {
+        fs::write(root.path().join(format!("{module}.r")), source).unwrap();
+        let diagnostics = codes_for(root.path(), &format!("box::use(./{module}[foo])\n"));
+        assert!(
+            diagnostics.iter().any(|(code, _, _)| code == "RY118"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    fs::write(root.path().join("outer.r"), "foo <- (bar <<- 1L)\n").unwrap();
+    fs::write(root.path().join("same_outer.r"), "foo <- (foo <<- 1L)\n").unwrap();
+    fs::write(root.path().join("existing.r"), "foo <- 1L\nfoo <<- 2L\n").unwrap();
+    for module in ["outer", "same_outer", "existing"] {
+        let diagnostics = codes_for(root.path(), &format!("box::use(./{module}[foo])\n"));
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    fs::write(
+        root.path().join("tagged_super.r"),
+        "#' @export\nfoo <<- 1L\nbar <- 2L\n",
+    )
+    .unwrap();
+    // box errors while loading this module, so no selection from it can
+    // provide a proven absence. The ordinary tagged-only control is above.
+    let tagged = codes_for(root.path(), "box::use(./tagged_super[bar])\n");
+    assert!(tagged.iter().all(|(code, _, _)| code != "RY118"));
+}
+
 #[cfg(unix)]
 #[test]
 fn native_caller_and_nested_module_paths_do_not_use_lossy_parent() {

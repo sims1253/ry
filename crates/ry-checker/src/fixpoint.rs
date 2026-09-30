@@ -170,7 +170,9 @@ impl Checker {
 
     pub(crate) fn read_return_slot(&self, slot: usize) -> RType {
         self.record_signature_read(slot);
-        self.return_slots.get(slot)
+        let mut result = self.return_slots.get(slot);
+        result.value_facts.cast_site = None;
+        result
     }
 
     /// A generic must allow the quoting and injection behavior of its known

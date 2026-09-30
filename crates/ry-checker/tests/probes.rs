@@ -301,6 +301,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n",
         negative: "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n",
     },
+    Probe {
+        code: "RY119",
+        note: "a proven out-of-range numeric cast creates a new integer NA",
+        positive: "x <- c(0, 1e10)\ny <- as.integer(x)\n",
+        negative: "x <- c(0, 2147483647.9)\ny <- as.integer(x)\n",
+    },
 ];
 
 #[test]

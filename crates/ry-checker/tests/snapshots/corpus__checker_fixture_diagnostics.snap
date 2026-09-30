@@ -1,5 +1,6 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
+assertion_line: 238
 expression: snapshots
 ---
 - diagnostics:
@@ -542,6 +543,24 @@ expression: snapshots
         line: 2
         start: 50
   fixture: err_impossible_standalone_guard.R
+- diagnostics:
+    - code: RY119
+      message: "`as.integer()` converts a proven out-of-range value to `NA_integer_`"
+      severity: warning
+      span:
+        column: 0
+        end: 45
+        line: 1
+        start: 23
+    - code: RY119
+      message: "`as.integer()` converts a proven out-of-range value to `NA_integer_`"
+      severity: warning
+      span:
+        column: 0
+        end: 75
+        line: 3
+        start: 62
+  fixture: err_integer_range_loss.R
 - diagnostics:
     - code: RY070
       message: "could not find function `x` (bound here as `NULL`)"
@@ -1732,6 +1751,8 @@ expression: snapshots
   fixture: ok_in_operator_length.R
 - diagnostics: []
   fixture: ok_index_length_from_index.R
+- diagnostics: []
+  fixture: ok_integer_range_controls.R
 - diagnostics: []
   fixture: ok_is_function_guard.R
 - diagnostics: []

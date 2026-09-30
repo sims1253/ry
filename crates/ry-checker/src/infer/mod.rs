@@ -553,7 +553,11 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                span: assignment_span,
+            } => {
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -563,7 +567,18 @@ impl Checker {
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let class_write = self.prepare_class_attribute(target, value, scope);
-                let vt = self.infer(value, scope);
+                let mut vt = self.infer(value, scope);
+                vt.value_facts.cast_site = None;
+                if matches!(
+                    vt.coercion_new_na(),
+                    ry_core::types::NewNaProvenance::ProvenContains
+                        | ry_core::types::NewNaProvenance::ProvenOnly
+                ) && matches!(value, Expr::Call { func, .. }
+                    if call::callee_name(func).as_deref().is_some_and(|name|
+                        name == "as.integer" || name == "base::as.integer"))
+                {
+                    vt.value_facts.cast_site = Some(*assignment_span);
+                }
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
                 // declarations, since a user-defined list-returning
@@ -2242,6 +2257,52 @@ impl Checker {
                 return true;
             }
         }
+        if matches!(kind, IndexKind::Single | IndexKind::Double)
+            && matches!(base_t.mode, Mode::Integer | Mode::Double)
+            && base_t.columns.is_none()
+        {
+            let only_missing = matches!(kind, IndexKind::Single)
+                && args.len() == 1
+                && !base_t.class.is_unknown()
+                && !base_t.class.has_known_class()
+                && matches!(&args[0].value,
+                    Expr::Call { func, args: check_args, .. }
+                        if check_args.len() == 1
+                            && matches!(&check_args[0].value, Expr::Ident { name, .. } if name == base_name)
+                            && call::callee_name(func).as_deref() == Some("is.na")
+                            && matches!(self.special_call_provenance(
+                                "is.na", func, "is.na", "is.na", "base", scope,
+                            ), crate::resolve::SpecialCallProvenance::Proven)
+                );
+            let mut updated = base_t;
+            if only_missing
+                && vt.value_facts.all_values_known
+                && !vt.value_facts.prior_na
+                && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
+                && matches!(vt.mode, Mode::Integer | Mode::Double)
+            {
+                updated.value_facts.prior_na = false;
+                updated.value_facts.new_na = ry_core::types::NewNaProvenance::None;
+                if let Some(site) = updated.value_facts.cast_site
+                    && self.source.get(site.end..span.start).is_some_and(|gap| {
+                        gap.lines().all(|line| {
+                            line.trim().is_empty() || line.trim_start().starts_with('#')
+                        })
+                    })
+                {
+                    self.diagnostics.retain(|diagnostic| {
+                        diagnostic.code != "RY119"
+                            || diagnostic.span.start < site.start
+                            || diagnostic.span.end > site.end
+                    });
+                }
+                updated.value_facts.cast_site = None;
+            } else {
+                updated.value_facts = ry_core::types::ValueFacts::default();
+            }
+            scope.insert(base_name.clone(), updated);
+            return true;
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
@@ -2614,11 +2675,18 @@ impl Checker {
         }
         match e {
             Expr::Logical(_, _) => RType::scalar(Mode::Logical),
-            Expr::Integer(_, _) => RType::scalar(Mode::Integer),
-            Expr::Double(_, _) => RType::scalar(Mode::Double),
+            Expr::Integer(value, _) => RType::scalar(Mode::Integer)
+                .with_value_facts(ry_core::types::ValueFacts::exact_number(*value as f64)),
+            Expr::Double(value, _) => RType::scalar(Mode::Double)
+                .with_value_facts(ry_core::types::ValueFacts::exact_number(*value)),
             Expr::String(_, _) => RType::scalar(Mode::Character),
             Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
-            Expr::Na(t, _) => t.clone(),
+            Expr::Na(t, _) => {
+                let mut result = t.clone();
+                result.value_facts.prior_na = true;
+                result.value_facts.all_values_known = true;
+                result
+            }
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
                 if !scope.literal_values_unknown {
@@ -2811,7 +2879,16 @@ impl Checker {
                                 Mode::Logical | Mode::Null => Mode::Integer,
                                 other => other,
                             };
-                            RType::new(mode, t.length)
+                            let mut result = RType::new(mode, t.length);
+                            result.value_facts = t.value_facts;
+                            result.value_facts.numeric_bounds =
+                                t.value_facts.numeric_bounds.map(|(lo, hi)| {
+                                    (
+                                        (-f64::from_bits(hi)).to_bits(),
+                                        (-f64::from_bits(lo)).to_bits(),
+                                    )
+                                });
+                            result
                         }
                     }
                     UnaryOpKind::Not => {

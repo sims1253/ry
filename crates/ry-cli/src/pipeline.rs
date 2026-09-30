@@ -20,7 +20,15 @@ pub(crate) struct CheckInput {
 
 impl CheckInput {
     fn into_project(self) -> ry_checker::Project {
+        self.into_project_with_records(Vec::new())
+    }
+
+    fn into_project_with_records(
+        self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
+        project.set_declaration_records(records);
         let workspace = self.workspace;
         project.set_loaded(workspace.attached_packages);
         project.set_bare_loaded(workspace.bare_bindings);
@@ -34,6 +42,63 @@ impl CheckInput {
         }
         project
     }
+}
+
+pub(crate) fn adopted_records(
+    files: &[(PathBuf, Arc<ry_core::SourceFile>)],
+    cfg: &config::Config,
+) -> AdoptedRecords {
+    let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
+        return AdoptedRecords::default();
+    };
+    let mut display_counts = std::collections::HashMap::new();
+    for (_, file) in files {
+        *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
+    }
+    let mut result = AdoptedRecords::default();
+    let mut ambiguous = std::collections::BTreeSet::new();
+    for (native, file) in files {
+        let records = ry_checker::typehint::read_records_at(file, native, &scope);
+        if display_counts[file.path.as_str()] == 1
+            && config::unambiguous_native_display_path(native, &file.path)
+        {
+            result.records.extend(records);
+        } else if !records.is_empty() {
+            // Project attachment still uses the display path. Decline all
+            // contracts at that path and report the loss once; otherwise a
+            // scoped UTF-8 neighbor could attach to an excluded raw filename.
+            ambiguous.insert(file.path.clone());
+        }
+    }
+    result.diagnostics = ambiguous
+        .into_iter()
+        .map(|path| {
+            ry_checker::Diagnostic::new(
+                ry_checker::Severity::Warning,
+                ry_core::Span::new(0, 1, 0, 0),
+                &path,
+                "RY117",
+                "Native source paths share one display name; typehint attachment is ambiguous and was skipped.",
+            )
+        })
+        .collect();
+    result
+}
+
+#[derive(Default)]
+pub(crate) struct AdoptedRecords {
+    pub records: Vec<ry_core::declarations::DeclarationRecord>,
+    pub diagnostics: Vec<ry_checker::Diagnostic>,
+}
+
+pub(crate) fn check_project_with_records(
+    input: CheckInput,
+    records: Vec<ry_core::declarations::DeclarationRecord>,
+) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    let mut project = input.into_project_with_records(records);
+    let mut diagnostics = project.check();
+    ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
+    diagnostics
 }
 
 /// Run a one-shot project check with workspace metadata.
@@ -58,7 +123,15 @@ pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
 ) -> CapturedFacts {
-    let mut project = input.into_project();
+    check_project_with_facts_and_records(input, references, Vec::new())
+}
+
+pub(crate) fn check_project_with_facts_and_records(
+    input: CheckInput,
+    references: bool,
+    records: Vec<ry_core::declarations::DeclarationRecord>,
+) -> CapturedFacts {
+    let mut project = input.into_project_with_records(records);
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();
@@ -197,12 +270,22 @@ pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
+    parse_files_with_native_paths(paths, on_failure)
+        .map(|files| files.into_iter().map(|(_, file)| file).collect())
+}
+
+/// Keep the native path alongside the parser's display path. These can differ
+/// for non-UTF-8 filenames, and source adoption must use native identity.
+pub(crate) fn parse_files_with_native_paths(
+    paths: &[PathBuf],
+    on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
+) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path) {
-            Ok(file) => Some(Ok(file)),
+            Ok(file) => Some(Ok((path.clone(), file))),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
                 FailureAction::Abort => Some(Err(failure)),

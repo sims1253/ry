@@ -1,9 +1,6 @@
 mod check;
 mod dump;
 mod facts;
-// The serializer is exercised with populated records now; the public flag is
-// enabled when an adapter can provide real source records in #594.
-#[allow(dead_code)]
 mod facts_declarations;
 mod facts_types;
 mod pipeline;
@@ -216,6 +213,9 @@ enum Cmd {
         /// Include conservative reference facts using schema version 2.
         #[arg(long)]
         references: bool,
+        /// Include adopted source annotation records using schema version 3.
+        #[arg(long)]
+        annotations: bool,
     },
     /// Start the language server over stdio.
     ///
@@ -324,7 +324,8 @@ fn main() -> Result<ExitCode> {
             project_root,
             format,
             references,
-        } => facts::run_dump_facts(files, project_root, &format, references),
+            annotations,
+        } => facts::run_dump_facts(files, project_root, &format, references, annotations),
         Cmd::Server { log_level } => {
             // The LSP server reads JSON-RPC from stdin and writes
             // JSON-RPC to stdout. CRITICAL: any tracing or log output

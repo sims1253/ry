@@ -191,8 +191,31 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.lock().await;
             state.trees.remove(&path);
+            let previous = state
+                .docs
+                .get(&path)
+                .cloned()
+                .zip(state.versions.get(&path).copied());
+            let open = state.open_source_paths.entry(path.clone()).or_default();
+            let collides = !open.is_empty() && (!open.contains_key(&uri) || open.len() > 1);
+            if collides && open.len() == 1 {
+                open.values_mut().next().expect("one open source").shadow = previous;
+            }
+            open.insert(
+                uri.clone(),
+                super::OpenSource {
+                    native: uri.to_file_path().ok(),
+                    shadow: collides.then(|| (text.clone(), version)),
+                },
+            );
+            if collides {
+                state.active_collision_uri.insert(path.clone(), uri.clone());
+            }
+            state.docs.insert(path.clone(), text);
+            state.versions.insert(path.clone(), version);
+            state.parsed.remove(&path);
+            state.hints.remove(&path);
         }
-        self.update_doc(path, text, version).await;
         self.schedule_diagnostics(uri).await;
     }
 
@@ -200,17 +223,20 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        // If any change has an invalid UTF-16 range, abort the remaining
-        // batch: subsequent changes' ranges are relative to the client
-        // text after the dropped edit, so applying them to the server's
-        // (pre-dropped-edit) text would splice wrong bytes.
-        for change in params.content_changes {
-            if !self.apply_incremental_change(&path, change, version).await {
-                tracing::error!(
-                    "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
-                );
-                break;
-            }
+        let mut changes = params.content_changes;
+        #[cfg(feature = "test-util")]
+        let paused_transition = crate::test_seam::maybe_pause_change_transition().await;
+        let result =
+            self.state
+                .lock()
+                .await
+                .apply_document_changes(&path, &uri, &mut changes, version);
+        #[cfg(feature = "test-util")]
+        if paused_transition {
+            crate::test_seam::note_change_transition_landed();
+        }
+        if result == CollisionChangeResult::Rejected {
+            return;
         }
         self.schedule_diagnostics(uri).await;
         // Test seam: signals didChange completion (see `test_seam`).
@@ -278,7 +304,16 @@ impl LanguageServer for Backend {
             let state = self.state.lock().await;
             let (keep, clear): (Vec<&String>, Vec<&String>) =
                 state.docs.keys().partition(|p| !under_removed_root(p));
-            let mut docs_to_clear: Vec<Url> = clear.into_iter().map(|p| path_to_uri(p)).collect();
+            let source_uris = |path: &str| {
+                state
+                    .open_source_paths
+                    .get(path)
+                    .map(|open| open.keys().cloned().collect::<Vec<_>>())
+                    .filter(|uris| !uris.is_empty())
+                    .unwrap_or_else(|| vec![path_to_uri(path)])
+            };
+            let mut docs_to_clear: std::collections::HashSet<Url> =
+                clear.into_iter().flat_map(|p| source_uris(p)).collect();
             // Mirror the `did_close` pattern: publish empty now, then
             // leave the tracked set via the retain below.
             for path in state
@@ -286,14 +321,17 @@ impl LanguageServer for Backend {
                 .iter()
                 .filter(|p| under_removed_root(p.as_str()))
             {
-                let uri = path_to_uri(path);
-                if !docs_to_clear.contains(&uri) {
-                    docs_to_clear.push(uri);
-                }
+                docs_to_clear.extend(
+                    state
+                        .published_uris
+                        .get(path)
+                        .cloned()
+                        .unwrap_or_else(|| source_uris(path).into_iter().collect()),
+                );
             }
             (
-                docs_to_clear,
-                keep.into_iter().map(|p| path_to_uri(p)).collect(),
+                docs_to_clear.into_iter().collect(),
+                keep.into_iter().flat_map(|p| source_uris(p)).collect(),
             )
         };
 
@@ -311,6 +349,7 @@ impl LanguageServer for Backend {
             // The explicit empty publications below clear these URIs, so
             // they leave the tracked set too (#489).
             state.published_paths.retain(|p| !under_removed_root(p));
+            state.published_uris.retain(|p, _| !under_removed_root(p));
 
             // Rebuild folder contexts from the surviving + added roots
             // through the shared builder used at initialize.
@@ -532,20 +571,38 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
-        let remaining_open_paths = {
+        let (remaining_open_paths, survivor) = {
             let mut state = self.state.lock().await;
-            state.docs.remove(&path);
-            state.versions.remove(&path);
-            state.parsed.remove(&path);
-            state.hints.remove(&path);
-            state.trees.remove(&path);
+            let survivor = state.close_open_source(&path, &uri);
+            if survivor.is_none() {
+                state.docs.remove(&path);
+                state.versions.remove(&path);
+                state.parsed.remove(&path);
+                state.hints.remove(&path);
+                state.trees.remove(&path);
+            }
             // The empty publication below clears this URI, so it must
             // leave the tracked set too (#489).
-            state.published_paths.remove(&path);
+            if let Some(uris) = state.published_uris.get_mut(&path) {
+                uris.remove(&uri);
+                if uris.is_empty() {
+                    state.published_uris.remove(&path);
+                    state.published_paths.remove(&path);
+                }
+            }
+            if survivor.is_none() {
+                state.published_paths.remove(&path);
+                state.published_uris.remove(&path);
+            }
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
-            state.docs.keys().cloned().collect::<Vec<_>>()
+            (state.docs.keys().cloned().collect::<Vec<_>>(), survivor)
         };
+        if let Some(survivor) = survivor {
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
+            self.schedule_diagnostics(survivor).await;
+            return;
+        }
         {
             // A closed file lives in at most one package cache, but its
             // package key may have shifted while it was open (a
@@ -703,8 +760,19 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
 
-        if !self.state.lock().await.eligibility_for_path(&path) {
-            return Ok(None);
+        {
+            let state = self.state.lock().await;
+            if !state.eligibility_for_path(&path)
+                || state
+                    .open_source_paths
+                    .get(&path)
+                    .is_some_and(|open| open.len() > 1)
+            {
+                // A display-keyed parse can belong to another native URI.
+                // Even matching document version numbers do not prove that
+                // an edit uses the requesting buffer's source text.
+                return Ok(None);
+            }
         }
         let Some((file, _)) = self.parsed_file(&path).await else {
             return Ok(None);
@@ -718,6 +786,10 @@ impl LanguageServer for Backend {
             if !Arc::ptr_eq(cached, &file)
                 || state.versions.get(&path) != Some(version)
                 || !state.eligibility_for_path(&path)
+                || state
+                    .open_source_paths
+                    .get(&path)
+                    .is_some_and(|open| open.len() > 1)
             {
                 return Ok(None);
             }

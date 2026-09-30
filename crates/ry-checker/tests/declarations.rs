@@ -277,6 +277,45 @@ fn default_mismatch_is_separate_from_omission_and_known_call_mismatch() {
 }
 
 #[test]
+fn supplied_only_atomic_constraint_reports_applicability_instead_of_type_limit() {
+    let file = parse(
+        "supplied-only.R",
+        "f <- function(x = \"default\") { x }\nf()\nf(1L)\nf(\"wrong\")\n",
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        (
+            "x",
+            AtomicMode::Integer,
+            SupplyStatus::DefaultedSuppliedOnly,
+        ),
+        None,
+    )]);
+    checker.check(&file);
+    let findings = checker.declaration_findings();
+    let partial = findings
+        .iter()
+        .find(|finding| finding.kind == DeclarationFindingKind::Partial)
+        .expect("supplied-only constraint has no unconditional body entry");
+    assert!(
+        partial
+            .message
+            .contains("only explicitly supplied arguments")
+    );
+    assert!(!partial.message.contains("cannot be represented"));
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
+            .count(),
+        1,
+        "omitted incompatible default is not checked as a supplied actual: {findings:?}"
+    );
+}
+
+#[test]
 fn authored_default_is_checked_even_when_every_call_supplies_a_valid_actual() {
     let file = parse(
         "default-all-supplied.R",

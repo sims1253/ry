@@ -1528,10 +1528,15 @@ async fn utf16_transcript() {
         )
         .await
         .unwrap();
-    session
-        .published_diagnostics_after(&main_uri, invalid_change_mark)
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(400),
+            session.published_diagnostics_after(&main_uri, invalid_change_mark),
+        )
         .await
-        .unwrap();
+        .is_err(),
+        "invalid-only change must not republish unchanged diagnostics"
+    );
     // The rejected edit must leave the last-good parse serving content
     // requests unchanged.
     let hints_after_invalid_change = hints_for_line(&mut session, &main_uri, 0).await;
@@ -1552,10 +1557,15 @@ async fn utf16_transcript() {
         )
         .await
         .unwrap();
-    session
-        .published_diagnostics_after(&main_uri, out_of_range_change_mark)
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(400),
+            session.published_diagnostics_after(&main_uri, out_of_range_change_mark),
+        )
         .await
-        .unwrap();
+        .is_err(),
+        "out-of-range change must not republish unchanged diagnostics"
+    );
     let hints_after_out_of_range_change = hints_for_line(&mut session, &main_uri, 0).await;
     assert_hint_at(&hints_after_out_of_range_change, 0, 5);
 

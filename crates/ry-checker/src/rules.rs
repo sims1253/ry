@@ -269,6 +269,30 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A call argument passes `TRUE`/`FALSE` for a formal an enclosing function exposes under the identical name (`na.rm = TRUE` inside `function(x, na.rm = FALSE)`), silently hardcoding instead of forwarding the caller's value — haven's `median.labelled` shipped this shape. Fires only when the tag is an exact (not partial) match on both the enclosing formal and a callee formal (typeshed or collected user signature) and the owning function never reads the formal anywhere in its body (a guard, validation, by-name forward, or `missing()` test all stay silent); forwarding the formal, non-literal expressions, renaming idioms, and numeric/string constants stay quiet.",
     },
+    Rule {
+        code: "RY114",
+        name: "declaration-mismatch",
+        default_severity: Severity::Warning,
+        summary: "An independently known argument, default, or return value contradicts an explicitly adopted source declaration. For typehint's simple class clauses this compares effective R class(), not storage typeof(); unknown or incomplete facts remain silent.",
+    },
+    Rule {
+        code: "RY115",
+        name: "declaration-incomplete",
+        default_severity: Severity::Info,
+        summary: "An adopted declaration has an unsupported residual or a predicate that body inference cannot represent. The source expression is retained without claiming complete checking.",
+    },
+    Rule {
+        code: "RY116",
+        name: "declaration-conflict",
+        default_severity: Severity::Warning,
+        summary: "Multiple adopted records for one lexical function cannot be selected as one complete contract; none is used for checking.",
+    },
+    Rule {
+        code: "RY117",
+        name: "declaration-invalid",
+        default_severity: Severity::Warning,
+        summary: "An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

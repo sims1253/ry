@@ -63,6 +63,7 @@ impl RParser {
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
         let (comments, special_operators) = collect_comments(root, src)?;
+        let function_bodies = collect_function_bodies(root);
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -104,6 +105,7 @@ impl RParser {
                 special_operators,
                 syntax_violations,
                 comments,
+                function_bodies,
             },
             tree,
         ))
@@ -1044,6 +1046,37 @@ fn self_span(node: tree_sitter::Node) -> Span {
         position.row,
         position.column,
     )
+}
+
+/// Collect every function's lexical span and any braced body span so
+/// annotation readers can identify the innermost owning function.
+fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
+    let mut bodies = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "function_definition" {
+            let function_position = node.start_position();
+            let body = node
+                .child_by_field_name("body")
+                .filter(|body| body.kind() == "braced_expression")
+                .map(self_span);
+            bodies.push(FunctionBody {
+                function: Span::new(
+                    node.start_byte(),
+                    node.end_byte(),
+                    function_position.row,
+                    function_position.column,
+                ),
+                body,
+            });
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    bodies.sort_by_key(|body| (body.function.start, body.function.end));
+    bodies
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.

@@ -32,7 +32,9 @@ pub use reference_facts::{
 };
 pub mod rules;
 pub mod semantic_lists;
+pub mod typehint;
 
+pub use declaration_check::append_diagnostics as append_declaration_diagnostics;
 pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
 // Re-export the diagnostic data types and suppression helpers at the

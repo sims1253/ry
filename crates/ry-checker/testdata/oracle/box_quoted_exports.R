@@ -1,0 +1,12 @@
+# oracle: must-pass
+box::use(./box_module/quoted_tagged[obj, renamed])
+box::use(./box_module/quoted_legacy[old_obj = obj])
+box::use(./box_module/quoted_strings[string_obj = obj, string_renamed = renamed])
+box::use(./box_module/s3_legacy[bar])
+box::use(./box_module/legacy_expression[a, b, foo])
+stopifnot(identical(renamed(), 1L))
+stopifnot(identical(obj$foo(), 1L))
+stopifnot(identical(old_obj$foo(), 1L))
+stopifnot(identical(string_obj$foo(), 1L), identical(string_renamed(), 1L))
+stopifnot(identical(bar, 2L))
+stopifnot(identical(a, 1L), identical(b, 1L), identical(foo, 2L))

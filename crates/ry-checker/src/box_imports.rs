@@ -65,11 +65,19 @@ struct Import {
     selection_unknown: bool,
 }
 
-fn static_name(expr: &Expr) -> Option<&str> {
+fn binding_name_token(raw: &str) -> Option<String> {
+    if matches!(raw.as_bytes().first(), Some(b'`' | b'\'' | b'"')) {
+        ry_core::parser::decode_r_quoted_name(raw)
+    } else {
+        Some(raw.to_string())
+    }
+}
+
+fn static_name(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Ident { name, .. } | Expr::String(name, _) => {
-            Some(infer::semantic_argument_name(name))
-        }
+        Expr::Ident { name, .. } => binding_name_token(name),
+        // String expressions have already been decoded by the parser.
+        Expr::String(name, _) => Some(name.clone()),
         _ => None,
     }
 }
@@ -77,8 +85,12 @@ fn static_name(expr: &Expr) -> Option<&str> {
 fn path_segments(expr: &Expr, segments: &mut Vec<String>) -> bool {
     match expr {
         Expr::Ident { name, .. } => {
-            segments.push(infer::semantic_argument_name(name).to_string());
-            true
+            if let Some(name) = binding_name_token(name) {
+                segments.push(name);
+                true
+            } else {
+                false
+            }
         }
         Expr::BinOp {
             op: BinOpKind::Div,
@@ -115,12 +127,25 @@ fn parse_import(argument: &Arg) -> Option<Import> {
                 let mut picked = Vec::new();
                 for arg in args {
                     match static_name(&arg.value) {
-                        Some("...") if arg.name.is_none() => *wildcard = true,
-                        Some(original) if original != "..." => picked.push(Selection {
-                            original: original.to_string(),
-                            bound: arg.name.clone().unwrap_or_else(|| original.to_string()),
-                            span: arg.span,
-                        }),
+                        Some(original) if original == "..." && arg.name.is_none() => {
+                            *wildcard = true;
+                        }
+                        Some(original) if original != "..." => {
+                            if let Some(bound) = arg
+                                .name
+                                .as_deref()
+                                .map(binding_name_token)
+                                .unwrap_or_else(|| Some(original.clone()))
+                            {
+                                picked.push(Selection {
+                                    original,
+                                    bound,
+                                    span: arg.span,
+                                });
+                            } else {
+                                *unknown = true;
+                            }
+                        }
                         _ => *unknown = true,
                     }
                 }
@@ -174,7 +199,13 @@ fn parse_import(argument: &Arg) -> Option<Import> {
     // A selective import binds only the selected names unless the import
     // explicitly names the module/package object.
     let object_name = if selections.is_none() || argument.name.is_some() {
-        Some(argument.name.clone().unwrap_or(basename))
+        Some(
+            argument
+                .name
+                .as_deref()
+                .map(binding_name_token)
+                .unwrap_or_else(|| Some(basename))?,
+        )
     } else {
         None
     };
@@ -279,6 +310,12 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
                 {
                     return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                 }
+                // `%<>%` is dispatched through an operator; its target and
+                // effects cannot certify an absent module binding.
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::PipeAssign,
+                    ..
+                }) => uncertain = true,
                 AstNode::Expr(Expr::Call { .. }) => uncertain = true,
                 // Executed braced and conditional expressions can write
                 // module bindings without producing a top-level Stmt::Assign.
@@ -326,6 +363,7 @@ struct ModuleWrites {
     counts: HashMap<String, usize>,
     names: HashSet<String>,
     expression_names: HashSet<String>,
+    own_expression_names: HashSet<String>,
 }
 
 fn module_writes(file: &SourceFile) -> ModuleWrites {
@@ -339,13 +377,19 @@ fn module_writes(file: &SourceFile) -> ModuleWrites {
         |node, _| {
             let binding = match node {
                 AstNode::Stmt(Stmt::Assign { target, .. }) => binding_name(target),
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign,
-                    lhs,
-                    ..
-                }) => {
+                AstNode::Expr(Expr::BinOp { op, lhs, .. })
+                    if matches!(
+                        op,
+                        BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
+                    ) =>
+                {
                     let name = binding_name(lhs);
                     if let Some(name) = name {
+                        if *op == BinOpKind::Assign {
+                            writes
+                                .own_expression_names
+                                .insert(infer::semantic_argument_name(name).to_string());
+                        }
                         writes
                             .expression_names
                             .insert(infer::semantic_argument_name(name).to_string());
@@ -379,7 +423,11 @@ fn has_export_tag(lines: &[&str], line: usize) -> bool {
         if !text.starts_with("#'") {
             break;
         }
-        if text[2..].trim_start().starts_with("@export") {
+        if text[2..]
+            .trim_start()
+            .strip_prefix("@export")
+            .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
+        {
             return true;
         }
     }
@@ -584,6 +632,11 @@ impl Checker {
             let (assigned, roxygen) = top_level_bindings(&file);
             let unmodeled_load_effects = has_unmodeled_load_effects(&file);
             let writes = module_writes(&file);
+            // Legacy box modules export bindings made by executed assignment
+            // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
+            // Roxygen/explicit inventories still use their declared names.
+            let mut assigned = assigned;
+            assigned.extend(writes.own_expression_names.iter().cloned());
             let stable_functions =
                 stable_direct_function_bindings(&file, unmodeled_load_effects, &writes);
             let (exported, complete) =

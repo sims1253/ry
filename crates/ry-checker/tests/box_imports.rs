@@ -627,6 +627,77 @@ fn roxygen_tagged_use_exports_object_and_attached_aliases() {
     );
 }
 
+#[test]
+fn quoted_box_aliases_use_runtime_binding_names_in_tagged_and_legacy_modules() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(
+        root.path().join("tagged.r"),
+        "#' @export\nbox::use(`ob\\x6a` = ./a[`ren\\x61med` = foo])\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("legacy.r"), "box::use(`ob\\x6a` = ./a)\n").unwrap();
+    fs::write(
+        root.path().join("strings.r"),
+        "#' @export\nbox::use(\"ob\\u006a\" = ./a[\"ren\\u0061med\" = foo])\n",
+    )
+    .unwrap();
+    let diagnostics = codes_for(
+        root.path(),
+        "box::use(./tagged[obj, renamed])\nbox::use(./legacy[obj])\nbox::use(./strings[obj, renamed])\nobj$foo() + renamed()\n",
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn only_the_exact_roxygen_export_tag_closes_legacy_inventory() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("s3.r"),
+        "#' @exportS3Method print foo\nfoo <- function() 1L\nbar <- 2L\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("tagged.r"),
+        "#' @export\nfoo <- function() 1L\nbar <- 2L\n",
+    )
+    .unwrap();
+    let legacy = codes_for(root.path(), "box::use(./s3[bar])\nbar\n");
+    assert!(
+        legacy.iter().all(|(code, _, _)| code != "RY118"),
+        "{legacy:#?}"
+    );
+    let tagged = codes_for(root.path(), "box::use(./tagged[bar])\n");
+    assert!(
+        tagged.iter().any(|(code, _, _)| code == "RY118"),
+        "{tagged:#?}"
+    );
+}
+
+#[test]
+fn legacy_expression_assignments_are_own_module_exports() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("chain.r"),
+        "a <- b <- 1L\ndummy <- (foo <- 2L)\n",
+    )
+    .unwrap();
+    let diagnostics = codes_for(root.path(), "box::use(./chain[a, b, foo])\na + b + foo\n");
+    assert!(
+        diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+        "{diagnostics:#?}"
+    );
+    fs::write(root.path().join("parent.r"), "a <- b <<- 1L\n").unwrap();
+    let parent = codes_for(root.path(), "box::use(./parent[b])\n");
+    assert!(
+        parent.iter().any(|(code, _, _)| code == "RY118"),
+        "superassignment does not create an own-module export: {parent:#?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn native_caller_and_nested_module_paths_do_not_use_lossy_parent() {

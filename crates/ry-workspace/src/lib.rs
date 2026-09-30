@@ -1212,9 +1212,9 @@ fn installed_package_exports(
 /// literal exports. Neither result proves that a package has no dynamic
 /// exports (for example `exportPattern`).
 pub fn installed_exports_for_file(package: &str, file: &Path) -> Option<HashSet<String>> {
-    if std::env::var_os("RY_NO_INSTALLED_LIBRARIES").is_some() {
-        return None;
-    }
+    // r_library_roots applies the same hermetic-mode interpretation for
+    // package context and box imports (in particular, an explicit `0`
+    // still permits installed metadata).
     let roots = r_library_roots(&[file.to_path_buf()]);
     let preferred_version = current_r_minor_version(&roots);
     roots

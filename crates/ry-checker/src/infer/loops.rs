@@ -20,21 +20,44 @@ struct LoopSourceState {
     remaining: usize,
 }
 
+#[derive(Default)]
+pub(super) struct LoopCallerBindingRisk {
+    pub(super) targets: HashSet<String>,
+    pub(super) immediate_targets: HashSet<String>,
+    pub(super) unknown: bool,
+}
+
 /// A later iteration may invoke a value assigned after an earlier call.
 /// The normal one-pass body walk only sees the initial callable at that call
 /// site. Collect possible target names and assignment values with a bounded
 /// walk, then use the same caller-binding source resolution as computed
 /// call heads. This is an effect fact, not a general loop CFG or return type.
 impl Checker {
-    pub(super) fn loop_may_install_caller_binding(
+    pub(super) fn loop_selected_immediate_assign(&self, name: &str, scope: &Scope) -> bool {
+        let Some(index) = scope.loop_frame else {
+            return false;
+        };
+        let mut seen = false;
+        for frame in self.loop_frames.iter().take(index + 1) {
+            if frame.risky_caller_binding_targets.contains(name) {
+                if !frame.immediate_caller_binding_targets.contains(name) {
+                    return false;
+                }
+                seen = true;
+            }
+        }
+        seen
+    }
+
+    pub(super) fn loop_carried_binding_risk(
         &self,
         body: &[Stmt],
         repeated_condition: Option<&Expr>,
         scope: &Scope,
-    ) -> bool {
-        if scope.scalar_asserted_bindings.is_empty() {
-            return false;
-        }
+    ) -> LoopCallerBindingRisk {
+        // A successful assertion may be established inside a repeated body.
+        // A later iteration can select an installer before that assertion is
+        // checked, so entry-only scalar markers cannot gate this prepass.
         let mut invocations = Vec::<LoopCallableInvocation>::new();
         let mut writes = HashMap::<String, Vec<HashSet<String>>>::new();
         let mut remaining = 4096;
@@ -125,8 +148,12 @@ impl Checker {
             let _ = walk_expr(condition, policy, &mut visit);
         }
         let _ = walk_stmts(body, policy, &mut visit);
+        let mut risk = LoopCallerBindingRisk {
+            unknown: exhausted,
+            ..LoopCallerBindingRisk::default()
+        };
         if exhausted {
-            return true;
+            return risk;
         }
         for invocation in invocations {
             if !writes.contains_key(&invocation.target) {
@@ -142,11 +169,124 @@ impl Checker {
                 visiting: HashSet::new(),
                 remaining: 128,
             };
-            if self.loop_assigned_source_may_install(&invocation.target, &inputs, &mut state) {
-                return true;
+            let assigned_effect =
+                self.loop_assigned_source_may_install(&invocation.target, &inputs, &mut state);
+            let initial_effect = self.computed_source_may_replace_current_binding(
+                &invocation.target,
+                &invocation.args,
+                scope,
+                &mut HashMap::new(),
+                &mut HashSet::new(),
+                &mut 128,
+            );
+            if assigned_effect || initial_effect {
+                // A call through `q <- p; q(...)` needs the carried fact on
+                // `p` before the copy as well as on the eventual target `q`.
+                // Otherwise that assignment would erase the marker on `q`
+                // before its invocation. Follow only names actually written
+                // by this repeated body, under the same finite source bound.
+                let mut pending = vec![invocation.target];
+                let mut related = HashSet::new();
+                while let Some(target) = pending.pop() {
+                    if related.len() >= 128 {
+                        risk.unknown = true;
+                        break;
+                    }
+                    if !related.insert(target.clone()) {
+                        continue;
+                    }
+                    if let Some(alternatives) = writes.get(&target) {
+                        for source in alternatives.iter().flat_map(|sources| sources.iter()) {
+                            if writes.contains_key(source) {
+                                pending.push(source.clone());
+                            }
+                        }
+                    }
+                }
+                for target in related {
+                    if self.loop_target_is_immediate_assign_or_inert(&target, &writes, scope) {
+                        risk.immediate_targets.insert(target.clone());
+                    }
+                    risk.targets.insert(target);
+                }
             }
         }
-        false
+        risk
+    }
+
+    /// Only a copied, proven base `assign` value performs an immediate write
+    /// without leaving a delayed or active binding behind. A successful later
+    /// assertion may then establish a new scalar fact. The initial value and
+    /// every loop-carried alternative must meet this bound; unknown aliases,
+    /// promises, and active-binding installers keep persistent uncertainty.
+    fn loop_target_is_immediate_assign_or_inert(
+        &self,
+        target: &str,
+        writes: &HashMap<String, Vec<HashSet<String>>>,
+        scope: &Scope,
+    ) -> bool {
+        if scope.dynamic_bindings_unknown
+            || (!scope.inert_caller_binding_functions.contains(target)
+                && !scope.function_alias(target).is_some_and(|alias| {
+                    self.loop_source_is_immediate_assign_or_inert(
+                        alias,
+                        writes,
+                        scope,
+                        &mut HashSet::new(),
+                        &mut 128,
+                    )
+                }))
+        {
+            return false;
+        }
+        writes.get(target).is_some_and(|alternatives| {
+            alternatives.iter().all(|sources| {
+                sources.iter().all(|source| {
+                    self.loop_source_is_immediate_assign_or_inert(
+                        source,
+                        writes,
+                        scope,
+                        &mut HashSet::new(),
+                        &mut 128,
+                    )
+                })
+            })
+        })
+    }
+
+    fn loop_source_is_immediate_assign_or_inert(
+        &self,
+        source: &str,
+        writes: &HashMap<String, Vec<HashSet<String>>>,
+        scope: &Scope,
+        visiting: &mut HashSet<String>,
+        remaining: &mut usize,
+    ) -> bool {
+        if *remaining == 0 || !visiting.insert(source.to_string()) {
+            return false;
+        }
+        *remaining -= 1;
+        let safe = if matches!(source, "base::assign" | "base:::assign") {
+            true
+        } else if let Some(alternatives) = writes.get(source) {
+            alternatives.iter().all(|sources| {
+                sources.iter().all(|value| {
+                    self.loop_source_is_immediate_assign_or_inert(
+                        value, writes, scope, visiting, remaining,
+                    )
+                })
+            })
+        } else if source == "assign" {
+            self.resolves_to_base(source, scope)
+        } else if scope.inert_caller_binding_functions.contains(source) {
+            true
+        } else if let Some(alias) = scope.function_alias(source) {
+            self.loop_source_is_immediate_assign_or_inert(alias, writes, scope, visiting, remaining)
+        } else {
+            false
+        };
+        visiting.remove(source);
+        safe
     }
 
     fn loop_assigned_source_may_install(
@@ -194,6 +334,8 @@ pub(super) fn known_unclassed_vector(ty: &RType) -> bool {
 pub(crate) struct LoopExitFrame {
     breaks: Option<Box<Scope>>,
     nexts: Option<Box<Scope>>,
+    pub(super) risky_caller_binding_targets: HashSet<String>,
+    pub(super) immediate_caller_binding_targets: HashSet<String>,
 }
 
 /// Accumulate alternative paths. Allocate a scope snapshot only for the first
@@ -445,6 +587,7 @@ mod tests {
                     })
                 }),
                 nexts: next_flag.then(|| Box::new(escaped_slot_scope())),
+                ..LoopExitFrame::default()
             });
             checker.finish_loop(&mut scope, inner, body_flag || break_flag, true);
             assert!(scope.has_escaped_slot_names);

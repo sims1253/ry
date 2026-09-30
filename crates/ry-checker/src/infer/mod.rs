@@ -785,8 +785,11 @@ impl Checker {
                         | Expr::Na(..)
                         | Expr::Null(..)
                 );
-                let carried_installer = !one_literal_iteration
-                    && self.loop_may_install_caller_binding(body, None, scope);
+                let carried_risk = if one_literal_iteration {
+                    Default::default()
+                } else {
+                    self.loop_carried_binding_risk(body, None, scope)
+                };
                 let mut inner = scope.clone();
                 inner.insert(name.clone(), iter_t.element());
                 // The loop variable rebinds `name` for the whole body and
@@ -797,11 +800,18 @@ impl Checker {
                 self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                if carried_installer {
+                if let Some(frame) = self.loop_frames.last_mut() {
+                    frame.risky_caller_binding_targets = carried_risk.targets.clone();
+                    frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
+                }
+                if carried_risk.unknown {
                     inner.dynamic_bindings_unknown = true;
                     for binding in inner.scalar_asserted_bindings.clone() {
                         inner.clear_scalar_asserted(&binding);
                     }
+                }
+                for target in carried_risk.targets {
+                    inner.mark_uncertain_caller_binding_alias(&target);
                 }
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
@@ -817,16 +827,26 @@ impl Checker {
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::Loop);
-                let carried_installer = !matches!(cond, Expr::Logical(false, _))
-                    && self.loop_may_install_caller_binding(body, Some(cond), scope);
+                let carried_risk = if matches!(cond, Expr::Logical(false, _)) {
+                    Default::default()
+                } else {
+                    self.loop_carried_binding_risk(body, Some(cond), scope)
+                };
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                if carried_installer {
+                if let Some(frame) = self.loop_frames.last_mut() {
+                    frame.risky_caller_binding_targets = carried_risk.targets.clone();
+                    frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
+                }
+                if carried_risk.unknown {
                     inner.dynamic_bindings_unknown = true;
                     for binding in inner.scalar_asserted_bindings.clone() {
                         inner.clear_scalar_asserted(&binding);
                     }
+                }
+                for target in carried_risk.targets {
+                    inner.mark_uncertain_caller_binding_alias(&target);
                 }
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());

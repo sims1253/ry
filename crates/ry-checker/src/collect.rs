@@ -403,9 +403,43 @@ pub(crate) fn installer_may_replace_current_binding(name: &str, args: &[Arg]) ->
         return true;
     }
     match installer_environment_arg(primitive, args) {
-        Ok(Some(Expr::Call { func, .. })) if ident_name(func) == Some("base::new.env") => false,
-        Ok(Some(_)) => true,
+        Ok(Some(environment)) => !definitely_fresh_installer_env(environment),
         Ok(None) | Err(()) => true,
+    }
+}
+
+/// The installer target is distinct from the caller's frame when an
+/// explicitly qualified constructor is the returned environment value.
+/// A preceding literal function definition only constructs a value; its body
+/// is deferred. Other block statements may affect the caller and cannot
+/// certify the negative path here.
+fn definitely_fresh_installer_env(expression: &Expr) -> bool {
+    match expression {
+        Expr::Call { func, .. } if ident_name(func) == Some("base::new.env") => true,
+        Expr::Call { func, args, .. }
+            if ident_name(func).is_some_and(|name| {
+                matches!(name, "base::identity" | "base::invisible" | "base::force")
+            }) && args.len() == 1
+                && args[0].name.as_deref().is_none_or(|name| name == "x") =>
+        {
+            definitely_fresh_installer_env(&args[0].value)
+        }
+        Expr::Block { body, .. } => {
+            let Some((last, prefix)) = body.split_last() else {
+                return false;
+            };
+            prefix.iter().all(|statement| {
+                matches!(
+                    statement,
+                    Stmt::Assign {
+                        target: Expr::Ident { .. },
+                        value: Expr::Function { .. },
+                        ..
+                    }
+                )
+            }) && matches!(last, Stmt::Expr(value) if definitely_fresh_installer_env(value))
+        }
+        _ => false,
     }
 }
 

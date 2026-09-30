@@ -2607,6 +2607,106 @@ fn direct_loop_carried_callables_and_negative_numeric_operands() {
 }
 
 #[test]
+fn named_head_selection_and_inside_loop_assertions_follow_r_evaluation_order() {
+    for (name, source) in [
+        (
+            "named assign",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_assign_selected.R"),
+        ),
+        (
+            "named delayed",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_delayed_selected.R"),
+        ),
+        (
+            "named active",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_active_selected.R"),
+        ),
+        (
+            "qualified assign",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_qualified.R"),
+        ),
+        (
+            "selected formal",
+            include_str!("../../testdata/oracle/assertion_subject_r19_formal_selected.R"),
+        ),
+        (
+            "first iteration",
+            include_str!("../../testdata/oracle/assertion_subject_r19_initial_installer.R"),
+        ),
+        (
+            "inside for",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_for.R"),
+        ),
+        (
+            "inside while",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_while.R"),
+        ),
+        (
+            "inside repeat",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_repeat.R"),
+        ),
+        (
+            "inside branch",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_branch.R"),
+        ),
+        (
+            "carried delayed binding",
+            include_str!("../../testdata/oracle/assertion_subject_r19_carried_delayed.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032"),
+            "{name}: a selected installer can replace the binding before the later ||: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "reverse pure",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_reverse_pure.R"),
+        ),
+        (
+            "fresh target",
+            include_str!("../../testdata/oracle/assertion_subject_r19_named_fresh.R"),
+        ),
+        (
+            "do.call target timing",
+            include_str!("../../testdata/oracle/assertion_subject_r19_do_call_timing.R"),
+        ),
+        (
+            "pure loop",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_pure.R"),
+        ),
+        (
+            "fresh loop",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_fresh.R"),
+        ),
+        (
+            "singleton",
+            include_str!("../../testdata/oracle/assertion_subject_r19_inside_singleton.R"),
+        ),
+        (
+            "scalar reassertion",
+            include_str!("../../testdata/oracle/assertion_subject_r19_reassert_immediate.R"),
+        ),
+        (
+            "vector rejected at reassertion",
+            include_str!("../../testdata/oracle/assertion_subject_r19_reassert_rejects_vector.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY032"),
+            "{name}: the selected call is harmless or a later assertion rejects the vector: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn scalar_proof_rejects_cross_file_caller_binding_helper() {
     let mut project = Project::new();
     project.add_file(

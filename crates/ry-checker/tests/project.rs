@@ -1651,6 +1651,87 @@ fn direct_loop_carried_effect_retracts_after_a_pure_edit() {
 }
 
 #[test]
+fn named_head_selected_before_argument_edit_retracts_warm_and_cold() {
+    let installing = "p <- base::assign\n";
+    let pure = "p <- function(...) NULL\n";
+    let consumer = "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); p('x', c(1L, 2L), envir = { p <- function(...) NULL; environment() }); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let mut warm = callback_project(&[("alias.R", installing), ("consumer.R", consumer)]);
+    let before = warm.check_incremental();
+    assert!(
+        before
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{before:?}"
+    );
+
+    warm.update_file("alias.R".into(), Arc::new(parse("alias.R", pure)));
+    let after = warm.check_incremental();
+    assert_eq!(
+        after,
+        callback_project(&[("alias.R", pure), ("consumer.R", consumer)]).check()
+    );
+    assert!(
+        after
+            .iter()
+            .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+        "{after:?}"
+    );
+
+    warm.update_file("alias.R".into(), Arc::new(parse("alias.R", installing)));
+    let restored = warm.check_incremental();
+    assert_eq!(
+        restored,
+        callback_project(&[("alias.R", installing), ("consumer.R", consumer)]).check()
+    );
+    assert!(
+        restored
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{restored:?}"
+    );
+}
+
+#[test]
+fn assertion_inside_loop_retracts_after_a_pure_edit() {
+    let installing = "f <- function(x = 1L) { p <- function(...) NULL; for (i in 1:2) { stopifnot(x > 0 && TRUE); p('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE; p <- base::assign } }; f()\n";
+    let pure = "f <- function(x = 1L) { p <- function(...) NULL; for (i in 1:2) { stopifnot(x > 0 && TRUE); p('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE; p <- function(...) NULL } }; f()\n";
+    let mut warm = callback_project(&[("consumer.R", installing)]);
+    let before = warm.check_incremental();
+    assert!(
+        before
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{before:?}"
+    );
+
+    warm.update_file("consumer.R".into(), Arc::new(parse("consumer.R", pure)));
+    let after = warm.check_incremental();
+    assert_eq!(after, callback_project(&[("consumer.R", pure)]).check());
+    assert!(
+        after
+            .iter()
+            .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+        "{after:?}"
+    );
+
+    warm.update_file(
+        "consumer.R".into(),
+        Arc::new(parse("consumer.R", installing)),
+    );
+    let restored = warm.check_incremental();
+    assert_eq!(
+        restored,
+        callback_project(&[("consumer.R", installing)]).check()
+    );
+    assert!(
+        restored
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{restored:?}"
+    );
+}
+
+#[test]
 fn branch_joined_installer_alias_retracts_after_a_pure_edit() {
     let installing = "f <- function(flag, x = 1L) { stopifnot(x > 0 && TRUE); if (flag) put <- base::assign else put <- function(...) NULL; put('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f(TRUE)\n";
     let pure = "f <- function(flag, x = 1L) { stopifnot(x > 0 && TRUE); if (flag) put <- function(...) NULL else put <- function(...) NULL; put('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f(TRUE)\n";

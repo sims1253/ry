@@ -77,9 +77,28 @@ impl Checker {
             scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
-        // A value-valued call head is evaluated before its arguments. Capture
-        // its possible callable sources now: inference of an argument can
-        // overwrite a name from which the head already copied its function.
+        // R selects a named callable before forcing its arguments too. Capture
+        // installer and formal provenance before an argument can overwrite
+        // the selected name. The target of do.call is different: its `what`
+        // argument is evaluated by do.call, so retain that check below.
+        let named_installer = callee_name(func).is_some_and(|name| {
+            self.caller_binding_source_matches(&name, scope, |source| {
+                crate::collect::installer_may_replace_current_binding(source, args)
+            }) || (scope.is_parameter(&name)
+                && scope.get(&name).is_some_and(|binding| {
+                    matches!(
+                        binding.mode,
+                        ry_core::types::Mode::Function
+                            | ry_core::types::Mode::Opaque
+                            | ry_core::types::Mode::Union
+                    )
+                }))
+        });
+        let selected_immediate_assign = named_installer
+            && callee_name(func)
+                .is_some_and(|name| self.loop_selected_immediate_assign(&name, scope));
+        // A value-valued head is also evaluated before its arguments. Capture
+        // possible sources before an argument overwrites a copied function.
         let computed_installer = callee_name(func).is_none()
             && self.computed_head_may_replace_current_binding(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
@@ -88,24 +107,18 @@ impl Checker {
         // cannot certify the later binding. Keep this narrower than the
         // general unknown-effect flag: that flag also makes base predicate
         // identity opaque and would hide the existing RY032 warning.
-        if computed_installer
-            || callee_name(func).is_some_and(|name| {
-                let semantic = scope.function_alias(&name).unwrap_or(&name);
-                self.caller_binding_source_matches(&name, scope, |source| {
-                    crate::collect::installer_may_replace_current_binding(source, args)
-                }) || self.do_call_may_replace_current_binding(semantic, args, scope)
-                    || (scope.is_parameter(&name)
-                        && scope.get(&name).is_some_and(|binding| {
-                            matches!(
-                                binding.mode,
-                                ry_core::types::Mode::Function
-                                    | ry_core::types::Mode::Opaque
-                                    | ry_core::types::Mode::Union
-                            )
-                        }))
-            })
-        {
-            scope.dynamic_bindings_unknown = true;
+        let do_call_installer = callee_name(func).is_some_and(|name| {
+            let semantic = scope.function_alias(&name).unwrap_or(&name);
+            self.do_call_may_replace_current_binding(semantic, args, scope)
+        });
+        if named_installer || computed_installer || do_call_installer {
+            // A loop-carried value proven to be only an immediate base assign
+            // can spoil an earlier assertion, but leaves no lazy or active
+            // binding behind. A successful later assertion may prove a new
+            // scalar fact. All other effect routes retain uncertainty.
+            if !selected_immediate_assign || computed_installer || do_call_installer {
+                scope.dynamic_bindings_unknown = true;
+            }
             for name in scope.scalar_asserted_bindings.clone() {
                 scope.clear_scalar_asserted(&name);
             }

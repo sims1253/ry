@@ -67,7 +67,8 @@ RY120 marks an unclosed R fence or a report over the 2 MiB or 128-chunk
 input limit. RY121 marks dynamic or conflicting execution options. After an
 uncertain option, ry does not assume that later chunks ran. Report-level
 execution options in YAML and runtime chunk-option changes also stop static
-analysis with RY121. A malformed R chunk gets the usual RY000 parse finding.
+analysis with RY121. Malformed R code in an admitted chunk gets the usual
+RY000 parse finding; a malformed R fence gets RY120.
 These are bounded static checks; inline R, child documents, notebooks,
 hooks, and renderer or project options are outside this input subset.
 Source-edit actions are withheld for reports because edits through a masked

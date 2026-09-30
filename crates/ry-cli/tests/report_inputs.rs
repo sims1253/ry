@@ -73,6 +73,37 @@ fn split_r_syntax_reports_each_chunk_at_original_crlf_line() {
 }
 
 #[test]
+fn chunk_options_do_not_shift_a_parse_error_into_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(
+        root.path().join("broken.qmd"),
+        "😀 prose\r\n```{r}\r\n#| eval: true\r\n#| echo: false\r\nx <- (\r\n```\r\n",
+    )
+    .unwrap();
+    let diagnostics = check(root.path());
+    let errors = code(&diagnostics, "RY000");
+    assert_eq!(errors.len(), 1, "{diagnostics:?}");
+    assert_eq!(errors[0]["line"], 5, "{diagnostics:?}");
+}
+
+#[test]
+fn indented_fences_keep_the_original_type_error_column() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(
+        root.path().join("indented.Rmd"),
+        "plain text\n  ```{r}\n  \"a\" + 1L\n  ```\n",
+    )
+    .unwrap();
+    let diagnostics = check(root.path());
+    let errors = code(&diagnostics, "RY040");
+    assert_eq!(errors.len(), 1, "{diagnostics:?}");
+    assert_eq!(errors[0]["line"], 3);
+    assert_eq!(errors[0]["column"], 3);
+}
+
+#[test]
 fn fact_source_hash_tracks_original_prose_and_uncertain_reports_refuse_export() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();

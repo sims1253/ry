@@ -143,10 +143,10 @@ fn header_options(rest: &str) -> Result<Option<Option<bool>>, ()> {
         // the option name. More than one assignment in the same segment
         // leaves the value dynamic and is refused below.
         let key = key.split_whitespace().last().unwrap_or("");
-        if let Some(value) = execution_option(key, value)? {
-            if eval.replace(value).is_some() {
-                return Err(());
-            }
+        if let Some(value) = execution_option(key, value)?
+            && eval.replace(value).is_some()
+        {
+            return Err(());
         }
     }
     Ok(Some(eval))
@@ -200,18 +200,20 @@ pub fn parse_report_with_tree(
             first = first.saturating_add(1);
         }
         if issues.is_empty() {
-            let mut open: Option<(u8, usize, bool, bool, usize, usize)> = None;
+            let mut open: Option<(u8, usize, bool, bool, usize, usize, usize)> = None;
+            let mut seen_r_chunks = 0;
             let mut row = first;
             while row < rows.len() {
                 let line = &rows[row];
-                if let Some((kind, width, r_chunk, enabled, start_row, body_start)) = open {
+                if let Some((kind, width, r_chunk, enabled, start_row, body_row, body_start)) = open
+                {
                     if let Some((close_kind, close_width, tail)) = fence(line.text)
                         && close_kind == kind
                         && close_width >= width
                         && tail.trim().is_empty()
                     {
                         if r_chunk && enabled {
-                            chunks.push((start_row, body_start, line.offset));
+                            chunks.push((start_row, body_row, body_start, line.offset));
                             if has_runtime_chunk_options(&source[body_start..line.offset]) {
                                 issues.push(issue(rows[start_row].offset, start_row, "RY121", "runtime chunk options may change later execution; later chunks are not analyzed"));
                                 break;
@@ -232,14 +234,17 @@ pub fn parse_report_with_tree(
                 let r_chunk = ["{r}", "{r,", "{r ", "{r\t", "{r"].iter().any(|prefix| {
                     header == *prefix || (*prefix != "{r" && header.starts_with(prefix))
                 });
-                if r_chunk && chunks.len() >= MAX_CHUNKS {
-                    issues.push(issue(
-                        line.offset,
-                        row,
-                        "RY120",
-                        "report exceeds the 128 R chunk limit; later chunks are not analyzed",
-                    ));
-                    break;
+                if r_chunk {
+                    if seen_r_chunks >= MAX_CHUNKS {
+                        issues.push(issue(
+                            line.offset,
+                            row,
+                            "RY120",
+                            "report exceeds the 128 R chunk limit; later chunks are not analyzed",
+                        ));
+                        break;
+                    }
+                    seen_r_chunks += 1;
                 }
                 let header_eval = if r_chunk {
                     match header_options(rest) {
@@ -308,9 +313,9 @@ pub fn parse_report_with_tree(
                 } else {
                     line.offset + line.text.len()
                 };
-                open = Some((kind, width, r_chunk, enabled, start_row, body_start));
+                open = Some((kind, width, r_chunk, enabled, start_row, row, body_start));
             }
-            if let Some((_, _, r_chunk, _, start_row, _)) = open
+            if let Some((_, _, r_chunk, _, start_row, _, _)) = open
                 && issues.is_empty()
                 && r_chunk
             {
@@ -325,13 +330,13 @@ pub fn parse_report_with_tree(
         // A chunk is only admitted after its matching close. Parse it on
         // its own as well, so syntax cannot accidentally continue through
         // masked Markdown between chunks.
-        for &(start_row, start, end) in &chunks {
+        for &(_, body_row, start, end) in &chunks {
             let chunk = parser.parse(path, &source[start..end])?;
             for span in chunk.parse_errors {
                 chunk_parse_errors.push(Span::new(
                     span.start + start,
                     span.end + start,
-                    span.line + start_row + 1,
+                    span.line + body_row,
                     span.col,
                 ));
             }
@@ -450,6 +455,12 @@ mod tests {
             parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &source, None).unwrap();
         assert_eq!(file.stmts.len(), MAX_CHUNKS);
         assert_eq!(file.input_issues.len(), 1);
+        assert_eq!(file.input_issues[0].code, "RY120");
+
+        let disabled = "```{r, eval=FALSE}\nx <- 1L\n```\n".repeat(MAX_CHUNKS + 1);
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &disabled, None).unwrap();
+        assert!(file.stmts.is_empty());
         assert_eq!(file.input_issues[0].code, "RY120");
 
         let huge = "é".repeat(MAX_REPORT_BYTES / 2 + 1);

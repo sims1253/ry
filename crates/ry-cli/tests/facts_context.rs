@@ -206,6 +206,25 @@ fn effective_config_changes_invalidate_unchanged_source() {
 }
 
 #[test]
+fn report_policy_changes_invalidate_facts_context() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("main.R"), "x <- 1L\n").unwrap();
+    fs::write(temp.path().join("ry.toml"), "[reports]\nenabled = false\n").unwrap();
+    let before = dump(temp.path(), &["main.R"]);
+    fs::write(temp.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let after = dump(temp.path(), &["main.R"]);
+    assert_context_changed(&before, &after, "main.R");
+    assert_ne!(
+        context(&before, file(&before, "main.R"))["inputs"]["config_hash"],
+        context(&after, file(&after, "main.R"))["inputs"]["config_hash"]
+    );
+    assert_eq!(
+        after["configuration"]["effective"]["reports"]["enabled"],
+        true
+    );
+}
+
+#[test]
 fn exporting_facts_does_not_execute_the_analyzed_source() {
     let temp = tempfile::tempdir().unwrap();
     fs::write(

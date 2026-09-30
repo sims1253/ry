@@ -1109,7 +1109,9 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
         file_count += 1;
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
         comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
-        if is_probably_not_r_source(&parsed_file) {
+        if !ry_workspace::reports::is_report_path(&native_path)
+            && is_probably_not_r_source(&parsed_file)
+        {
             synthetic_diagnostics.push(ry_checker::Diagnostic::new(
                 ry_checker::Severity::Info,
                 ry_core::Span::new(0, 1, 0, 0),

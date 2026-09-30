@@ -54,6 +54,8 @@ explanation for one rule.
 | RY115 | declaration-incomplete | info | An adopted declaration has an unsupported residual or a predicate that body inference cannot represent. The source expression is retained without claiming complete checking. |
 | RY116 | declaration-conflict | warning | Multiple adopted records for one lexical function cannot be selected as one complete contract; none is used for checking. |
 | RY117 | declaration-invalid | warning | An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking. |
+| RY120 | report-boundary | warning | An opted-in report has a malformed R fence or exceeds the bounded extraction budget; affected R chunks are not analyzed. |
+| RY121 | report-execution-unknown | warning | A report execution option cannot be determined statically; analysis stops at that chunk rather than guessing which later bindings exist. |
 RY003 is registered but default-off: it is omitted from output unless a
 severity override or rule selection names it (for example
 `warn = ["RY003"]`).

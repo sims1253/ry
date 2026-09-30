@@ -19,6 +19,9 @@ pub struct SourceFile {
     /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
     /// that malformed input no longer checks "clean".
     pub parse_errors: Vec<Span>,
+    /// Report-input boundaries produced before R parsing. Their spans use
+    /// original document bytes, just like the R AST spans.
+    pub input_issues: Vec<InputIssue>,
     /// Maximal byte spans of invalid UTF-8 sequences found while decoding
     /// this file from disk, located in `source` (which for such files is
     /// a Latin-1 transcoding; see `ry_workspace::read_r_source`). Empty
@@ -63,6 +66,13 @@ pub struct SourceFile {
     /// readers first establish the innermost lexical function, including
     /// unbraced functions, before deciding whether a comment is in its body.
     pub function_bodies: Vec<FunctionBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputIssue {
+    pub span: Span,
+    pub code: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

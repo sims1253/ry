@@ -325,9 +325,15 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
                 Err(error) => return Err(error.to_string()),
             },
         };
-        parser
-            .parse(&path_str, &decoded.text)
-            .map_err(|message| message.to_string())
+        if ry_workspace::reports::is_report_path(path) {
+            ry_workspace::reports::parse_report_with_tree(parser, &path_str, &decoded.text, None)
+                .map(|(file, _)| file)
+                .map_err(|message| message.to_string())
+        } else {
+            parser
+                .parse(&path_str, &decoded.text)
+                .map_err(|message| message.to_string())
+        }
     });
     file.map(|mut file| {
         // Record where the on-disk bytes were not valid UTF-8, and
@@ -373,17 +379,15 @@ pub(crate) fn resolve_groups(
     let groups = ry_workspace::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
     let mut resolved = Vec::with_capacity(groups.len());
     for (group_root, indices) in &groups {
-        let resolution_root = group_root
-            .clone()
-            .or_else(|| {
-                fallback_roots
-                    .iter()
-                    .flatten()
-                    .copied()
-                    .next()
-                    .map(PathBuf::from)
-            })
+        let fallback = fallback_roots
+            .iter()
+            .flatten()
+            .copied()
+            .next()
+            .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let resolution_root =
+            ry_workspace::resolution_root_for_group(group_root.as_deref(), &fallback);
         // A relative file such as R/main.R can find DESCRIPTION at the
         // empty ancestor path. That ancestor is the working directory.
         let resolution_root = if resolution_root.as_os_str().is_empty() {

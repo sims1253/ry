@@ -93,6 +93,7 @@ impl RParser {
                 source: src.to_string(),
                 stmts,
                 parse_errors,
+                input_issues: Vec::new(),
                 // Invalid-UTF-8 spans come from the on-disk decoding
                 // step, not tree-sitter (which only ever sees the
                 // already-decoded text). The read boundary fills this in
@@ -677,7 +678,8 @@ impl RParser {
     ///     packages' export tables.
     ///
     /// Both `::` (exported) and `:::` (internal/unexported) are
-    /// preserved as written so the original spelling is recoverable.
+    /// preserved. Quoted namespace components carry their semantic R names;
+    /// the span retains their original source spelling.
     fn lower_namespace(&self, n: Node, src: &str) -> Option<Expr> {
         let span = self.span(n);
         let lhs = match n.child_by_field_name("lhs") {
@@ -691,6 +693,7 @@ impl RParser {
             Some(t) => t,
             None => return Some(Expr::Unknown(span)),
         };
+        let pkg = namespace_component(pkg, lhs.kind());
         let rhs = match n.child_by_field_name("rhs") {
             Some(rhs) => rhs,
             None => {
@@ -702,21 +705,14 @@ impl RParser {
             Some(t) => t,
             None => return Some(Expr::Unknown(span)),
         };
-        // For identifier RHS the raw text is the bare name. For a string
-        // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
-        // strip the surrounding quotes.  Use the shared boundary-safe
-        // helper: `raw.len() - 1` need not be a char boundary
-        // when the string token is malformed/truncated, which would
-        // panic on the naive slice `raw[1..raw.len() - 1]`.
-        let name = if rhs.kind() == "string" {
-            strip_quotes_at_boundaries(&raw).to_string()
-        } else {
-            raw
-        };
+        // Decode each syntactically quoted component exactly once. In
+        // particular, a string whose *value* resembles raw-string syntax is
+        // still that literal value, not a second string to unquote.
+        let name = namespace_component(raw, rhs.kind());
         // Detect the operator (`::` vs `:::`) by scanning the node's
         // anonymous children. We preserve it so the checker can tell
         // exported (`::`) from internal (`:::`) references if needed,
-        // and so the original spelling round-trips through the AST.
+        // while the span retains the original source spelling.
         let op = namespace_op(n, src).unwrap_or("::");
         let full_name = format!("{}{}{}", pkg, op, name);
         Some(Expr::Ident {
@@ -740,6 +736,14 @@ fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
 }
 
+fn namespace_component(raw: String, kind: &str) -> String {
+    if kind == "string" || (raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2) {
+        unquote_r_string(&raw)
+    } else {
+        raw
+    }
+}
+
 /// Unquote an R string literal, handling escape sequences and raw
 /// strings.
 ///
@@ -755,7 +759,7 @@ fn text(n: Node, src: &str) -> Option<String> {
 /// escape processing matters because column-name matching
 /// (`df$"my col"`, `list("a b" = 1)`) and `# ry:` directive parsing
 /// depend on the literal value.
-fn unquote_r_string(raw: &str) -> String {
+pub fn unquote_r_string(raw: &str) -> String {
     // Raw strings: r"(...)" , r"(...){...}", R"(...)", r"[...]", etc.
     // The opening is r/R followed by an optional dash-delimiter and a
     // ( or [. The matching close is ) or ] followed by the same
@@ -808,60 +812,28 @@ fn strip_quotes_at_boundaries(raw: &str) -> &str {
 }
 
 /// Strip the delimiters of a raw string whose body starts after the
-/// leading `r"`/`R"` (so `body` begins at the optional `-delim(` or
-/// `(`). Returns the literal content if it parses as a raw string,
-/// else None.
+/// leading `r`/`R` (so `body` begins with `"` and optional dashes).
+/// Returns the literal content if the matching closing delimiter is present.
 fn try_unwrap_raw_string(body: &str) -> Option<String> {
-    // `body` is the token text after the leading `r`/`R`, so it begins
-    // with a quote (`"`). Strip it (and the trailing quote, which the
-    // close-sequence search handles).
     let body = body.strip_prefix('"')?;
-    // Opening sequence: optional delimiter chars, then `(` or `[`.
-    // R allows `r"(...)"`, `r"-(...)-"`, `r"--(...)--"`, and the `[`
-    // bracket form likewise. We capture the delimiter and the bracket.
     let bytes = body.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let (open_bracket, close_bracket) = match bytes[0] {
-        b'(' => (b'(', b')'),
-        b'[' => (b'[', b']'),
-        _ => {
-            // delimiter form: dashes then bracket
-            let mut i = 0;
-            while i < bytes.len() && bytes[i] == b'-' {
-                i += 1;
-            }
-            if i == 0 || i >= bytes.len() {
-                return None;
-            }
-            match bytes[i] {
-                b'(' => (b'(', b')'),
-                b'[' => (b'[', b']'),
-                _ => return None,
-            }
-        }
+    let dashes = bytes.iter().take_while(|&&byte| byte == b'-').count();
+    let close_bracket = match bytes.get(dashes)? {
+        b'(' => b')',
+        b'[' => b']',
+        b'{' => b'}',
+        _ => return None,
     };
-    // Find the content start (after the opening bracket) and the
-    // matching close. For the simple (no-delimiter) form, the close is
-    // the last `)bracket"` sequence. We do a conservative search from
-    // the end for the closing `"<close>` .
-    let close_quote_seq: &[u8] = &[close_bracket, b'"'];
-    if body.len() < close_quote_seq.len() {
+    let content_start = dashes + 1;
+    let close_idx = bytes.len().checked_sub(dashes + 2)?;
+    if close_idx < content_start
+        || bytes[close_idx] != close_bracket
+        || bytes[close_idx + 1..bytes.len() - 1] != bytes[..dashes]
+        || bytes.last() != Some(&b'"')
+    {
         return None;
     }
-    // The opening bracket is the FIRST bracket char in body.
-    let open_idx = body.find(open_bracket as char)?;
-    // The closing sequence is the LAST occurrence of `<close>"`.
-    let close_idx = body.rfind(std::str::from_utf8(close_quote_seq).ok()?)?;
-    if close_idx <= open_idx {
-        return None;
-    }
-    let content_start = open_idx + 1;
-    if content_start >= close_idx {
-        return Some(String::new());
-    }
-    Some(body[content_start..close_idx].to_string())
+    Some(body.get(content_start..close_idx)?.to_string())
 }
 
 /// Decode ordinary R string escapes when their value is representable as UTF-8.
@@ -1812,6 +1784,31 @@ mod tests {
     }
 
     #[test]
+    fn namespace_components_decode_r_literal_names_exactly_once() {
+        for (source, expected) in [
+            (r#"knitr::"opts_\x63hunk""#, "knitr::opts_chunk"),
+            (r#"knitr::'opts_\u0063hunk'"#, "knitr::opts_chunk"),
+            (r#"knitr::"opts_\U00000063hunk""#, "knitr::opts_chunk"),
+            (r#""knitr"::"opts_\x63hunk""#, "knitr::opts_chunk"),
+            (r#"r"(knitr)"::opts_chunk"#, "knitr::opts_chunk"),
+            (r#"R"--[knitr]--"::r"(opts_chunk)""#, "knitr::opts_chunk"),
+            (r#"r"{knitr}"::R"--{opts_chunk}--""#, "knitr::opts_chunk"),
+            (r#"`knitr`::`opts_\x63hunk`"#, "knitr::opts_chunk"),
+            (r#""r\"(knitr)\""::opts_chunk"#, "r\"(knitr)\"::opts_chunk"),
+            (r#"knitr::"r\"(opts_chunk)\"""#, "knitr::r\"(opts_chunk)\""),
+            (r#"base::"my\x20func""#, "base::my func"),
+        ] {
+            let file = parse(&format!("{source}\n"));
+            match file.stmts.first() {
+                Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                    assert_eq!(name, expected, "{source}")
+                }
+                other => panic!("expected namespace identifier for {source}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn parses_negative_integer_literal_as_unary() {
         // `-1L` lowers to a unary minus applied to a positive integer
         // literal. Type-wise this is equivalent to a negative literal,
@@ -2080,6 +2077,11 @@ mod tests {
         assert_eq!(unquote_r_string(r#"R"(x)""#), "x");
         // r"[...]" bracket form.
         assert_eq!(unquote_r_string(r#"r"[literal]""#), "literal");
+        // The same dash delimiter must appear after the closing bracket.
+        assert_eq!(unquote_r_string(r#"R"--[knitr]--""#), "knitr");
+        assert_eq!(unquote_r_string(r#"r"-(a]b)-""#), "a]b");
+        assert_eq!(unquote_r_string(r#"r"{knitr}""#), "knitr");
+        assert_eq!(unquote_r_string(r#"R"--{knitr}--""#), "knitr");
     }
 
     #[test]

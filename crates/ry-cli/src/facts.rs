@@ -318,6 +318,12 @@ pub(crate) fn run_dump_facts(
     let mut sources = BTreeMap::new();
     let mut canonical_files = BTreeSet::new();
     for file in &parsed {
+        if !file.input_issues.is_empty() {
+            return Err(miette::miette!(
+                "{}: dump-facts cannot export a report after an uncertain input boundary",
+                file.path
+            ));
+        }
         // Deliberately keyed on `parse_errors` only: a recovered tree's
         // node shapes are partly invented, so its facts would be
         // fiction, while `syntax_violations` (native-pipe RHS shapes R

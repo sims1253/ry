@@ -293,6 +293,14 @@ impl TypehintConfig {
     }
 }
 
+/// Explicit report-input activation. Reports are never inferred from a file
+/// extension alone because executable chunk options need a stated policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReportsConfig {
+    pub enabled: bool,
+}
+
 /// Parsed contents of a `ry.toml` project config file.
 ///
 /// The schema is intentionally minimal and conservative; we can add
@@ -356,6 +364,8 @@ pub struct Config {
     pub environments: Vec<EnvironmentConfig>,
     /// Explicit adoption of source annotation conventions.
     pub annotations: AnnotationsConfig,
+    /// Opt-in static analysis of ordinary R chunks in R Markdown and Quarto.
+    pub reports: ReportsConfig,
     /// Runtime typeshed directories. Relative entries are anchored at the
     /// directory containing this configuration file.
     pub typeshed: Vec<PathBuf>,
@@ -387,6 +397,7 @@ impl Default for Config {
             max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
             environments: Vec::new(),
             annotations: AnnotationsConfig::default(),
+            reports: ReportsConfig::default(),
             typeshed: Vec::new(),
             baseline: None,
             index: IndexConfig::default(),
@@ -644,6 +655,7 @@ impl Config {
             max_serialized_bytes: self.max_serialized_bytes,
             environments: self.environments,
             annotations: self.annotations,
+            reports: self.reports,
             typeshed,
             baseline,
             index: self.index,

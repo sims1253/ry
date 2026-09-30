@@ -3,6 +3,7 @@
 [Getting started](../README.md) · [Configuration](configuration.md) · [Rules](rules.md)
 
 - [Checking files and CI](#checking-files-and-ci)
+- [R Markdown and Quarto inputs](#r-markdown-and-quarto-inputs)
 - [Package awareness](#package-awareness)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
@@ -39,6 +40,60 @@ can run:
 ``` yaml
 - run: ry check --output-format github .
 ```
+
+## R Markdown and Quarto inputs
+
+Set `reports.enabled = true` in `ry.toml` to check ordinary fenced R chunks
+in `.Rmd` and `.qmd` files. The setting applies to `ry check` and the language
+server. Each report has its own ordered R environment. An active chunk can
+define a name used by a later active chunk in the same report; another report
+does not inherit that name. ry keeps the original report path and text for
+diagnostic positions, source hashes, and existing conservative `source()`
+handling. It does not render or run a report.
+
+```toml
+[reports]
+enabled = true
+```
+
+ry checks literal `eval = TRUE` and `#| eval: true` chunks. Literal false
+forms disable a chunk. R headers require uppercase `TRUE` or `FALSE`: `T`,
+`F`, lowercase R names, and computed values can be rebound, so they produce
+RY121 rather than certifying execution. Quarto cell options accept YAML
+boolean spellings. `include = FALSE`, `echo = FALSE`, and their Quarto
+forms still leave the chunk active. Quoted simple option keys are recognized;
+quoted commas in unrelated header metadata do not create an `eval` option.
+Option names are case-sensitive (`Eval` is unrelated metadata). R expressions
+in header metadata are inspected for runtime chunk-option references too.
+R chunks inside a longer non-R fence and
+double-brace documentation examples stay inert. A chunk must close with the
+same fence kind and at least the opening length. ry parses each R chunk on
+its own, then checks admitted chunks in document order.
+
+RY120 marks a malformed R fence, unclosed YAML front matter, or a report over
+the 2 MiB, 128-chunk, or 16 KiB/128-field R-header input limits. RY121 marks
+dynamic or conflicting execution options. After an
+uncertain option, ry does not assume that later chunks ran. Report-level
+execution options at the document root or within format settings, and real
+runtime references to knitr's chunk-option object, also stop static
+analysis with RY121. Quoted, escaped, and raw R-string package/object names
+in namespace references use their R values; literal strings and whole
+backtick names containing namespace-like text remain inert. Complex `format`
+values such as flow mappings, aliases, anchors, and merges are refused visibly
+because their inherited execution settings cannot be resolved by this bounded
+reader. Unrelated `metadata` values remain metadata. Simple one-line root flow
+metadata remains active;
+root flow execution/format keys and unclassifiable root YAML forms are refused
+visibly, including legal indentation before the root mapping. Disabled
+reports do not receive report-derived LSP inlay hints. Malformed R code in an
+admitted chunk gets the usual RY000 parse finding; a malformed R fence gets RY120.
+Directory discovery applies `index.max-file-bytes` before parsing and reports
+oversized skipped reports on stderr. An explicitly selected oversized report
+reaches the adapter and reports RY120.
+These are bounded static checks; inline R, child documents, notebooks,
+hooks, and renderer or project options are outside this input subset.
+Source-edit actions are withheld for reports because edits through a masked
+document have not been proven safe. Direct `.R` checking is unchanged.
 
 ## Package awareness
 

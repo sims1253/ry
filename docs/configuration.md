@@ -144,11 +144,32 @@ when writing custom stubs.
 ``` r
 x <- bad  # ry: ignore                 # suppress all rules on this line
 x <- bad  # ry: ignore[RY010, RY040]   # suppress specific rules
+x <- bad  # ry: ignore[]               # legacy alias for all rules
 x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 
 # ry: ignore                           # standalone: suppresses the next line
 # ry: ignore-file                      # file-level, anywhere in the file
 ```
+
+Selective `ry: ignore[...]` lists must contain registered `RY` codes.
+The older unbracketed code-list form (`ry: ignore RY040 RY010`) is also
+selective when its first word resembles a rule code. Commas may have spaces
+on either side. Code-like words before trailing prose must name registered
+rules; after the first ordinary word, the rest is explanation and may itself
+mention rule codes. The colon form
+requires only code tokens. Brackets make the boundary between codes and an
+explanation explicit.
+Unknown codes and malformed brackets produce RY112 at the comment and do
+not suppress findings. A `noqa` list can also name another tool's codes;
+ry uses only its registered `RY` entries. A foreign-only list suppresses
+nothing in ry. Bare `ry: ignore` (including explanatory prose) and bare
+`noqa` suppress all rules on their target line. Any nonempty text after
+`noqa` is interpreted as a code list; if it contains no registered `RY`
+codes, it suppresses nothing in ry. Put explanatory prose after a native
+`ry: ignore` instead. `ignore[ ]` is an alias for
+`ignore[]`. Use `--ignore RY112` or the corresponding severity
+configuration to disable directive validation; a bare ignore cannot hide
+its own RY112 finding.
 
 Prefer a rule-specific inline suppression or `globals` entry for dynamic
 workspaces. ry intentionally does not suppress diagnostics merely because an

@@ -301,6 +301,12 @@ static PROBES: &[Probe] = &[
         positive: "f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n",
         negative: "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n",
     },
+    Probe {
+        code: "RY112",
+        note: "unknown native ignore code is rejected at its comment",
+        positive: "x <- 1L # ry: ignore[RX040]\n",
+        negative: "x <- 1L # noqa: E501\n",
+    },
 ];
 
 #[test]

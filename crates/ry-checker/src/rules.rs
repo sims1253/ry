@@ -269,6 +269,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A call argument passes `TRUE`/`FALSE` for a formal an enclosing function exposes under the identical name (`na.rm = TRUE` inside `function(x, na.rm = FALSE)`), silently hardcoding instead of forwarding the caller's value — haven's `median.labelled` shipped this shape. Fires only when the tag is an exact (not partial) match on both the enclosing formal and a callee formal (typeshed or collected user signature) and the owning function never reads the formal anywhere in its body (a guard, validation, by-name forward, or `missing()` test all stay silent); forwarding the formal, non-literal expressions, renaming idioms, and numeric/string constants stay quiet.",
     },
+    Rule {
+        code: "RY112",
+        name: "invalid-ignore",
+        default_severity: Severity::Warning,
+        summary: "A ry-owned inline ignore has malformed brackets or names an unknown rule. It cannot suppress diagnostics; correct the spelling or remove the directive. Foreign-only noqa lists are left to their owning tool and do not suppress ry findings.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

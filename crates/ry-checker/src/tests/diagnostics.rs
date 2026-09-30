@@ -12,7 +12,7 @@ fn parse_trailing_ignore_comment() {
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
     assert_eq!(supps[0].line, 0);
-    assert!(supps[0].rules.is_empty()); // suppress all
+    assert_eq!(supps[0].kind, SuppressionKind::All);
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn parse_specific_rule_ignore() {
     let src = "x <- \"a\" * 3  # ry: ignore[RY040]\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert_eq!(supps[0].rules, vec!["RY040"]);
+    assert_eq!(supps[0].valid_rules().unwrap(), &["RY040"]);
 }
 
 #[test]
@@ -28,8 +28,46 @@ fn parse_multiple_rules() {
     let src = "x <- bad  # ry: ignore[RY040, RY010]\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.contains(&"RY040".to_string()));
-    assert!(supps[0].rules.contains(&"RY010".to_string()));
+    assert!(supps[0].suppresses("RY040"));
+    assert!(supps[0].suppresses("RY010"));
+}
+
+#[test]
+fn unbracketed_code_like_list_validates_every_token() {
+    for directive in [
+        "ry: ignore RY040 RY010",
+        "ry: ignore RY040, RY010",
+        "ry: ignore RY040 , RY010",
+        "ry: ignore RY040 ,RY010",
+        "ry: ignore RY040,RY010",
+    ] {
+        let src = format!("x <- bad  # {directive}\n");
+        let supps = parse_suppressions_from_comments(&scan_comments(&src), &src);
+        assert_eq!(supps.len(), 1, "{directive}");
+        assert_eq!(
+            supps[0].valid_rules().unwrap(),
+            &["RY040", "RY010"],
+            "{directive}"
+        );
+    }
+
+    let prose = "x <- bad  # ry: ignore RY040 reason documented under RY010\n";
+    let supps = parse_suppressions_from_comments(&scan_comments(prose), prose);
+    assert_eq!(supps[0].valid_rules().unwrap(), &["RY040"]);
+
+    for directive in [
+        "ry: ignore RY040 RX010",
+        "ry: ignore RY040, RX010",
+        "ry: ignore RY040 , RX010",
+        "ry: ignore RY040 ,RX010",
+        "ry: ignore RY040 ,",
+        "ry: ignore RY040 ,, RY010",
+    ] {
+        let src = format!("\"a\" + 1L # {directive}\n");
+        let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
+        assert!(filtered.iter().any(|d| d.code == "RY040"), "{directive}");
+        assert!(filtered.iter().any(|d| d.code == "RY112"), "{directive}");
+    }
 }
 
 #[test]
@@ -53,7 +91,7 @@ fn parse_noqa_alias() {
     let src = "x <- bad  # noqa: RY010\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.contains(&"RY010".to_string()));
+    assert!(supps[0].suppresses("RY010"));
 }
 
 #[test]
@@ -61,7 +99,7 @@ fn parse_bare_noqa_suppresses_all() {
     let src = "x <- bad  # noqa\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.is_empty());
+    assert_eq!(supps[0].kind, SuppressionKind::All);
 }
 
 #[test]
@@ -69,7 +107,7 @@ fn parse_noqa_bracket_form() {
     let src = "x <- bad  # noqa[RY010]\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.contains(&"RY010".to_string()));
+    assert!(supps[0].suppresses("RY010"));
 }
 
 #[test]
@@ -77,7 +115,7 @@ fn parse_compact_ry_ignore_no_space() {
     let src = "x <- bad  # ry:ignore[RY010]\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.contains(&"RY010".to_string()));
+    assert!(supps[0].suppresses("RY010"));
 }
 
 #[test]
@@ -85,7 +123,7 @@ fn parse_case_insensitive_marker() {
     let src = "x <- bad  # RY: IGNORE[ry010]\n";
     let supps = parse_suppressions_from_comments(&scan_comments(src), src);
     assert_eq!(supps.len(), 1);
-    assert!(supps[0].rules.contains(&"RY010".to_string()));
+    assert!(supps[0].suppresses("RY010"));
 }
 
 #[test]
@@ -126,7 +164,14 @@ fn file_level_marker_not_treated_as_line_level() {
 fn is_suppressed_matches_line_and_code() {
     let supps = vec![Suppression {
         line: 2,
-        rules: vec!["RY010".to_string()],
+        span: Span {
+            start: 0,
+            end: 1,
+            line: 2,
+            col: 0,
+        },
+        origin: SuppressionOrigin::Ry,
+        kind: SuppressionKind::Selective(vec!["RY010".to_string()]),
     }];
     let diag_matching = Diagnostic {
         severity: Severity::Warning,
@@ -161,7 +206,14 @@ fn is_suppressed_matches_line_and_code() {
 fn is_suppressed_empty_rules_matches_any_code() {
     let supps = vec![Suppression {
         line: 0,
-        rules: vec![],
+        span: Span {
+            start: 0,
+            end: 1,
+            line: 0,
+            col: 0,
+        },
+        origin: SuppressionOrigin::Ry,
+        kind: SuppressionKind::All,
     }];
     let diag = Diagnostic {
         severity: Severity::Warning,
@@ -218,6 +270,111 @@ fn filter_suppressed_other_rules_still_fire() {
     assert!(
         filtered.iter().all(|d| d.code != "RY010"),
         "RY010 should be suppressed"
+    );
+}
+
+#[test]
+fn invalid_native_ignores_report_and_leave_errors_visible() {
+    for directive in [
+        "ry: ignore[RX040]",
+        "ry: ignore[RY999999]",
+        "ry: ignore[RY040",
+        "ry: ignore[RY040]]",
+        "ry: ignore[RY040] ]",
+        "ry: ignore[RY040][RX040]",
+        "ry: ignore[RY040,]",
+        "ry: ignore[RY040, RX040]",
+    ] {
+        let src = format!("\"a\" + 1L  # {directive}\n");
+        let comments = scan_comments(&src);
+        let raw = check(&src);
+        let filtered = filter_suppressed_with_comments(raw, &comments, &src);
+        assert!(
+            filtered.iter().any(|d| d.code == "RY040"),
+            "{directive}: {filtered:?}"
+        );
+        let invalid = filtered.iter().find(|d| d.code == "RY112").unwrap();
+        assert_eq!(invalid.span.line, 0);
+        assert_eq!(invalid.span.col, src.find('#').unwrap());
+    }
+}
+
+#[test]
+fn foreign_noqa_and_marker_prefixes_do_not_suppress() {
+    for directive in [
+        "noqa: E501",
+        "noqa reason documented elsewhere",
+        "noqa[RY040]]",
+        "noqa[RY040] ]",
+        "noqa[RY040][RX040]",
+        "noqa-ish note",
+        "noquality",
+        "ry: ignored by upstream",
+        "ry: ignore-file-extra",
+    ] {
+        let src = format!("\"a\" + 1L  # {directive}\n");
+        let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
+        assert!(
+            filtered.iter().any(|d| d.code == "RY040"),
+            "{directive}: {filtered:?}"
+        );
+        assert!(
+            !filtered.iter().any(|d| d.code == "RY112"),
+            "{directive}: {filtered:?}"
+        );
+    }
+}
+
+#[test]
+fn selective_and_bare_ignores_remain_distinct() {
+    for directive in [
+        "ry: ignore[RY040]",
+        "noqa: E501, RY040",
+        "ry: ignore[ry040]",
+    ] {
+        let src = format!("\"a\" + 1L; missing_name  # {directive}\n");
+        let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
+        assert!(
+            !filtered.iter().any(|d| d.code == "RY040"),
+            "{directive}: {filtered:?}"
+        );
+        assert!(
+            filtered.iter().any(|d| d.code == "RY010"),
+            "{directive}: {filtered:?}"
+        );
+    }
+    for directive in [
+        "ry: ignore",
+        "ry: ignore[]",
+        "ry: ignore[ ]",
+        "ry: ignore reason documented elsewhere",
+        "noqa",
+        "RY:IGNORE",
+    ] {
+        let src = format!("\"a\" + 1L  # {directive}\n");
+        let filtered = filter_suppressed_with_comments(check(&src), &scan_comments(&src), &src);
+        assert!(
+            !filtered.iter().any(|d| d.code == "RY040"),
+            "{directive}: {filtered:?}"
+        );
+    }
+    let src = "\"a\" + 1L  # ry: ignore-file\n";
+    assert!(filter_suppressed_with_comments(check(src), &scan_comments(src), src).is_empty());
+}
+
+#[test]
+fn invalid_standalone_comment_reports_at_comment_and_does_not_suppress_next_line() {
+    let src = "# ry: ignore[RX040]\n\"a\" + 1L\n";
+    let filtered = filter_suppressed_with_comments(check(src), &scan_comments(src), src);
+    assert!(
+        filtered
+            .iter()
+            .any(|d| d.code == "RY040" && d.span.line == 1)
+    );
+    assert!(
+        filtered
+            .iter()
+            .any(|d| d.code == "RY112" && d.span.line == 0)
     );
 }
 

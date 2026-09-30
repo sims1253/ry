@@ -81,8 +81,9 @@ anchors, and merges are refused visibly because their inherited execution
 settings cannot be resolved by this bounded reader; unrelated `metadata`
 values remain metadata. Simple one-line root flow metadata remains active;
 root flow execution/format keys and unclassifiable root YAML forms are refused
-visibly. Malformed R code in an admitted chunk gets the usual
-RY000 parse finding; a malformed R fence gets RY120.
+visibly, including legal indentation before the root mapping. Disabled
+reports do not receive report-derived LSP inlay hints. Malformed R code in an
+admitted chunk gets the usual RY000 parse finding; a malformed R fence gets RY120.
 Directory discovery applies `index.max-file-bytes` before parsing and reports
 oversized skipped reports on stderr. An explicitly selected oversized report
 reaches the adapter and reports RY120.

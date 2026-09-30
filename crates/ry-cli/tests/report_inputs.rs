@@ -90,6 +90,8 @@ fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
     for body in [
         "`knitr`::opts_chunk$set(eval=FALSE)",
         r"knitr::`opts_\x63hunk`$set(eval=FALSE)",
+        r#"knitr::"opts_\x63hunk"$set(eval=FALSE)"#,
+        r"knitr::'opts_\u0063hunk'$set(eval=FALSE)",
     ] {
         fs::write(
             &report,
@@ -110,6 +112,7 @@ fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
     for header in [
         "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
         r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
+        r#"{r, fig.cap={knitr::"opts_\x63hunk"$set(eval=FALSE); "caption"}}"#,
     ] {
         fs::write(
             &report,
@@ -216,6 +219,11 @@ fn format_inheritance_and_option_name_case_keep_execution_truthful() {
     fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
     let report = root.path().join("format.qmd");
     for yaml in [
+        "  {execute: {eval: false}}",
+        "  {format: {html: {execute: {eval: false}}}}",
+        "  execute:\n    eval: false",
+        "  title: study\n  format:\n    html:\n      execute:\n        eval: false",
+        "  !!map {execute: {eval: false}}",
         "{execute: {eval: false}}",
         "{format: {html: {execute: {eval: false}}}}",
         "{\"exec\\u0075te\": {eval: false}}",
@@ -248,6 +256,21 @@ fn format_inheritance_and_option_name_case_keep_execution_truthful() {
     let benign = check(root.path());
     assert_eq!(code(&benign, "RY040").len(), 1, "{benign:?}");
     assert!(code(&benign, "RY121").is_empty(), "{benign:?}");
+    fs::write(
+        &report,
+        "---\n  metadata:\n    eval: false\n---\n```{r}\n'a' + 1L\n```\n",
+    )
+    .unwrap();
+    let indented_metadata = check(root.path());
+    assert_eq!(
+        code(&indented_metadata, "RY040").len(),
+        1,
+        "{indented_metadata:?}"
+    );
+    assert!(
+        code(&indented_metadata, "RY121").is_empty(),
+        "{indented_metadata:?}"
+    );
     for header in ["{r, Eval=FALSE}", "{r}\n#| Eval: false"] {
         fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
         let diagnostics = check(root.path());

@@ -365,11 +365,22 @@ pub fn parse_report_with_tree(
         if rows.first().is_some_and(|line| line.text.trim() == "---") {
             first = 1;
             let mut root_key = None;
+            let mut root_indent = None;
             while first < rows.len() && rows[first].text.trim() != "---" {
                 let raw = rows[first].text.trim_end_matches(['\r', '\n']);
                 let indent = raw.len() - raw.trim_start_matches(' ').len();
                 let content = raw.trim_start_matches(' ');
-                if indent == 0 && content.starts_with('{') {
+                if content.is_empty() || content.starts_with('#') {
+                    first += 1;
+                    continue;
+                }
+                let root = *root_indent.get_or_insert(indent);
+                if indent < root || content.starts_with('\t') {
+                    issues.push(issue(rows[first].offset, first, "RY121", "report YAML indentation cannot be classified safely; no chunks are assumed executable"));
+                    break;
+                }
+                let at_root = indent == root;
+                if at_root && content.starts_with('{') {
                     match root_flow_execution(content) {
                         Ok(false) => {
                             first += 1;
@@ -381,25 +392,25 @@ pub fn parse_report_with_tree(
                         }
                     }
                 }
-                if indent == 0 && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
+                if at_root && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
                     issues.push(issue(rows[first].offset, first, "RY121", "report YAML root syntax cannot be classified safely; no chunks are assumed executable"));
                     break;
                 }
                 match yaml_key_value(raw) {
                     Ok(Some((key, value))) => {
-                        if indent == 0 {
+                        if at_root {
                             root_key = Some(key);
                         }
                         let execution_key = key == "execute" || key == "knitr";
-                        let root_execution = indent == 0 && (execution_key || key == "eval");
+                        let root_execution = at_root && (execution_key || key == "eval");
                         let format_execution =
-                            indent > 0 && root_key == Some("format") && execution_key;
+                            !at_root && root_key == Some("format") && execution_key;
                         let format_inheritance = root_key == Some("format")
                             && (key == "<<" || complex_format_value(value));
                         if root_execution
                             || format_execution
                             || format_inheritance
-                            || indent == 0 && key == "<<"
+                            || at_root && key == "<<"
                         {
                             issues.push(issue(rows[first].offset, first, "RY121", "report-level execution options need a report engine; no chunks are assumed executable"));
                             break;
@@ -812,6 +823,12 @@ mod tests {
         for front_matter in [
             "\"execute\":\n  \"eval\": false",
             "format:\n  html:\n    execute:\n      eval: false",
+            "  {execute: {eval: false}}",
+            "  {format: {html: {execute: {eval: false}}}}",
+            "  execute:\n    eval: false",
+            "  title: study\n  format:\n    html:\n      execute:\n        eval: false",
+            "  !!map {execute: {eval: false}}",
+            "# comment\n\n  {execute: {eval: false}}",
             "{execute: {eval: false}}",
             "{format: {html: {execute: {eval: false}}}}",
             "{\"exec\\u0075te\": {eval: false}}",
@@ -835,6 +852,8 @@ mod tests {
 
         for front_matter in [
             "metadata: {eval: false}",
+            "  metadata:\n    eval: false",
+            "  {title: \"test\", metadata: {execute: {eval: false}}}",
             "{title: \"test\", metadata: {execute: {eval: false}}}",
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nmetadata:\n  default: *fmt",
             "format:\n  html:\n    toc: true",

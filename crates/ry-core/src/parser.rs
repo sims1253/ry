@@ -703,21 +703,19 @@ impl RParser {
             Some(t) => t,
             None => return Some(Expr::Unknown(span)),
         };
-        // For identifier RHS the raw text is the bare name. For a string
-        // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
-        // strip the surrounding quotes.  Use the shared boundary-safe
-        // helper: `raw.len() - 1` need not be a char boundary
-        // when the string token is malformed/truncated, which would
-        // panic on the naive slice `raw[1..raw.len() - 1]`.
+        // For identifier RHS the raw text is the bare name. A quoted string
+        // RHS is a semantic name, so its R escapes must be decoded just as
+        // they are for an ordinary string expression. Stripping quotes only
+        // would make `pkg::"my\x20func"` disagree with R's `pkg::"my func"`.
         let name = if rhs.kind() == "string" {
-            strip_quotes_at_boundaries(&raw).to_string()
+            unquote_r_string(&raw)
         } else {
             raw
         };
         // Detect the operator (`::` vs `:::`) by scanning the node's
         // anonymous children. We preserve it so the checker can tell
         // exported (`::`) from internal (`:::`) references if needed,
-        // and so the original spelling round-trips through the AST.
+        // while the span retains the original source spelling.
         let op = namespace_op(n, src).unwrap_or("::");
         let full_name = format!("{}{}{}", pkg, op, name);
         Some(Expr::Ident {
@@ -1809,6 +1807,25 @@ mod tests {
                 assert_eq!(name, "base::my fn", "expected ident name \"base::my fn\"");
             }
             other => panic!("expected Ident for `base::\"my fn\"`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn namespace_string_rhs_decodes_r_escapes_without_changing_the_package() {
+        for (source, expected) in [
+            (r#"knitr::"opts_\x63hunk""#, "knitr::opts_chunk"),
+            (r#"knitr::'opts_\u0063hunk'"#, "knitr::opts_chunk"),
+            (r#"knitr::"opts_\U00000063hunk""#, "knitr::opts_chunk"),
+            (r#""knitr"::"opts_\x63hunk""#, "\"knitr\"::opts_chunk"),
+            (r#"base::"my\x20func""#, "base::my func"),
+        ] {
+            let file = parse(&format!("{source}\n"));
+            match file.stmts.first() {
+                Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                    assert_eq!(name, expected, "{source}")
+                }
+                other => panic!("expected namespace identifier for {source}, got {other:?}"),
+            }
         }
     }
 

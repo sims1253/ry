@@ -12,6 +12,108 @@ fn finding<'a>(publish: &'a Value, code: &str) -> Option<&'a Value> {
         .find(|diag| diag["code"] == code)
 }
 
+async fn hints_for(session: &mut harness::ClientSession, uri: &str) -> Value {
+    session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 4, "character": 0}}
+            }),
+        )
+        .await
+        .unwrap()
+}
+
+#[test]
+fn disabled_reports_never_supply_inlay_hints_even_after_config_toggles() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            let outside = FixtureProject::empty().unwrap();
+            fixture
+                .write_file("ry.toml", "[reports]\nenabled = false\n")
+                .unwrap();
+            let source = "```{r}\nx <- 1L\n```\n";
+            let report_uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+            let outside_uri =
+                file_uri(&outside.write_file("outside.qmd", source).unwrap()).unwrap();
+            let ordinary_uri =
+                file_uri(&fixture.write_file("ordinary.R", "x <- 1L\n").unwrap()).unwrap();
+            let config_uri = file_uri(&fixture.path("ry.toml")).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            session.open(&report_uri, 1, source).await.unwrap();
+            session.open(&outside_uri, 1, source).await.unwrap();
+            session.open(&ordinary_uri, 1, "x <- 1L\n").await.unwrap();
+            assert!(hints_for(&mut session, &report_uri).await.is_null());
+            assert!(hints_for(&mut session, &outside_uri).await.is_null());
+            assert!(
+                hints_for(&mut session, &ordinary_uri)
+                    .await
+                    .as_array()
+                    .is_some_and(|hints| !hints.is_empty())
+            );
+
+            fixture
+                .write_file("ry.toml", "[reports]\nenabled = true\n")
+                .unwrap();
+            sync_barrier(&mut session, &report_uri).await;
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "workspace/didChangeWatchedFiles",
+                    json!({"changes": [{"uri": config_uri, "type": 2}]}),
+                )
+                .await
+                .unwrap();
+            session
+                .published_diagnostics_after(&report_uri, mark)
+                .await
+                .unwrap();
+            assert!(
+                hints_for(&mut session, &report_uri)
+                    .await
+                    .as_array()
+                    .is_some_and(|hints| !hints.is_empty())
+            );
+            assert!(
+                hints_for(&mut session, &outside_uri)
+                    .await
+                    .as_array()
+                    .is_some_and(|hints| !hints.is_empty())
+            );
+
+            fixture
+                .write_file("ry.toml", "[reports]\nenabled = false\n")
+                .unwrap();
+            sync_barrier(&mut session, &report_uri).await;
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "workspace/didChangeWatchedFiles",
+                    json!({"changes": [{"uri": config_uri, "type": 2}]}),
+                )
+                .await
+                .unwrap();
+            session
+                .published_diagnostics_after(&report_uri, mark)
+                .await
+                .unwrap();
+            assert!(hints_for(&mut session, &report_uri).await.is_null());
+            assert!(hints_for(&mut session, &outside_uri).await.is_null());
+            assert!(
+                hints_for(&mut session, &ordinary_uri)
+                    .await
+                    .as_array()
+                    .is_some_and(|hints| !hints.is_empty())
+            );
+            join_session(session, server).await;
+        });
+}
+
 #[test]
 fn warm_report_execution_identity_edits_republish_the_same_uri() {
     tokio::runtime::Builder::new_current_thread()
@@ -32,8 +134,10 @@ fn warm_report_execution_identity_edits_republish_the_same_uri() {
             let cases = [
                 ("😀 prose\r\n```{r, eval=FALSE}\r\n'a' + 1L\r\n```\r\n", false, false),
                 ("😀 prose\r\n```{r}\r\nknitr::`opts_\\x63hunk`$set(eval=FALSE)\r\n```\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
+                ("😀 prose\r\n```{r}\r\nknitr::\"opts_\\x63hunk\"$set(eval=FALSE)\r\n```\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
                 ("---\r\nformat: {html: {execute: {eval: false}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
                 ("---\r\n{format: {html: {execute: {eval: false}}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
+                ("---\r\n  {format: {html: {execute: {eval: false}}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
                 ("---\r\nmetadata: {eval: false}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", true, false),
                 ("---\r\n{title: \"test\", metadata: {execute: {eval: false}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", true, false),
             ];

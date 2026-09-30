@@ -54,14 +54,15 @@ fn mask(masked: &mut [u8], start: usize, end: usize) {
 
 /// A real reference to knitr's chunk-option object can change the execution
 /// of later chunks. Inspect lowered R identifiers so raw strings, comments,
-/// and similarly named variables cannot invent that boundary. Function
-/// bodies are deferred until called and do not execute just by appearing here.
+/// and similarly named variables cannot invent that boundary. We include
+/// function bodies and assignment targets conservatively: without executing
+/// the report, a later call or replacement could use either reference.
 fn has_runtime_chunk_options(stmts: &[Stmt]) -> bool {
     let policy = Walk {
-        assign_targets: false,
-        assign_operands: false,
+        assign_targets: true,
+        assign_operands: true,
         dollar_args: false,
-        fn_bodies: false,
+        fn_bodies: true,
         control_tests: true,
     };
     matches!(
@@ -592,6 +593,17 @@ mod tests {
             parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None).unwrap();
         assert_eq!(file.stmts.len(), 1);
         assert_eq!(file.input_issues[0].code, "RY121");
+
+        for body in [
+            "change_options <- function() knitr::opts_chunk$set(eval=FALSE)",
+            "knitr::opts_chunk$set <- function(...) NULL",
+        ] {
+            let source = format!("```{{r}}\n{body}\n```\n```{{r}}\nx + 1L\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
+                    .unwrap();
+            assert_eq!(file.input_issues[0].code, "RY121", "{body}");
+        }
     }
 
     #[test]

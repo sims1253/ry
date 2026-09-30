@@ -3,6 +3,15 @@ use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
+struct HelperCallEffects<'a> {
+    params: &'a [String],
+    may_install: bool,
+    called_formals: &'a [String],
+    fresh_target_formal: Option<&'a str>,
+    fresh_target_needs_base_c: bool,
+    forwarded_installer: Option<&'a str>,
+}
+
 fn supplied_callable_may_install_caller_binding(
     checker: &Checker,
     function: &UserFn,
@@ -294,44 +303,39 @@ impl Checker {
 
     fn helper_effect_with_actuals(
         &self,
-        params: &[String],
-        may_install: bool,
-        called_formals: &[String],
-        fresh_target_formal: Option<&str>,
-        fresh_target_needs_base_c: bool,
-        forwarded_installer: Option<&str>,
+        effects: HelperCallEffects<'_>,
         args: &[Arg],
         scope: &Scope,
     ) -> bool {
-        if let Some(installer) = forwarded_installer {
+        if let Some(installer) = effects.forwarded_installer {
             return crate::collect::installer_may_replace_current_binding(installer, args);
         }
-        if !may_install && called_formals.is_empty() {
+        if !effects.may_install && effects.called_formals.is_empty() {
             return false;
         }
-        let formal_refs: Vec<_> = params.iter().map(String::as_str).collect();
+        let formal_refs: Vec<_> = effects.params.iter().map(String::as_str).collect();
         let matched = crate::match_caller_binding_argument_names(&formal_refs, args);
-        if may_install
-            && let Some(formal) = fresh_target_formal
-            && let Some(index) = params.iter().position(|name| name == formal)
+        if effects.may_install
+            && let Some(formal) = effects.fresh_target_formal
+            && let Some(index) = effects.params.iter().position(|name| name == formal)
             && let Some(actual) = matched
                 .as_ref()
                 .and_then(|bindings| bindings.arg_for_param(index))
                 .and_then(|index| args.get(index))
             && crate::collect::definitely_fresh_installer_env(&actual.value)
-            && (!fresh_target_needs_base_c || self.resolves_to_base("c", scope))
+            && (!effects.fresh_target_needs_base_c || self.resolves_to_base("c", scope))
             && !scope.effects_unknown
         {
             return false;
         }
-        if may_install {
+        if effects.may_install {
             return true;
         }
         let Some(matched) = matched else {
             return true;
         };
-        called_formals.iter().any(|called| {
-            let Some(index) = params.iter().position(|name| name == called) else {
+        effects.called_formals.iter().any(|called| {
+            let Some(index) = effects.params.iter().position(|name| name == called) else {
                 return true;
             };
             let Some(actual) = matched
@@ -352,12 +356,14 @@ impl Checker {
     ) -> bool {
         if let Some(function) = scope.local_caller_binding_functions.get(source) {
             return self.helper_effect_with_actuals(
-                &function.params,
-                function.may_install,
-                &function.called_formals,
-                function.fresh_target_formal.as_deref(),
-                function.fresh_target_needs_base_c,
-                function.forwarded_installer.as_deref(),
+                HelperCallEffects {
+                    params: &function.params,
+                    may_install: function.may_install,
+                    called_formals: &function.called_formals,
+                    fresh_target_formal: function.fresh_target_formal.as_deref(),
+                    fresh_target_needs_base_c: function.fresh_target_needs_base_c,
+                    forwarded_installer: function.forwarded_installer.as_deref(),
+                },
                 args,
                 scope,
             );
@@ -383,12 +389,14 @@ impl Checker {
         let forwarded_installer =
             crate::collect::helper_forwarded_installer(&params, &function.body);
         self.helper_effect_with_actuals(
-            &params,
-            function.may_install_caller_binding,
-            &[],
-            fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
-            fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
-            forwarded_installer.as_deref(),
+            HelperCallEffects {
+                params: &params,
+                may_install: function.may_install_caller_binding,
+                called_formals: &[],
+                fresh_target_formal: fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
+                fresh_target_needs_base_c: fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
+                forwarded_installer: forwarded_installer.as_deref(),
+            },
             args,
             scope,
         )

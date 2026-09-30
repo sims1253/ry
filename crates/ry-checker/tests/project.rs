@@ -1692,6 +1692,46 @@ fn named_head_selected_before_argument_edit_retracts_warm_and_cold() {
 }
 
 #[test]
+fn local_helper_effect_after_callable_guard_retracts_warm_and_cold() {
+    let installing = "f <- function(x = 1L) { put <- function(env) base::assign('x', c(1L, 2L), envir = env); stopifnot(is.function(put)); stopifnot(x > 0 && TRUE); put(environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let pure = "f <- function(x = 1L) { put <- function(env) NULL; stopifnot(is.function(put)); stopifnot(x > 0 && TRUE); put(environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let mut warm = callback_project(&[("consumer.R", installing)]);
+    let before = warm.check_incremental();
+    assert!(
+        before
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{before:?}"
+    );
+
+    warm.update_file("consumer.R".into(), Arc::new(parse("consumer.R", pure)));
+    let after = warm.check_incremental();
+    assert_eq!(after, callback_project(&[("consumer.R", pure)]).check());
+    assert!(
+        after
+            .iter()
+            .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+        "{after:?}"
+    );
+
+    warm.update_file(
+        "consumer.R".into(),
+        Arc::new(parse("consumer.R", installing)),
+    );
+    let restored = warm.check_incremental();
+    assert_eq!(
+        restored,
+        callback_project(&[("consumer.R", installing)]).check()
+    );
+    assert!(
+        restored
+            .iter()
+            .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+        "{restored:?}"
+    );
+}
+
+#[test]
 fn assertion_inside_loop_retracts_after_a_pure_edit() {
     let installing = "f <- function(x = 1L) { p <- function(...) NULL; for (i in 1:2) { stopifnot(x > 0 && TRUE); p('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE; p <- base::assign } }; f()\n";
     let pure = "f <- function(x = 1L) { p <- function(...) NULL; for (i in 1:2) { stopifnot(x > 0 && TRUE); p('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE; p <- function(...) NULL } }; f()\n";

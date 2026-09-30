@@ -84,6 +84,7 @@ impl Checker {
         let named_installer = callee_name(func).is_some_and(|name| {
             self.caller_binding_source_matches(&name, scope, |source| {
                 crate::collect::installer_may_replace_current_binding(source, args)
+                    || self.named_helper_may_replace_current_binding(source, args, scope)
             }) || (scope.is_parameter(&name)
                 && scope.get(&name).is_some_and(|binding| {
                     matches!(
@@ -201,6 +202,8 @@ impl Checker {
                     "identity" | "invisible" | "force"
                 )
             }
+        } else if scope.local_caller_binding_functions.contains_key(source) {
+            self.named_helper_may_replace_current_binding(source, args, scope)
         } else if !scope.dynamic_bindings_unknown
             && scope.inert_caller_binding_functions.contains(source)
         {
@@ -212,7 +215,7 @@ impl Checker {
         } else if scope.is_parameter(source) || scope.is_lexical_function(source) {
             true
         } else if let Some(function) = self.fn_table.fns.get(source) {
-            function.may_install_caller_binding
+            self.named_helper_may_replace_current_binding(source, args, scope)
                 || supplied_callable_may_install_caller_binding(self, function, args, scope)
         } else if let Some(aliases) = self.fn_table.caller_binding_aliases.get(source) {
             aliases.iter().any(|alias| {
@@ -289,6 +292,108 @@ impl Checker {
         false
     }
 
+    fn helper_effect_with_actuals(
+        &self,
+        params: &[String],
+        may_install: bool,
+        called_formals: &[String],
+        fresh_target_formal: Option<&str>,
+        fresh_target_needs_base_c: bool,
+        forwarded_installer: Option<&str>,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        if let Some(installer) = forwarded_installer {
+            return crate::collect::installer_may_replace_current_binding(installer, args);
+        }
+        if !may_install && called_formals.is_empty() {
+            return false;
+        }
+        let formal_refs: Vec<_> = params.iter().map(String::as_str).collect();
+        let matched = crate::match_caller_binding_argument_names(&formal_refs, args);
+        if may_install
+            && let Some(formal) = fresh_target_formal
+            && let Some(index) = params.iter().position(|name| name == formal)
+            && let Some(actual) = matched
+                .as_ref()
+                .and_then(|bindings| bindings.arg_for_param(index))
+                .and_then(|index| args.get(index))
+            && crate::collect::definitely_fresh_installer_env(&actual.value)
+            && (!fresh_target_needs_base_c || self.resolves_to_base("c", scope))
+            && !scope.effects_unknown
+        {
+            return false;
+        }
+        if may_install {
+            return true;
+        }
+        let Some(matched) = matched else {
+            return true;
+        };
+        called_formals.iter().any(|called| {
+            let Some(index) = params.iter().position(|name| name == called) else {
+                return true;
+            };
+            let Some(actual) = matched
+                .arg_for_param(index)
+                .and_then(|index| args.get(index))
+            else {
+                return true;
+            };
+            !inert_caller_binding_value(&actual.value, scope)
+        })
+    }
+
+    fn named_helper_may_replace_current_binding(
+        &self,
+        source: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        if let Some(function) = scope.local_caller_binding_functions.get(source) {
+            return self.helper_effect_with_actuals(
+                &function.params,
+                function.may_install,
+                &function.called_formals,
+                function.fresh_target_formal.as_deref(),
+                function.fresh_target_needs_base_c,
+                function.forwarded_installer.as_deref(),
+                args,
+                scope,
+            );
+        }
+        if scope.function_alias(source).is_some() {
+            return false;
+        }
+        if !source.contains("::") && scope.is_lexical_function(source) {
+            return !scope.inert_caller_binding_functions.contains(source)
+                && scope.get(source).is_some_and(|ty| {
+                    matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+                });
+        }
+        let Some(function) = self.fn_table.fns.get(source) else {
+            return false;
+        };
+        let params: Vec<_> = function
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
+        let fresh_target = crate::collect::helper_fresh_target_formal(&params, &function.body);
+        let forwarded_installer =
+            crate::collect::helper_forwarded_installer(&params, &function.body);
+        self.helper_effect_with_actuals(
+            &params,
+            function.may_install_caller_binding,
+            &function.caller_binding_called_formals,
+            fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
+            fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
+            forwarded_installer.as_deref(),
+            args,
+            scope,
+        )
+    }
+
     /// Resolve only an actual dispatcher source. An effect-uncertain local
     /// callable is not evidence that its selected value is `do.call`; the
     /// ordinary caller-binding check already handles that uncertainty.
@@ -360,10 +465,19 @@ impl Checker {
                     || self.caller_binding_source_matches(source, scope, |candidate| {
                         candidate == crate::UNKNOWN_CALLER_BINDING_IDENTITY
                             || supplied.map_or_else(
-                                || crate::collect::is_caller_binding_installer_source(candidate),
+                                || {
+                                    crate::collect::is_caller_binding_installer_source(candidate)
+                                        || self.named_helper_may_replace_current_binding(
+                                            candidate,
+                                            &[],
+                                            scope,
+                                        )
+                                },
                                 |supplied| {
                                     crate::collect::installer_may_replace_current_binding(
                                         candidate, supplied,
+                                    ) || self.named_helper_may_replace_current_binding(
+                                        candidate, supplied, scope,
                                     )
                                 },
                             )
@@ -591,7 +705,7 @@ impl Checker {
         // callable is not certified by the project-wide name table.
         if !scope.is_parameter(&lookup_name)
             && call.user_function.as_ref().is_some_and(|function| {
-                function.may_install_caller_binding
+                self.named_helper_may_replace_current_binding(&lookup_name, args, scope)
                     || supplied_callable_may_install_caller_binding(self, function, args, scope)
             })
         {

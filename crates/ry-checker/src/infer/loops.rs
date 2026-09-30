@@ -471,6 +471,9 @@ fn path_may_install_caller_binding(scope: &Scope, name: &str, functions: &FnTabl
     if scope.uncertain_caller_binding_aliases.contains(name) {
         return true;
     }
+    if let Some(function) = scope.local_caller_binding_functions.get(name) {
+        return function.may_install || !function.called_formals.is_empty();
+    }
     if scope.inert_caller_binding_functions.contains(name) && !scope.dynamic_bindings_unknown {
         return false;
     }
@@ -492,6 +495,8 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope, functions: &FnTab
         .chain(incoming.uncertain_caller_binding_aliases.iter())
         .chain(joined.inert_caller_binding_functions.iter())
         .chain(incoming.inert_caller_binding_functions.iter())
+        .chain(joined.local_caller_binding_functions.keys())
+        .chain(incoming.local_caller_binding_functions.keys())
         .cloned()
         .collect();
     for name in alias_names {
@@ -509,6 +514,29 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope, functions: &FnTab
         }
         if uncertain {
             joined.uncertain_caller_binding_aliases.insert(name);
+        }
+    }
+    let local_names: HashSet<String> = joined
+        .local_caller_binding_functions
+        .keys()
+        .chain(incoming.local_caller_binding_functions.keys())
+        .cloned()
+        .collect();
+    for name in local_names {
+        if joined.local_caller_binding_functions.get(&name)
+            != incoming.local_caller_binding_functions.get(&name)
+        {
+            let risky = [
+                joined.local_caller_binding_functions.get(&name),
+                incoming.local_caller_binding_functions.get(&name),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|function| function.may_install || !function.called_formals.is_empty());
+            joined.local_caller_binding_functions.remove(&name);
+            if risky {
+                joined.uncertain_caller_binding_aliases.insert(name);
+            }
         }
     }
     let bounded_names: HashSet<String> = joined
@@ -705,6 +733,8 @@ impl Checker {
                 let exit_alias = exit.function_alias(&binding);
                 let prior_inert = inert_before.contains(&binding);
                 let exit_inert = exit.inert_caller_binding_functions.contains(&binding);
+                let prior_local = scope.local_caller_binding_functions.get(&binding).cloned();
+                let exit_local = exit.local_caller_binding_functions.get(&binding).cloned();
                 let aliases_differ =
                     prior_alias.as_deref() != exit_alias || prior_inert != exit_inert;
                 let alias = if entered || !aliases_differ {
@@ -725,6 +755,20 @@ impl Checker {
                                     &binding,
                                     &self.fn_table,
                                 )))));
+                let uncertain_alias = uncertain_alias
+                    || (!entered
+                        && prior_local != exit_local
+                        && [prior_local.as_ref(), exit_local.as_ref()]
+                            .into_iter()
+                            .flatten()
+                            .any(|function| {
+                                function.may_install || !function.called_formals.is_empty()
+                            }));
+                let local_function = if entered || prior_local == exit_local {
+                    exit_local
+                } else {
+                    None
+                };
                 let list_origin = exit.list_origin_bindings.contains(&binding);
                 let parameter =
                     scope.is_parameter(&binding) && exit.parameter_bindings.contains(&binding);
@@ -760,6 +804,9 @@ impl Checker {
                 }
                 if uncertain_alias {
                     scope.mark_uncertain_caller_binding_alias(&binding);
+                }
+                if let Some(function) = local_function {
+                    scope.set_local_caller_binding_function(&binding, function);
                 }
                 if !scope.dynamic_bindings_unknown
                     && !scope.effects_unknown

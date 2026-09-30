@@ -435,7 +435,7 @@ pub(crate) fn installer_may_replace_current_binding(name: &str, args: &[Arg]) ->
 /// A preceding literal function definition only constructs a value; its body
 /// is deferred. Other block statements may affect the caller and cannot
 /// certify the negative path here.
-fn definitely_fresh_installer_env(expression: &Expr) -> bool {
+pub(crate) fn definitely_fresh_installer_env(expression: &Expr) -> bool {
     match expression {
         Expr::Call { func, .. } if ident_name(func) == Some("base::new.env") => true,
         Expr::Call { func, args, .. }
@@ -712,7 +712,7 @@ fn local_do_call_effects(
 /// are not.
 /// Direct calls let wrappers inherit this conservative summary. A local
 /// installer without a caller-frame route does not taint callers.
-fn helper_caller_binding_summary(
+pub(crate) fn helper_caller_binding_summary(
     params: &[Param],
     body: &[Stmt],
 ) -> (
@@ -725,6 +725,94 @@ fn helper_caller_binding_summary(
     // Exhaustion must withdraw the negative binding-effect proof.
     let mut remaining_default_bodies = 64;
     helper_caller_binding_summary_bounded(params, body, &mut remaining_default_bodies)
+}
+
+/// A one-call helper can be certified harmless for a fresh actual only when
+/// its sole installer target is a formal and all other actual expressions
+/// are closed values. Bare `c()` additionally needs its base identity at the
+/// caller; a lexical mask can execute arbitrary code while forming `value`.
+pub(crate) fn helper_fresh_target_formal(
+    params: &[String],
+    body: &[Stmt],
+) -> Option<(String, bool)> {
+    fn pure_value(value: &Expr) -> Option<bool> {
+        match value {
+            Expr::Null(_)
+            | Expr::Na(_, _)
+            | Expr::Logical(_, _)
+            | Expr::Integer(_, _)
+            | Expr::Double(_, _)
+            | Expr::String(_, _) => Some(false),
+            Expr::Call { func, args, .. } if matches!(ident_name(func), Some("c" | "base::c")) => {
+                let mut needs_base_c = ident_name(func) == Some("c");
+                for arg in args {
+                    needs_base_c |= pure_value(&arg.value)?;
+                }
+                Some(needs_base_c)
+            }
+            _ => None,
+        }
+    }
+    let [Stmt::Expr(Expr::Call { func, args, .. })] = body else {
+        return None;
+    };
+    let name = ident_name(func)?;
+    if !crate::semantic_lists::is_base_qualified(name) || !is_caller_binding_installer_source(name)
+    {
+        return None;
+    }
+    let environment = installer_environment_arg(name, args).ok().flatten()?;
+    let Expr::Ident { name: formal, .. } = environment else {
+        return None;
+    };
+    let formal = caller_binding_identity(formal)?;
+    if !params.contains(&formal) || formal == "..." || params.iter().any(|name| name == "c") {
+        return None;
+    }
+    let mut needs_base_c = false;
+    for arg in args {
+        if std::ptr::eq(&arg.value, environment) {
+            continue;
+        }
+        needs_base_c |= pure_value(&arg.value)?;
+    }
+    Some((formal, needs_base_c))
+}
+
+pub(crate) fn helper_forwarded_installer(params: &[String], body: &[Stmt]) -> Option<String> {
+    if params != ["..."] {
+        return None;
+    }
+    let [Stmt::Expr(Expr::Call { func, args, .. })] = body else {
+        return None;
+    };
+    let name = ident_name(func)?;
+    (crate::semantic_lists::is_base_qualified(name)
+        && is_caller_binding_installer_source(name)
+        && matches!(args.as_slice(), [Arg { name: None, value: Expr::Ident { name, .. }, .. }] if name == "..."))
+    .then(|| name.to_string())
+}
+
+pub(crate) fn local_caller_binding_function(
+    params: &[Param],
+    body: &[Stmt],
+    definition: Span,
+) -> LocalCallerBindingFunction {
+    let (may_install, _, called_formals, _) = helper_caller_binding_summary(params, body);
+    let names: Vec<_> = params
+        .iter()
+        .map(|param| caller_binding_identity(&param.name).unwrap_or_default())
+        .collect();
+    let fresh_target = helper_fresh_target_formal(&names, body);
+    LocalCallerBindingFunction {
+        params: names.clone(),
+        may_install,
+        called_formals,
+        fresh_target_formal: fresh_target.as_ref().map(|(formal, _)| formal.clone()),
+        fresh_target_needs_base_c: fresh_target.is_some_and(|(_, needs)| needs),
+        forwarded_installer: helper_forwarded_installer(&names, body),
+        definition,
+    }
 }
 
 fn helper_caller_binding_summary_bounded(
@@ -858,7 +946,9 @@ fn helper_caller_binding_summary_bounded(
                         | "base::force"
                         | "base::list"
                         | "base::is.function"
-                ) {
+                ) && !(crate::semantic_lists::is_base_qualified(&name)
+                    && is_caller_binding_installer_source(&name))
+                {
                     for arg in args {
                         match caller_binding_value_sources(&arg.value) {
                             Some(sources) => {

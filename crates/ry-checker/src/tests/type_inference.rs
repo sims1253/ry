@@ -2811,6 +2811,118 @@ fn selected_dispatcher_and_loop_exit_callable_values_match_r() {
 }
 
 #[test]
+fn local_helper_effects_and_callable_guards_match_r() {
+    for (name, source) in [
+        (
+            "local direct helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_helper_local.R"),
+        ),
+        (
+            "local do.call helper",
+            include_str!(
+                "../../testdata/oracle/assertion_subject_r21_review_helper_local_docall.R"
+            ),
+        ),
+        (
+            "top-level do.call helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_helper_top_docall.R"),
+        ),
+        (
+            "guarded installer alias",
+            include_str!(
+                "../../testdata/oracle/assertion_subject_r21_review_direct_alias_narrow.R"
+            ),
+        ),
+        (
+            "guarded loop alternative",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_is_function.R"),
+        ),
+        (
+            "positive guard branch",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_positive_branch.R"),
+        ),
+        (
+            "copied helper survives overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_copied_unsafe.R"),
+        ),
+        (
+            "guarded local helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_guarded_helper.R"),
+        ),
+        (
+            "branch helper alternative",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_branch_helper.R"),
+        ),
+        (
+            "loop helper alternative",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_loop_helper.R"),
+        ),
+        (
+            "copied top-level do.call helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_extra.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032"),
+            "{name}: the helper can replace the asserted caller binding: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "pure local helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_helper_pure.R"),
+        ),
+        (
+            "fresh local helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_helper_fresh.R"),
+        ),
+        (
+            "pure callable guard",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_pure_guard.R"),
+        ),
+        (
+            "fresh callable guard",
+            include_str!("../../testdata/oracle/assertion_subject_r21_review_fresh_guard.R"),
+        ),
+        (
+            "copied helper to fresh frame",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_copied_fresh.R"),
+        ),
+        (
+            "pure overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_overwritten_pure.R"),
+        ),
+        (
+            "pure helper branch",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_branch_pure.R"),
+        ),
+        (
+            "pure helper loop",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_loop_pure.R"),
+        ),
+        (
+            "fresh top-level helper",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_fresh.R"),
+        ),
+        (
+            "known pure base call",
+            include_str!("../../testdata/oracle/assertion_subject_r21_focus_pure_known.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY032"),
+            "{name}: the helper cannot replace the asserted caller binding: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn scalar_proof_rejects_cross_file_caller_binding_helper() {
     let mut project = Project::new();
     project.add_file(

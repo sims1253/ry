@@ -647,6 +647,20 @@ impl Checker {
                 let inert_caller_binding_function = inert_caller_binding_value(value, scope);
                 let uncertain_caller_binding_alias =
                     function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
+                let local_caller_binding_function = match value {
+                    Expr::Function { params, body, span } => Some(Arc::new(
+                        crate::collect::local_caller_binding_function(params, body, *span),
+                    )),
+                    _ => {
+                        let sources =
+                            crate::collect::global_caller_binding_value_sources(value, 64);
+                        (sources.len() == 1)
+                            .then(|| sources.iter().next())
+                            .flatten()
+                            .and_then(|source| scope.local_caller_binding_functions.get(source))
+                            .cloned()
+                    }
+                };
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 // A rebound name no longer carries any armed
@@ -704,6 +718,9 @@ impl Checker {
                     }
                     if inert_caller_binding_function {
                         scope.mark_inert_caller_binding_function(name);
+                    }
+                    if let Some(function) = local_caller_binding_function {
+                        scope.set_local_caller_binding_function(name, function);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -1564,6 +1581,7 @@ impl Checker {
                     list_origin: scope.has_list_origin(name),
                     default_parameter: scope.is_default_parameter(name),
                     alias: scope.function_alias(name),
+                    local_function: scope.local_caller_binding_functions.get(name),
                     uncertain_caller_binding_alias: scope
                         .uncertain_caller_binding_aliases
                         .contains(name),
@@ -1588,28 +1606,46 @@ impl Checker {
                                 || !function.caller_binding_called_formals.is_empty()
                         })
                 };
-                let (joined_alias, uncertain_alias) = if has_else && then_reaches != else_reaches {
-                    let reached = if then_reaches {
-                        &then_binding
+                let (joined_alias, mut uncertain_alias) =
+                    if has_else && then_reaches != else_reaches {
+                        let reached = if then_reaches {
+                            &then_binding
+                        } else {
+                            &else_binding
+                        };
+                        (
+                            reached.alias.map(str::to_string),
+                            reached.uncertain_caller_binding_alias,
+                        )
                     } else {
-                        &else_binding
+                        let shared = (then_binding.alias == else_binding.alias)
+                            .then(|| then_binding.alias.map(str::to_string))
+                            .flatten();
+                        let uncertain = then_binding.uncertain_caller_binding_alias
+                            || else_binding.uncertain_caller_binding_alias
+                            || (then_binding.alias != else_binding.alias
+                                && [then_binding.alias, else_binding.alias]
+                                    .into_iter()
+                                    .flatten()
+                                    .any(alias_may_install));
+                        (shared, uncertain)
                     };
-                    (
-                        reached.alias.map(str::to_string),
-                        reached.uncertain_caller_binding_alias,
-                    )
+                let joined_local = if has_else && then_reaches != else_reaches {
+                    if then_reaches {
+                        then_binding.local_function.cloned()
+                    } else {
+                        else_binding.local_function.cloned()
+                    }
+                } else if then_binding.local_function == else_binding.local_function {
+                    then_binding.local_function.cloned()
                 } else {
-                    let shared = (then_binding.alias == else_binding.alias)
-                        .then(|| then_binding.alias.map(str::to_string))
-                        .flatten();
-                    let uncertain = then_binding.uncertain_caller_binding_alias
-                        || else_binding.uncertain_caller_binding_alias
-                        || (then_binding.alias != else_binding.alias
-                            && [then_binding.alias, else_binding.alias]
-                                .into_iter()
-                                .flatten()
-                                .any(alias_may_install));
-                    (shared, uncertain)
+                    uncertain_alias |= [then_binding.local_function, else_binding.local_function]
+                        .into_iter()
+                        .flatten()
+                        .any(|function| {
+                            function.may_install || !function.called_formals.is_empty()
+                        });
+                    None
                 };
                 let inert_function = if has_else && then_reaches != else_reaches {
                     if then_reaches {
@@ -1626,6 +1662,7 @@ impl Checker {
                     joined_alias,
                     uncertain_alias,
                     inert_function,
+                    joined_local,
                 ));
                 if has_else && then_reaches != else_reaches {
                     let continuation = if then_reaches {
@@ -1726,11 +1763,15 @@ impl Checker {
         for name in loop_vectors_after {
             scope.mark_loop_vector(&name);
         }
-        for (name, alias, uncertain, inert_function) in caller_alias_updates {
+        for (name, alias, uncertain, inert_function, local_function) in caller_alias_updates {
             // A changed branch can replace one of the loop-joined values.
             // The ordinary alias join below is the conservative fallback;
             // the old finite source set must not certify the new value.
             scope.clear_bounded_caller_binding_sources(&name);
+            scope.clear_local_caller_binding_function(&name);
+            if let Some(function) = local_function {
+                scope.set_local_caller_binding_function(&name, function);
+            }
             scope.set_joined_function_alias(&name, alias);
             if uncertain {
                 scope.mark_uncertain_caller_binding_alias(&name);

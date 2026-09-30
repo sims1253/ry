@@ -441,6 +441,9 @@ pub struct Scope {
     /// every reaching value is inert; entries are qualified base installers.
     /// This is used only for the caller-binding effect check.
     pub(crate) bounded_caller_binding_sources: FxMap<String, FxSet<String>>,
+    /// The actual lexical function value used by the caller-binding effect
+    /// check. A flat project function name is not a lexical identity.
+    pub(crate) local_caller_binding_functions: FxMap<String, Arc<LocalCallerBindingFunction>>,
     /// Literal callables proven inert for the bounded caller-binding effect
     /// check. This is separate from ordinary function/return inference.
     pub(crate) inert_caller_binding_functions: FxSet<String>,
@@ -456,6 +459,19 @@ pub struct Scope {
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
     pub(crate) unreachable: bool,
+}
+
+/// A value-bound lexical function summary used only for caller-frame effects.
+/// Cloning a scope shares the summary; an assignment replaces its identity.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct LocalCallerBindingFunction {
+    pub(crate) params: Vec<String>,
+    pub(crate) may_install: bool,
+    pub(crate) called_formals: Vec<String>,
+    pub(crate) fresh_target_formal: Option<String>,
+    pub(crate) fresh_target_needs_base_c: bool,
+    pub(crate) forwarded_installer: Option<String>,
+    pub(crate) definition: Span,
 }
 
 impl Clone for Scope {
@@ -482,6 +498,7 @@ impl Clone for Scope {
             function_aliases: self.function_aliases.clone(),
             uncertain_caller_binding_aliases: self.uncertain_caller_binding_aliases.clone(),
             bounded_caller_binding_sources: self.bounded_caller_binding_sources.clone(),
+            local_caller_binding_functions: self.local_caller_binding_functions.clone(),
             inert_caller_binding_functions: self.inert_caller_binding_functions.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
@@ -565,6 +582,7 @@ impl Scope {
                 .chain(self.function_aliases.keys())
                 .chain(self.uncertain_caller_binding_aliases.iter())
                 .chain(self.bounded_caller_binding_sources.keys())
+                .chain(self.local_caller_binding_functions.keys())
                 .chain(self.inert_caller_binding_functions.iter())
                 .cloned()
                 .collect();
@@ -585,6 +603,7 @@ impl Scope {
         self.function_aliases.clear();
         self.uncertain_caller_binding_aliases.clear();
         self.bounded_caller_binding_sources.clear();
+        self.local_caller_binding_functions.clear();
         self.inert_caller_binding_functions.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -633,6 +652,9 @@ impl Scope {
         if !self.bounded_caller_binding_sources.is_empty() {
             self.bounded_caller_binding_sources.remove(&name);
         }
+        if !self.local_caller_binding_functions.is_empty() {
+            self.local_caller_binding_functions.remove(&name);
+        }
         if !self.inert_caller_binding_functions.is_empty() {
             self.inert_caller_binding_functions.remove(&name);
         }
@@ -661,8 +683,8 @@ impl Scope {
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
-        // Preserve parameter, default-parameter, and list-origin markers;
-        // clear function aliases and lexical-function markers, then mark narrowed.
+        // A type guard refines the existing value; it does not replace its
+        // callable identity or caller-binding effect provenance.
         let name = name.into();
         let excludes_unclassed_vector =
             t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
@@ -674,11 +696,6 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
-        self.function_aliases.remove(&name);
-        self.uncertain_caller_binding_aliases.remove(&name);
-        self.bounded_caller_binding_sources.remove(&name);
-        self.inert_caller_binding_functions.remove(&name);
-        self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
             self.loop_vector_bindings.remove(&name);
         }
@@ -709,6 +726,7 @@ impl Scope {
         self.function_aliases.remove(&name);
         self.uncertain_caller_binding_aliases.remove(&name);
         self.bounded_caller_binding_sources.remove(&name);
+        self.local_caller_binding_functions.remove(&name);
         self.inert_caller_binding_functions.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
@@ -803,6 +821,23 @@ impl Scope {
         if self.bounded_caller_binding_sources.contains_key(name) {
             self.journal_binding(name);
             self.bounded_caller_binding_sources.remove(name);
+        }
+    }
+
+    pub(crate) fn set_local_caller_binding_function(
+        &mut self,
+        name: &str,
+        function: Arc<LocalCallerBindingFunction>,
+    ) {
+        self.journal_binding(name);
+        self.local_caller_binding_functions
+            .insert(name.to_string(), function);
+    }
+
+    pub(crate) fn clear_local_caller_binding_function(&mut self, name: &str) {
+        if self.local_caller_binding_functions.contains_key(name) {
+            self.journal_binding(name);
+            self.local_caller_binding_functions.remove(name);
         }
     }
 

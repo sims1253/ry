@@ -365,22 +365,60 @@ fn module_writes(file: &SourceFile) -> ModuleWrites {
     writes
 }
 
-fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
+struct RoxygenExports {
+    names: HashSet<String>,
+    tagged: bool,
+    complete: bool,
+}
+
+fn has_export_tag(lines: &[&str], line: usize) -> bool {
+    let mut before = line;
+    while before > 0 {
+        before -= 1;
+        let text = lines.get(before).copied().unwrap_or("").trim_start();
+        if !text.starts_with("#'") {
+            break;
+        }
+        if text[2..].trim_start().starts_with("@export") {
+            return true;
+        }
+    }
+    false
+}
+
+fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
     let mut assigned = HashSet::new();
-    let mut roxygen = HashSet::new();
+    let mut roxygen = RoxygenExports {
+        names: HashSet::new(),
+        tagged: false,
+        complete: true,
+    };
     let lines: Vec<&str> = file.source.lines().collect();
     for statement in &file.stmts {
-        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
+        if let Stmt::Expr(Expr::Call { func, args, span }) = statement
             && ident_name(func) == Some("box::use")
         {
+            let tagged = has_export_tag(&lines, span.line);
+            roxygen.tagged |= tagged;
             for argument in args {
-                if let Some(import) = parse_import(argument)
-                    && let Some(name) = import.object_name
-                {
-                    // box stores module/package objects in its own module
-                    // environment. Selectively attached names without an
-                    // object alias live in the parent imports environment.
+                let Some(import) = parse_import(argument) else {
+                    roxygen.complete &= !tagged;
+                    continue;
+                };
+                if let Some(name) = import.object_name {
+                    // Plain and explicitly aliased imports bind in the
+                    // module namespace. A tag also exports that object.
+                    if tagged {
+                        roxygen.names.insert(name.clone());
+                    }
                     assigned.insert(name);
+                }
+                if tagged {
+                    for selection in import.selection.into_iter().flatten() {
+                        roxygen.names.insert(selection.bound);
+                    }
+                    // A wildcard can introduce names we have not enumerated.
+                    roxygen.complete &= !import.wildcard && !import.selection_unknown;
                 }
             }
         }
@@ -392,16 +430,9 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
         };
         let name = infer::semantic_argument_name(name).to_string();
         assigned.insert(name.clone());
-        let mut before = span.line;
-        while before > 0 {
-            before -= 1;
-            let text = lines.get(before).copied().unwrap_or("").trim_start();
-            if !text.starts_with("#'") {
-                break;
-            }
-            if text[2..].trim_start().starts_with("@export") {
-                roxygen.insert(name.clone());
-            }
+        if has_export_tag(&lines, span.line) {
+            roxygen.tagged = true;
+            roxygen.names.insert(name);
         }
     }
     (assigned, roxygen)
@@ -410,7 +441,7 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
 fn declared_exports(
     file: &SourceFile,
     assigned: &HashSet<String>,
-    roxygen: HashSet<String>,
+    roxygen: RoxygenExports,
     unmodeled_load_effects: bool,
 ) -> (HashSet<String>, bool) {
     let mut explicit = false;
@@ -448,8 +479,8 @@ fn declared_exports(
     if explicit {
         return (names, complete && !unmodeled_load_effects);
     }
-    if !roxygen.is_empty() {
-        return (roxygen, complete);
+    if roxygen.tagged {
+        return (roxygen.names, complete && roxygen.complete);
     }
     // Legacy modules export their own non-dot bindings. Imported names live
     // in an attachment environment and are not implicitly re-exported.

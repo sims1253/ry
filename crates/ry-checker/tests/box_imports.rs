@@ -593,6 +593,40 @@ fn legacy_inventory_includes_own_module_objects_but_not_attached_selections() {
     );
 }
 
+#[test]
+fn roxygen_tagged_use_exports_object_and_attached_aliases() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(
+        root.path().join("tagged.r"),
+        "#' @export\nbox::use(imp = ./a[renamed = foo])\n#' @export\nlocal_value <- 1L\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("attached.r"),
+        "#' @export\nbox::use(./a[renamed = foo])\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("wildcard.r"),
+        "#' @export\nbox::use(./a[...])\n",
+    )
+    .unwrap();
+    let diagnostics = codes_for(
+        root.path(),
+        "box::use(./tagged[imp, renamed, local_value, missing])\nbox::use(./attached[renamed])\nbox::use(./wildcard[foo, unknown])\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|(code, _, _)| code == "RY118")
+            .map(|(_, _, message)| message.as_str())
+            .collect::<Vec<_>>(),
+        ["box module does not export `missing`"],
+        "{diagnostics:#?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn native_caller_and_nested_module_paths_do_not_use_lossy_parent() {

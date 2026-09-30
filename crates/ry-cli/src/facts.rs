@@ -413,7 +413,19 @@ pub(crate) fn run_dump_facts(
                 .iter()
                 .map(|(path, file)| (PathBuf::from(path), Arc::clone(file)))
                 .collect::<Vec<_>>();
-            pipeline::adopted_records(&native_files, &cfg).records
+            let adopted = pipeline::adopted_records(&native_files, &cfg);
+            if let Some(diagnostic) = adopted.diagnostics.first() {
+                // A declined attachment must not look like a complete, empty
+                // annotation snapshot. Records with invalid or unsupported
+                // clauses remain exportable with their explicit status.
+                return Err(miette::miette!(
+                    "{}: dump-facts cannot export annotations: {}: {}",
+                    diagnostic.path,
+                    diagnostic.code,
+                    diagnostic.message
+                ));
+            }
+            adopted.records
         } else {
             Vec::new()
         };

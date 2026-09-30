@@ -25,6 +25,10 @@ records with source, target, translation, assumptions, and evidence use. Exact,
 partial, unsupported, invalid, and ambiguous records retain those statuses;
 an exported record does not assert that a runtime guard succeeded. The
 existing binding `declaration` field still identifies a source definition.
+If a native filename collision prevents attachment, annotation export fails
+with RY117 and writes no JSON, even when only the UTF-8 filename was selected.
+Exporting a directory that includes a non-UTF-8 path also fails. Remove the
+collision or disable annotation export to obtain the older fact schemas.
 Without `--annotations`, schema 1 output remains unchanged; `--references`
 alone still selects schema 2.
 

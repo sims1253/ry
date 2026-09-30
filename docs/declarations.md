@@ -177,7 +177,9 @@ The annotation serializer validates same-file source and residual spans.
 `dump-facts --annotations` exports real adopted records in schema 3 with
 translation, provenance, and evidence status. The existing `declaration`
 field retains its source-definition meaning. Schema 1 and 2 output remains
-unchanged for callers that do not request annotations.
+unchanged for callers that do not request annotations. If a native filename
+collision makes attachment ambiguous, annotation export fails with RY117
+instead of presenting an empty array as a complete record set.
 
 [#592]: https://github.com/sims1253/ry/issues/592
 [#593]: https://github.com/sims1253/ry/issues/593

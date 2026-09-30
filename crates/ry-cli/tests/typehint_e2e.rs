@@ -145,6 +145,98 @@ fn native_filename_collision_cannot_attach_another_files_contract() {
     assert!(!check_codes(temp.path()).iter().any(|code| code == "RY117"));
 }
 
+#[cfg(unix)]
+#[test]
+fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    let r = temp.path().join("R");
+    fs::create_dir(&r).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    let unicode = r.join("bad�.R");
+    let raw = r.join(OsString::from_vec(b"bad\xff.R".to_vec()));
+    fs::write(
+        &unicode,
+        "f <- function(x) {\n #| x integer\n x\n}\nf(\"bad\")\n",
+    )
+    .unwrap();
+    fs::write(&raw, "other <- 1L\n").unwrap();
+
+    let checked = invoke(
+        temp.path(),
+        &["check", "--output-format", "json", "R/bad�.R"],
+    );
+    assert!(checked.status.success(), "{checked:?}");
+    let diagnostics: Vec<Value> = serde_json::from_slice(&checked.stdout).unwrap();
+    assert!(diagnostics.iter().any(|entry| entry["code"] == "RY117"));
+
+    for flags in [
+        &["--annotations"][..],
+        &["--references", "--annotations"][..],
+    ] {
+        let mut args = vec!["dump-facts", "R/bad�.R"];
+        args.extend_from_slice(flags);
+        let output = invoke(temp.path(), &args);
+        assert!(!output.status.success(), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("RY117"), "{stderr}");
+        assert!(stderr.contains("bad�.R"), "{stderr}");
+        assert!(stderr.contains("ambiguous"), "{stderr}");
+    }
+
+    // Schemas without annotations do not claim an adopted-record snapshot.
+    for (flags, schema) in [(&[][..], 1), (&["--references"][..], 2)] {
+        let mut args = vec!["dump-facts", "R/bad�.R"];
+        args.extend_from_slice(flags);
+        let output = invoke(temp.path(), &args);
+        assert!(output.status.success(), "{output:?}");
+        let facts: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(facts["schema_version"], schema);
+    }
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = false\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    let disabled = invoke(temp.path(), &["dump-facts", "R/bad�.R", "--annotations"]);
+    assert!(disabled.status.success(), "{disabled:?}");
+    let disabled_facts: Value = serde_json::from_slice(&disabled.stdout).unwrap();
+    assert!(
+        disabled_facts["files"][0]["annotations"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+
+    let directory = invoke(temp.path(), &["dump-facts", "R", "--annotations"]);
+    assert!(!directory.status.success(), "{directory:?}");
+    assert!(directory.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&directory.stderr).contains("UTF-8 paths"));
+
+    fs::remove_file(&raw).unwrap();
+    let restored = invoke(temp.path(), &["dump-facts", "R/bad�.R", "--annotations"]);
+    assert!(restored.status.success(), "{restored:?}");
+    let facts: Value = serde_json::from_slice(&restored.stdout).unwrap();
+    assert_eq!(facts["schema_version"], 3);
+    assert_eq!(
+        facts["files"][0]["annotations"][0]["source"]["raw"],
+        "#| x integer"
+    );
+}
+
 #[test]
 fn effective_class_checks_use_class_facts_and_keep_uncertain_values_quiet() {
     for (actual, expected) in [

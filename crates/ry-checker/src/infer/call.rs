@@ -94,6 +94,11 @@ impl Checker {
                     )
                 }))
         });
+        // R selects the dispatcher before evaluating its arguments. Its
+        // `what` value is selected later by do.call itself, so only freeze
+        // the dispatcher's identity here.
+        let selected_do_call =
+            callee_name(func).is_some_and(|name| self.selected_base_do_call(&name, scope));
         let selected_immediate_assign = named_installer
             && callee_name(func)
                 .is_some_and(|name| self.loop_selected_immediate_assign(&name, scope));
@@ -107,10 +112,8 @@ impl Checker {
         // cannot certify the later binding. Keep this narrower than the
         // general unknown-effect flag: that flag also makes base predicate
         // identity opaque and would hide the existing RY032 warning.
-        let do_call_installer = callee_name(func).is_some_and(|name| {
-            let semantic = scope.function_alias(&name).unwrap_or(&name);
-            self.do_call_may_replace_current_binding(semantic, args, scope)
-        });
+        let do_call_installer =
+            selected_do_call && self.do_call_may_replace_current_binding(args, scope);
         if named_installer || computed_installer || do_call_installer {
             // A loop-carried value proven to be only an immediate base assign
             // can spoil an earlier assertion, but leaves no lazy or active
@@ -173,7 +176,13 @@ impl Checker {
             return true;
         }
         *remaining -= 1;
-        let effect = if source == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+        let effect = if let Some(sources) = scope.bounded_caller_binding_sources.get(source) {
+            sources.iter().any(|candidate| {
+                self.computed_source_may_replace_current_binding(
+                    candidate, args, scope, completed, visiting, remaining,
+                )
+            })
+        } else if source == crate::UNKNOWN_CALLER_BINDING_IDENTITY
             || scope.uncertain_caller_binding_aliases.contains(source)
         {
             true
@@ -245,6 +254,9 @@ impl Checker {
         scope: &Scope,
         matches_source: impl Fn(&str) -> bool,
     ) -> bool {
+        if let Some(sources) = scope.bounded_caller_binding_sources.get(name) {
+            return sources.iter().any(|source| matches_source(source));
+        }
         if matches_source(name) {
             return true;
         }
@@ -277,10 +289,44 @@ impl Checker {
         false
     }
 
-    fn do_call_may_replace_current_binding(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
-        if crate::semantic_lists::bare_name(name) != "do.call" {
+    /// Resolve only an actual dispatcher source. An effect-uncertain local
+    /// callable is not evidence that its selected value is `do.call`; the
+    /// ordinary caller-binding check already handles that uncertainty.
+    fn selected_base_do_call(&self, name: &str, scope: &Scope) -> bool {
+        let is_dispatcher = |source: &str| {
+            crate::semantic_lists::bare_name(source) == "do.call"
+                && self.resolves_to_base(source, scope)
+        };
+        if let Some(alias) = scope.function_alias(name) {
+            return is_dispatcher(alias);
+        }
+        if is_dispatcher(name) {
+            return true;
+        }
+        if scope.get(name).is_some() || scope.is_parameter(name) || scope.is_lexical_function(name)
+        {
             return false;
         }
+        let mut pending = vec![name.to_string()];
+        let mut seen = HashSet::new();
+        while let Some(source) = pending.pop() {
+            if !seen.insert(source.clone()) {
+                continue;
+            }
+            if seen.len() > 128 {
+                return true;
+            }
+            if is_dispatcher(&source) {
+                return true;
+            }
+            if let Some(aliases) = self.fn_table.caller_binding_aliases.get(&source) {
+                pending.extend(aliases.iter().cloned());
+            }
+        }
+        false
+    }
+
+    fn do_call_may_replace_current_binding(&self, args: &[Arg], scope: &Scope) -> bool {
         let Some(matched) =
             crate::match_caller_binding_argument_names(&["what", "args", "quote", "envir"], args)
         else {
@@ -292,11 +338,20 @@ impl Checker {
         let supplied = matched
             .arg_for_param(1)
             .and_then(|index| args.get(index))
-            .and_then(|arg| match &arg.value {
-                Expr::Call { func, args, .. } if ident_name(func) == Some("base::list") => {
-                    Some(args.as_slice())
+            .and_then(|arg| {
+                let value = match &arg.value {
+                    Expr::Block { body, .. } => match body.last() {
+                        Some(Stmt::Expr(value)) => value,
+                        _ => &arg.value,
+                    },
+                    value => value,
+                };
+                match value {
+                    Expr::Call { func, args, .. } if ident_name(func) == Some("base::list") => {
+                        Some(args.as_slice())
+                    }
+                    _ => None,
                 }
-                _ => None,
             });
         crate::collect::global_caller_binding_value_sources(&target.value, 64)
             .iter()

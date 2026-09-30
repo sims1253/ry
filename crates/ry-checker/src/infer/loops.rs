@@ -24,6 +24,7 @@ struct LoopSourceState {
 pub(super) struct LoopCallerBindingRisk {
     pub(super) targets: HashSet<String>,
     pub(super) immediate_targets: HashSet<String>,
+    pub(super) bounded_sources: HashMap<String, HashSet<String>>,
     pub(super) unknown: bool,
 }
 
@@ -193,6 +194,19 @@ impl Checker {
         if exhausted {
             return risk;
         }
+        for name in writes.keys() {
+            let mut visiting = HashSet::new();
+            let mut remaining = 128;
+            if let Some(sources) = self.loop_known_callable_sources(
+                name,
+                &writes,
+                scope,
+                &mut visiting,
+                &mut remaining,
+            ) {
+                risk.bounded_sources.insert(name.clone(), sources);
+            }
+        }
         for invocation in invocations {
             if !writes.contains_key(&invocation.target) {
                 continue;
@@ -251,6 +265,66 @@ impl Checker {
             }
         }
         risk
+    }
+
+    /// A finite value union across zero or more loop visits. Unknown values
+    /// decline the negative effect proof; pure literals contribute no source.
+    fn loop_known_callable_sources(
+        &self,
+        name: &str,
+        writes: &HashMap<String, Vec<HashSet<String>>>,
+        scope: &Scope,
+        visiting: &mut HashSet<String>,
+        remaining: &mut usize,
+    ) -> Option<HashSet<String>> {
+        if *remaining == 0 || !visiting.insert(name.to_string()) {
+            return None;
+        }
+        *remaining -= 1;
+        let mut result = if let Some(sources) = scope.bounded_caller_binding_sources.get(name) {
+            sources.iter().cloned().collect()
+        } else if scope.inert_caller_binding_functions.contains(name)
+            && !scope.dynamic_bindings_unknown
+        {
+            HashSet::new()
+        } else if let Some(alias) = scope.function_alias(name) {
+            if matches!(
+                alias,
+                "base::assign" | "base::delayedAssign" | "base::makeActiveBinding"
+            ) {
+                HashSet::from([alias.to_string()])
+            } else {
+                visiting.remove(name);
+                return None;
+            }
+        } else {
+            visiting.remove(name);
+            return None;
+        };
+        if let Some(alternatives) = writes.get(name) {
+            for values in alternatives {
+                for value in values {
+                    if matches!(
+                        value.as_str(),
+                        "base::assign" | "base::delayedAssign" | "base::makeActiveBinding"
+                    ) {
+                        result.insert(value.clone());
+                    } else if writes.contains_key(value) {
+                        result.extend(self.loop_known_callable_sources(
+                            value, writes, scope, visiting, remaining,
+                        )?);
+                    } else if value != name && scope.inert_caller_binding_functions.contains(value)
+                    {
+                        // Copied inert callable.
+                    } else {
+                        visiting.remove(name);
+                        return None;
+                    }
+                }
+            }
+        }
+        visiting.remove(name);
+        (result.len() <= 32).then_some(result)
     }
 
     /// Only a copied, proven base `assign` value performs an immediate write
@@ -375,15 +449,89 @@ pub(crate) struct LoopExitFrame {
     nexts: Option<Box<Scope>>,
     pub(super) risky_caller_binding_targets: HashSet<String>,
     pub(super) immediate_caller_binding_targets: HashSet<String>,
+    pub(super) bounded_caller_binding_sources: HashMap<String, HashSet<String>>,
 }
 
 /// Accumulate alternative paths. Allocate a scope snapshot only for the first
 /// transfer; later transfers join their binding types into that snapshot.
-fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
+fn alias_may_install_caller_binding(alias: &str, functions: &FnTable) -> bool {
+    if crate::collect::is_caller_binding_installer_source(alias)
+        || crate::semantic_lists::bare_name(alias) == "do.call"
+    {
+        return true;
+    }
+    if let Some(function) = functions.fns.get(alias) {
+        return function.may_install_caller_binding
+            || !function.caller_binding_called_formals.is_empty();
+    }
+    !matches!(alias, "base::identity" | "base::invisible" | "base::force")
+}
+
+fn path_may_install_caller_binding(scope: &Scope, name: &str, functions: &FnTable) -> bool {
+    if scope.uncertain_caller_binding_aliases.contains(name) {
+        return true;
+    }
+    if scope.inert_caller_binding_functions.contains(name) && !scope.dynamic_bindings_unknown {
+        return false;
+    }
+    scope
+        .function_alias(name)
+        .is_none_or(|alias| alias_may_install_caller_binding(alias, functions))
+}
+
+fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope, functions: &FnTable) {
     let Some(joined) = paths else {
         *paths = Some(Box::new(incoming.clone()));
         return;
     };
+    let alias_names: HashSet<String> = joined
+        .function_aliases
+        .keys()
+        .chain(incoming.function_aliases.keys())
+        .chain(joined.uncertain_caller_binding_aliases.iter())
+        .chain(incoming.uncertain_caller_binding_aliases.iter())
+        .chain(joined.inert_caller_binding_functions.iter())
+        .chain(incoming.inert_caller_binding_functions.iter())
+        .cloned()
+        .collect();
+    for name in alias_names {
+        let left_alias = joined.function_alias(&name);
+        let right_alias = incoming.function_alias(&name);
+        let left_inert = joined.inert_caller_binding_functions.contains(&name);
+        let right_inert = incoming.inert_caller_binding_functions.contains(&name);
+        let uncertain = joined.uncertain_caller_binding_aliases.contains(&name)
+            || incoming.uncertain_caller_binding_aliases.contains(&name)
+            || ((left_alias != right_alias || left_inert != right_inert)
+                && (path_may_install_caller_binding(joined, &name, functions)
+                    || path_may_install_caller_binding(incoming, &name, functions)));
+        if left_alias != right_alias {
+            joined.function_aliases.remove(&name);
+        }
+        if uncertain {
+            joined.uncertain_caller_binding_aliases.insert(name);
+        }
+    }
+    let bounded_names: HashSet<String> = joined
+        .bounded_caller_binding_sources
+        .keys()
+        .chain(incoming.bounded_caller_binding_sources.keys())
+        .cloned()
+        .collect();
+    for name in bounded_names {
+        let left = joined.bounded_caller_binding_sources.get(&name);
+        let right = incoming.bounded_caller_binding_sources.get(&name);
+        match (left, right) {
+            (Some(left), Some(right)) if left.len() + right.len() <= 32 => {
+                let mut sources = left.clone();
+                sources.extend(right.iter().cloned());
+                joined.bounded_caller_binding_sources.insert(name, sources);
+            }
+            _ => {
+                joined.bounded_caller_binding_sources.remove(&name);
+                joined.uncertain_caller_binding_aliases.insert(name);
+            }
+        }
+    }
     for (name, ty) in &mut joined.bindings {
         *ty = incoming
             .get(name)
@@ -492,6 +640,7 @@ impl Checker {
                 &mut frame.nexts
             },
             scope,
+            &self.fn_table,
         );
         scope.unreachable = true;
         true
@@ -517,7 +666,7 @@ impl Checker {
         scope.has_escaped_slot_names |= inner.has_escaped_slot_names;
         let mut exits = frame.breaks;
         if has_transfer && inner.effects_unknown {
-            join_path(&mut exits, &inner);
+            join_path(&mut exits, &inner, &self.fn_table);
         }
         if has_transfer {
             // A literal-TRUE loop can leave only through break. Finite loops
@@ -526,13 +675,13 @@ impl Checker {
             if !always_true {
                 // Unknown-effect paths were already included above.
                 if !inner.unreachable && !inner.effects_unknown {
-                    join_path(&mut exits, &inner);
+                    join_path(&mut exits, &inner, &self.fn_table);
                 }
                 if let Some(next) = &frame.nexts {
-                    join_path(&mut exits, next);
+                    join_path(&mut exits, next, &self.fn_table);
                 }
                 if !entered {
-                    join_path(&mut exits, scope);
+                    join_path(&mut exits, scope, &self.fn_table);
                 }
             }
         }
@@ -542,7 +691,7 @@ impl Checker {
             Some(inner)
         };
         let reaches = exits.is_some() && !(always_true && !has_transfer && body_unreachable);
-        if let Some(exit) = exits {
+        if let Some(mut exit) = exits {
             let scalar_before = scope.scalar_asserted_bindings.clone();
             let inert_before = scope.inert_caller_binding_functions.clone();
             let vector_before = scope.loop_vector_bindings.clone();
@@ -551,7 +700,31 @@ impl Checker {
             scope.dynamic_bindings_unknown |= exit.dynamic_bindings_unknown;
             scope.literal_values_unknown |= exit.literal_values_unknown;
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
-            for (binding, ty) in exit.bindings {
+            for (binding, ty) in std::mem::take(&mut exit.bindings) {
+                let prior_alias = scope.function_alias(&binding).map(str::to_string);
+                let exit_alias = exit.function_alias(&binding);
+                let prior_inert = inert_before.contains(&binding);
+                let exit_inert = exit.inert_caller_binding_functions.contains(&binding);
+                let aliases_differ =
+                    prior_alias.as_deref() != exit_alias || prior_inert != exit_inert;
+                let alias = if entered || !aliases_differ {
+                    exit_alias.map(str::to_string)
+                } else {
+                    None
+                };
+                let uncertain_alias = exit.uncertain_caller_binding_aliases.contains(&binding)
+                    || (!entered
+                        && (scope.uncertain_caller_binding_aliases.contains(&binding)
+                            || (aliases_differ
+                                && (path_may_install_caller_binding(
+                                    scope,
+                                    &binding,
+                                    &self.fn_table,
+                                ) || path_may_install_caller_binding(
+                                    &exit,
+                                    &binding,
+                                    &self.fn_table,
+                                )))));
                 let list_origin = exit.list_origin_bindings.contains(&binding);
                 let parameter =
                     scope.is_parameter(&binding) && exit.parameter_bindings.contains(&binding);
@@ -582,6 +755,21 @@ impl Checker {
                 if inert {
                     scope.mark_inert_caller_binding_function(&binding);
                 }
+                if let Some(alias) = alias {
+                    scope.set_function_alias(binding.clone(), alias);
+                }
+                if uncertain_alias {
+                    scope.mark_uncertain_caller_binding_alias(&binding);
+                }
+                if !scope.dynamic_bindings_unknown
+                    && !scope.effects_unknown
+                    && let Some(sources) = frame.bounded_caller_binding_sources.get(&binding)
+                {
+                    scope.set_bounded_caller_binding_sources(
+                        &binding,
+                        sources.iter().cloned().collect(),
+                    );
+                }
                 if loop_vector {
                     scope.mark_loop_vector(&binding);
                 }
@@ -609,9 +797,9 @@ mod tests {
     #[test]
     fn escaped_slot_flag_survives_loop_path_joins_without_bindings() {
         let mut paths = None;
-        join_path(&mut paths, &Scope::default());
-        join_path(&mut paths, &escaped_slot_scope());
-        join_path(&mut paths, &Scope::default());
+        join_path(&mut paths, &Scope::default(), &FnTable::default());
+        join_path(&mut paths, &escaped_slot_scope(), &FnTable::default());
+        join_path(&mut paths, &Scope::default(), &FnTable::default());
         let joined = paths.unwrap();
         assert!(joined.has_escaped_slot_names);
         assert!(joined.bindings.is_empty());

@@ -350,8 +350,8 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&
         "makeActiveBinding" => (["sym", "fun", "env"].as_slice(), 2),
         "delayedAssign" => (["x", "value", "eval.env", "assign.env"].as_slice(), 3),
         "assign" => (
-            ["x", "value", "envir", "inherits", "immediate"].as_slice(),
-            2,
+            ["x", "value", "pos", "envir", "inherits", "immediate"].as_slice(),
+            3,
         ),
         _ => return Ok(None),
     };
@@ -361,7 +361,7 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&
     let matched = crate::match_caller_binding_argument_names(formals, args).ok_or(())?;
     if bare_name(name) == "assign"
         && matched
-            .arg_for_param(3)
+            .arg_for_param(4)
             .and_then(|index| args.get(index))
             .is_some_and(|arg| !matches!(arg.value, Expr::Logical(false, _)))
     {
@@ -401,6 +401,28 @@ pub(crate) fn installer_may_replace_current_binding(name: &str, args: &[Arg]) ->
         // Another namespace's function has no certified base argument
         // contract, even if one actual looks like a fresh environment.
         return true;
+    }
+    // Base installers have no `...`. An unambiguously unmatched or duplicate
+    // actual fails argument matching before its body can replace a binding.
+    let formals: &[&str] = match primitive {
+        "assign" => &["x", "value", "pos", "envir", "inherits", "immediate"],
+        "delayedAssign" => &["x", "value", "eval.env", "assign.env"],
+        "makeActiveBinding" => &["sym", "fun", "env"],
+        _ => &[],
+    };
+    if let Some(matched) = crate::match_caller_binding_argument_names(formals, args)
+        && (!matched.unmatched_named.is_empty()
+            || matched.param_for_arg.iter().any(Option::is_none)
+            || (0..formals.len()).any(|index| {
+                matched
+                    .param_for_arg
+                    .iter()
+                    .filter(|formal| **formal == Some(index))
+                    .count()
+                    > 1
+            }))
+    {
+        return false;
     }
     match installer_environment_arg(primitive, args) {
         Ok(Some(environment)) => !definitely_fresh_installer_env(environment),

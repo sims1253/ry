@@ -15,6 +15,7 @@ pub(crate) struct BindingState {
     pub default_parameter: bool,
     lexical: bool,
     alias: Option<String>,
+    bounded_sources: Option<FxSet<String>>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -50,6 +51,7 @@ impl BindingState {
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
             alias: scope.function_aliases.get(name).cloned(),
+            bounded_sources: scope.bounded_caller_binding_sources.get(name).cloned(),
             provenance: scope
                 .reference_provenance
                 .as_ref()
@@ -94,6 +96,13 @@ impl BindingState {
         } else {
             scope.function_aliases.remove(&name);
         }
+        if let Some(sources) = self.bounded_sources {
+            scope
+                .bounded_caller_binding_sources
+                .insert(name.clone(), sources);
+        } else {
+            scope.bounded_caller_binding_sources.remove(&name);
+        }
         if let Some(p) = scope.reference_provenance.as_mut() {
             if let Some(value) = self.provenance {
                 p.bindings.insert(name.clone(), value);
@@ -116,6 +125,7 @@ pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
     removed_markers: u16,
     alias: Option<String>,
+    bounded_sources: Option<FxSet<String>>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -141,6 +151,11 @@ impl AssignmentUndo {
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
+        }
+        if let Some(sources) = self.bounded_sources {
+            scope
+                .bounded_caller_binding_sources
+                .insert(name.clone(), sources);
         }
         if let Some(provenance) = self.provenance
             && let Some(table) = scope.reference_provenance.as_mut()
@@ -331,6 +346,11 @@ impl Scope {
         } else {
             self.function_aliases.remove(&name)
         };
+        let bounded_sources = if self.bounded_caller_binding_sources.is_empty() {
+            None
+        } else {
+            self.bounded_caller_binding_sources.remove(&name)
+        };
         let provenance = self.reference_provenance.as_mut().and_then(|table| {
             if table.bindings.is_empty() {
                 None
@@ -339,7 +359,12 @@ impl Scope {
             }
         });
         let previous = if let Some(current) = self.bindings.get_mut(&name) {
-            if current == &ty && removed_markers == 0 && alias.is_none() && provenance.is_none() {
+            if current == &ty
+                && removed_markers == 0
+                && alias.is_none()
+                && bounded_sources.is_none()
+                && provenance.is_none()
+            {
                 return;
             }
             Some(std::mem::replace(current, ty))
@@ -353,6 +378,7 @@ impl Scope {
                 ty: previous,
                 removed_markers,
                 alias,
+                bounded_sources,
                 provenance,
             },
         ));
@@ -723,6 +749,10 @@ mod tests {
         scope.mark_list_origin("x");
         scope.mark_lexical_function("x");
         scope.set_function_alias("x", "original".into());
+        scope.set_bounded_caller_binding_sources(
+            "x",
+            FxSet::from_iter(["base::assign".to_string()]),
+        );
         scope.reference_provenance = Some(Box::new(ScopeProvenance {
             owner: Span {
                 start: 0,
@@ -737,6 +767,7 @@ mod tests {
         let initial = format!("{:?}", scope.clone());
         let outer = scope.begin_snapshot();
         scope.insert_narrowed("x", RType::new(Mode::Double, Length::One));
+        scope.clear_bounded_caller_binding_sources("x");
         scope.data_mask_unknown = true;
         scope.search_path_unknown = true;
         scope.tidy_injection = Some(InjectionMode::Full);
@@ -771,6 +802,10 @@ mod tests {
         assert_eq!(left.list_origin_bindings, right.list_origin_bindings);
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.function_aliases, right.function_aliases);
+        assert_eq!(
+            left.bounded_caller_binding_sources,
+            right.bounded_caller_binding_sources
+        );
         assert_eq!(
             left.uncertain_caller_binding_aliases,
             right.uncertain_caller_binding_aliases

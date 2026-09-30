@@ -2735,6 +2735,82 @@ fn named_head_selection_and_inside_loop_assertions_follow_r_evaluation_order() {
 }
 
 #[test]
+fn selected_dispatcher_and_loop_exit_callable_values_match_r() {
+    for (name, source) in [
+        (
+            "dispatcher rebound after selection",
+            include_str!("../../testdata/oracle/assertion_subject_r20_dispatcher_overwrite.R"),
+        ),
+        (
+            "stable dispatcher",
+            include_str!("../../testdata/oracle/assertion_subject_r20_dispatcher_stable.R"),
+        ),
+        (
+            "break before or after installer",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_break.R"),
+        ),
+        (
+            "next with a carried installer",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_next.R"),
+        ),
+        (
+            "single installer branch",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_only_assign.R"),
+        ),
+        (
+            "non-loop installer control",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_no_loop.R"),
+        ),
+        (
+            "branch replaces a pure loop value",
+            include_str!("../../testdata/oracle/assertion_subject_r20_branch_after_loop.R"),
+        ),
+        (
+            "fresh target with parent search",
+            include_str!("../../testdata/oracle/assertion_subject_r20_fresh_inherits_true.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032"),
+            "{name}: the selected value can replace the asserted binding: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "dispatcher fresh frame",
+            include_str!("../../testdata/oracle/assertion_subject_r20_dispatcher_fresh.R"),
+        ),
+        (
+            "target rebound before do.call",
+            include_str!("../../testdata/oracle/assertion_subject_r20_target_overwrite.R"),
+        ),
+        (
+            "pure loop exits",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_pure.R"),
+        ),
+        (
+            "installer into fresh frame",
+            include_str!("../../testdata/oracle/assertion_subject_r20_uncertain_fresh.R"),
+        ),
+        (
+            "fresh target without parent search",
+            include_str!("../../testdata/oracle/assertion_subject_r20_fresh_inherits_false.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "RY032"),
+            "{name}: no caller binding can be replaced: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn scalar_proof_rejects_cross_file_caller_binding_helper() {
     let mut project = Project::new();
     project.add_file(

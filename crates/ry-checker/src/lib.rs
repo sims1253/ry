@@ -437,6 +437,10 @@ pub struct Scope {
     /// Callable values with more than one possible installer source. This is
     /// effect-only provenance: ordinary call resolution keeps its own alias.
     pub(crate) uncertain_caller_binding_aliases: FxSet<String>,
+    /// Proven alternatives for a loop-joined callable. An empty set means
+    /// every reaching value is inert; entries are qualified base installers.
+    /// This is used only for the caller-binding effect check.
+    pub(crate) bounded_caller_binding_sources: FxMap<String, FxSet<String>>,
     /// Literal callables proven inert for the bounded caller-binding effect
     /// check. This is separate from ordinary function/return inference.
     pub(crate) inert_caller_binding_functions: FxSet<String>,
@@ -477,6 +481,7 @@ impl Clone for Scope {
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
             uncertain_caller_binding_aliases: self.uncertain_caller_binding_aliases.clone(),
+            bounded_caller_binding_sources: self.bounded_caller_binding_sources.clone(),
             inert_caller_binding_functions: self.inert_caller_binding_functions.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
@@ -559,6 +564,7 @@ impl Scope {
                 .chain(self.lexical_functions.iter())
                 .chain(self.function_aliases.keys())
                 .chain(self.uncertain_caller_binding_aliases.iter())
+                .chain(self.bounded_caller_binding_sources.keys())
                 .chain(self.inert_caller_binding_functions.iter())
                 .cloned()
                 .collect();
@@ -578,6 +584,7 @@ impl Scope {
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
         self.uncertain_caller_binding_aliases.clear();
+        self.bounded_caller_binding_sources.clear();
         self.inert_caller_binding_functions.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -623,6 +630,9 @@ impl Scope {
         if !self.uncertain_caller_binding_aliases.is_empty() {
             self.uncertain_caller_binding_aliases.remove(&name);
         }
+        if !self.bounded_caller_binding_sources.is_empty() {
+            self.bounded_caller_binding_sources.remove(&name);
+        }
         if !self.inert_caller_binding_functions.is_empty() {
             self.inert_caller_binding_functions.remove(&name);
         }
@@ -666,6 +676,7 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.uncertain_caller_binding_aliases.remove(&name);
+        self.bounded_caller_binding_sources.remove(&name);
         self.inert_caller_binding_functions.remove(&name);
         self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
@@ -697,6 +708,7 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.uncertain_caller_binding_aliases.remove(&name);
+        self.bounded_caller_binding_sources.remove(&name);
         self.inert_caller_binding_functions.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
@@ -774,6 +786,23 @@ impl Scope {
             self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
             self.uncertain_caller_binding_aliases
                 .insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn set_bounded_caller_binding_sources(
+        &mut self,
+        name: &str,
+        sources: FxSet<String>,
+    ) {
+        self.journal_binding(name);
+        self.bounded_caller_binding_sources
+            .insert(name.to_string(), sources);
+    }
+
+    pub(crate) fn clear_bounded_caller_binding_sources(&mut self, name: &str) {
+        if self.bounded_caller_binding_sources.contains_key(name) {
+            self.journal_binding(name);
+            self.bounded_caller_binding_sources.remove(name);
         }
     }
 

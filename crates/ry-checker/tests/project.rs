@@ -1781,6 +1781,55 @@ fn loop_header_and_exit_callable_facts_retract_warm_and_cold() {
 }
 
 #[test]
+fn selected_dispatcher_and_break_join_retract_warm_and_cold() {
+    for (installing, pure) in [
+        (
+            include_str!("../testdata/oracle/assertion_subject_r20_dispatcher_overwrite.R"),
+            include_str!("../testdata/oracle/assertion_subject_r20_target_overwrite.R"),
+        ),
+        (
+            include_str!("../testdata/oracle/assertion_subject_r20_uncertain_break.R"),
+            include_str!("../testdata/oracle/assertion_subject_r20_uncertain_pure.R"),
+        ),
+    ] {
+        let mut warm = callback_project(&[("consumer.R", installing)]);
+        let before = warm.check_incremental();
+        assert!(
+            before
+                .iter()
+                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+            "{before:?}"
+        );
+
+        warm.update_file("consumer.R".into(), Arc::new(parse("consumer.R", pure)));
+        let after = warm.check_incremental();
+        assert_eq!(after, callback_project(&[("consumer.R", pure)]).check());
+        assert!(
+            after
+                .iter()
+                .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
+            "{after:?}"
+        );
+
+        warm.update_file(
+            "consumer.R".into(),
+            Arc::new(parse("consumer.R", installing)),
+        );
+        let restored = warm.check_incremental();
+        assert_eq!(
+            restored,
+            callback_project(&[("consumer.R", installing)]).check()
+        );
+        assert!(
+            restored
+                .iter()
+                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
+            "{restored:?}"
+        );
+    }
+}
+
+#[test]
 fn branch_joined_installer_alias_retracts_after_a_pure_edit() {
     let installing = "f <- function(flag, x = 1L) { stopifnot(x > 0 && TRUE); if (flag) put <- base::assign else put <- function(...) NULL; put('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f(TRUE)\n";
     let pure = "f <- function(flag, x = 1L) { stopifnot(x > 0 && TRUE); if (flag) put <- function(...) NULL else put <- function(...) NULL; put('x', c(1L, 2L), envir = environment()); if (is.null(x) || x == 1L) TRUE else FALSE }; f(TRUE)\n";

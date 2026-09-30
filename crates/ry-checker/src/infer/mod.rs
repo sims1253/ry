@@ -828,6 +828,7 @@ impl Checker {
                 if let Some(frame) = self.loop_frames.last_mut() {
                     frame.risky_caller_binding_targets = carried_risk.targets.clone();
                     frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
+                    frame.bounded_caller_binding_sources = carried_risk.bounded_sources;
                 }
                 if carried_risk.unknown {
                     inner.dynamic_bindings_unknown = true;
@@ -863,6 +864,7 @@ impl Checker {
                 if let Some(frame) = self.loop_frames.last_mut() {
                     frame.risky_caller_binding_targets = carried_risk.targets.clone();
                     frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
+                    frame.bounded_caller_binding_sources = carried_risk.bounded_sources;
                 }
                 if carried_risk.unknown {
                     inner.dynamic_bindings_unknown = true;
@@ -1725,6 +1727,10 @@ impl Checker {
             scope.mark_loop_vector(&name);
         }
         for (name, alias, uncertain, inert_function) in caller_alias_updates {
+            // A changed branch can replace one of the loop-joined values.
+            // The ordinary alias join below is the conservative fallback;
+            // the old finite source set must not certify the new value.
+            scope.clear_bounded_caller_binding_sources(&name);
             scope.set_joined_function_alias(&name, alias);
             if uncertain {
                 scope.mark_uncertain_caller_binding_alias(&name);

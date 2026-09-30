@@ -76,10 +76,13 @@ dynamic or conflicting execution options. After an
 uncertain option, ry does not assume that later chunks ran. Report-level
 execution options at the document root or within format settings, and real
 runtime references to knitr's chunk-option object, also stop static
-analysis with RY121. Complex `format` values such as flow mappings, aliases,
-anchors, and merges are refused visibly because their inherited execution
-settings cannot be resolved by this bounded reader; unrelated `metadata`
-values remain metadata. Simple one-line root flow metadata remains active;
+analysis with RY121. Quoted, escaped, and raw R-string package/object names
+in namespace references use their R values; literal strings and whole
+backtick names containing namespace-like text remain inert. Complex `format`
+values such as flow mappings, aliases, anchors, and merges are refused visibly
+because their inherited execution settings cannot be resolved by this bounded
+reader. Unrelated `metadata` values remain metadata. Simple one-line root flow
+metadata remains active;
 root flow execution/format keys and unclassifiable root YAML forms are refused
 visibly, including legal indentation before the root mapping. Disabled
 reports do not receive report-derived LSP inlay hints. Malformed R code in an

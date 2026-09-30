@@ -108,14 +108,17 @@ fn has_runtime_chunk_options(stmts: &[Stmt]) -> bool {
     matches!(
         walk_stmts(stmts, policy, |node, _| {
             if let AstNode::Expr(Expr::Ident { name, .. }) = node {
-                let (package, object) = name
-                    .rsplit_once("::")
-                    .map_or((None, name.as_str()), |(package, object)| {
-                        (Some(package.trim_end_matches(':')), object)
-                    });
-                if package.is_none_or(|package| r_name_component(package) == "knitr")
-                    && r_name_component(object) == "opts_chunk"
-                {
+                // The parser has already decoded *components* of a
+                // namespace reference. Do not unquote those semantic values
+                // again: the literal object name `r"(opts_chunk)"` is not
+                // knitr's `opts_chunk`. A standalone backtick identifier is
+                // still decoded here, once, for its own spelling.
+                let is_options = if let Some((package, object)) = name.rsplit_once("::") {
+                    package.trim_end_matches(':') == "knitr" && object == "opts_chunk"
+                } else {
+                    r_name_component(name) == "opts_chunk"
+                };
+                if is_options {
                     return ControlFlow::Break(());
                 }
             }
@@ -728,6 +731,11 @@ mod tests {
             "opts_chunkish <- 1L",
             "value <- r\"(a \" opts_chunk x)\"",
             "value <- 'opts_chunk'",
+            "`knitr::opts_chunk` <- 1L",
+            "`r\"(knitr)\"::opts_chunk` <- 1L",
+            "value <- r\"(knitr::opts_chunk$set(eval=FALSE))\"",
+            r#""r\"(knitr)\""::opts_chunk$set(eval=FALSE)"#,
+            r#"knitr::"r\"(opts_chunk)\""$set(eval=FALSE)"#,
         ] {
             let source = format!("```{{r}}\n{body}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n");
             let (file, _) =
@@ -753,6 +761,9 @@ mod tests {
             "`knitr`::opts_chunk$set(eval=FALSE)",
             r"knitr::`opts_\x63hunk`$set(eval=FALSE)",
             r"`knitr`::`opts_\x63hunk`$set(eval=FALSE)",
+            r#"r"(knitr)"::opts_chunk$set(eval=FALSE)"#,
+            r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#,
+            r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#,
         ] {
             let source = format!("```{{r}}\n{body}\n```\n```{{r}}\nx + 1L\n```\n");
             let (file, _) =
@@ -783,6 +794,9 @@ mod tests {
         for header in [
             "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
             r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
         ] {
             let source = format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n");
             let (file, _) =

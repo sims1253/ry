@@ -92,6 +92,9 @@ fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
         r"knitr::`opts_\x63hunk`$set(eval=FALSE)",
         r#"knitr::"opts_\x63hunk"$set(eval=FALSE)"#,
         r"knitr::'opts_\u0063hunk'$set(eval=FALSE)",
+        r#"r"(knitr)"::opts_chunk$set(eval=FALSE)"#,
+        r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#,
+        r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#,
     ] {
         fs::write(
             &report,
@@ -113,6 +116,9 @@ fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
         "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
         r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
         r#"{r, fig.cap={knitr::"opts_\x63hunk"$set(eval=FALSE); "caption"}}"#,
+        r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
+        r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
+        r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
     ] {
         fs::write(
             &report,
@@ -148,6 +154,27 @@ fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
         assert!(
             code(&diagnostics, "RY121").is_empty(),
             "{header}: {diagnostics:?}"
+        );
+    }
+    for body in [
+        "`knitr::opts_chunk` <- 1L",
+        "`r\"(knitr)\"::opts_chunk` <- 1L",
+        "value <- r\"(knitr::opts_chunk$set(eval=FALSE))\"",
+    ] {
+        fs::write(
+            &report,
+            format!("```{{r}}\n{body}\n```\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY040").len(),
+            1,
+            "{body}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY121").is_empty(),
+            "{body}: {diagnostics:?}"
         );
     }
 }

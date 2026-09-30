@@ -119,6 +119,22 @@ fn unsaved_module_overlay_matches_symlinked_caller_root() {
 }
 
 #[test]
+fn oversized_module_is_opaque_instead_of_a_complete_inventory() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("large.r"), vec![b' '; 1_048_577]).unwrap();
+    let diagnostics = codes_for(
+        root.path(),
+        "box::use(./large[missing])\nvalue <- missing\n",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, _, _)| code != "RY118" && code != "RY010"),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
 fn explicit_exports_override_tags_and_empty_calls_override_legacy_names() {
     let root = tempfile::tempdir().unwrap();
     fs::write(

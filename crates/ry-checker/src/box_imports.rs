@@ -5,6 +5,7 @@
 use crate::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeMap, HashSet};
+use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
@@ -363,16 +364,23 @@ impl Checker {
                 if !metadata.is_file() {
                     continue;
                 }
-                let decoded = ry_workspace::read_r_source_decoded(&candidate).ok()?;
-                if !decoded.invalid_utf8.is_empty() || decoded.leading_bom {
+                // Bound the actual read as well as the metadata precheck:
+                // the file can grow or be replaced between those operations.
+                let mut bytes = Vec::new();
+                std::fs::File::open(&candidate)
+                    .ok()?
+                    .take(MAX_MODULE_BYTES + 1)
+                    .read_to_end(&mut bytes)
+                    .ok()?;
+                if bytes.len() as u64 > MAX_MODULE_BYTES || bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
                     return None;
                 }
+                // Invalid UTF-8 is an R parser boundary finding in the
+                // frontends. An imported module with such bytes cannot
+                // provide a trustworthy export inventory.
+                let source = String::from_utf8(bytes).ok()?;
                 let mut parser = ry_core::RParser::new().ok()?;
-                Arc::new(
-                    parser
-                        .parse(&candidate.to_string_lossy(), &decoded.text)
-                        .ok()?,
-                )
+                Arc::new(parser.parse(&candidate.to_string_lossy(), &source).ok()?)
             };
             if !file.parse_errors.is_empty() || !file.syntax_violations.is_empty() {
                 return None;

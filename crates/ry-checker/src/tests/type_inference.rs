@@ -2425,6 +2425,188 @@ fn variadic_positional_references_resolve_only_with_enclosing_dots() {
 }
 
 #[test]
+fn computed_call_heads_respect_binding_installers_and_inert_values() {
+    for (name, source) in [
+        (
+            "assign identity",
+            include_str!("../../testdata/oracle/assertion_subject_computed_assign_identity.R"),
+        ),
+        (
+            "assign block",
+            include_str!("../../testdata/oracle/assertion_subject_computed_assign_block.R"),
+        ),
+        (
+            "assign list index",
+            include_str!("../../testdata/oracle/assertion_subject_computed_assign_list_index.R"),
+        ),
+        (
+            "assign returned",
+            include_str!("../../testdata/oracle/assertion_subject_computed_assign_returned.R"),
+        ),
+        (
+            "delayed invisible",
+            include_str!("../../testdata/oracle/assertion_subject_computed_delayed_invisible.R"),
+        ),
+        (
+            "active nested returned",
+            include_str!(
+                "../../testdata/oracle/assertion_subject_computed_active_nested_returned.R"
+            ),
+        ),
+        (
+            "nested head effect",
+            include_str!("../../testdata/oracle/assertion_subject_computed_nested_head_effect.R"),
+        ),
+        (
+            "branch effect",
+            include_str!("../../testdata/oracle/assertion_subject_computed_branch_effect.R"),
+        ),
+        (
+            "evaluating head",
+            include_str!("../../testdata/oracle/assertion_subject_computed_eval_effect.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "{name}: the later || reads a newly installed vector binding: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "assign fresh",
+            include_str!("../../testdata/oracle/assertion_subject_computed_assign_fresh.R"),
+        ),
+        (
+            "delayed fresh",
+            include_str!("../../testdata/oracle/assertion_subject_computed_delayed_fresh.R"),
+        ),
+        (
+            "active fresh",
+            include_str!("../../testdata/oracle/assertion_subject_computed_active_fresh.R"),
+        ),
+        (
+            "pure block",
+            include_str!("../../testdata/oracle/assertion_subject_computed_pure_block.R"),
+        ),
+        (
+            "pure returned",
+            include_str!("../../testdata/oracle/assertion_subject_computed_pure_returned.R"),
+        ),
+        (
+            "pure overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_computed_pure_overwrite.R"),
+        ),
+        (
+            "branch pure",
+            include_str!("../../testdata/oracle/assertion_subject_computed_branch_pure.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "{name}: no binding can replace the asserted value: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn direct_loop_carried_callables_and_negative_numeric_operands() {
+    for (name, source) in [
+        (
+            "for direct",
+            include_str!("../../testdata/oracle/assertion_subject_r18_for_direct.R"),
+        ),
+        (
+            "for do.call",
+            include_str!("../../testdata/oracle/assertion_subject_r18_for_do_call.R"),
+        ),
+        (
+            "for alias",
+            include_str!("../../testdata/oracle/assertion_subject_r18_for_alias.R"),
+        ),
+        (
+            "for wrapped",
+            include_str!("../../testdata/oracle/assertion_subject_r18_for_wrapped.R"),
+        ),
+        (
+            "while direct",
+            include_str!("../../testdata/oracle/assertion_subject_r18_while_direct.R"),
+        ),
+        (
+            "repeat do.call",
+            include_str!("../../testdata/oracle/assertion_subject_r18_repeat_do_call.R"),
+        ),
+        (
+            "negative for",
+            include_str!("../../testdata/oracle/assertion_subject_r18_negative_for.R"),
+        ),
+        (
+            "negative while",
+            include_str!("../../testdata/oracle/assertion_subject_r18_negative_while.R"),
+        ),
+        (
+            "negative mirror",
+            include_str!("../../testdata/oracle/assertion_subject_r18_negative_mirror.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY032"),
+            "{name}: a repeated callable or unclassed vector can reach the scalar operator: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "one iteration",
+            include_str!("../../testdata/oracle/assertion_subject_r18_literal_one.R"),
+        ),
+        (
+            "fresh target",
+            include_str!("../../testdata/oracle/assertion_subject_r18_fresh_target.R"),
+        ),
+        (
+            "pure loop",
+            include_str!("../../testdata/oracle/assertion_subject_r18_pure_loop.R"),
+        ),
+        (
+            "pure overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_r18_pure_overwrite.R"),
+        ),
+        (
+            "while false",
+            include_str!("../../testdata/oracle/assertion_subject_r18_while_false.R"),
+        ),
+        (
+            "negative scalar",
+            include_str!("../../testdata/oracle/assertion_subject_r18_negative_scalar.R"),
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "{name}: the guarded binding stays stable or the operand is scalar: {diagnostics:?}"
+        );
+    }
+    for (name, source) in [
+        (
+            "masked unary minus",
+            "`-` <- function(y) 1L; f <- function() { x <- c(1L, 2L); for(i in integer()) x <- 1L; x < -1L && TRUE }; f()",
+        ),
+        (
+            "classed vector",
+            "f <- function() { x <- structure(c(1L, 2L), class='foo'); for(i in integer()) x <- 1L; x < -1L && TRUE }; f()",
+        ),
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY032"),
+            "{name}: no unclassed numeric-vector proof is available: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn scalar_proof_rejects_cross_file_caller_binding_helper() {
     let mut project = Project::new();
     project.add_file(

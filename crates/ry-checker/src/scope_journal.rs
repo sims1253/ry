@@ -10,6 +10,7 @@ pub(crate) struct BindingState {
     pub scalar_asserted: bool,
     pub loop_vector: bool,
     pub uncertain_caller_binding_alias: bool,
+    pub inert_caller_binding_function: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
@@ -26,6 +27,7 @@ impl BindingState {
             default_parameter: self.default_parameter,
             alias: self.alias.as_deref(),
             uncertain_caller_binding_alias: self.uncertain_caller_binding_alias,
+            inert_caller_binding_function: self.inert_caller_binding_function,
         }
     }
 
@@ -43,6 +45,7 @@ impl BindingState {
             scalar_asserted: scope.scalar_asserted_bindings.contains(name),
             loop_vector: scope.loop_vector_bindings.contains(name),
             uncertain_caller_binding_alias: scope.uncertain_caller_binding_aliases.contains(name),
+            inert_caller_binding_function: scope.inert_caller_binding_functions.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
@@ -81,6 +84,11 @@ impl BindingState {
             self.default_parameter,
         );
         marker(&mut scope.lexical_functions, &name, self.lexical);
+        marker(
+            &mut scope.inert_caller_binding_functions,
+            &name,
+            self.inert_caller_binding_function,
+        );
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
         } else {
@@ -106,7 +114,7 @@ impl BindingState {
 #[derive(Debug)]
 pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
-    removed_markers: u8,
+    removed_markers: u16,
     alias: Option<String>,
     provenance: Option<BindingProvenance>,
 }
@@ -122,6 +130,7 @@ impl AssignmentUndo {
             &mut scope.default_parameter_bindings,
             &mut scope.lexical_functions,
             &mut scope.uncertain_caller_binding_aliases,
+            &mut scope.inert_caller_binding_functions,
         ];
         for (index, set) in sets.into_iter().enumerate() {
             debug_assert!(!set.contains(&name));
@@ -155,6 +164,7 @@ pub(crate) enum MarkerKind {
     ScalarAsserted,
     LoopVector,
     UncertainCallerBindingAlias,
+    InertCallerBindingFunction,
 }
 
 #[derive(Debug)]
@@ -213,6 +223,7 @@ pub(crate) struct BindingView<'a> {
     pub default_parameter: bool,
     pub alias: Option<&'a str>,
     pub uncertain_caller_binding_alias: bool,
+    pub inert_caller_binding_function: bool,
 }
 
 impl BranchDelta {
@@ -234,6 +245,7 @@ impl BranchDelta {
                 uncertain_caller_binding_alias: base
                     .uncertain_caller_binding_aliases
                     .contains(name),
+                inert_caller_binding_function: base.inert_caller_binding_functions.contains(name),
             }
         }
     }
@@ -304,6 +316,7 @@ impl Scope {
             &mut self.default_parameter_bindings,
             &mut self.lexical_functions,
             &mut self.uncertain_caller_binding_aliases,
+            &mut self.inert_caller_binding_functions,
         ];
         let mut removed_markers = 0;
         // Rollback retains empty tables' capacity. Avoid hashing a name for
@@ -384,6 +397,9 @@ impl Scope {
                 MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
                 MarkerKind::UncertainCallerBindingAlias => {
                     self.uncertain_caller_binding_aliases.contains(name)
+                }
+                MarkerKind::InertCallerBindingFunction => {
+                    self.inert_caller_binding_functions.contains(name)
                 }
             };
             self.undo
@@ -520,6 +536,9 @@ impl Scope {
                         MarkerKind::LoopVector => &mut self.loop_vector_bindings,
                         MarkerKind::UncertainCallerBindingAlias => {
                             &mut self.uncertain_caller_binding_aliases
+                        }
+                        MarkerKind::InertCallerBindingFunction => {
+                            &mut self.inert_caller_binding_functions
                         }
                     };
                     if present {
@@ -755,6 +774,10 @@ mod tests {
         assert_eq!(
             left.uncertain_caller_binding_aliases,
             right.uncertain_caller_binding_aliases
+        );
+        assert_eq!(
+            left.inert_caller_binding_functions,
+            right.inert_caller_binding_functions
         );
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);

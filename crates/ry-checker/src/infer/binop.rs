@@ -499,7 +499,18 @@ impl Checker {
                         | BinOpKind::Ne
                 ) && !ops_chooser::operator_rebound(self, op_symbol(*op), scope) =>
             {
-                let numeric = |expr: &Expr| matches!(expr, Expr::Integer(..) | Expr::Double(..));
+                let numeric = |expr: &Expr| match expr {
+                    Expr::Integer(..) | Expr::Double(..) => true,
+                    Expr::UnaryOp {
+                        op: UnaryOpKind::Neg,
+                        expr: value,
+                        ..
+                    } => {
+                        matches!(value.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                            && !ops_chooser::operator_rebound(self, "-", scope)
+                    }
+                    _ => false,
+                };
                 match (lhs.as_ref(), rhs.as_ref()) {
                     (Expr::Ident { name, .. }, rhs) if numeric(rhs) => Some(name.as_str()),
                     (lhs, Expr::Ident { name, .. }) if numeric(lhs) => Some(name.as_str()),

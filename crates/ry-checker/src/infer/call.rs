@@ -77,27 +77,34 @@ impl Checker {
             scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
+        // A value-valued call head is evaluated before its arguments. Capture
+        // its possible callable sources now: inference of an argument can
+        // overwrite a name from which the head already copied its function.
+        let computed_installer = callee_name(func).is_none()
+            && self.computed_head_may_replace_current_binding(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
         // These primitives can install an active binding or a promise after
         // an earlier value was read. A scalar assertion about that value
         // cannot certify the later binding. Keep this narrower than the
         // general unknown-effect flag: that flag also makes base predicate
         // identity opaque and would hide the existing RY032 warning.
-        if callee_name(func).is_some_and(|name| {
-            let semantic = scope.function_alias(&name).unwrap_or(&name);
-            self.caller_binding_source_matches(&name, scope, |source| {
-                crate::collect::installer_may_replace_current_binding(source, args)
-            }) || self.do_call_may_replace_current_binding(semantic, args, scope)
-                || (scope.is_parameter(&name)
-                    && scope.get(&name).is_some_and(|binding| {
-                        matches!(
-                            binding.mode,
-                            ry_core::types::Mode::Function
-                                | ry_core::types::Mode::Opaque
-                                | ry_core::types::Mode::Union
-                        )
-                    }))
-        }) {
+        if computed_installer
+            || callee_name(func).is_some_and(|name| {
+                let semantic = scope.function_alias(&name).unwrap_or(&name);
+                self.caller_binding_source_matches(&name, scope, |source| {
+                    crate::collect::installer_may_replace_current_binding(source, args)
+                }) || self.do_call_may_replace_current_binding(semantic, args, scope)
+                    || (scope.is_parameter(&name)
+                        && scope.get(&name).is_some_and(|binding| {
+                            matches!(
+                                binding.mode,
+                                ry_core::types::Mode::Function
+                                    | ry_core::types::Mode::Opaque
+                                    | ry_core::types::Mode::Union
+                            )
+                        }))
+            })
+        {
             scope.dynamic_bindings_unknown = true;
             for name in scope.scalar_asserted_bindings.clone() {
                 scope.clear_scalar_asserted(&name);
@@ -107,6 +114,112 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         result
+    }
+
+    /// Resolve the value of an indirect call head through the same bounded
+    /// callable-source transport used for aliases and `do.call`. An opaque
+    /// source cannot certify that the earlier assertion still describes the
+    /// current binding. This is deliberately effect-only: return inference
+    /// and ordinary callee diagnostics keep their existing resolution.
+    fn computed_head_may_replace_current_binding(
+        &self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        let mut completed = HashMap::new();
+        let mut visiting = HashSet::new();
+        let mut remaining = 128;
+        crate::collect::global_caller_binding_value_sources(func, 64)
+            .iter()
+            .any(|source| {
+                self.computed_source_may_replace_current_binding(
+                    source,
+                    args,
+                    scope,
+                    &mut completed,
+                    &mut visiting,
+                    &mut remaining,
+                )
+            })
+    }
+
+    pub(super) fn computed_source_may_replace_current_binding(
+        &self,
+        source: &str,
+        args: &[Arg],
+        scope: &Scope,
+        completed: &mut HashMap<String, bool>,
+        visiting: &mut HashSet<String>,
+        remaining: &mut usize,
+    ) -> bool {
+        if let Some(effect) = completed.get(source) {
+            return *effect;
+        }
+        if *remaining == 0 || !visiting.insert(source.to_string()) {
+            return true;
+        }
+        *remaining -= 1;
+        let effect = if source == crate::UNKNOWN_CALLER_BINDING_IDENTITY
+            || scope.uncertain_caller_binding_aliases.contains(source)
+        {
+            true
+        } else if source.contains("::")
+            && !source.starts_with(crate::LITERAL_QUALIFIED_CALLER_BINDING_PREFIX)
+        {
+            // Namespace lookup is independent of a same-spelled lexical
+            // binding. Other packages have no certified binding contract.
+            if !crate::semantic_lists::is_base_qualified(source) {
+                true
+            } else if crate::collect::is_caller_binding_installer_source(source) {
+                crate::collect::installer_may_replace_current_binding(source, args)
+            } else {
+                !matches!(
+                    crate::semantic_lists::bare_name(source),
+                    "identity" | "invisible" | "force"
+                )
+            }
+        } else if !scope.dynamic_bindings_unknown
+            && scope.inert_caller_binding_functions.contains(source)
+        {
+            false
+        } else if let Some(alias) = scope.function_alias(source) {
+            self.computed_source_may_replace_current_binding(
+                alias, args, scope, completed, visiting, remaining,
+            )
+        } else if scope.is_parameter(source) || scope.is_lexical_function(source) {
+            true
+        } else if let Some(function) = self.fn_table.fns.get(source) {
+            function.may_install_caller_binding
+                || supplied_callable_may_install_caller_binding(self, function, args, scope)
+        } else if let Some(aliases) = self.fn_table.caller_binding_aliases.get(source) {
+            aliases.iter().any(|alias| {
+                self.computed_source_may_replace_current_binding(
+                    alias, args, scope, completed, visiting, remaining,
+                )
+            })
+        } else if scope.get(source).is_some() {
+            // A local callable without captured provenance may run an
+            // arbitrary body, regardless of its inferred function mode.
+            true
+        } else if crate::collect::is_caller_binding_installer_source(source) {
+            // An unqualified name needs the ordinary base-identity proof.
+            !self.resolves_to_base(source, scope)
+                || crate::collect::installer_may_replace_current_binding(source, args)
+        } else if matches!(
+            crate::semantic_lists::bare_name(source),
+            "identity" | "invisible" | "force"
+        ) && self.resolves_to_base(source, scope)
+        {
+            false
+        } else {
+            // A known name is not proof of purity: base::eval, a foreign
+            // namespace callable, or a masked helper can write here.
+            true
+        };
+        visiting.remove(source);
+        completed.insert(source.to_string(), effect);
+        effect
     }
 
     /// Follow a current scope alias first; only consult project aliases when

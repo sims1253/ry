@@ -43,6 +43,32 @@ pub(crate) fn stopifnot_predicate_arg(arg: &Arg) -> bool {
     !matches!(arg.name.as_deref(), Some("local" | "exprs" | "exprObject"))
 }
 
+/// Assignment-time evidence that a copied callable cannot install a caller
+/// binding. Only a closed literal body or a value-preserving qualified base
+/// wrapper qualifies; arbitrary function types and local names do not.
+fn inert_caller_binding_value(value: &Expr, scope: &Scope) -> bool {
+    match value {
+        Expr::Function { .. } => crate::collect::inert_caller_binding_actual(value),
+        Expr::Ident { name, .. } => {
+            !scope.dynamic_bindings_unknown && scope.inert_caller_binding_functions.contains(name)
+        }
+        Expr::Call { func, args, .. }
+            if ident_name(func).is_some_and(|name| {
+                matches!(name, "base::identity" | "base::force" | "base::invisible")
+            }) && args.len() == 1
+                && args[0].name.as_deref().is_none_or(|name| name == "x") =>
+        {
+            inert_caller_binding_value(&args[0].value, scope)
+        }
+        Expr::Block { body, .. } if body.len() == 1 => match &body[0] {
+            Stmt::Expr(value) => inert_caller_binding_value(value, scope),
+            Stmt::FunctionDef { body, .. } => crate::collect::inert_caller_binding_body(body),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -593,6 +619,7 @@ impl Checker {
                     && !ops_chooser::operator_rebound(self, "<-", scope)
                     && !ops_chooser::operator_rebound(self, "=", scope);
                 let function_alias = self.function_alias_target(value, scope);
+                let inert_caller_binding_function = inert_caller_binding_value(value, scope);
                 let uncertain_caller_binding_alias =
                     function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
                 let literal_function = ops_chooser::literal_function(self, value, scope);
@@ -649,6 +676,9 @@ impl Checker {
                         scope.set_function_alias(name.to_string(), alias);
                     } else if uncertain_caller_binding_alias {
                         scope.mark_uncertain_caller_binding_alias(name);
+                    }
+                    if inert_caller_binding_function {
+                        scope.mark_inert_caller_binding_function(name);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -746,6 +776,17 @@ impl Checker {
                 name, iter, body, ..
             } => {
                 let iter_t = self.infer(iter, scope);
+                let one_literal_iteration = matches!(
+                    iter,
+                    Expr::Integer(..)
+                        | Expr::Double(..)
+                        | Expr::Logical(..)
+                        | Expr::String(..)
+                        | Expr::Na(..)
+                        | Expr::Null(..)
+                );
+                let carried_installer = !one_literal_iteration
+                    && self.loop_may_install_caller_binding(body, None, scope);
                 let mut inner = scope.clone();
                 inner.insert(name.clone(), iter_t.element());
                 // The loop variable rebinds `name` for the whole body and
@@ -756,6 +797,12 @@ impl Checker {
                 self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
+                if carried_installer {
+                    inner.dynamic_bindings_unknown = true;
+                    for binding in inner.scalar_asserted_bindings.clone() {
+                        inner.clear_scalar_asserted(&binding);
+                    }
+                }
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
@@ -770,9 +817,17 @@ impl Checker {
             Stmt::While { cond, body, .. } => {
                 // RY103: a loop condition is a length-1 logical context.
                 self.infer_condition(cond, scope, ConditionContext::Loop);
+                let carried_installer = !matches!(cond, Expr::Logical(false, _))
+                    && self.loop_may_install_caller_binding(body, Some(cond), scope);
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
+                if carried_installer {
+                    inner.dynamic_bindings_unknown = true;
+                    for binding in inner.scalar_asserted_bindings.clone() {
+                        inner.clear_scalar_asserted(&binding);
+                    }
+                }
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
@@ -1465,6 +1520,9 @@ impl Checker {
                     uncertain_caller_binding_alias: scope
                         .uncertain_caller_binding_aliases
                         .contains(name),
+                    inert_caller_binding_function: scope
+                        .inert_caller_binding_functions
+                        .contains(name),
                 };
                 let then_binding = then_state
                     .as_deref()
@@ -1506,7 +1564,22 @@ impl Checker {
                                 .any(alias_may_install));
                     (shared, uncertain)
                 };
-                caller_alias_updates.push((name.clone(), joined_alias, uncertain_alias));
+                let inert_function = if has_else && then_reaches != else_reaches {
+                    if then_reaches {
+                        then_binding.inert_caller_binding_function
+                    } else {
+                        else_binding.inert_caller_binding_function
+                    }
+                } else {
+                    then_binding.inert_caller_binding_function
+                        && else_binding.inert_caller_binding_function
+                };
+                caller_alias_updates.push((
+                    name.clone(),
+                    joined_alias,
+                    uncertain_alias,
+                    inert_function,
+                ));
                 if has_else && then_reaches != else_reaches {
                     let continuation = if then_reaches {
                         then_binding
@@ -1606,12 +1679,17 @@ impl Checker {
         for name in loop_vectors_after {
             scope.mark_loop_vector(&name);
         }
-        for (name, alias, uncertain) in caller_alias_updates {
+        for (name, alias, uncertain, inert_function) in caller_alias_updates {
             scope.set_joined_function_alias(&name, alias);
             if uncertain {
                 scope.mark_uncertain_caller_binding_alias(&name);
             } else {
                 scope.clear_uncertain_caller_binding_alias(&name);
+            }
+            if inert_function {
+                scope.mark_inert_caller_binding_function(&name);
+            } else {
+                scope.clear_inert_caller_binding_function(&name);
             }
         }
         if has_else && then_delta.unreachable && else_delta.unreachable {

@@ -49,6 +49,9 @@ pub(crate) fn inert_caller_binding_body(body: &[Stmt]) -> bool {
     };
     body.iter().all(|statement| match statement {
         Stmt::Expr(value) if inert_value(value) => true,
+        // A nested function literal is a value. Its body and defaults are
+        // deferred until that returned function is invoked.
+        Stmt::FunctionDef { .. } => true,
         Stmt::Return { value, .. } => value.as_ref().is_none_or(&inert_value),
         Stmt::Expr(Expr::Call { func, args, .. })
             if ident_name(func)
@@ -197,6 +200,23 @@ pub(crate) fn global_caller_binding_value_sources(
         Expr::Ident { name, .. } => HashSet::from([caller_binding_identity(name)
             .unwrap_or_else(|| UNKNOWN_CALLER_BINDING_IDENTITY.to_string())]),
         Expr::Call { func, args, .. }
+            if args.is_empty()
+                && matches!(func.as_ref(), Expr::Function { params, body, .. }
+                    if params.is_empty() && body.len() == 1) =>
+        {
+            let Expr::Function { body, .. } = func.as_ref() else {
+                unreachable!();
+            };
+            match &body[0] {
+                Stmt::Expr(value)
+                | Stmt::Return {
+                    value: Some(value), ..
+                } => global_caller_binding_value_sources(value, remaining - 1),
+                Stmt::FunctionDef { body, .. } if inert_caller_binding_body(body) => HashSet::new(),
+                _ => unknown(),
+            }
+        }
+        Expr::Call { func, args, .. }
             if ident_name(func).is_some_and(|name| {
                 matches!(name, "base::identity" | "base::force" | "base::invisible")
             }) && args.len() == 1
@@ -278,6 +298,9 @@ pub(crate) fn global_caller_binding_value_sources(
             let mut sources = match body.last() {
                 Some(Stmt::Expr(value) | Stmt::Assign { value, .. }) => {
                     global_caller_binding_value_sources(value, remaining - body.len())
+                }
+                Some(Stmt::FunctionDef { body, .. }) if inert_caller_binding_body(body) => {
+                    HashSet::new()
                 }
                 _ => unknown(),
             };

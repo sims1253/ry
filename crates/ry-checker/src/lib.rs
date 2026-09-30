@@ -437,6 +437,9 @@ pub struct Scope {
     /// Callable values with more than one possible installer source. This is
     /// effect-only provenance: ordinary call resolution keeps its own alias.
     pub(crate) uncertain_caller_binding_aliases: FxSet<String>,
+    /// Literal callables proven inert for the bounded caller-binding effect
+    /// check. This is separate from ordinary function/return inference.
+    pub(crate) inert_caller_binding_functions: FxSet<String>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
@@ -474,6 +477,7 @@ impl Clone for Scope {
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
             uncertain_caller_binding_aliases: self.uncertain_caller_binding_aliases.clone(),
+            inert_caller_binding_functions: self.inert_caller_binding_functions.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
@@ -555,6 +559,7 @@ impl Scope {
                 .chain(self.lexical_functions.iter())
                 .chain(self.function_aliases.keys())
                 .chain(self.uncertain_caller_binding_aliases.iter())
+                .chain(self.inert_caller_binding_functions.iter())
                 .cloned()
                 .collect();
             for name in names {
@@ -573,6 +578,7 @@ impl Scope {
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
         self.uncertain_caller_binding_aliases.clear();
+        self.inert_caller_binding_functions.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
@@ -617,6 +623,9 @@ impl Scope {
         if !self.uncertain_caller_binding_aliases.is_empty() {
             self.uncertain_caller_binding_aliases.remove(&name);
         }
+        if !self.inert_caller_binding_functions.is_empty() {
+            self.inert_caller_binding_functions.remove(&name);
+        }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
@@ -657,6 +666,7 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.uncertain_caller_binding_aliases.remove(&name);
+        self.inert_caller_binding_functions.remove(&name);
         self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
             self.loop_vector_bindings.remove(&name);
@@ -687,6 +697,7 @@ impl Scope {
         }
         self.function_aliases.remove(&name);
         self.uncertain_caller_binding_aliases.remove(&name);
+        self.inert_caller_binding_functions.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
         self.loop_vector_bindings.remove(&name);
@@ -763,6 +774,20 @@ impl Scope {
             self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
             self.uncertain_caller_binding_aliases
                 .insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn mark_inert_caller_binding_function(&mut self, name: &str) {
+        if !self.inert_caller_binding_functions.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::InertCallerBindingFunction);
+            self.inert_caller_binding_functions.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn clear_inert_caller_binding_function(&mut self, name: &str) {
+        if self.inert_caller_binding_functions.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::InertCallerBindingFunction);
+            self.inert_caller_binding_functions.remove(name);
         }
     }
 

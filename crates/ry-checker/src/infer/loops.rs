@@ -1,4 +1,190 @@
 use super::*;
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use std::ops::ControlFlow;
+
+#[derive(Debug)]
+struct LoopCallableInvocation {
+    target: String,
+    args: Vec<Arg>,
+}
+
+struct LoopSourceInputs<'a> {
+    args: &'a [Arg],
+    writes: &'a HashMap<String, Vec<HashSet<String>>>,
+    scope: &'a Scope,
+}
+
+struct LoopSourceState {
+    completed: HashMap<String, bool>,
+    visiting: HashSet<String>,
+    remaining: usize,
+}
+
+/// A later iteration may invoke a value assigned after an earlier call.
+/// The normal one-pass body walk only sees the initial callable at that call
+/// site. Collect possible target names and assignment values with a bounded
+/// walk, then use the same caller-binding source resolution as computed
+/// call heads. This is an effect fact, not a general loop CFG or return type.
+impl Checker {
+    pub(super) fn loop_may_install_caller_binding(
+        &self,
+        body: &[Stmt],
+        repeated_condition: Option<&Expr>,
+        scope: &Scope,
+    ) -> bool {
+        if scope.scalar_asserted_bindings.is_empty() {
+            return false;
+        }
+        let mut invocations = Vec::<LoopCallableInvocation>::new();
+        let mut writes = HashMap::<String, Vec<HashSet<String>>>::new();
+        let mut remaining = 4096;
+        let mut exhausted = false;
+        let policy = Walk {
+            assign_targets: false,
+            assign_operands: true,
+            dollar_args: false,
+            fn_bodies: false,
+            control_tests: true,
+        };
+        let mut visit = |node: AstNode<'_>, _| {
+            if remaining == 0 {
+                exhausted = true;
+                return ControlFlow::<(), Descend>::Break(());
+            }
+            remaining -= 1;
+            if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+                if ident_name(func)
+                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "do.call")
+                {
+                    if let Some(matched) = crate::match_caller_binding_argument_names(
+                        &["what", "args", "quote", "envir"],
+                        args,
+                    ) {
+                        if let Some(target) =
+                            matched.arg_for_param(0).and_then(|index| args.get(index))
+                        {
+                            let supplied = matched
+                                .arg_for_param(1)
+                                .and_then(|index| args.get(index))
+                                .and_then(|arg| match &arg.value {
+                                    Expr::Call { func, args, .. }
+                                        if ident_name(func) == Some("base::list") =>
+                                    {
+                                        Some(args.clone())
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            for source in crate::collect::global_caller_binding_value_sources(
+                                &target.value,
+                                64,
+                            ) {
+                                invocations.push(LoopCallableInvocation {
+                                    target: source,
+                                    args: supplied.clone(),
+                                });
+                            }
+                        }
+                    } else {
+                        exhausted = true;
+                    }
+                }
+                for source in crate::collect::global_caller_binding_value_sources(func, 64) {
+                    invocations.push(LoopCallableInvocation {
+                        target: source,
+                        args: args.to_vec(),
+                    });
+                }
+            }
+            let assignment = match node {
+                AstNode::Stmt(Stmt::Assign { target, value, .. }) => Some((target, value)),
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign,
+                    lhs,
+                    rhs,
+                    ..
+                }) => Some((lhs.as_ref(), rhs.as_ref())),
+                _ => None,
+            };
+            if let Some((Expr::Ident { name, .. }, value)) = assignment {
+                if let Some(name) = crate::caller_binding_identity(name) {
+                    writes.entry(name).or_default().push(
+                        crate::collect::global_caller_binding_value_sources(value, 64),
+                    );
+                } else {
+                    exhausted = true;
+                }
+            }
+            if invocations.len() + writes.len() > 256 {
+                exhausted = true;
+                return ControlFlow::<(), Descend>::Break(());
+            }
+            ControlFlow::<(), Descend>::Continue(Descend::Into)
+        };
+        if let Some(condition) = repeated_condition {
+            let _ = walk_expr(condition, policy, &mut visit);
+        }
+        let _ = walk_stmts(body, policy, &mut visit);
+        if exhausted {
+            return true;
+        }
+        for invocation in invocations {
+            if !writes.contains_key(&invocation.target) {
+                continue;
+            }
+            let inputs = LoopSourceInputs {
+                args: &invocation.args,
+                writes: &writes,
+                scope,
+            };
+            let mut state = LoopSourceState {
+                completed: HashMap::new(),
+                visiting: HashSet::new(),
+                remaining: 128,
+            };
+            if self.loop_assigned_source_may_install(&invocation.target, &inputs, &mut state) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn loop_assigned_source_may_install(
+        &self,
+        name: &str,
+        inputs: &LoopSourceInputs<'_>,
+        state: &mut LoopSourceState,
+    ) -> bool {
+        if let Some(effect) = state.completed.get(name) {
+            return *effect;
+        }
+        if state.remaining == 0 || !state.visiting.insert(name.to_string()) {
+            return true;
+        }
+        state.remaining -= 1;
+        let effect = inputs.writes.get(name).is_some_and(|alternatives| {
+            alternatives.iter().any(|sources| {
+                sources.iter().any(|source| {
+                    if inputs.writes.contains_key(source) {
+                        self.loop_assigned_source_may_install(source, inputs, state)
+                    } else {
+                        self.computed_source_may_replace_current_binding(
+                            source,
+                            inputs.args,
+                            inputs.scope,
+                            &mut state.completed,
+                            &mut state.visiting,
+                            &mut state.remaining,
+                        )
+                    }
+                })
+            })
+        });
+        state.visiting.remove(name);
+        state.completed.insert(name.to_string(), effect);
+        effect
+    }
+}
 
 pub(super) fn known_unclassed_vector(ty: &RType) -> bool {
     matches!(ty.length, Length::Known(n) if n > 1) && ty.class.known && ty.class.len == 0
@@ -31,6 +217,12 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     joined
         .list_origin_bindings
         .retain(|name| incoming.has_list_origin(name));
+    joined
+        .parameter_bindings
+        .retain(|name| incoming.parameter_bindings.contains(name));
+    joined
+        .default_parameter_bindings
+        .retain(|name| incoming.default_parameter_bindings.contains(name));
     joined
         .scalar_asserted_bindings
         .retain(|name| incoming.scalar_asserted_bindings.contains(name));
@@ -169,13 +361,24 @@ impl Checker {
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
+                let parameter =
+                    scope.is_parameter(&binding) && exit.parameter_bindings.contains(&binding);
+                let default_parameter = parameter
+                    && scope.is_default_parameter(&binding)
+                    && exit.default_parameter_bindings.contains(&binding);
                 let scalar_asserted = scalar_before.contains(&binding)
                     && exit.scalar_asserted_bindings.contains(&binding);
                 let loop_vector = exit.loop_vector_bindings.contains(&binding)
                     || (!entered
                         && (vector_before.contains(&binding)
                             || scope.get(&binding).is_some_and(known_unclassed_vector)));
-                scope.insert(binding.clone(), ty);
+                if default_parameter {
+                    scope.insert_parameter_default(binding.clone(), ty);
+                } else if parameter {
+                    scope.insert_parameter(binding.clone(), ty);
+                } else {
+                    scope.insert(binding.clone(), ty);
+                }
                 if list_origin {
                     scope.mark_list_origin(binding.clone());
                 }

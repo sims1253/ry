@@ -40,6 +40,7 @@ impl Checker {
         for branch in [&*scope, &then_scope, &else_scope] {
             alias_names.extend(branch.function_aliases.keys().cloned());
             alias_names.extend(branch.uncertain_caller_binding_aliases.iter().cloned());
+            alias_names.extend(branch.inert_caller_binding_functions.iter().cloned());
         }
         let mut caller_alias_updates = Vec::new();
         if !(scope.loop_frame.is_some() && !then_reaches_alias && !has_else) {
@@ -76,7 +77,17 @@ impl Checker {
                                 .any(alias_may_install));
                     (shared, uncertain)
                 };
-                caller_alias_updates.push((name, alias, uncertain));
+                let inert_function = if has_else && then_reaches_alias != else_reaches_alias {
+                    if then_reaches_alias {
+                        then_scope.inert_caller_binding_functions.contains(&name)
+                    } else {
+                        else_scope.inert_caller_binding_functions.contains(&name)
+                    }
+                } else {
+                    then_scope.inert_caller_binding_functions.contains(&name)
+                        && else_scope.inert_caller_binding_functions.contains(&name)
+                };
+                caller_alias_updates.push((name, alias, uncertain, inert_function));
             }
         }
         // Merge branch bindings back into the parent scope. In R,
@@ -163,12 +174,17 @@ impl Checker {
             scope.insert_narrowed(name, refined);
         }
         scope.loop_vector_bindings = loop_vectors_after;
-        for (name, alias, uncertain) in caller_alias_updates {
+        for (name, alias, uncertain, inert_function) in caller_alias_updates {
             scope.set_joined_function_alias(&name, alias);
             if uncertain {
                 scope.mark_uncertain_caller_binding_alias(&name);
             } else {
                 scope.clear_uncertain_caller_binding_alias(&name);
+            }
+            if inert_function {
+                scope.mark_inert_caller_binding_function(&name);
+            } else {
+                scope.clear_inert_caller_binding_function(&name);
             }
         }
         // When both explicit arms throw, no route reaches the

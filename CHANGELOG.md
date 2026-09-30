@@ -15,6 +15,10 @@ All notable changes to ry are documented in this file.
   unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
   lists no longer suppress ry findings; bare ignores still do.
 
+### Fixed
+
+- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
+
 ## [0.11.0] - 2026-09-22
 
 This release adds six new rules (RY106-RY111) whose founding fixtures are

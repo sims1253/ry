@@ -155,6 +155,7 @@ struct Ladder {
     fixture: FixtureProject,
     session: ClientSession,
     server: tokio::task::JoinHandle<()>,
+    initial_a_diagnostics: Vec<Value>,
     a_uri: String,
     b_uri: String,
     c_uri: String,
@@ -199,7 +200,7 @@ async fn settled_ladder_in(a_relative: &str, a_initial: &str, extra: &[(&str, &[
         .published_diagnostics_after(&main_uri, mark)
         .await
         .unwrap();
-    session
+    let initial_a = session
         .published_diagnostics_after(&a_uri, mark)
         .await
         .unwrap();
@@ -250,6 +251,7 @@ async fn settled_ladder_in(a_relative: &str, a_initial: &str, extra: &[(&str, &[
         fixture,
         session,
         server,
+        initial_a_diagnostics: normalize_diagnostics(&initial_a),
         a_uri,
         b_uri,
         c_uri,
@@ -1297,6 +1299,15 @@ fn driver_idle_out_keeps_the_signal_of_a_refresh_exiting_in_the_window() {
 fn shutdown_during_a_driver_round_publishes_nothing_afterwards() {
     run(async {
         let mut ladder = settled_ladder("x <- never_bound_here\n").await;
+        assert!(
+            has_ry010(&ladder.initial_a_diagnostics),
+            "the server must report the initial stale-state control"
+        );
+        // Mark before the watched edits so the pre-shutdown publication
+        // below belongs to this ladder. A repaired publication can win the
+        // race with D's stale pass; the initial RY010 above remains the
+        // stale-state control in either ordering.
+        let pre_edit_mark = ladder.session.publication_mark();
 
         // Exhaust the ladder, then arm the per-file commit gate BEFORE
         // releasing the scan: the next refresh to reach the gate is the
@@ -1312,13 +1323,19 @@ fn shutdown_during_a_driver_round_publishes_nothing_afterwards() {
         .await
         .expect("the driver's re-drive must park at the armed commit gate");
 
-        // Drain D's debounced republish — it still carries a.R's stale
-        // state, and it was scheduled before shutdown — so the negative
-        // window below observes only post-shutdown traffic.
-        let stale = await_diagnostics_where(&mut ladder.session, &ladder.a_uri, has_ry010, 4).await;
+        // Drain the pre-shutdown publication. D's debounced pass may still
+        // carry the old RY010, or a completed repair may already have
+        // cleared it. Both are valid before shutdown; the initial server
+        // publication above proves the stale state was observable.
+        let pre_shutdown = ladder
+            .session
+            .published_diagnostics_after(&ladder.a_uri, pre_edit_mark)
+            .await
+            .unwrap();
+        let before_shutdown = normalize_diagnostics(&pre_shutdown);
         assert!(
-            has_ry010(&stale),
-            "the pre-shutdown republish must carry the stale state (the control for the window)"
+            before_shutdown == ladder.initial_a_diagnostics || before_shutdown.is_empty(),
+            "pre-shutdown publication must show the old or repaired source: {before_shutdown:?}"
         );
         sync_barrier(
             &mut ladder.session,

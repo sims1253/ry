@@ -74,4 +74,5 @@ mod missing_args;
 mod printf_provenance;
 mod switch_selection;
 
+mod integer_range;
 mod literal_conditions;

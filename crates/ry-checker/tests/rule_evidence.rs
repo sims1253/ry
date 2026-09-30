@@ -191,6 +191,11 @@ const R7_CASES: &[R7Case] = &[
         literal_src: "f <- function(x) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\nf(character())\n",
         default_src: "f <- function(x = character()) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\nf()\n",
     },
+    R7Case {
+        rule: "RY119",
+        literal_src: "f <- function(x) as.integer(x)\nf(1e10)\n",
+        default_src: "f <- function(x = 1e10) as.integer(x)\nf()\n",
+    },
 ];
 
 /// Rules for which R7 is not applicable: purely syntactic or structural.
@@ -690,6 +695,10 @@ const VERDICTS: &[Verdict] = &[
     },
     Verdict {
         code: "RY111",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY119",
         verdict: "keep",
     },
 ];

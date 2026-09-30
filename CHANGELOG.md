@@ -4,6 +4,13 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add RY119 for proven `as.integer()` range loss. The checker distinguishes
+  a newly created integer `NA` from an input `NA`, retains that fact for
+  condition analysis, and stays quiet for unknown inputs and immediately
+  repaired casts (#569).
+
 ### Changed
 
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.

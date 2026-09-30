@@ -585,7 +585,20 @@ impl Checker {
                 None => Length::Unknown,
             }
         };
-        let result = RType::new(mode, length);
+        let mut result = RType::new(mode, length);
+        if matches!(mode, Mode::Integer | Mode::Double)
+            && arg_types.len() <= 32
+            && arg_types.iter().all(|t| t.value_facts.all_values_known)
+            && arg_types
+                .iter()
+                .all(|t| !t.class.is_unknown() && !t.class.has_known_class())
+        {
+            result.value_facts = arg_types
+                .iter()
+                .map(|t| t.value_facts)
+                .reduce(ry_core::types::ValueFacts::merge_vector)
+                .unwrap_or_default();
+        }
         if mode == Mode::Opaque {
             result.with_class(ClassVector::unknown())
         } else {
@@ -656,6 +669,7 @@ impl Checker {
                 // fn_sig is meaningless on a data-frame column.
                 fn_sig: None,
                 members: None,
+                value_facts: t.value_facts,
             })
             .collect();
 

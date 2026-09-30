@@ -46,6 +46,104 @@ fn disabled_and_uncertain_chunks_have_visible_boundaries() {
 }
 
 #[test]
+fn runtime_option_detection_uses_r_tokens_not_identifier_substrings() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let report = root.path().join("tokens.qmd");
+    for body in [
+        "my_opts_chunk_counter <- 1L",
+        "opts_chunkish <- 1L",
+        "literal <- r\"(a \" opts_chunk x)\"",
+    ] {
+        fs::write(
+            &report,
+            format!("```{{r}}\n{body}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY040").len(),
+            1,
+            "{body}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY121").is_empty(),
+            "{body}: {diagnostics:?}"
+        );
+    }
+
+    fs::write(
+        &report,
+        "```{r}\nknitr::`opts_chunk`$set(eval=FALSE)\n```\n```{r}\n'a' + 1L\n```\n",
+    )
+    .unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY121").len(), 1, "{diagnostics:?}");
+    assert!(code(&diagnostics, "RY040").is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn quoted_header_commas_and_execution_keys_keep_chunk_execution_truthful() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let report = root.path().join("headers.Rmd");
+    fs::write(
+        &report,
+        "```{r, fig.cap=\"caption, eval=FALSE\"}\nx <- 'a'\n```\n```{r}\nx + 1L\n```\n",
+    )
+    .unwrap();
+    let active = check(root.path());
+    assert_eq!(code(&active, "RY040").len(), 1, "{active:?}");
+    assert!(code(&active, "RY121").is_empty(), "{active:?}");
+
+    for header in ["{r, \"eval\"=FALSE}", "{r}\n#| \"eval\": false"] {
+        fs::write(
+            &report,
+            format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
+        )
+        .unwrap();
+        let disabled = check(root.path());
+        assert!(
+            code(&disabled, "RY040").is_empty(),
+            "{header}: {disabled:?}"
+        );
+        assert_eq!(code(&disabled, "RY010").len(), 1, "{header}: {disabled:?}");
+    }
+}
+
+#[test]
+fn yaml_exec_refusal_does_not_invent_an_unrelated_metadata_option() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let report = root.path().join("front.qmd");
+    fs::write(
+        &report,
+        "---\nmetadata:\n  eval: false\n---\n```{r}\n'a' + 1L\n```\n",
+    )
+    .unwrap();
+    let benign = check(root.path());
+    assert_eq!(code(&benign, "RY040").len(), 1, "{benign:?}");
+    assert!(code(&benign, "RY121").is_empty(), "{benign:?}");
+
+    for yaml in [
+        "\"execute\":\n  \"eval\": false",
+        "format:\n  html:\n    execute:\n      eval: false",
+    ] {
+        fs::write(
+            &report,
+            format!("---\n{yaml}\n---\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let uncertain = check(root.path());
+        assert_eq!(code(&uncertain, "RY121").len(), 1, "{yaml}: {uncertain:?}");
+        assert!(
+            code(&uncertain, "RY040").is_empty(),
+            "{yaml}: {uncertain:?}"
+        );
+    }
+}
+
+#[test]
 fn quarto_cell_options_do_not_replace_function_local_typehint_comments() {
     let root = tempfile::tempdir().unwrap();
     fs::write(

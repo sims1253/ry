@@ -57,16 +57,22 @@ enabled = true
 ```
 
 ry checks literal `eval = TRUE` and `#| eval: true` chunks. Literal false
-forms disable a chunk. `include = FALSE`, `echo = FALSE`, and their Quarto
-forms still leave the chunk active. R chunks inside a longer non-R fence and
+forms disable a chunk. R headers require uppercase `TRUE` or `FALSE`: `T`,
+`F`, lowercase R names, and computed values can be rebound, so they produce
+RY121 rather than certifying execution. Quarto cell options accept YAML
+boolean spellings. `include = FALSE`, `echo = FALSE`, and their Quarto
+forms still leave the chunk active. Quoted simple option keys are recognized;
+quoted commas in unrelated header metadata do not create an `eval` option.
+R chunks inside a longer non-R fence and
 double-brace documentation examples stay inert. A chunk must close with the
 same fence kind and at least the opening length. ry parses each R chunk on
 its own, then checks admitted chunks in document order.
 
-RY120 marks an unclosed R fence or a report over the 2 MiB or 128-chunk
+RY120 marks a malformed R fence, unclosed YAML front matter, or a report over the 2 MiB or 128-chunk
 input limit. RY121 marks dynamic or conflicting execution options. After an
 uncertain option, ry does not assume that later chunks ran. Report-level
-execution options in YAML and runtime chunk-option changes also stop static
+execution options at the document root or within format settings, and real
+runtime references to knitr's chunk-option object, also stop static
 analysis with RY121. Malformed R code in an admitted chunk gets the usual
 RY000 parse finding; a malformed R fence gets RY120.
 Directory discovery applies `index.max-file-bytes` before parsing and reports

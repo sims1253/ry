@@ -2,7 +2,10 @@
 //! No report engine is invoked. Every retained R byte has its original
 //! offset; all other non-newline bytes become ASCII spaces.
 
-use ry_core::ast::InputIssue;
+use std::ops::ControlFlow;
+
+use ry_core::ast::{Expr, InputIssue, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_core::{RParser, SourceFile, Span};
 use tree_sitter::Tree;
 
@@ -49,41 +52,36 @@ fn mask(masked: &mut [u8], start: usize, end: usize) {
     }
 }
 
-/// Detect the common runtime chunk-option object in executable R tokens.
-/// A mention inside a string, backtick name, or comment is inert.
-fn has_runtime_chunk_options(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut pos = 0;
-    while pos < bytes.len() {
-        match bytes[pos] {
-            b'#' => {
-                pos += 1;
-                while pos < bytes.len() && bytes[pos] != b'\n' {
-                    pos += 1;
+/// A real reference to knitr's chunk-option object can change the execution
+/// of later chunks. Inspect lowered R identifiers so raw strings, comments,
+/// and similarly named variables cannot invent that boundary. Function
+/// bodies are deferred until called and do not execute just by appearing here.
+fn has_runtime_chunk_options(stmts: &[Stmt]) -> bool {
+    let policy = Walk {
+        assign_targets: false,
+        assign_operands: false,
+        dollar_args: false,
+        fn_bodies: false,
+        control_tests: true,
+    };
+    matches!(
+        walk_stmts(stmts, policy, |node, _| {
+            if let AstNode::Expr(Expr::Ident { name, .. }) = node {
+                let (package, object) = name
+                    .rsplit_once("::")
+                    .map_or((None, name.as_str()), |(package, object)| {
+                        (Some(package.trim_end_matches(':')), object)
+                    });
+                if package.is_none_or(|package| package == "knitr")
+                    && object.trim_matches('`') == "opts_chunk"
+                {
+                    return ControlFlow::Break(());
                 }
             }
-            quote @ (b'\'' | b'"' | b'`') => {
-                pos += 1;
-                while pos < bytes.len() {
-                    if bytes[pos] == b'\\' {
-                        pos = (pos + 2).min(bytes.len());
-                    } else if bytes[pos] == quote {
-                        pos += 1;
-                        break;
-                    } else {
-                        pos += 1;
-                    }
-                }
-            }
-            _ => {
-                if bytes[pos..].starts_with(b"opts_chunk") {
-                    return true;
-                }
-                pos += 1;
-            }
-        }
-    }
-    false
+            ControlFlow::Continue(Descend::Into)
+        }),
+        ControlFlow::Break(())
+    )
 }
 
 fn fence(text: &str) -> Option<(u8, usize, &str)> {
@@ -100,7 +98,7 @@ fn fence(text: &str) -> Option<(u8, usize, &str)> {
     (count >= 3).then_some((kind, count, &rest[count..]))
 }
 
-fn option_value(text: &str) -> Option<bool> {
+fn yaml_bool(text: &str) -> Option<bool> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" => Some(true),
         "false" => Some(false),
@@ -108,8 +106,38 @@ fn option_value(text: &str) -> Option<bool> {
     }
 }
 
-fn execution_option(key: &str, value: &str) -> Result<Option<bool>, ()> {
+fn r_bool(text: &str) -> Option<bool> {
+    match text.trim() {
+        "TRUE" => Some(true),
+        "FALSE" => Some(false),
+        _ => None,
+    }
+}
+
+fn simple_key(key: &str) -> Result<&str, ()> {
     let key = key.trim();
+    if key.len() >= 2
+        && matches!(
+            (key.as_bytes()[0], key.as_bytes()[key.len() - 1]),
+            (b'"', b'"') | (b'\'', b'\'') | (b'`', b'`')
+        )
+    {
+        // Encoded spellings can decode to execution keys. Without a full
+        // R/YAML key decoder, make that uncertainty visible.
+        if key.as_bytes().contains(&b'\\') {
+            return Err(());
+        }
+        Ok(&key[1..key.len() - 1])
+    } else if key.starts_with(['"', '\'', '`']) || key.ends_with(['"', '\'', '`']) {
+        Err(())
+    } else {
+        Ok(key)
+    }
+}
+
+fn execution_option(key: &str, value: &str, r_header: bool) -> Result<Option<bool>, ()> {
+    let key = simple_key(key)?;
+    let boolean = if r_header { r_bool } else { yaml_bool };
     if ["child", "ref.label", "engine", "file", "code", "dependson"]
         .iter()
         .any(|name| key.eq_ignore_ascii_case(name))
@@ -117,12 +145,88 @@ fn execution_option(key: &str, value: &str) -> Result<Option<bool>, ()> {
         return Err(());
     }
     if key.eq_ignore_ascii_case("eval") {
-        option_value(value).map(Some).ok_or(())
+        boolean(value).map(Some).ok_or(())
     } else if key.eq_ignore_ascii_case("include") || key.eq_ignore_ascii_case("echo") {
-        option_value(value).map(|_| None).ok_or(())
+        boolean(value).map(|_| None).ok_or(())
     } else {
         Ok(None)
     }
+}
+
+/// Extract a YAML key without mistaking a colon inside a quoted key or value
+/// for a separator. This is a bounded key reader, not a YAML renderer.
+fn yaml_key(line: &str) -> Result<Option<&str>, ()> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return Ok(None);
+    }
+    let bytes = line.as_bytes();
+    let mut quote = None;
+    let mut pos = 0;
+    while pos < bytes.len() {
+        match (quote, bytes[pos]) {
+            (Some(_), b'\\') => {
+                pos = (pos + 2).min(bytes.len());
+                continue;
+            }
+            (Some(delimiter), byte) if delimiter == byte => quote = None,
+            (None, delimiter @ (b'\'' | b'"')) => quote = Some(delimiter),
+            (None, b':') => return simple_key(&line[..pos]).map(Some),
+            _ => {}
+        }
+        pos += 1;
+    }
+    if quote.is_some() {
+        return Err(());
+    }
+    Ok(None)
+}
+
+/// Split only at header commas outside ordinary quotes and nested R syntax.
+fn header_fields(inner: &str) -> Result<Vec<&str>, ()> {
+    let bytes = inner.as_bytes();
+    let mut fields = Vec::new();
+    let mut start = 0;
+    let mut quote = None;
+    let mut nesting = Vec::new();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        let byte = bytes[pos];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                pos = (pos + 2).min(bytes.len());
+                continue;
+            }
+            if byte == delimiter {
+                quote = None;
+            }
+        } else {
+            match byte {
+                b'\'' | b'"' | b'`' => quote = Some(byte),
+                b'(' | b'[' | b'{' => nesting.push(byte),
+                b')' | b']' | b'}' => {
+                    let matches = matches!(
+                        (nesting.pop(), byte),
+                        (Some(b'('), b')') | (Some(b'['), b']') | (Some(b'{'), b'}')
+                    );
+                    if !matches {
+                        return Err(());
+                    }
+                }
+                b',' if nesting.is_empty() => {
+                    fields.push(&inner[start..pos]);
+                    start = pos + 1;
+                }
+                _ => {}
+            }
+        }
+        pos += 1;
+    }
+    if quote.is_some() || !nesting.is_empty() {
+        return Err(());
+    }
+    fields.push(&inner[start..]);
+    Ok(fields)
 }
 
 fn header_options(rest: &str) -> Result<Option<Option<bool>>, ()> {
@@ -135,7 +239,7 @@ fn header_options(rest: &str) -> Result<Option<Option<bool>>, ()> {
         return Ok(None);
     }
     let mut eval = None;
-    for part in inner.split(',') {
+    for part in header_fields(inner)? {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
@@ -143,7 +247,7 @@ fn header_options(rest: &str) -> Result<Option<Option<bool>>, ()> {
         // the option name. More than one assignment in the same segment
         // leaves the value dynamic and is refused below.
         let key = key.split_whitespace().last().unwrap_or("");
-        if let Some(value) = execution_option(key, value)?
+        if let Some(value) = execution_option(key, value, true)?
             && eval.replace(value).is_some()
         {
             return Err(());
@@ -183,14 +287,29 @@ pub fn parse_report_with_tree(
         let mut first = 0;
         if rows.first().is_some_and(|line| line.text.trim() == "---") {
             first = 1;
+            let mut root_key = None;
             while first < rows.len() && rows[first].text.trim() != "---" {
-                let yaml = rows[first].text.trim();
-                if yaml.starts_with("execute:")
-                    || yaml.starts_with("knitr:")
-                    || yaml.starts_with("eval:")
-                {
-                    issues.push(issue(rows[first].offset, first, "RY121", "report-level execution options need a report engine; no chunks are assumed executable"));
-                    break;
+                let raw = rows[first].text.trim_end_matches(['\r', '\n']);
+                let indent = raw.len() - raw.trim_start_matches(' ').len();
+                match yaml_key(raw) {
+                    Ok(Some(key)) => {
+                        if indent == 0 {
+                            root_key = Some(key);
+                        }
+                        let execution_key = key == "execute" || key == "knitr";
+                        let root_execution = indent == 0 && (execution_key || key == "eval");
+                        let format_execution =
+                            indent > 0 && root_key == Some("format") && execution_key;
+                        if root_execution || format_execution || indent == 0 && key == "<<" {
+                            issues.push(issue(rows[first].offset, first, "RY121", "report-level execution options need a report engine; no chunks are assumed executable"));
+                            break;
+                        }
+                    }
+                    Err(()) => {
+                        issues.push(issue(rows[first].offset, first, "RY121", "report YAML key cannot be classified safely; no chunks are assumed executable"));
+                        break;
+                    }
+                    Ok(None) => {}
                 }
                 first += 1;
             }
@@ -214,7 +333,16 @@ pub fn parse_report_with_tree(
                     {
                         if r_chunk && enabled {
                             chunks.push((start_row, body_row, body_start, line.offset));
-                            if has_runtime_chunk_options(&source[body_start..line.offset]) {
+                            let chunk = parser.parse(path, &source[body_start..line.offset])?;
+                            for span in chunk.parse_errors {
+                                chunk_parse_errors.push(Span::new(
+                                    span.start + body_start,
+                                    span.end + body_start,
+                                    span.line + body_row,
+                                    span.col,
+                                ));
+                            }
+                            if has_runtime_chunk_options(&chunk.stmts) {
                                 issues.push(issue(rows[start_row].offset, start_row, "RY121", "runtime chunk options may change later execution; later chunks are not analyzed"));
                                 break;
                             }
@@ -279,7 +407,7 @@ pub fn parse_report_with_tree(
                         let option = rows[row].text.trim_start().trim_start_matches("#|").trim();
                         let parsed = option
                             .split_once(':')
-                            .map_or(Ok(None), |(key, value)| execution_option(key, value));
+                            .map_or(Ok(None), |(key, value)| execution_option(key, value, false));
                         match parsed {
                             Ok(Some(value)) if cell_eval.replace(value).is_none() => {}
                             Ok(Some(_)) | Err(()) => {
@@ -330,16 +458,7 @@ pub fn parse_report_with_tree(
         // A chunk is only admitted after its matching close. Parse it on
         // its own as well, so syntax cannot accidentally continue through
         // masked Markdown between chunks.
-        for &(_, body_row, start, end) in &chunks {
-            let chunk = parser.parse(path, &source[start..end])?;
-            for span in chunk.parse_errors {
-                chunk_parse_errors.push(Span::new(
-                    span.start + start,
-                    span.end + start,
-                    span.line + body_row,
-                    span.col,
-                ));
-            }
+        for &(_, _, start, end) in &chunks {
             masked[start..end].copy_from_slice(&source.as_bytes()[start..end]);
         }
     }
@@ -446,6 +565,101 @@ mod tests {
             parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", active, None).unwrap();
         assert_eq!(file.stmts.len(), 1);
         assert_eq!(file.input_issues[0].code, "RY121");
+    }
+
+    #[test]
+    fn runtime_options_use_r_identifier_identity() {
+        for body in [
+            "my_opts_chunk_counter <- 1L",
+            "opts_chunkish <- 1L",
+            "value <- r\"(a \" opts_chunk x)\"",
+            "value <- 'opts_chunk'",
+        ] {
+            let source = format!("```{{r}}\n{body}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
+                    .unwrap();
+            assert_eq!(file.stmts.len(), 3, "{body}: {:?}", file.input_issues);
+            assert!(file.input_issues.is_empty(), "{body}");
+            assert!(
+                file.parse_errors.is_empty(),
+                "{body}: {:?}",
+                file.parse_errors
+            );
+        }
+        let source = "```{r}\nknitr::`opts_chunk`$set(eval=FALSE)\n```\n```{r}\nx + 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None).unwrap();
+        assert_eq!(file.stmts.len(), 1);
+        assert_eq!(file.input_issues[0].code, "RY121");
+    }
+
+    #[test]
+    fn header_fields_keep_quoted_commas_and_nested_expressions_together() {
+        for header in [
+            "{r, fig.cap=\"caption, eval=FALSE\"}",
+            "{r, fig.cap=paste('a,b', c(1,2))}",
+        ] {
+            let source = format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
+                    .unwrap();
+            assert_eq!(file.stmts.len(), 2, "{header}: {:?}", file.input_issues);
+            assert!(file.input_issues.is_empty(), "{header}");
+        }
+    }
+
+    #[test]
+    fn quoted_eval_keys_do_not_enable_disabled_chunks() {
+        for source in [
+            "```{r, \"eval\"=FALSE}\nx <- 'a'\n```\n",
+            "```{r}\n#| \"eval\": false\nx <- 'a'\n```\n",
+        ] {
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None)
+                    .unwrap();
+            assert!(file.stmts.is_empty(), "{source}");
+            assert!(file.input_issues.is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn r_header_booleans_require_unambiguous_literals() {
+        for option in ["eval=T", "eval=t", "eval=true", "echo=F", "include=f"] {
+            let source = format!("```{{r, {option}}}\nx <- 1L\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
+                    .unwrap();
+            assert!(file.stmts.is_empty(), "{option}");
+            assert_eq!(file.input_issues[0].code, "RY121", "{option}");
+        }
+        let source = "```{r}\n#| eval: TRUE\nx <- 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
+        assert_eq!(file.stmts.len(), 1);
+        assert!(file.input_issues.is_empty());
+    }
+
+    #[test]
+    fn yaml_execution_keys_are_scoped_and_quoted_keys_are_recognized() {
+        let benign = "---\nmetadata:\n  eval: false\n---\n```{r}\n'a' + 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", benign, None).unwrap();
+        assert_eq!(file.stmts.len(), 1);
+        assert!(file.input_issues.is_empty());
+        for front_matter in [
+            "\"execute\":\n  \"eval\": false",
+            "format:\n  html:\n    execute:\n      eval: false",
+            "'knitr':\n  opts_chunk:\n    eval: false",
+            "<<: *execution_defaults",
+        ] {
+            let source = format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &source, None)
+                    .unwrap();
+            assert!(file.stmts.is_empty(), "{front_matter}");
+            assert_eq!(file.input_issues[0].code, "RY121", "{front_matter}");
+        }
     }
 
     #[test]

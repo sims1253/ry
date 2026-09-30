@@ -678,6 +678,35 @@ fn only_the_exact_roxygen_export_tag_closes_legacy_inventory() {
 }
 
 #[test]
+fn dynamic_box_export_keeps_tagged_inventory_open() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("alias.r"),
+        "#' @export\nfoo <- 1L\nbar <- 2L\nf <- box::export\nf(bar)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("computed.r"),
+        "#' @export\nfoo <- 1L\nbar <- 2L\ndo.call(box::export, list(quote(bar)))\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("tag_only.r"),
+        "#' @export\nfoo <- 1L\nbar <- 2L\n",
+    )
+    .unwrap();
+    for module in ["alias", "computed"] {
+        let diagnostics = codes_for(root.path(), &format!("box::use(./{module}[bar])\n"));
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    let closed = codes_for(root.path(), "box::use(./tag_only[bar])\n");
+    assert!(closed.iter().any(|(code, _, _)| code == "RY118"));
+}
+
+#[test]
 fn legacy_expression_assignments_are_own_module_exports() {
     let root = tempfile::tempdir().unwrap();
     fs::write(

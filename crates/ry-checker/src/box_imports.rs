@@ -528,7 +528,12 @@ fn declared_exports(
         return (names, complete && !unmodeled_load_effects);
     }
     if roxygen.tagged {
-        return (roxygen.names, complete && roxygen.complete);
+        // An aliased or computed box::export() can extend a tagged module's
+        // inventory during load. Only an effect-free body proves absence.
+        return (
+            roxygen.names,
+            complete && roxygen.complete && !unmodeled_load_effects,
+        );
     }
     // Legacy modules export their own non-dot bindings. Imported names live
     // in an attachment environment and are not implicitly re-exported.

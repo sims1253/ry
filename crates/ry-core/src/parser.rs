@@ -756,7 +756,7 @@ fn text(n: Node, src: &str) -> Option<String> {
 /// escape processing matters because column-name matching
 /// (`df$"my col"`, `list("a b" = 1)`) and `# ry:` directive parsing
 /// depend on the literal value.
-fn unquote_r_string(raw: &str) -> String {
+pub fn unquote_r_string(raw: &str) -> String {
     // Raw strings: r"(...)" , r"(...){...}", R"(...)", r"[...]", etc.
     // The opening is r/R followed by an optional dash-delimiter and a
     // ( or [. The matching close is ) or ] followed by the same

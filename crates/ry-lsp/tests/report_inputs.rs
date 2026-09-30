@@ -13,6 +13,40 @@ fn finding<'a>(publish: &'a Value, code: &str) -> Option<&'a Value> {
 }
 
 #[test]
+fn warm_report_execution_identity_edits_republish_the_same_uri() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture.write_file("ry.toml", "[reports]\nenabled = true\n").unwrap();
+            let source = "😀 prose\r\n```{r, Eval=FALSE}\r\n'a' + 1L\r\n```\r\n";
+            let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, source).await.unwrap();
+            let active = session.published_diagnostics_after(&uri, mark).await.unwrap();
+            assert!(finding(&active, "RY040").is_some(), "{active}");
+
+            let cases = [
+                ("😀 prose\r\n```{r, eval=FALSE}\r\n'a' + 1L\r\n```\r\n", false, false),
+                ("😀 prose\r\n```{r}\r\nknitr::`opts_\\x63hunk`$set(eval=FALSE)\r\n```\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
+                ("---\r\nformat: {html: {execute: {eval: false}}}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", false, true),
+                ("---\r\nmetadata: {eval: false}\r\n---\r\n```{r}\r\n'a' + 1L\r\n```\r\n", true, false),
+            ];
+            for (index, (source, expect_type, expect_boundary)) in cases.iter().enumerate() {
+                let mark = session.publication_mark();
+                session.change(&uri, index as i32 + 2, json!([{"text": source}])).await.unwrap();
+                let published = session.published_diagnostics_after(&uri, mark).await.unwrap();
+                assert_eq!(finding(&published, "RY040").is_some(), *expect_type, "{published}");
+                assert_eq!(finding(&published, "RY121").is_some(), *expect_boundary, "{published}");
+            }
+            join_session(session, server).await;
+        });
+}
+
+#[test]
 fn warm_report_prose_and_option_edits_keep_original_utf16_positions() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

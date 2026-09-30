@@ -83,6 +83,73 @@ fn runtime_option_detection_uses_r_tokens_not_identifier_substrings() {
 }
 
 #[test]
+fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let report = root.path().join("options.Rmd");
+    for body in [
+        "`knitr`::opts_chunk$set(eval=FALSE)",
+        r"knitr::`opts_\x63hunk`$set(eval=FALSE)",
+    ] {
+        fs::write(
+            &report,
+            format!("```{{r}}\n{body}\n```\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY121").len(),
+            1,
+            "{body}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY040").is_empty(),
+            "{body}: {diagnostics:?}"
+        );
+    }
+    for header in [
+        "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
+        r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
+    ] {
+        fs::write(
+            &report,
+            format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY121").len(),
+            1,
+            "{header}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY040").is_empty(),
+            "{header}: {diagnostics:?}"
+        );
+    }
+    for header in [
+        "{r, fig.cap={\"caption\"}}",
+        "{r, fig.cap=\"caption, eval=FALSE\"}",
+    ] {
+        fs::write(
+            &report,
+            format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY040").len(),
+            1,
+            "{header}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY121").is_empty(),
+            "{header}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn quoted_header_commas_and_execution_keys_keep_chunk_execution_truthful() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
@@ -139,6 +206,59 @@ fn yaml_exec_refusal_does_not_invent_an_unrelated_metadata_option() {
         assert!(
             code(&uncertain, "RY040").is_empty(),
             "{yaml}: {uncertain:?}"
+        );
+    }
+}
+
+#[test]
+fn format_inheritance_and_option_name_case_keep_execution_truthful() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let report = root.path().join("format.qmd");
+    for yaml in [
+        "format: {html: {execute: {eval: false}}}",
+        "settings: &fmt\n  html:\n    execute:\n      eval: false\nformat: *fmt",
+        "settings: &fmt\n  execute:\n    eval: false\nformat:\n  html:\n    <<: *fmt",
+    ] {
+        fs::write(
+            &report,
+            format!("---\n{yaml}\n---\n```{{r}}\n'a' + 1L\n```\n"),
+        )
+        .unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY121").len(),
+            1,
+            "{yaml}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY040").is_empty(),
+            "{yaml}: {diagnostics:?}"
+        );
+    }
+    for header in ["{r, Eval=FALSE}", "{r}\n#| Eval: false"] {
+        fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
+        let diagnostics = check(root.path());
+        assert_eq!(
+            code(&diagnostics, "RY040").len(),
+            1,
+            "{header}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY121").is_empty(),
+            "{header}: {diagnostics:?}"
+        );
+    }
+    for header in ["{r, eval=FALSE}", "{r}\n#| eval: false"] {
+        fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
+        let diagnostics = check(root.path());
+        assert!(
+            code(&diagnostics, "RY040").is_empty(),
+            "{header}: {diagnostics:?}"
+        );
+        assert!(
+            code(&diagnostics, "RY121").is_empty(),
+            "{header}: {diagnostics:?}"
         );
     }
 }

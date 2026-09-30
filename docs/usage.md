@@ -63,6 +63,8 @@ RY121 rather than certifying execution. Quarto cell options accept YAML
 boolean spellings. `include = FALSE`, `echo = FALSE`, and their Quarto
 forms still leave the chunk active. Quoted simple option keys are recognized;
 quoted commas in unrelated header metadata do not create an `eval` option.
+Option names are case-sensitive (`Eval` is unrelated metadata). R expressions
+in header metadata are inspected for runtime chunk-option references too.
 R chunks inside a longer non-R fence and
 double-brace documentation examples stay inert. A chunk must close with the
 same fence kind and at least the opening length. ry parses each R chunk on
@@ -73,7 +75,10 @@ input limit. RY121 marks dynamic or conflicting execution options. After an
 uncertain option, ry does not assume that later chunks ran. Report-level
 execution options at the document root or within format settings, and real
 runtime references to knitr's chunk-option object, also stop static
-analysis with RY121. Malformed R code in an admitted chunk gets the usual
+analysis with RY121. Complex `format` values such as flow mappings, aliases,
+anchors, and merges are refused visibly because their inherited execution
+settings cannot be resolved by this bounded reader; unrelated `metadata`
+values remain metadata. Malformed R code in an admitted chunk gets the usual
 RY000 parse finding; a malformed R fence gets RY120.
 Directory discovery applies `index.max-file-bytes` before parsing and reports
 oversized skipped reports on stderr. An explicitly selected oversized report

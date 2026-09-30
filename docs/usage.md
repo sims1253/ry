@@ -69,6 +69,9 @@ uncertain option, ry does not assume that later chunks ran. Report-level
 execution options in YAML and runtime chunk-option changes also stop static
 analysis with RY121. Malformed R code in an admitted chunk gets the usual
 RY000 parse finding; a malformed R fence gets RY120.
+Directory discovery applies `index.max-file-bytes` before parsing and reports
+oversized skipped reports on stderr. An explicitly selected oversized report
+reaches the adapter and reports RY120.
 These are bounded static checks; inline R, child documents, notebooks,
 hooks, and renderer or project options are outside this input subset.
 Source-edit actions are withheld for reports because edits through a masked

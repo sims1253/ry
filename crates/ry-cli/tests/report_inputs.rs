@@ -173,3 +173,35 @@ fn malformed_and_unclosed_r_fences_have_visible_status() {
     assert_eq!(code(&diagnostics, "RY120").len(), 2, "{diagnostics:?}");
     assert!(code(&diagnostics, "RY000").is_empty(), "{diagnostics:?}");
 }
+
+#[test]
+fn oversized_report_is_visible_for_direct_and_directory_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let path = root.path().join("large.qmd");
+    fs::write(
+        &path,
+        "x".repeat(ry_workspace::reports::MAX_REPORT_BYTES + 1),
+    )
+    .unwrap();
+
+    let direct = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(&path)
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&direct.stdout).unwrap();
+    assert_eq!(code(&diagnostics, "RY120").len(), 1, "{diagnostics:?}");
+
+    let discovered = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json"])
+        .arg(root.path())
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&discovered.stderr).contains("per-file size cap"),
+        "{discovered:?}"
+    );
+}

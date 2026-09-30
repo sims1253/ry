@@ -13,6 +13,13 @@ use tree_sitter::Tree;
 
 pub const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CHUNKS: usize = 128;
+const MAX_HEADER_BYTES: usize = 16 * 1024;
+const MAX_HEADER_FIELDS: usize = 128;
+
+enum HeaderError {
+    Budget,
+    Unsupported,
+}
 
 pub fn is_report_path(path: &std::path::Path) -> bool {
     matches!(
@@ -205,7 +212,7 @@ fn complex_format_value(value: &str) -> bool {
 }
 
 /// Split only at header commas outside ordinary quotes and nested R syntax.
-fn header_fields(inner: &str) -> Result<Vec<&str>, ()> {
+fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
     let bytes = inner.as_bytes();
     let mut fields = Vec::new();
     let mut start = 0;
@@ -232,10 +239,13 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, ()> {
                         (Some(b'('), b')') | (Some(b'['), b']') | (Some(b'{'), b'}')
                     );
                     if !matches {
-                        return Err(());
+                        return Err(HeaderError::Unsupported);
                     }
                 }
                 b',' if nesting.is_empty() => {
+                    if fields.len() >= MAX_HEADER_FIELDS {
+                        return Err(HeaderError::Budget);
+                    }
                     fields.push(&inner[start..pos]);
                     start = pos + 1;
                 }
@@ -245,7 +255,10 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, ()> {
         pos += 1;
     }
     if quote.is_some() || !nesting.is_empty() {
-        return Err(());
+        return Err(HeaderError::Unsupported);
+    }
+    if fields.len() >= MAX_HEADER_FIELDS {
+        return Err(HeaderError::Budget);
     }
     fields.push(&inner[start..]);
     Ok(fields)
@@ -255,10 +268,13 @@ fn header_options(
     parser: &mut RParser,
     path: &str,
     rest: &str,
-) -> Result<Option<Option<bool>>, ()> {
+) -> Result<Option<Option<bool>>, HeaderError> {
     let header = rest.trim();
     if !(header.starts_with("{r") && header.ends_with('}')) {
         return Ok(None);
+    }
+    if header.len() > MAX_HEADER_BYTES {
+        return Err(HeaderError::Budget);
     }
     let inner = &header[2..header.len() - 1];
     if !inner.is_empty() && !inner.starts_with([',', ' ', '\t']) {
@@ -273,17 +289,20 @@ fn header_options(
         // the option name. More than one assignment in the same segment
         // leaves the value dynamic and is refused below.
         let key = key.split_whitespace().last().unwrap_or("");
-        if let Some(value) = execution_option(key, value, true)?
+        if let Some(value) =
+            execution_option(key, value, true).map_err(|()| HeaderError::Unsupported)?
             && eval.replace(value).is_some()
         {
-            return Err(());
+            return Err(HeaderError::Unsupported);
         }
         // Chunk-header metadata is evaluated as R before the body. A real
         // reference to knitr's options object can change later chunks even
         // when the option's own key is just a caption or plot setting.
-        let expression = parser.parse(path, value.trim()).map_err(|_| ())?;
+        let expression = parser
+            .parse(path, value.trim())
+            .map_err(|_| HeaderError::Unsupported)?;
         if !expression.parse_errors.is_empty() || has_runtime_chunk_options(&expression.stmts) {
-            return Err(());
+            return Err(HeaderError::Unsupported);
         }
     }
     Ok(Some(eval))
@@ -416,6 +435,10 @@ pub fn parse_report_with_tree(
                 let header_eval = if r_chunk {
                     match header_options(parser, path, rest) {
                         Ok(Some(value)) => value,
+                        Err(HeaderError::Budget) => {
+                            issues.push(issue(line.offset, row, "RY120", "R chunk header exceeds the 16 KiB or 128-field static input limit; later chunks are not analyzed"));
+                            break;
+                        }
                         _ => {
                             let (code, message) = if header.ends_with('}') {
                                 (
@@ -675,6 +698,22 @@ mod tests {
                     .unwrap();
             assert_eq!(file.input_issues[0].code, "RY121", "{header}");
             assert_eq!(file.stmts.len(), 0, "{header}");
+        }
+    }
+
+    #[test]
+    fn parsed_header_metadata_has_a_visible_input_budget() {
+        for header in [
+            format!("{{r, fig.cap=\"{}\"}}", "a".repeat(MAX_HEADER_BYTES)),
+            format!("{{r, {}}}", "fig.cap=\"x\",".repeat(MAX_HEADER_FIELDS + 1)),
+        ] {
+            let source = format!("```{header}\nNULL\n```\n");
+            let (file, _) =
+                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
+                    .unwrap();
+            assert!(file.stmts.is_empty());
+            assert_eq!(file.input_issues[0].code, "RY120");
+            assert!(file.input_issues[0].message.contains("header exceeds"));
         }
     }
 

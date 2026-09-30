@@ -70,8 +70,9 @@ double-brace documentation examples stay inert. A chunk must close with the
 same fence kind and at least the opening length. ry parses each R chunk on
 its own, then checks admitted chunks in document order.
 
-RY120 marks a malformed R fence, unclosed YAML front matter, or a report over the 2 MiB or 128-chunk
-input limit. RY121 marks dynamic or conflicting execution options. After an
+RY120 marks a malformed R fence, unclosed YAML front matter, or a report over
+the 2 MiB, 128-chunk, or 16 KiB/128-field R-header input limits. RY121 marks
+dynamic or conflicting execution options. After an
 uncertain option, ry does not assume that later chunks ran. Report-level
 execution options at the document root or within format settings, and real
 runtime references to knitr's chunk-option object, also stop static

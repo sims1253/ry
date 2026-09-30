@@ -326,6 +326,8 @@ impl Checker {
             name.clone(),
             UserFn {
                 params,
+                origin_path: self.path.clone(),
+                origin_native_path: self.native_path.clone(),
                 body,
                 return_slot: slot,
             },
@@ -346,10 +348,17 @@ impl Checker {
         // Pull the body out by reference so we can re-borrow self during
         // the walk. We can't simply clone the body since that's expensive
         // for large functions; instead we snapshot the slot index.
-        let (body_clone, params, slot) = match self.fn_table.fns.get(name) {
-            Some(f) => (f.body.clone(), f.params.clone(), f.return_slot),
-            None => return false,
-        };
+        let (body_clone, params, slot, origin_path, origin_native_path) =
+            match self.fn_table.fns.get(name) {
+                Some(f) => (
+                    f.body.clone(),
+                    f.params.clone(),
+                    f.return_slot,
+                    f.origin_path.clone(),
+                    f.origin_native_path.clone(),
+                ),
+                None => return false,
+            };
         // Cycle detection: if this function is already on the inference
         // stack, leave its return as UNKNOWN and bail out. The fixpoint
         // will converge on subsequent iterations.
@@ -361,6 +370,8 @@ impl Checker {
             *self.refinement_counts.entry(name.to_string()).or_default() += 1;
         }
         self.inferring.push(name.to_string());
+        let previous_path = std::mem::replace(&mut self.path, origin_path);
+        let previous_native_path = std::mem::replace(&mut self.native_path, origin_native_path);
 
         let mut scope = Scope::default();
         // Deferred execution can observe later syntax and constructor changes.
@@ -414,6 +425,8 @@ impl Checker {
         }
         self.deferred_captures.pop();
         self.inferring.pop();
+        self.path = previous_path;
+        self.native_path = previous_native_path;
         changed
     }
 }

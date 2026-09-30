@@ -43,11 +43,104 @@ impl Checker {
             return self.infer_function_literal_call(func, args, scope);
         }
 
+        if let Expr::Index {
+            base,
+            kind: IndexKind::Dollar,
+            args: members,
+            ..
+        } = func
+            && let Some(object_name) = ident_name(base)
+            && let Some(member) = members
+                .first()
+                .and_then(|argument| argument.name.as_deref())
+            && let Some(object) = scope.box_objects.get(object_name).cloned()
+        {
+            match object {
+                box_imports::BoxObject::Package(package) => {
+                    self.infer(base, scope);
+                    if !self
+                        .box_package_inventory(&package)
+                        .exports
+                        .contains_key(member)
+                    {
+                        self.infer_args_for_diagnostics(args, scope);
+                        return RType::unknown();
+                    }
+                    let qualified = Expr::Ident {
+                        name: format!("{package}::{member}"),
+                        span,
+                    };
+                    return self.infer_call_inner(
+                        &qualified,
+                        args,
+                        scope,
+                        span,
+                        environment_known_before_call,
+                    );
+                }
+                box_imports::BoxObject::Module(inventory) => {
+                    let member_type = self.infer(func, scope);
+                    if let Some(function) = inventory.functions.get(member) {
+                        return self.infer_box_function_call(member, function, args, scope, span);
+                    }
+                    if let Some(target) = inventory.package_functions.get(member) {
+                        let qualified = Expr::Ident {
+                            name: target.clone(),
+                            span,
+                        };
+                        return self.infer_call_inner(
+                            &qualified,
+                            args,
+                            scope,
+                            span,
+                            environment_known_before_call,
+                        );
+                    }
+                    self.infer_args_for_diagnostics(args, scope);
+                    return member_type
+                        .fn_sig
+                        .as_ref()
+                        .map(|signature| (*signature.return_type).clone())
+                        .unwrap_or_else(RType::unknown);
+                }
+                box_imports::BoxObject::ModuleFunction(_) => {}
+            }
+        }
+
         // Only model direct calls `name(...)`. Pipelines and indirect calls
         // return opaque.
         let Some(name) = callee_name(func) else {
             return self.infer_opaque_callee(func, args, scope, span);
         };
+
+        if let Some(box_imports::BoxObject::ModuleFunction(function)) =
+            scope.box_objects.get(&name).cloned()
+        {
+            return self.infer_box_function_call(&name, &function, args, scope, span);
+        }
+
+        if name == "box::use" {
+            return self.infer_box_use(args, scope);
+        }
+        if name == "box::export" {
+            return RType::new(Mode::Null, Length::Zero);
+        }
+        if let Some(qualified) = scope
+            .function_alias(&name)
+            .and_then(|alias| alias.strip_prefix("__ry_box_import::"))
+        {
+            let qualified = Expr::Ident {
+                name: qualified.to_string(),
+                span,
+            };
+            return self.infer_call_inner(
+                &qualified,
+                args,
+                scope,
+                span,
+                environment_known_before_call,
+            );
+        }
 
         // An explicitly qualified typed package value is known not to be
         // callable. Bare names wait until after lexical callable lookup below,

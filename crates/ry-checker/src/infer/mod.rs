@@ -2851,6 +2851,14 @@ impl Checker {
                 args,
                 span,
             } => {
+                if *kind == IndexKind::Dollar
+                    && let Some(object_name) = ident_name(base)
+                    && let Some(member) = args.first().and_then(|argument| argument.name.as_deref())
+                    && let Some(object) = scope.box_objects.get(object_name).cloned()
+                {
+                    self.infer(base, scope);
+                    return self.infer_box_member(&object, member, *span);
+                }
                 if *kind == IndexKind::Slot
                     && let Some(result) = self.infer_custom_slot_operator(false, scope)
                 {

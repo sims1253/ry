@@ -11,6 +11,7 @@ pub(crate) struct BindingState {
     pub default_parameter: bool,
     lexical: bool,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -39,6 +40,7 @@ impl BindingState {
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
             alias: scope.function_aliases.get(name).cloned(),
+            box_object: scope.box_objects.get(name).cloned(),
             provenance: scope
                 .reference_provenance
                 .as_ref()
@@ -67,6 +69,11 @@ impl BindingState {
         } else {
             scope.function_aliases.remove(&name);
         }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
+        } else {
+            scope.box_objects.remove(&name);
+        }
         if let Some(p) = scope.reference_provenance.as_mut() {
             if let Some(value) = self.provenance {
                 p.bindings.insert(name.clone(), value);
@@ -89,6 +96,7 @@ pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
     removed_markers: u8,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -110,6 +118,9 @@ impl AssignmentUndo {
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
+        }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
         }
         if let Some(provenance) = self.provenance
             && let Some(table) = scope.reference_provenance.as_mut()
@@ -282,6 +293,11 @@ impl Scope {
         } else {
             self.function_aliases.remove(&name)
         };
+        let box_object = if self.box_objects.is_empty() {
+            None
+        } else {
+            self.box_objects.remove(&name)
+        };
         let provenance = self.reference_provenance.as_mut().and_then(|table| {
             if table.bindings.is_empty() {
                 None
@@ -290,7 +306,12 @@ impl Scope {
             }
         });
         let previous = if let Some(current) = self.bindings.get_mut(&name) {
-            if current == &ty && removed_markers == 0 && alias.is_none() && provenance.is_none() {
+            if current == &ty
+                && removed_markers == 0
+                && alias.is_none()
+                && box_object.is_none()
+                && provenance.is_none()
+            {
                 return;
             }
             Some(std::mem::replace(current, ty))
@@ -304,6 +325,7 @@ impl Scope {
                 ty: previous,
                 removed_markers,
                 alias,
+                box_object,
                 provenance,
             },
         ));
@@ -703,6 +725,7 @@ mod tests {
         assert_eq!(left.list_origin_bindings, right.list_origin_bindings);
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.function_aliases, right.function_aliases);
+        assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(left.literal_values_unknown, right.literal_values_unknown);

@@ -4,6 +4,7 @@
 
 - [Checking files and CI](#checking-files-and-ci)
 - [Package awareness](#package-awareness)
+- [Box imports](#box-imports)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
 - [Exporting analysis facts](#exporting-analysis-facts)
@@ -96,6 +97,35 @@ bad <- map_dbl(1:4, function(i) as.character(i))
 
 ry reports RY080 because the callback returns character values where `map_dbl`
 requires doubles. `in_parallel()` preserves the callback's inferred type.
+
+## Box imports
+
+ry reads static `box::use()` imports without loading a module or running R.
+For example, `box::use(./mod/hello)` binds `hello`, while
+`box::use(./mod/hello[say_hello])` binds only `say_hello`. An explicit
+alias binds the module object as well as selected names. `[...]` attaches
+known exports; renaming an export removes its original spelling from the
+wildcard attachment. Bare package imports such as `dplyr[filter]` use that
+package's installed `NAMESPACE` exports and ry's bundled function stubs.
+The import does not attach the package to the ordinary search path.
+
+Local paths resolve from the file containing the import. ry checks `.r`,
+`.R`, `__init__.r`, then `__init__.R`, appending an extension to the full
+module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file that
+cannot be analyzed stays opaque rather than making a lower-priority file
+stand in for it. ry uses open editor buffers when available. It recognizes
+roxygen `@export` tags and literal `box::export()` declarations; explicit
+declarations override tags. A tag on `box::use()` exports the module object
+alias and statically selected attachment aliases; a wildcard keeps the
+inventory incomplete. A module with neither exports its own non-dot
+top-level bindings, including module-object imports but not selectively
+attached names. ry can report RY118
+when a complete local inventory proves a selected name or `$` member is
+missing. Computed imports, dynamic exports, module-load calls that may write
+bindings, unreadable or deeply nested modules, and incomplete package
+metadata stay opaque, so an absent name
+there does not trigger RY118. This static model does not execute module
+initialization or evaluate arbitrary R expressions.
 
 ## Data masking and NSE
 

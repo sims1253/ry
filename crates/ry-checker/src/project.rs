@@ -21,6 +21,7 @@ use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 struct FileEmission {
@@ -211,6 +212,16 @@ impl Project {
             *existing = file;
         } else {
             self.files.push((path, file));
+        }
+        // A module can supply exports to unchanged importers. The ordinary
+        // function-name dependency graph does not describe quoted box paths,
+        // so recheck the project when any file may consume such a module.
+        if self
+            .files
+            .iter()
+            .any(|(_, source)| crate::box_imports::has_box_use(source))
+        {
+            self.mark_all_dirty();
         }
     }
 
@@ -651,6 +662,32 @@ impl Project {
     }
 
     fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
+        // Avoid filesystem identity calls on projects with no parsed box
+        // imports. This also covers the spaced `box :: use` spelling.
+        let box_sources = Arc::new(
+            if self
+                .files
+                .iter()
+                .any(|(_, source)| crate::box_imports::has_box_use(source))
+            {
+                self.files
+                    .iter()
+                    .filter_map(|(path, file)| {
+                        // The logical diagnostic path may be lossy for a
+                        // non-UTF-8 disk filename. Keep native identity for
+                        // box overlays so it cannot collide with a distinct
+                        // genuine Unicode module. Unsaved buffers still use
+                        // their logical source path.
+                        crate::box_imports::path_identity(
+                            file.native_path.as_deref().unwrap_or(Path::new(path)),
+                        )
+                        .map(|identity| (identity, Arc::clone(file)))
+                    })
+                    .collect()
+            } else {
+                HashMap::new()
+            },
+        );
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -669,6 +706,7 @@ impl Project {
         );
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.set_box_sources(Arc::clone(&box_sources));
         refiner.refinement_dependencies = Some(HashMap::new());
 
         // Scoping: refine only functions whose return type can have
@@ -700,6 +738,7 @@ impl Project {
             refiner = Checker::with_tables("__project_pass2__", table, slots);
             refiner.set_loaded(self.loaded.clone());
             refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+            refiner.set_box_sources(Arc::clone(&box_sources));
             refiner.refinement_dependencies = Some(HashMap::new());
             refiner.run_fixpoint();
             #[cfg(test)]
@@ -877,6 +916,7 @@ impl Project {
                         .unwrap_or_else(|| loaded.as_ref().clone()),
                 );
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
+                emitter.set_box_sources(Arc::clone(&box_sources));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );

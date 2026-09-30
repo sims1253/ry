@@ -52,6 +52,10 @@ const EXCLUDED: &[(&str, &str)] = &[
     // CLI-level heuristic emitted by `ry-cli` from parser-recovery signals,
     // not by the checker, so it cannot be probed through `Checker::check`.
     ("RY097", "emitted by the CLI, not the checker"),
+    (
+        "RY113",
+        "opt-in post-processing audit, not emitted by Checker::check",
+    ),
 ];
 
 /// The probe matrix. Order follows the rule registry. When you add a rule to

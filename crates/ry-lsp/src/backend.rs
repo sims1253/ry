@@ -1338,8 +1338,13 @@ impl Backend {
                     min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
                     repo_root: config_anchor.as_deref(),
                 };
-                let mut diagnostics =
-                    post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
+                let mut diagnostics = post.pre_demotion(
+                    diagnostics,
+                    comments,
+                    source_text.unwrap_or(""),
+                    &diagnostic_path,
+                    checked_file.map(AsRef::as_ref),
+                );
                 post.demote_non_source_paths(&mut diagnostics);
                 post.post_demotion(&mut diagnostics);
                 let diagnostics: Vec<LspDiagnostic> = diagnostics

@@ -16,7 +16,7 @@ pub struct Rule {
 /// severity override. Keep this policy in the registry so every checker
 /// entry point and CLI output path agrees.
 pub fn enabled_by_default(code: &str) -> bool {
-    code != "RY003"
+    !matches!(code, "RY003" | "RY113")
 }
 
 /// All rules currently emitted by the checker. Keep codes lexicographic.
@@ -274,6 +274,12 @@ pub const RULES: &[Rule] = &[
         name: "invalid-ignore",
         default_severity: Severity::Warning,
         summary: "A ry-owned inline ignore has malformed brackets or names an unknown rule. It cannot suppress diagnostics; correct the spelling or remove the directive. Foreign-only noqa lists are left to their owning tool and do not suppress ry findings.",
+    },
+    Rule {
+        code: "RY113",
+        name: "unused-ignore",
+        default_severity: Severity::Warning,
+        summary: "Opt-in audit: a valid ry-owned selective line or standalone ignore names an enabled rule whose local syntax was checked in diagnostic mode and produced no matching finding before baseline or confidence filtering. The initial supported codes are RY034 and RY102. Invalid, bare, noqa, and file directives are outside this audit; parser errors, anonymous function bodies, and other unavailable analysis are left unaudited. Enable with `--warn RY113` or a severity override.",
     },
 ];
 

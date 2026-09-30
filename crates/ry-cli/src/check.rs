@@ -1123,6 +1123,10 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
             }
         })
         .collect();
+    let parsed_by_path: HashMap<_, _> = parsed
+        .iter()
+        .map(|file| (file.path.as_str(), file.as_ref()))
+        .collect();
 
     // Same per-package grouping as `ry dump-types`; check's fallback
     // resolution root for non-package files is the config root (check has
@@ -1160,7 +1164,13 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     for (path, diags) in &mut per_file_diagnostics {
         let comments: &[ry_core::ast::Comment] = comments.get(path).map_or(&[], Vec::as_slice);
         let src = srcs.get(path).map_or("", String::as_str);
-        *diags = post.pre_demotion(std::mem::take(diags), comments, src);
+        *diags = post.pre_demotion(
+            std::mem::take(diags),
+            comments,
+            src,
+            path.as_str(),
+            parsed_by_path.get(path.as_str()).copied(),
+        );
     }
     // The synthesized not-R diagnostics have no suppression comments to
     // honor, so they enter the pipeline at the severity filter.

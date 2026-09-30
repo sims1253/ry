@@ -1378,6 +1378,7 @@ dependencies = [
  "criterion",
  "hashbrown 0.17.1",
  "insta",
+ "libc",
  "proptest",
  "rayon",
  "ry-config",

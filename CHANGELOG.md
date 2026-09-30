@@ -6,6 +6,9 @@ All notable changes to ry are documented in this file.
 
 ### Changed
 
+- Keep editor inlay labels short while marking hidden known fields and
+  uncertainty; expanded inlay details show the represented type facts within
+  a visible budget. `dump-types` keeps its historical strings (#591).
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
 

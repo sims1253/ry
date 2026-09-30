@@ -3,8 +3,10 @@
 [Getting started](../README.md) · [Usage](usage.md) · [Configuration](configuration.md)
 
 `ry dump-types` prints names and inferred types as JSON on stdout. It uses
-the same analysis and package context as `ry check`, and the same type
-strings as editor inlay hints. The output groups bindings by lexical scope
+the same analysis and package context as `ry check`. Its historical compact
+type strings are preserved for compatibility; editor hints have a separate
+bounded summary and an expanded tooltip. For machine-readable types, use
+[`ry dump-facts`](facts.md). The output groups bindings by lexical scope
 (the top level or a function body), so tools can query several positions
 without running the checker again.
 

@@ -66,10 +66,9 @@ pub(crate) fn parse_dump_position(value: &str) -> Result<(usize, usize), String>
     Ok((line, col))
 }
 
-/// The type string for one binding. Same `Display` rendering the LSP
-/// inlay hints show, except the fully-uninformed type is reported as
-/// "unknown" so consumers never mistake `opaque<len=?>:?` for a real
-/// inference result.
+/// The historical `Display` type string for one binding. The fully-uninformed
+/// type is reported as "unknown" so consumers never mistake `opaque<len=?>:?`
+/// for a real inference result. Editor hints have their own bounded renderer.
 fn dump_type_string(t: &ry_core::RType) -> String {
     if *t == ry_core::RType::unknown() {
         "unknown".to_string()

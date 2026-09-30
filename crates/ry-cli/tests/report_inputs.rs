@@ -46,6 +46,26 @@ fn disabled_and_uncertain_chunks_have_visible_boundaries() {
 }
 
 #[test]
+fn quarto_cell_options_do_not_replace_function_local_typehint_comments() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("ry.toml"),
+        "[reports]\nenabled = true\n[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['**/*.qmd']\n",
+    )
+    .unwrap();
+    let report = root.path().join("typed.qmd");
+    let active =
+        "```{r}\n#| echo: false\nf <- function(x) {\n #| x integer\n x\n}\nf(\"bad\")\n```\n";
+    fs::write(&report, active).unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY114").len(), 1, "{diagnostics:?}");
+
+    fs::write(&report, active.replace("#| echo: false", "#| eval: false")).unwrap();
+    let disabled = check(root.path());
+    assert!(code(&disabled, "RY114").is_empty(), "{disabled:?}");
+}
+
+#[test]
 fn report_input_is_disabled_by_default_and_r_files_remain_checked() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("a.qmd"), "```{r}\n\"a\" + 1L\n```\n").unwrap();

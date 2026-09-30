@@ -385,7 +385,7 @@ impl Checker {
         self.helper_effect_with_actuals(
             &params,
             function.may_install_caller_binding,
-            &function.caller_binding_called_formals,
+            &[],
             fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
             fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
             forwarded_installer.as_deref(),

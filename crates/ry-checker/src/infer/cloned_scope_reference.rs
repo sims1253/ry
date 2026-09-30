@@ -41,13 +41,15 @@ impl Checker {
             alias_names.extend(branch.function_aliases.keys().cloned());
             alias_names.extend(branch.uncertain_caller_binding_aliases.iter().cloned());
             alias_names.extend(branch.inert_caller_binding_functions.iter().cloned());
+            alias_names.extend(branch.local_caller_binding_functions.keys().cloned());
         }
         let mut caller_alias_updates = Vec::new();
         if !(scope.loop_frame.is_some() && !then_reaches_alias && !has_else) {
             for name in alias_names {
                 let then_alias = then_scope.function_alias(&name);
                 let else_alias = else_scope.function_alias(&name);
-                let (alias, uncertain) = if has_else && then_reaches_alias != else_reaches_alias {
+                let (alias, mut uncertain) = if has_else && then_reaches_alias != else_reaches_alias
+                {
                     let reached = if then_reaches_alias {
                         &then_scope
                     } else {
@@ -77,6 +79,25 @@ impl Checker {
                                 .any(alias_may_install));
                     (shared, uncertain)
                 };
+                let then_local = then_scope.local_caller_binding_functions.get(&name);
+                let else_local = else_scope.local_caller_binding_functions.get(&name);
+                let local_function = if has_else && then_reaches_alias != else_reaches_alias {
+                    if then_reaches_alias {
+                        then_local.cloned()
+                    } else {
+                        else_local.cloned()
+                    }
+                } else if then_local == else_local {
+                    then_local.cloned()
+                } else {
+                    uncertain |= [then_local, else_local]
+                        .into_iter()
+                        .flatten()
+                        .any(|function| {
+                            function.may_install || !function.called_formals.is_empty()
+                        });
+                    None
+                };
                 let inert_function = if has_else && then_reaches_alias != else_reaches_alias {
                     if then_reaches_alias {
                         then_scope.inert_caller_binding_functions.contains(&name)
@@ -87,7 +108,7 @@ impl Checker {
                     then_scope.inert_caller_binding_functions.contains(&name)
                         && else_scope.inert_caller_binding_functions.contains(&name)
                 };
-                caller_alias_updates.push((name, alias, uncertain, inert_function));
+                caller_alias_updates.push((name, alias, uncertain, inert_function, local_function));
             }
         }
         // Merge branch bindings back into the parent scope. In R,
@@ -174,7 +195,11 @@ impl Checker {
             scope.insert_narrowed(name, refined);
         }
         scope.loop_vector_bindings = loop_vectors_after;
-        for (name, alias, uncertain, inert_function) in caller_alias_updates {
+        for (name, alias, uncertain, inert_function, local_function) in caller_alias_updates {
+            scope.clear_local_caller_binding_function(&name);
+            if let Some(function) = local_function {
+                scope.set_local_caller_binding_function(&name, function);
+            }
             scope.set_joined_function_alias(&name, alias);
             if uncertain {
                 scope.mark_uncertain_caller_binding_alias(&name);

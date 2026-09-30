@@ -891,7 +891,8 @@ mod selected_branch_tests {
         assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Double));
         assert!(scope.is_parameter("x") && scope.is_default_parameter("x"));
         assert!(scope.has_list_origin("x") && scope.narrowed_bindings.contains("x"));
-        assert!(scope.function_alias("x").is_none() && !scope.is_lexical_function("x"));
+        assert_eq!(scope.function_alias("x"), Some("base::identity"));
+        assert!(scope.is_lexical_function("x"));
         assert_eq!(
             scope.get("untouched").map(|ty| ty.mode),
             Some(Mode::Integer)

@@ -648,6 +648,10 @@ impl Checker {
                 let uncertain_caller_binding_alias =
                     function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
                 let local_caller_binding_function = match value {
+                    // Project functions already have a cross-file, fixpoint
+                    // summary. A lexical-only summary here would shadow that
+                    // result and lose transitive callback effects.
+                    _ if self.enclosing_formals.is_empty() => None,
                     Expr::Function { params, body, span } => Some(Arc::new(
                         crate::collect::local_caller_binding_function(params, body, *span),
                     )),

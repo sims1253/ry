@@ -520,6 +520,122 @@ fn exported_function_signature_requires_a_surviving_direct_definition() {
 }
 
 #[test]
+fn expression_writes_and_runtime_writers_invalidate_imported_callable_provenance() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "foo <- function() 'old'\n").unwrap();
+    fs::write(
+        root.path().join("expression.r"),
+        "foo <- function() 'old'\ndummy <- (foo <- function() 1L)\nbox::export(foo)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("runtime.r"),
+        "box::use(./a[foo])\nbase::assign('foo', function() 1L)\nbox::export(foo)\n",
+    )
+    .unwrap();
+    for module in ["expression", "runtime"] {
+        let diagnostics = codes_for(
+            root.path(),
+            &format!("box::use(./{module}[foo])\nfoo() + 1L\n"),
+        );
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY040"),
+            "{module}: {diagnostics:#?}"
+        );
+    }
+    fs::write(
+        root.path().join("unmodified.r"),
+        "box::use(./a[foo])\nbox::export(foo)\n",
+    )
+    .unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./unmodified[foo])\nfoo() + 1L\n")
+            .iter()
+            .any(|(code, _, _)| code == "RY040")
+    );
+}
+
+#[test]
+fn legacy_inventory_includes_own_module_objects_but_not_attached_selections() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(
+        root.path().join("package.r"),
+        "box::use(dplyr)\nhelper <- 1L\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("local.r"), "box::use(./a)\nhelper <- 1L\n").unwrap();
+    fs::write(
+        root.path().join("attached.r"),
+        "box::use(dplyr[filter])\nhelper <- 1L\n",
+    )
+    .unwrap();
+    let diagnostics = codes_for(
+        root.path(),
+        "box::use(./package[dplyr, absent])\nbox::use(./local[a])\nbox::use(./attached[filter])\n",
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|(code, _, _)| code == "RY118")
+            .map(|(_, _, message)| message.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "box module does not export `absent`",
+            "box module does not export `filter`"
+        ]
+    );
+    fs::write(root.path().join("braced.r"), "{{x <- 1L}}\n").unwrap();
+    assert!(
+        codes_for(root.path(), "box::use(./braced[x])\nx + 1L\n")
+            .iter()
+            .all(|(code, _, _)| code != "RY118")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn native_caller_and_nested_module_paths_do_not_use_lossy_parent() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let raw_dir = root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"raw\xff".to_vec()));
+    let unicode_dir = root.path().join("raw�");
+    fs::create_dir_all(&raw_dir).unwrap();
+    fs::create_dir_all(&unicode_dir).unwrap();
+    fs::write(raw_dir.join("mod.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(unicode_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
+    let caller = raw_dir.join("run.R");
+    let mut file = parse(&caller, "box::use(./mod[foo])\nfoo() + 1L\n");
+    file.native_path = Some(caller.clone());
+    let mut checker = Checker::new(&caller.to_string_lossy());
+    let diagnostics = checker.check(&file);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "{diagnostics:#?}"
+    );
+
+    fs::write(
+        raw_dir.join("mod.r"),
+        "box::use(./inner[foo])\nbox::export(foo)\n",
+    )
+    .unwrap();
+    fs::write(raw_dir.join("inner.r"), "foo <- function() 1L\n").unwrap();
+    fs::write(unicode_dir.join("inner.r"), "foo <- function() 'wrong'\n").unwrap();
+    let diagnostics = checker.check(&file);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "RY040"),
+        "nested: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn preferred_module_limits_do_not_select_a_different_file() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("mod.r"), vec![b' '; 1_048_577]).unwrap();

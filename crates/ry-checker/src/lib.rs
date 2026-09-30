@@ -742,6 +742,9 @@ pub(crate) struct UserFn {
     /// Source path of the definition, needed for relative quoted imports
     /// while the pooled project fixpoint checks its body.
     pub(crate) origin_path: String,
+    /// Physical source identity for relative imports in functions defined
+    /// by an on-disk file whose diagnostic path may be lossy.
+    pub(crate) origin_native_path: Option<PathBuf>,
     // The function body, shared via `Arc` so the per-fixpoint-iteration
     // clone in `refine_fn_return` is a cheap refcount bump rather than a
     // deep clone of every statement. The body is immutable after
@@ -959,6 +962,9 @@ pub struct Checker {
     box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,
+    /// Native path of the file currently being inferred or emitted. Keep
+    /// diagnostics on `path`, but resolve relative box modules from this.
+    pub(crate) native_path: Option<PathBuf>,
     /// Source text corresponding to `path`, set at every production check seam.
     /// Messages that quote source spelling slice this exact text by parser
     /// spans.
@@ -1141,6 +1147,7 @@ impl Checker {
     /// silent by design and the fixpoint forces discarding mode.
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
         self.box_module_cache.clear();
         self.escaped_operator_bindings = self
@@ -1215,6 +1222,7 @@ impl Checker {
             box_depth: 0,
             diagnostics: Vec::new(),
             path: path.to_string(),
+            native_path: None,
             source: String::new(),
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
@@ -1284,6 +1292,7 @@ impl Checker {
     // union across files.
     pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.collect_fns(&file.stmts);
         self.harvest_attached_packages(&file.stmts)
     }
@@ -1370,6 +1379,7 @@ impl Checker {
     // top-level scope (also returned by `check_with_scope`).
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
         self.escaped_operator_bindings = self
             .external_bindings

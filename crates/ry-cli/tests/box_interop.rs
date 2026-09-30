@@ -186,3 +186,70 @@ fn native_module_path_survives_lossy_display_collision_in_cli() {
     std::fs::remove_file(&raw).unwrap();
     check(&[root.path()]);
 }
+
+#[cfg(unix)]
+#[test]
+fn native_caller_directory_drives_relative_module_lookup_in_cli() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let raw_dir = root
+        .path()
+        .join(std::ffi::OsString::from_vec(b"raw\xff".to_vec()));
+    let unicode_dir = root.path().join("raw�");
+    std::fs::create_dir_all(&raw_dir).unwrap();
+    std::fs::create_dir_all(&unicode_dir).unwrap();
+    let caller = raw_dir.join("run.R");
+    std::fs::write(&caller, "box::use(./mod[foo])\nfoo() + 1L\n").unwrap();
+    std::fs::write(raw_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
+    std::fs::write(unicode_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
+    let check = |paths: &[&std::path::Path], expect_type_error: bool| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["check", "--output-format", "json", "--exit-zero"])
+            .args(paths)
+            .env("RY_NO_INSTALLED_LIBRARIES", "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == "RY040"),
+            expect_type_error,
+            "{diagnostics:#?}"
+        );
+    };
+    // A wrong return in the raw directory must be observed, proving that
+    // the subsequent quiet case actually resolved that module.
+    check(&[&caller], true);
+    std::fs::write(raw_dir.join("mod.r"), "foo <- function() 1L\n").unwrap();
+    check(&[&caller], false);
+    check(&[root.path()], false);
+    check(
+        &[&caller, &unicode_dir.join("mod.r"), &raw_dir.join("mod.r")],
+        false,
+    );
+    check(
+        &[&unicode_dir.join("mod.r"), &raw_dir.join("mod.r"), &caller],
+        false,
+    );
+
+    // Nested imports inherit the selected module's native directory.
+    std::fs::write(
+        raw_dir.join("mod.r"),
+        "box::use(./inner[foo])\nbox::export(foo)\n",
+    )
+    .unwrap();
+    std::fs::write(raw_dir.join("inner.r"), "foo <- function() 1L\n").unwrap();
+    std::fs::write(unicode_dir.join("inner.r"), "foo <- function() 'wrong'\n").unwrap();
+    check(&[root.path()], false);
+
+    // When the native module disappears, the similar display spelling is
+    // never a fallback source for this caller.
+    std::fs::remove_file(raw_dir.join("mod.r")).unwrap();
+    check(&[root.path()], false);
+    std::fs::write(raw_dir.join("mod.r"), "foo <- function() 1L\n").unwrap();
+    std::fs::remove_file(unicode_dir.join("mod.r")).unwrap();
+    check(&[root.path()], false);
+}

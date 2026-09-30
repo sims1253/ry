@@ -222,8 +222,8 @@ pub(crate) fn path_identity(path: &Path) -> Option<PathBuf> {
     Some(resolved)
 }
 
-fn module_candidates(caller: &str, segments: &[String]) -> Option<[PathBuf; 4]> {
-    let mut stem = Path::new(caller).parent()?.to_path_buf();
+fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]> {
+    let mut stem = caller.parent()?.to_path_buf();
     for segment in segments {
         if !matches!(segment.as_str(), "." | "..")
             && (segment.is_empty() || segment.contains(['/', '\\']))
@@ -265,7 +265,10 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
                 AstNode::Expr(Expr::Function { .. }) => {
                     return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                 }
-                AstNode::Expr(Expr::Call { func, .. }) if ident_name(func) == Some("box::use") => {
+                AstNode::Expr(Expr::Call { func, args, .. })
+                    if ident_name(func) == Some("box::use") =>
+                {
+                    uncertain |= args.iter().any(|argument| parse_import(argument).is_none());
                     return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                 }
                 AstNode::Expr(Expr::Call { func, args, .. })
@@ -277,6 +280,9 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
                     return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                 }
                 AstNode::Expr(Expr::Call { .. }) => uncertain = true,
+                // Executed braced and conditional expressions can write
+                // module bindings without producing a top-level Stmt::Assign.
+                AstNode::Expr(Expr::Block { .. } | Expr::If { .. }) => uncertain = true,
                 _ => {}
             }
             ControlFlow::<(), Descend>::Continue(Descend::Into)
@@ -294,6 +300,7 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
 fn stable_direct_function_bindings(
     file: &SourceFile,
     unmodeled_load_effects: bool,
+    writes: &ModuleWrites,
 ) -> HashSet<String> {
     if unmodeled_load_effects {
         return HashSet::new();
@@ -310,7 +317,19 @@ fn stable_direct_function_bindings(
             direct_literals.insert(infer::semantic_argument_name(name).to_string());
         }
     }
-    let mut bindings: HashMap<String, usize> = HashMap::new();
+    direct_literals.retain(|name| writes.counts.get(name) == Some(&1));
+    direct_literals
+}
+
+#[derive(Default)]
+struct ModuleWrites {
+    counts: HashMap<String, usize>,
+    names: HashSet<String>,
+    expression_names: HashSet<String>,
+}
+
+fn module_writes(file: &SourceFile) -> ModuleWrites {
+    let mut writes = ModuleWrites::default();
     let _ = walk_stmts(
         &file.stmts,
         Walk {
@@ -318,18 +337,32 @@ fn stable_direct_function_bindings(
             ..Walk::ALL
         },
         |node, _| {
-            if let AstNode::Stmt(Stmt::Assign { target, .. }) = node
-                && let Some(name) = binding_name(target)
-            {
-                *bindings
-                    .entry(infer::semantic_argument_name(name).to_string())
-                    .or_default() += 1;
+            let binding = match node {
+                AstNode::Stmt(Stmt::Assign { target, .. }) => binding_name(target),
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign,
+                    lhs,
+                    ..
+                }) => {
+                    let name = binding_name(lhs);
+                    if let Some(name) = name {
+                        writes
+                            .expression_names
+                            .insert(infer::semantic_argument_name(name).to_string());
+                    }
+                    name
+                }
+                _ => None,
+            };
+            if let Some(name) = binding {
+                let name = infer::semantic_argument_name(name).to_string();
+                *writes.counts.entry(name.clone()).or_default() += 1;
+                writes.names.insert(name);
             }
             ControlFlow::<(), Descend>::Continue(Descend::Into)
         },
     );
-    direct_literals.retain(|name| bindings.get(name) == Some(&1));
-    direct_literals
+    writes
 }
 
 fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
@@ -337,6 +370,20 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, HashSet<String>) {
     let mut roxygen = HashSet::new();
     let lines: Vec<&str> = file.source.lines().collect();
     for statement in &file.stmts {
+        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
+            && ident_name(func) == Some("box::use")
+        {
+            for argument in args {
+                if let Some(import) = parse_import(argument)
+                    && let Some(name) = import.object_name
+                {
+                    // box stores module/package objects in its own module
+                    // environment. Selectively attached names without an
+                    // object alias live in the parent imports environment.
+                    assigned.insert(name);
+                }
+            }
+        }
         let Stmt::Assign { target, span, .. } = statement else {
             continue;
         };
@@ -399,7 +446,7 @@ fn declared_exports(
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
     if explicit {
-        return (names, complete);
+        return (names, complete && !unmodeled_load_effects);
     }
     if !roxygen.is_empty() {
         return (roxygen, complete);
@@ -432,9 +479,10 @@ impl Checker {
                 exports.insert(name.clone(), infer::json_rtype_to_rtype(value));
             }
         }
-        if let Some(installed) =
-            ry_workspace::installed_exports_for_file(package, Path::new(&self.path))
-        {
+        if let Some(installed) = ry_workspace::installed_exports_for_file(
+            package,
+            self.native_path.as_deref().unwrap_or(Path::new(&self.path)),
+        ) {
             exports.retain(|name, _| installed.contains(name));
             for name in installed {
                 exports.entry(name).or_insert_with(RType::unknown);
@@ -454,7 +502,8 @@ impl Checker {
         if self.box_depth >= MAX_MODULE_DEPTH {
             return None;
         }
-        for candidate in module_candidates(&self.path, segments)? {
+        let caller = self.native_path.as_deref().unwrap_or(Path::new(&self.path));
+        for candidate in module_candidates(caller, segments)? {
             let identity = path_identity(&candidate)?;
             if let Some(inventory) = self.box_module_cache.get(&identity) {
                 return inventory.clone();
@@ -494,14 +543,18 @@ impl Checker {
                 // provide a trustworthy export inventory.
                 let source = String::from_utf8(bytes).ok()?;
                 let mut parser = ry_core::RParser::new().ok()?;
-                Arc::new(parser.parse(&candidate.to_string_lossy(), &source).ok()?)
+                let mut parsed = parser.parse(&candidate.to_string_lossy(), &source).ok()?;
+                parsed.native_path = Some(candidate.clone());
+                Arc::new(parsed)
             };
             if !file.parse_errors.is_empty() || !file.syntax_violations.is_empty() {
                 return None;
             }
             let (assigned, roxygen) = top_level_bindings(&file);
             let unmodeled_load_effects = has_unmodeled_load_effects(&file);
-            let stable_functions = stable_direct_function_bindings(&file, unmodeled_load_effects);
+            let writes = module_writes(&file);
+            let stable_functions =
+                stable_direct_function_bindings(&file, unmodeled_load_effects, &writes);
             let (exported, complete) =
                 declared_exports(&file, &assigned, roxygen, unmodeled_load_effects);
             let mut nested = Checker::new(&file.path);
@@ -513,6 +566,9 @@ impl Checker {
             let package_functions = exported
                 .iter()
                 .filter_map(|name| {
+                    if unmodeled_load_effects || writes.names.contains(name) {
+                        return None;
+                    }
                     scope
                         .function_alias(name)?
                         .strip_prefix("__ry_box_import::")
@@ -522,7 +578,11 @@ impl Checker {
             let functions = exported
                 .iter()
                 .filter_map(|name| {
-                    if let Some(BoxObject::ModuleFunction(function)) = scope.box_objects.get(name) {
+                    if !unmodeled_load_effects
+                        && !writes.names.contains(name)
+                        && let Some(BoxObject::ModuleFunction(function)) =
+                            scope.box_objects.get(name)
+                    {
                         return Some((name.clone(), Arc::clone(function)));
                     }
                     if scope.function_alias(name).is_some() {
@@ -558,7 +618,19 @@ impl Checker {
             let exports = exported
                 .into_iter()
                 .map(|name| {
-                    let value = scope.get(&name).cloned().unwrap_or_else(RType::unknown);
+                    let stale_callable = scope.get(&name).is_some_and(|value| {
+                        value.mode == Mode::Function
+                            && writes.names.contains(&name)
+                            && !stable_functions.contains(&name)
+                    });
+                    let value = if unmodeled_load_effects
+                        || writes.expression_names.contains(&name)
+                        || stale_callable
+                    {
+                        RType::unknown()
+                    } else {
+                        scope.get(&name).cloned().unwrap_or_else(RType::unknown)
+                    };
                     (name, value)
                 })
                 .collect();

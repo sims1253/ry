@@ -6,7 +6,7 @@ use ry_core::ast::InputIssue;
 use ry_core::{RParser, SourceFile, Span};
 use tree_sitter::Tree;
 
-const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CHUNKS: usize = 128;
 
 pub fn is_report_path(path: &std::path::Path) -> bool {
@@ -49,6 +49,43 @@ fn mask(masked: &mut [u8], start: usize, end: usize) {
     }
 }
 
+/// Detect the common runtime chunk-option object in executable R tokens.
+/// A mention inside a string, backtick name, or comment is inert.
+fn has_runtime_chunk_options(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'#' => {
+                pos += 1;
+                while pos < bytes.len() && bytes[pos] != b'\n' {
+                    pos += 1;
+                }
+            }
+            quote @ (b'\'' | b'"' | b'`') => {
+                pos += 1;
+                while pos < bytes.len() {
+                    if bytes[pos] == b'\\' {
+                        pos = (pos + 2).min(bytes.len());
+                    } else if bytes[pos] == quote {
+                        pos += 1;
+                        break;
+                    } else {
+                        pos += 1;
+                    }
+                }
+            }
+            _ => {
+                if bytes[pos..].starts_with(b"opts_chunk") {
+                    return true;
+                }
+                pos += 1;
+            }
+        }
+    }
+    false
+}
+
 fn fence(text: &str) -> Option<(u8, usize, &str)> {
     let trimmed = text.trim_end_matches(['\r', '\n']);
     let rest = trimmed.trim_start_matches(' ');
@@ -71,10 +108,7 @@ fn option_value(text: &str) -> Option<bool> {
     }
 }
 
-fn execution_option(text: &str, separator: char) -> Result<Option<bool>, ()> {
-    let Some((key, value)) = text.split_once(separator) else {
-        return Ok(None);
-    };
+fn execution_option(key: &str, value: &str) -> Result<Option<bool>, ()> {
     let key = key.trim();
     if ["child", "ref.label", "engine", "file", "code", "dependson"]
         .iter()
@@ -101,12 +135,15 @@ fn header_options(rest: &str) -> Result<Option<Option<bool>>, ()> {
         return Ok(None);
     }
     let mut eval = None;
-    for part in inner.split([',', ' ', '\t']) {
-        let part = part.trim();
-        if part.is_empty() || !part.contains('=') {
+    for part in inner.split(',') {
+        let Some((key, value)) = part.split_once('=') else {
             continue;
-        }
-        if let Some(value) = execution_option(part, '=')? {
+        };
+        // A leading label such as `setup eval = FALSE` has no effect on
+        // the option name. More than one assignment in the same segment
+        // leaves the value dynamic and is refused below.
+        let key = key.split_whitespace().last().unwrap_or("");
+        if let Some(value) = execution_option(key, value)? {
             if eval.replace(value).is_some() {
                 return Err(());
             }
@@ -175,7 +212,7 @@ pub fn parse_report_with_tree(
                     {
                         if r_chunk && enabled {
                             chunks.push((start_row, body_start, line.offset));
-                            if source[body_start..line.offset].contains("opts_chunk$set") {
+                            if has_runtime_chunk_options(&source[body_start..line.offset]) {
                                 issues.push(issue(rows[start_row].offset, start_row, "RY121", "runtime chunk options may change later execution; later chunks are not analyzed"));
                                 break;
                             }
@@ -235,7 +272,10 @@ pub fn parse_report_with_tree(
                     let mut cell_eval = None;
                     while row < rows.len() && rows[row].text.trim_start().starts_with("#|") {
                         let option = rows[row].text.trim_start().trim_start_matches("#|").trim();
-                        match execution_option(option, ':') {
+                        let parsed = option
+                            .split_once(':')
+                            .map_or(Ok(None), |(key, value)| execution_option(key, value));
+                        match parsed {
                             Ok(Some(value)) if cell_eval.replace(value).is_none() => {}
                             Ok(Some(_)) | Err(()) => {
                                 issues.push(issue(rows[row].offset, row, "RY121", "R chunk has dynamic or conflicting execution options; later chunks are not analyzed"));
@@ -286,10 +326,7 @@ pub fn parse_report_with_tree(
         // its own as well, so syntax cannot accidentally continue through
         // masked Markdown between chunks.
         for &(start_row, start, end) in &chunks {
-            let mut body = masked[start..end].to_vec();
-            body.copy_from_slice(&source.as_bytes()[start..end]);
-            let body = String::from_utf8(body).expect("source is UTF-8");
-            let chunk = parser.parse(path, &body)?;
+            let chunk = parser.parse(path, &source[start..end])?;
             for span in chunk.parse_errors {
                 chunk_parse_errors.push(Span::new(
                     span.start + start,
@@ -317,7 +354,7 @@ mod tests {
 
     #[test]
     fn report_mask_keeps_original_offsets_and_execution_boundaries() {
-        let source = "é prose\r\n```{r}\r\nx <- 1L\r\n```\r\n~~~{r, eval=FALSE}\r\nx <- 2L\r\n~~~\r\n```{r}\r\nx + \"s\"\r\n```\r\n";
+        let source = "é prose\r\n```{r}\r\nx <- 1L\r\n```\r\n~~~{r, eval = FALSE}\r\nx <- 2L\r\n~~~\r\n```{r, include = FALSE}\r\nx + \"s\"\r\n```\r\n";
         let mut parser = RParser::new().unwrap();
         let (file, _) = parse_report_with_tree(&mut parser, "a.qmd", source, None).unwrap();
         assert_eq!(file.source, source);
@@ -327,7 +364,7 @@ mod tests {
 
     #[test]
     fn quarto_options_and_outer_fences_do_not_invent_execution() {
-        let source = "~~~~~python\n```{r}\nforeign <- 1L\n```\n~~~~~\n```{{r}}\nexample <- 1L\n```\n```{r}\n#| eval: false\nremoved <- 1L\n```\n```{r}\n#| include: false\n#| echo: false\nretained <- 1L\n```\n";
+        let source = "~~~~~python\n```{r}\nforeign <- 1L\n```\n~~~~~\n```{{r}}\nexample <- 1L\n```\n```r\nexample2 <- 1L\n```\n```{r}\n#| eval: false\nremoved <- 1L\n```\n```{r}\n#| include: false\n#| echo: false\nretained <- 1L\n```\n";
         let (file, _) =
             parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
         assert!(file.input_issues.is_empty());
@@ -389,6 +426,21 @@ mod tests {
             assert_eq!(file.input_issues.len(), 1);
             assert_eq!(file.input_issues[0].code, "RY121");
         }
+    }
+
+    #[test]
+    fn runtime_option_mentions_in_strings_and_comments_are_inert() {
+        let source = "```{r}\nx <- 'opts_chunk$set(eval=FALSE)'\n# knitr::opts_chunk$set(eval=FALSE)\n```\n```{r}\ny <- 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
+        assert_eq!(file.stmts.len(), 2);
+        assert!(file.input_issues.is_empty());
+
+        let active = "```{r}\nknitr::opts_chunk$set(eval=FALSE)\n```\n```{r}\ny <- 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", active, None).unwrap();
+        assert_eq!(file.stmts.len(), 1);
+        assert_eq!(file.input_issues[0].code, "RY121");
     }
 
     #[test]

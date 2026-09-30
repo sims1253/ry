@@ -1192,7 +1192,16 @@ impl Backend {
             let stored = if state.versions.get(path).copied() == Some(version)
                 && state.docs.get(path) == Some(&text)
             {
-                state.store_tree(path, version, new_tree);
+                if ry_workspace::reports::is_report_path(Path::new(path))
+                    && text.len() > ry_workspace::reports::MAX_REPORT_BYTES
+                {
+                    // The adapter returned an empty refusal tree. It does
+                    // not have the source's byte coordinates, so no later
+                    // InputEdit may reuse it when the report shrinks.
+                    state.trees.remove(path);
+                } else {
+                    state.store_tree(path, version, new_tree);
+                }
                 state.record_parse(path, version, Arc::clone(&file))
             } else {
                 false

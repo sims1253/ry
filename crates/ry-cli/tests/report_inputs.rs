@@ -100,17 +100,45 @@ fn fact_source_hash_tracks_original_prose_and_uncertain_reports_refuse_export() 
     let uncertain = dump();
     assert!(!uncertain.status.success());
     assert!(String::from_utf8_lossy(&uncertain.stderr).contains("uncertain input boundary"));
+    let types = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("dump-types")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!types.status.success());
+    assert!(String::from_utf8_lossy(&types.stderr).contains("uncertain input"));
 }
 
 #[test]
 fn source_call_keeps_report_origin_without_executing_helper_file() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(root.path().join("helper.R"), "from_helper <- function() 1L\n").unwrap();
-    fs::write(root.path().join("memo.qmd"), "```{r}\nsource('helper.R')\nfrom_helper()\n```\n").unwrap();
+    let marker = root.path().join("ran-marker");
+    fs::write(
+        root.path().join("helper.R"),
+        format!(
+            "writeLines('ran', '{}')\nfrom_helper <- function() 1L\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("memo.qmd"),
+        "```{r}\nsource('helper.R')\nfrom_helper()\n```\n",
+    )
+    .unwrap();
     let diagnostics = check(root.path());
-    let unresolved = code(&diagnostics, "RY010");
-    assert_eq!(unresolved.len(), 1, "{diagnostics:?}");
-    assert!(unresolved[0]["path"].as_str().unwrap().ends_with("memo.qmd"));
-    assert!(unresolved[0]["message"].as_str().unwrap().contains("from_helper"));
+    assert!(code(&diagnostics, "RY000").is_empty(), "{diagnostics:?}");
+    assert!(!marker.exists());
+}
+
+#[test]
+fn malformed_and_unclosed_r_fences_have_visible_status() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    fs::write(root.path().join("unclosed.qmd"), "```{r}\nx <- 1L\n").unwrap();
+    fs::write(root.path().join("malformed.Rmd"), "```{r\nx <- 1L\n```\n").unwrap();
+    let diagnostics = check(root.path());
+    assert_eq!(code(&diagnostics, "RY120").len(), 2, "{diagnostics:?}");
+    assert!(code(&diagnostics, "RY000").is_empty(), "{diagnostics:?}");
 }

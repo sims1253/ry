@@ -125,3 +125,70 @@ fn report_config_toggle_rechecks_an_open_buffer() {
             join_session(session, server).await;
         });
 }
+
+#[test]
+fn oversized_report_refusal_does_not_reuse_its_empty_parse_tree_after_shrink() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[reports]\nenabled = true\n[index]\nmax-file-bytes = 3145728\n",
+                )
+                .unwrap();
+            let huge = "é".repeat(ry_workspace::reports::MAX_REPORT_BYTES / 2 + 1);
+            let uri = file_uri(&fixture.write_file("memo.qmd", &huge).unwrap()).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, &huge).await.unwrap();
+            let capped = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert!(finding(&capped, "RY120").is_some(), "{capped}");
+            let mark = session.publication_mark();
+            session
+                .change(&uri, 2, json!([{"text": "```{r}\n\"x\" + 1L\n```\n"}]))
+                .await
+                .unwrap();
+            let admitted = session
+                .published_diagnostics_after(&uri, mark)
+                .await
+                .unwrap();
+            assert!(finding(&admitted, "RY120").is_none(), "{admitted}");
+            assert!(finding(&admitted, "RY040").is_some(), "{admitted}");
+            join_session(session, server).await;
+        });
+}
+
+#[test]
+fn two_open_reports_keep_independent_r_bindings() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file("ry.toml", "[reports]\nenabled = true\n")
+                .unwrap();
+            let first = "```{r}\nx <- 1L\n```\n";
+            let second = "```{r}\nx + 1L\n```\n";
+            let first_uri = file_uri(&fixture.write_file("first.qmd", first).unwrap()).unwrap();
+            let second_uri = file_uri(&fixture.write_file("second.qmd", second).unwrap()).unwrap();
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            session.open(&first_uri, 1, first).await.unwrap();
+            let mark = session.publication_mark();
+            session.open(&second_uri, 1, second).await.unwrap();
+            let published = session
+                .published_diagnostics_after(&second_uri, mark)
+                .await
+                .unwrap();
+            assert!(finding(&published, "RY010").is_some(), "{published}");
+            join_session(session, server).await;
+        });
+}

@@ -915,6 +915,19 @@ pub(crate) fn insert_s3_dispatch_context(method_name: &str, scope: &mut Scope, g
 /// recorded -- R does not evaluate them), and every expression form
 /// except blocks, `if`, and assignment operators.
 pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
+    assigned_names_in_body_with_superassign(body, true)
+}
+
+/// Bindings written in the current frame. A superassignment in a function
+/// searches enclosing frames, so it cannot replace a local loop callable.
+pub(crate) fn locally_assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
+    assigned_names_in_body_with_superassign(body, false)
+}
+
+fn assigned_names_in_body_with_superassign(
+    body: &[Stmt],
+    include_superassign: bool,
+) -> HashSet<String> {
     let mut names = HashSet::new();
     let _ = walk_stmts(
         body,
@@ -927,8 +940,19 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
         },
         |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
             match node {
-                AstNode::Stmt(Stmt::Assign { target, .. }) => {
-                    if let Expr::Ident { name, .. } = target {
+                AstNode::Stmt(Stmt::Assign {
+                    target,
+                    value,
+                    span,
+                }) => {
+                    let superassign = matches!(value, Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        span: marker_span,
+                        ..
+                    } if marker_span == span);
+                    if (include_superassign || !superassign)
+                        && let Expr::Ident { name, .. } = target
+                    {
                         names.insert(name.clone());
                     }
                 }
@@ -936,10 +960,19 @@ pub(crate) fn assigned_names_in_body(body: &[Stmt]) -> HashSet<String> {
                     names.insert(name.clone());
                 }
                 AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                    op: BinOpKind::Assign,
                     lhs,
                     ..
                 }) => {
+                    if let Expr::Ident { name, .. } = lhs.as_ref() {
+                        names.insert(name.clone());
+                    }
+                }
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    ..
+                }) if include_superassign => {
                     if let Expr::Ident { name, .. } = lhs.as_ref() {
                         names.insert(name.clone());
                     }

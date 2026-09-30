@@ -53,6 +53,7 @@ impl Checker {
         &self,
         body: &[Stmt],
         repeated_condition: Option<&Expr>,
+        iterator_binding: Option<(&str, &Expr)>,
         scope: &Scope,
     ) -> LoopCallerBindingRisk {
         // A successful assertion may be established inside a repeated body.
@@ -60,8 +61,28 @@ impl Checker {
         // checked, so entry-only scalar markers cannot gate this prepass.
         let mut invocations = Vec::<LoopCallableInvocation>::new();
         let mut writes = HashMap::<String, Vec<HashSet<String>>>::new();
+        if let Some((name, iterator)) = iterator_binding {
+            // A `for` header assigns its element before every body visit.
+            // Only a proven base list exposes callable element alternatives;
+            // the pre-loop value of `name` is never selected in the body.
+            if let Expr::Call { func, args, .. } = iterator
+                && ident_name(func).is_some_and(|head| {
+                    self.resolves_to_base(head, scope) && head.rsplit("::").next() == Some("list")
+                })
+            {
+                writes.insert(
+                    name.to_string(),
+                    args.iter()
+                        .map(|arg| {
+                            crate::collect::global_caller_binding_value_sources(&arg.value, 64)
+                        })
+                        .collect(),
+                );
+            }
+        }
         let mut remaining = 4096;
         let mut exhausted = false;
+        let inside_function = !self.enclosing_formals.is_empty();
         let policy = Walk {
             assign_targets: false,
             assign_operands: true,
@@ -120,13 +141,30 @@ impl Checker {
                 }
             }
             let assignment = match node {
-                AstNode::Stmt(Stmt::Assign { target, value, .. }) => Some((target, value)),
+                AstNode::Stmt(Stmt::Assign {
+                    target,
+                    value,
+                    span,
+                }) if !matches!(value, Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        span: marker_span,
+                        ..
+                    } if inside_function && marker_span == span) =>
+                {
+                    Some((target, value))
+                }
                 AstNode::Expr(Expr::BinOp {
                     op: BinOpKind::Assign,
                     lhs,
                     rhs,
                     ..
                 }) => Some((lhs.as_ref(), rhs.as_ref())),
+                AstNode::Expr(Expr::BinOp {
+                    op: BinOpKind::SuperAssign,
+                    lhs,
+                    rhs,
+                    ..
+                }) if !inside_function => Some((lhs.as_ref(), rhs.as_ref())),
                 _ => None,
             };
             if let Some((Expr::Ident { name, .. }, value)) = assignment {
@@ -171,14 +209,15 @@ impl Checker {
             };
             let assigned_effect =
                 self.loop_assigned_source_may_install(&invocation.target, &inputs, &mut state);
-            let initial_effect = self.computed_source_may_replace_current_binding(
-                &invocation.target,
-                &invocation.args,
-                scope,
-                &mut HashMap::new(),
-                &mut HashSet::new(),
-                &mut 128,
-            );
+            let initial_effect = iterator_binding.is_none_or(|(name, _)| name != invocation.target)
+                && self.computed_source_may_replace_current_binding(
+                    &invocation.target,
+                    &invocation.args,
+                    scope,
+                    &mut HashMap::new(),
+                    &mut HashSet::new(),
+                    &mut 128,
+                );
             if assigned_effect || initial_effect {
                 // A call through `q <- p; q(...)` needs the carried fact on
                 // `p` before the copy as well as on the eventual target `q`.
@@ -369,6 +408,9 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .scalar_asserted_bindings
         .retain(|name| incoming.scalar_asserted_bindings.contains(name));
     joined
+        .inert_caller_binding_functions
+        .retain(|name| incoming.inert_caller_binding_functions.contains(name));
+    joined
         .loop_vector_bindings
         .extend(incoming.loop_vector_bindings.iter().cloned());
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
@@ -409,15 +451,22 @@ impl Checker {
         body: &[Stmt],
         scope: &Scope,
     ) -> HashSet<String> {
-        let Some(end) = body.iter().position(|s| self.ends_loop_iteration(s, scope)) else {
-            return assigned_names_in_body(body);
+        let assigned = |statements: &[Stmt]| {
+            if self.enclosing_formals.is_empty() {
+                assigned_names_in_body(statements)
+            } else {
+                index::locally_assigned_names_in_body(statements)
+            }
         };
-        let mut names = assigned_names_in_body(&body[..end]);
+        let Some(end) = body.iter().position(|s| self.ends_loop_iteration(s, scope)) else {
+            return assigned(body);
+        };
+        let mut names = assigned(&body[..end]);
         match &body[end] {
             Stmt::Expr(Expr::Block { body, .. }) => {
                 names.extend(self.reachable_loop_assignments(body, scope))
             }
-            statement => names.extend(assigned_names_in_body(std::slice::from_ref(statement))),
+            statement => names.extend(assigned(std::slice::from_ref(statement))),
         }
         names
     }
@@ -495,6 +544,7 @@ impl Checker {
         let reaches = exits.is_some() && !(always_true && !has_transfer && body_unreachable);
         if let Some(exit) = exits {
             let scalar_before = scope.scalar_asserted_bindings.clone();
+            let inert_before = scope.inert_caller_binding_functions.clone();
             let vector_before = scope.loop_vector_bindings.clone();
             scope.ops_environment_unknown |= exit.ops_environment_unknown;
             scope.effects_unknown |= exit.effects_unknown;
@@ -510,6 +560,8 @@ impl Checker {
                     && exit.default_parameter_bindings.contains(&binding);
                 let scalar_asserted = scalar_before.contains(&binding)
                     && exit.scalar_asserted_bindings.contains(&binding);
+                let inert = inert_before.contains(&binding)
+                    && exit.inert_caller_binding_functions.contains(&binding);
                 let loop_vector = exit.loop_vector_bindings.contains(&binding)
                     || (!entered
                         && (vector_before.contains(&binding)
@@ -526,6 +578,9 @@ impl Checker {
                 }
                 if scalar_asserted {
                     scope.mark_scalar_asserted(&binding);
+                }
+                if inert {
+                    scope.mark_inert_caller_binding_function(&binding);
                 }
                 if loop_vector {
                     scope.mark_loop_vector(&binding);

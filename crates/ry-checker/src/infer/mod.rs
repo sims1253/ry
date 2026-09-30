@@ -585,7 +585,32 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } => {
+                if !self.enclosing_formals.is_empty()
+                    && let Expr::BinOp {
+                        op: BinOpKind::SuperAssign,
+                        rhs,
+                        span: marker_span,
+                        ..
+                    } = value
+                    && marker_span == span
+                {
+                    // The statement parser carries `<<-` inside Assign.
+                    // Its target is in an enclosing frame, never this
+                    // function's same-named local binding.
+                    if ops_chooser::operator_rebound(self, "<<-", scope) {
+                        scope.dynamic_bindings_unknown = true;
+                        for binding in scope.scalar_asserted_bindings.clone() {
+                            scope.clear_scalar_asserted(&binding);
+                        }
+                    }
+                    self.infer(rhs, scope);
+                    return;
+                }
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -788,7 +813,7 @@ impl Checker {
                 let carried_risk = if one_literal_iteration {
                     Default::default()
                 } else {
-                    self.loop_carried_binding_risk(body, None, scope)
+                    self.loop_carried_binding_risk(body, None, Some((name, iter)), scope)
                 };
                 let mut inner = scope.clone();
                 inner.insert(name.clone(), iter_t.element());
@@ -830,7 +855,7 @@ impl Checker {
                 let carried_risk = if matches!(cond, Expr::Logical(false, _)) {
                     Default::default()
                 } else {
-                    self.loop_carried_binding_risk(body, Some(cond), scope)
+                    self.loop_carried_binding_risk(body, Some(cond), None, scope)
                 };
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
@@ -2927,6 +2952,18 @@ impl Checker {
                 // return the RHS type. R's `<-` returns the assigned
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    if *op == BinOpKind::SuperAssign && !self.enclosing_formals.is_empty() {
+                        // `<<-` searches enclosing frames. It does not
+                        // replace a same-named binding in this function's
+                        // frame, including a callable selected in a loop.
+                        if ops_chooser::operator_rebound(self, "<<-", scope) {
+                            scope.dynamic_bindings_unknown = true;
+                            for binding in scope.scalar_asserted_bindings.clone() {
+                                scope.clear_scalar_asserted(&binding);
+                            }
+                        }
+                        return self.infer(rhs, scope);
+                    }
                     if !scope.ops_environment_unknown
                         && !ops_chooser::ordinary_assignment(self, lhs, rhs)
                     {

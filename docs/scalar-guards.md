@@ -34,6 +34,12 @@ callable back to an earlier `do.call()` on its next iteration; ry keeps the
 effect uncertain when that path may install a caller binding. The same bounded
 check covers a direct or aliased local call inside the repeated body, including
 `base::do.call(p, ...)` when `p` changes on a later iteration. An explicit
+base `list()` in a `for` header can supply different callable values to the
+loop variable, so an installer selected from that list also withdraws the
+earlier scalar fact. A `<<-` in a function writes to an enclosing frame; it
+does not replace a same-named local callable. A callable proven inert both
+before a loop and on every exit path remains inert for a computed call after
+the loop. An explicit
 `base::new.env()` target and a pure overwrite remain quiet. A literal
 single-element `for` sequence has no next iteration. The spelling `1:1`
 does not certify one iteration because R permits a masked `:` operator.

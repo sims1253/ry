@@ -2653,6 +2653,22 @@ fn named_head_selection_and_inside_loop_assertions_follow_r_evaluation_order() {
             "carried delayed binding",
             include_str!("../../testdata/oracle/assertion_subject_r19_carried_delayed.R"),
         ),
+        (
+            "loop header installer",
+            include_str!("../../testdata/oracle/assertion_subject_r19_header_installer.R"),
+        ),
+        (
+            "loop header alias installer",
+            include_str!("../../testdata/oracle/assertion_subject_r19_header_alias_installer.R"),
+        ),
+        (
+            "installer after loop join",
+            include_str!("../../testdata/oracle/assertion_subject_r19_postloop_installer_join.R"),
+        ),
+        (
+            "rebound superassignment operator",
+            include_str!("../../testdata/oracle/assertion_subject_r19_rebound_superassign.R"),
+        ),
     ] {
         let diagnostics = check(source);
         assert!(
@@ -2694,6 +2710,18 @@ fn named_head_selection_and_inside_loop_assertions_follow_r_evaluation_order() {
         (
             "vector rejected at reassertion",
             include_str!("../../testdata/oracle/assertion_subject_r19_reassert_rejects_vector.R"),
+        ),
+        (
+            "pure loop header",
+            include_str!("../../testdata/oracle/assertion_subject_r19_header_pure.R"),
+        ),
+        (
+            "superassignment leaves local callable",
+            include_str!("../../testdata/oracle/assertion_subject_r19_superassign_outer_pure.R"),
+        ),
+        (
+            "pure callable survives loop join",
+            include_str!("../../testdata/oracle/assertion_subject_r19_postloop_inert_join.R"),
         ),
     ] {
         let diagnostics = check(source);

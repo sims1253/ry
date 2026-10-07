@@ -197,7 +197,7 @@ const R7_CASES: &[R7Case] = &[
 const R7_NA_RULES: &[&str] = &[
     "RY000", "RY010", "RY041", "RY042", "RY050", "RY051", "RY060", "RY070", "RY080", "RY090",
     "RY091", "RY092", "RY094", "RY096", "RY097", "RY098", "RY101", "RY102", "RY108", "RY109",
-    "RY111",
+    "RY111", "RY112", "RY113",
 ];
 
 /// Run R7 over all applicable rule families and report the classification.
@@ -692,6 +692,14 @@ const VERDICTS: &[Verdict] = &[
         code: "RY111",
         verdict: "keep",
     },
+    Verdict {
+        code: "RY112",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY113",
+        verdict: "default-off",
+    },
 ];
 
 #[test]
@@ -742,13 +750,13 @@ fn default_off_verdicts_match_the_registry() {
 }
 
 #[test]
-fn reverting_ry003_default_off_fails() {
+fn reverting_default_off_rules_fails() {
     assert!(
         !enabled_by_default("RY003"),
         "RY003 must be disabled by default (default-off verdict)"
     );
     for rule in RULES {
-        if rule.code == "RY003" {
+        if matches!(rule.code, "RY003" | "RY113") {
             continue;
         }
         assert!(

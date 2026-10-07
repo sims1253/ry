@@ -751,6 +751,112 @@ fn qualified_base_schema_effect_is_applied() {
 }
 
 #[test]
+fn base_schema_effects_retain_list_and_vector_receivers() {
+    for call in [
+        "base::with(list(x = 'a'), x)",
+        "base::with(list(x = 'a'), 'a')",
+        "base::subset(c('a', 'b'), TRUE)",
+    ] {
+        let diagnostics = check(&format!("value <- {call}\nresult <- value + 1L\n"));
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let transform =
+        check("value <- base::transform(list(x = 'a'), y = x)\nresult <- value$y + 1L\n");
+    assert!(transform.iter().any(|d| d.code == "RY040"), "{transform:?}");
+    for call in [
+        "base::with(list(x = 1L), x)",
+        "base::subset(c(1L, 2L), TRUE)",
+    ] {
+        let diagnostics = check(&format!("value <- {call}\nresult <- value + 1L\n"));
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+    let numeric_transform =
+        check("value <- base::transform(list(x = 1L), y = x)\nresult <- value$y + 1L\n");
+    assert!(
+        numeric_transform.iter().all(|d| d.code != "RY040"),
+        "{numeric_transform:?}"
+    );
+    // The block in within() may write dynamic fields. Its source mode still
+    // follows the base contract even when its output columns are incomplete.
+    let (_, scope) = check_with_scope("value <- base::within(list(x = 'a'), { y <- x })\n");
+    assert_eq!(scope.get("value").map(|ty| &ty.mode), Some(&Mode::List));
+}
+
+#[test]
+fn base_subset_select_formal_keeps_source_column_names() {
+    for selector in ["x", "c(new = x)"] {
+        let source = format!(
+            "d <- data.frame(x = 1L, g = 2L)\nout <- base::subset(d, select = {selector})\nvalue <- base::with(out, x + 1L)\n"
+        );
+        let (diagnostics, scope) = check_with_scope(&source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY010"),
+            "{selector}: {diagnostics:?}"
+        );
+        let columns = scope.get("out").unwrap().columns.as_ref().unwrap();
+        assert!(columns.get("x").is_some(), "{selector}: {columns:?}");
+        assert!(columns.get("select").is_none(), "{selector}: {columns:?}");
+        assert!(columns.get("new").is_none(), "{selector}: {columns:?}");
+    }
+}
+
+#[test]
+fn package_schema_effects_with_base_names_still_require_a_standard_frame() {
+    assert!(
+        Checker::new("package_nse.R")
+            .resolve_schema_sig("other::with")
+            .is_none()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("fakepkg.json"),
+        r#"{
+            "schema_version": "1",
+            "package": "fakepkg",
+            "version": "test",
+            "functions": {
+                "subset": {
+                    "params": ["x", "select"],
+                    "return": "arg0",
+                    "eval": {"select": "tidy_select"},
+                    "schema_effect": "select"
+                },
+                "with": {
+                    "params": ["data", "expr"],
+                    "return": "arg0",
+                    "eval": {"expr": "data_mask"},
+                    "schema_effect": "expression_value"
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let stubs = Arc::new(ry_typeshed::load_stub_dir(dir.path()).unwrap());
+    for call in [
+        "fakepkg::subset(c('a', 'b'), x)",
+        "fakepkg::with(list(x = 'a'), x)",
+    ] {
+        let file = parse_file(
+            "package_nse.R",
+            &format!("value <- {call}\nresult <- value + 1L\n"),
+        );
+        let mut checker = Checker::new("package_nse.R");
+        checker.set_user_stubs(stubs.clone());
+        let (diagnostics, _) = checker.check_with_scope(&file);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{call}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn discarded_pure_expression_in_non_tail_if_branch_warns() {
     let diagnostics = check(
         "f <- function(z, text) {\n\

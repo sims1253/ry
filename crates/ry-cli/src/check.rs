@@ -1022,8 +1022,7 @@ impl CheckResult {
     }
 
     /// Surface scopes whose RY010 (unbound-variable) precision dropped
-    /// because a serialized data file exceeded the byte cap and was reduced
-    /// to a file-stem binding. Printed to stderr (never the stdout
+    /// because a serialized data file could not be inventoried. Printed to stderr (never the stdout
     /// diagnostic stream) so it is visible in both the human summary and
     /// `--statistics` without disturbing machine-readable output.
     fn print_degraded(&self) {
@@ -1031,13 +1030,15 @@ impl CheckResult {
             return;
         }
         eprintln!(
-            "ry: {} degraded scope(s) — serialized data file(s) over the byte cap fell back to file stems; RY010 precision reduced:",
+            "ry: {} degraded scope(s) — serialized inventory unavailable; RY010 precision may be reduced:",
             self.degraded.len()
         );
         for note in &self.degraded {
             eprintln!("  - {note}");
         }
-        eprintln!("ry: raise `max-serialized-bytes` in ry.toml to enumerate them precisely");
+        eprintln!(
+            "ry: inspect the listed files; raise `max-serialized-bytes` only for decoded-byte limit failures"
+        );
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
@@ -1094,7 +1095,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
-    // Degraded scopes (serialized data over the byte cap), deduplicated and
+    // Degraded serialized scopes, deduplicated and
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -1122,6 +1123,10 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
             }
         })
         .collect();
+    let parsed_by_path: HashMap<_, _> = parsed
+        .iter()
+        .map(|file| (file.path.as_str(), file.as_ref()))
+        .collect();
 
     // Same per-package grouping as `ry dump-types`; check's fallback
     // resolution root for non-package files is the config root (check has
@@ -1137,7 +1142,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     for group in groups {
         per_file_diagnostics.extend(check_project(group.check_input));
         for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason));
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
     }
 
@@ -1159,7 +1164,13 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     for (path, diags) in &mut per_file_diagnostics {
         let comments: &[ry_core::ast::Comment] = comments.get(path).map_or(&[], Vec::as_slice);
         let src = srcs.get(path).map_or("", String::as_str);
-        *diags = post.pre_demotion(std::mem::take(diags), comments, src);
+        *diags = post.pre_demotion(
+            std::mem::take(diags),
+            comments,
+            src,
+            path.as_str(),
+            parsed_by_path.get(path.as_str()).copied(),
+        );
     }
     // The synthesized not-R diagnostics have no suppression comments to
     // honor, so they enter the pipeline at the severity filter.

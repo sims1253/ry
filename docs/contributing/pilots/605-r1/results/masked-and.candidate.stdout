@@ -1,0 +1,11 @@
+[
+  {
+    "code": "RY032",
+    "severity": "warning",
+    "message": "`&&` may receive an unclassed vector retained across a loop; R requires a single logical value",
+    "path": "masked-and.R",
+    "line": 2,
+    "column": 57,
+    "confidence": "medium"
+  }
+]

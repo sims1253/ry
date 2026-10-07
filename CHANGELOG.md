@@ -11,6 +11,13 @@ All notable changes to ry are documented in this file.
   a visible budget. `dump-types` keeps its historical strings (#591).
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
+- Validate selective `ry: ignore[...]` comments and report malformed or
+  unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
+  lists no longer suppress ry findings; bare ignores still do.
+
+### Fixed
+
+- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 
 ## [0.11.0] - 2026-09-22
 

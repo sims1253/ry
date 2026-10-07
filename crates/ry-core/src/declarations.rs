@@ -145,8 +145,7 @@ impl TypeExpr {
         let mut nodes = 0;
         count_type_nodes(self, 0, &mut nodes)?;
         let normalized = self.clone().normalized()?;
-        let mut rendered_nodes = 0;
-        normalized.render(0, &mut rendered_nodes)
+        normalized.render()
     }
 
     fn normalized(self) -> Result<Self, DeclarationError> {
@@ -177,7 +176,7 @@ impl TypeExpr {
                 }
                 let mut keyed = flattened
                     .into_iter()
-                    .map(|member| Ok((member.canonical()?, member)))
+                    .map(|member| Ok((member.render()?, member)))
                     .collect::<Result<Vec<_>, DeclarationError>>()?;
                 keyed.sort_by(|left, right| left.0.cmp(&right.0));
                 keyed.dedup_by(|left, right| left.0 == right.0);
@@ -200,13 +199,9 @@ impl TypeExpr {
         }
     }
 
-    fn render(&self, depth: usize, nodes: &mut usize) -> Result<String, DeclarationError> {
-        *nodes += 1;
-        if depth >= MAX_DECLARATION_DEPTH || *nodes > MAX_DECLARATION_NODES {
-            return Err(DeclarationError::ResourceLimit(
-                "type nesting or node count exceeded".into(),
-            ));
-        }
+    // Only normalized expressions reach this formatter. Input boundaries
+    // enforce tree budgets before normalization can remove nodes or nesting.
+    fn render(&self) -> Result<String, DeclarationError> {
         let spelling = match self {
             Self::Unknown => "unknown".to_string(),
             Self::Atomic { mode, length } => {
@@ -229,30 +224,11 @@ impl TypeExpr {
                 spelling
             }
             Self::Union(members) => {
-                if members.is_empty() {
-                    return Err(DeclarationError::InvalidSyntax("empty union".into()));
-                }
-                if members.len() > MAX_UNION_ALTERNATIVES {
-                    return Err(DeclarationError::ResourceLimit(format!(
-                        "union has more than {MAX_UNION_ALTERNATIVES} alternatives"
-                    )));
-                }
-                let mut rendered = members
+                let rendered = members
                     .iter()
-                    .map(|member| member.render(depth + 1, nodes))
+                    .map(Self::render)
                     .collect::<Result<Vec<_>, _>>()?;
-                if rendered.iter().any(|member| member == "unknown") {
-                    return Err(DeclarationError::InvalidSyntax(
-                        "unknown cannot be a union alternative".into(),
-                    ));
-                }
-                rendered.sort();
-                rendered.dedup();
-                if rendered.len() == 1 {
-                    rendered.remove(0)
-                } else {
-                    format!("union[{}]", rendered.join(", "))
-                }
+                format!("union[{}]", rendered.join(", "))
             }
         };
         if spelling.len() > MAX_DECLARATION_BYTES {
@@ -904,18 +880,11 @@ fn convert_type(
     } else if ty.class.len > 0 {
         reasons.push("known class constraint is outside the initial declaration vocabulary".into());
     }
-    if let Some(schema) = &ty.columns {
-        reasons.push(if schema.columns.len() > MAX_DECLARATION_NODES {
-            "schema exceeds conversion inspection budget; field identity cannot be exported".into()
-        } else if schema
-            .columns
-            .iter()
-            .any(|(name, _)| name.starts_with("[["))
-        {
-            "schema keys may be synthetic; field identity cannot be exported".into()
-        } else {
-            "known schema fields are outside the initial declaration vocabulary".into()
-        });
+    if ty.columns.is_some() {
+        reasons.push(
+            "schema constraints and field identity are outside the initial declaration vocabulary and are omitted"
+                .into(),
+        );
     }
     if ty.fn_sig.is_some() || ty.mode == Mode::Function {
         return Err("callable parameter information is incomplete".into());
@@ -1318,24 +1287,34 @@ mod tests {
     }
 
     #[test]
-    fn class_capacity_and_uncertain_field_names_cannot_be_exact() {
+    fn class_capacity_and_omitted_schema_constraints_cannot_be_exact() {
         let classed = RType::scalar(Mode::Integer)
             .with_class(ClassVector::from_slice(&["a", "b", "c", "d", "e"]));
         assert!(matches!(
             convert_inferred(&classed, ExportSite::ValueAtAssignment),
             Conversion::Refused { .. }
         ));
-        let schema = RType::new(Mode::List, Length::One).with_columns(Arc::new(ColumnSchema {
-            columns: vec![("[[1]]".into(), RType::scalar(Mode::Integer))],
-            complete: true,
-            locally_constructed: true,
-        }));
-        let Conversion::Proposed { reasons, .. } =
-            convert_inferred(&schema, ExportSite::ValueAtAssignment)
-        else {
-            panic!("field-name ambiguity must be visible");
-        };
-        assert!(reasons.iter().any(|reason| reason.contains("synthetic")));
+        for name in ["field", "[[1]]"] {
+            let schema = RType::new(Mode::List, Length::One).with_columns(Arc::new(ColumnSchema {
+                columns: vec![(name.into(), RType::scalar(Mode::Integer))],
+                complete: true,
+                locally_constructed: true,
+            }));
+            let Conversion::Proposed {
+                constraint,
+                reasons,
+            } = convert_inferred(&schema, ExportSite::ValueAtAssignment)
+            else {
+                panic!("omitted schema constraints must need an explicit proposal");
+            };
+            assert_eq!(constraint.canonical().unwrap(), "list<len=1>");
+            assert!(
+                reasons
+                    .iter()
+                    .any(|reason| reason.contains("schema constraints")
+                        && reason.contains("omitted"))
+            );
+        }
     }
 
     #[test]
@@ -1374,7 +1353,7 @@ mod tests {
     }
 
     #[test]
-    fn successful_conversion_is_always_canonical_and_schema_scan_is_bounded() {
+    fn successful_conversion_is_always_canonical_and_wide_schemas_are_omitted() {
         let compatible =
             RType::union(vec![RType::scalar(Mode::Integer), RType::scalar(Mode::Character)].into());
         let Conversion::Exact(constraint) =
@@ -1436,7 +1415,7 @@ mod tests {
         assert!(
             reasons
                 .iter()
-                .any(|reason| reason.contains("inspection budget"))
+                .any(|reason| reason.contains("schema constraints") && reason.contains("omitted"))
         );
     }
 }

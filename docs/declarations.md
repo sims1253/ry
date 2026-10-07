@@ -92,8 +92,9 @@ refusal, with uncertainty retained.
 Conversion inspects at most 64 inferred type nodes and checks the final
 constraint against the canonical grammar before reporting success. A narrowed
 union whose outer length is not carried by its members becomes a proposal
-with that loss stated explicitly. Very wide schemas are not scanned in full;
-their field identity remains unverified in the proposal.
+with that loss stated explicitly. Conversion does not inspect schema fields.
+It omits schema constraints and field identity and states that loss in the
+proposal.
 
 The annotation serializer is tested with populated exact/partial/unsupported
 records and validates same-file source/residual spans. [#594] will wire real

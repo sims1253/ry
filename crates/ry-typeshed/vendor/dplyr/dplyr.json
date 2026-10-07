@@ -279,7 +279,7 @@
       "eval": {
         "...": "data_mask"
       },
-      "schema_effect": "preserve",
+      "schema_effect": "group_by",
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -476,7 +476,7 @@
         ".before": "tidy_select",
         ".after": "tidy_select"
       },
-      "schema_effect": "preserve",
+      "schema_effect": "relocate",
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -495,7 +495,7 @@
       "eval": {
         "...": "tidy_select"
       },
-      "schema_effect": "preserve",
+      "schema_effect": "rename",
       "return": {
         "mode": "opaque",
         "length": "unknown",
@@ -831,6 +831,7 @@
       "eval": {
         "...": "data_mask"
       },
+      "schema_effect": "transmute",
       "injection": {"...": "full"}
     },
     "ungroup": {

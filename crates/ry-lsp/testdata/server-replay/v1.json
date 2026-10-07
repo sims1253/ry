@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "files": {
+    "R/helper.R": "value <- function() 1L\n",
+    "R/caller.R": "result <- value() + 1L\n",
+    "R/local.R": "local_value <- unknown_boot\n",
+    "R/unrelated.R": "unrelated_value <- 1L\n"
+  },
+  "scenarios": [
+    {
+      "id": "local-clean",
+      "edit": "R/local.R",
+      "reset": "local_value <- unknown_reset_{sample}\n",
+      "final": "local_value <- 1L\n",
+      "completion": "R/local.R"
+    },
+    {
+      "id": "cross-file-caller",
+      "edit": "R/helper.R",
+      "reset": "value <- function() 1L\n",
+      "final": "value <- function() \"text\"\n",
+      "completion": "R/caller.R"
+    },
+    {
+      "id": "unrelated-file",
+      "edit": "R/unrelated.R",
+      "reset": "unrelated_value <- 1L\n",
+      "final": "unrelated_value <- unknown_unrelated_{sample}\n",
+      "completion": "R/unrelated.R"
+    }
+  ]
+}

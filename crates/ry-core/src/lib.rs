@@ -3,6 +3,7 @@
 
 pub mod ast;
 pub mod parser;
+pub mod presentation;
 pub mod span;
 pub mod types;
 pub mod walk;

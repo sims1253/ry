@@ -28,6 +28,10 @@ pub enum EvalMode {
 pub enum SchemaEffect {
     Preserve,
     AddNamedArgs,
+    GroupBy,
+    Transmute,
+    Rename,
+    Relocate,
     Select,
     Aggregate,
     ExpressionValue,

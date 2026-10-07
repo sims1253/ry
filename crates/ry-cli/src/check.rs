@@ -164,10 +164,10 @@ pub(crate) fn run_check(
                 Some(_) if path.as_path() == stdin_path.as_deref().expect("stdin has a path") => {
                     true
                 }
-                Some(identity) if path.exists() || source_parent(&path).exists() => {
+                Some(identity) if path.exists() || source_parent(&path).is_dir() => {
                     source_identity(&path)? == *identity
                 }
-                // A separate requested root with no existing parent is
+                // A separate requested root with no directory parent is
                 // diagnosed by the missing-root check below, not silently
                 // treated as an alias of the stdin source.
                 _ => false,
@@ -244,19 +244,21 @@ pub(crate) fn run_check(
             return Ok(discovery_exit_code(&cfg));
         }
         let identity = overlay_identity.expect("stdin path has an identity");
-        let checked_path = overlay_path_for_roots(
-            &path,
-            &identity,
-            &all_paths,
-            &search_roots,
-            overlay_alias.as_deref(),
-        )?;
+        let mut checked_path = None;
         let mut distinct = Vec::with_capacity(all_paths.len() + 1);
         for discovered in all_paths {
-            if source_identity(&discovered)? != identity {
+            if source_identity(&discovered)? == identity {
+                checked_path.get_or_insert(discovered);
+            } else {
                 distinct.push(discovered);
             }
         }
+        let checked_path = match checked_path {
+            Some(path) => path,
+            None => {
+                overlay_path_for_roots(&path, &identity, &search_roots, overlay_alias.as_deref())?
+            }
+        };
         all_paths = distinct;
         all_paths.push(checked_path.clone());
         sort_and_deduplicate_paths(&mut all_paths);
@@ -1547,15 +1549,9 @@ fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
 fn overlay_path_for_roots(
     logical: &std::path::Path,
     identity: &std::path::Path,
-    discovered: &[PathBuf],
     roots: &[PathBuf],
     alias: Option<&std::path::Path>,
 ) -> Result<PathBuf> {
-    for path in discovered {
-        if source_identity(path)? == identity {
-            return Ok(path.clone());
-        }
-    }
     for root in roots {
         if root.is_dir()
             && let Ok(relative) = identity.strip_prefix(source_identity(root)?)

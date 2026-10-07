@@ -4,6 +4,12 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
+  replaces its disk source and uses the same project context and diagnostics
+  as a saved file (#582).
+
 ### Changed
 
 - Keep editor inlay labels short while marking hidden known fields and

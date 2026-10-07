@@ -665,16 +665,10 @@ fn process_failures_have_distinct_classes() {
     let dir = tempfile::tempdir().expect("temporary scripts");
     let case = Case::from_seed(6);
     let script = dir.path().join("fake-rscript");
-    let fake = |body: &str| {
+    let fake = |body: &str, wall_limit: Duration| {
         fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("write fake R");
         fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).expect("chmod fake R");
-        run_r(
-            &case,
-            &case.source(),
-            &script,
-            false,
-            Duration::from_millis(100),
-        )
+        run_r(&case, &case.source(), &script, false, wall_limit)
     };
     assert_eq!(
         run_r(
@@ -687,10 +681,21 @@ fn process_failures_have_distinct_classes() {
         .class,
         Status::RUnavailable
     );
-    assert_eq!(fake("while :; do :; done").class, Status::TimedOut);
-    assert_eq!(fake("kill -SEGV $$").class, Status::Crashed);
-    assert_eq!(fake("head -c 20000 /dev/zero").class, Status::OutputLimit);
-    assert_eq!(fake("exit 7").class, Status::HarnessError);
+    assert_eq!(
+        fake("while :; do :; done", Duration::from_millis(100)).class,
+        Status::TimedOut
+    );
+    // Host crash cleanup can outlast the timeout fixture's short deadline.
+    // The delay ensures this case needs the normal process budget.
+    assert_eq!(
+        fake("sleep 0.2; kill -SEGV $$", WALL_LIMIT).class,
+        Status::Crashed
+    );
+    assert_eq!(
+        fake("head -c 20000 /dev/zero", WALL_LIMIT).class,
+        Status::OutputLimit
+    );
+    assert_eq!(fake("exit 7", WALL_LIMIT).class, Status::HarnessError);
 }
 
 #[test]

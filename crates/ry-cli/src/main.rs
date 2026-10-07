@@ -1,6 +1,10 @@
 mod check;
 mod dump;
 mod facts;
+// The serializer is exercised with populated records now; the public flag is
+// enabled when an adapter can provide real source records in #594.
+#[allow(dead_code)]
+mod facts_declarations;
 mod facts_types;
 mod pipeline;
 

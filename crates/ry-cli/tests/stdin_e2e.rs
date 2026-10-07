@@ -239,6 +239,123 @@ fn package_dynamic_bindings_use_stdin_instead_of_stale_disk() {
 }
 
 #[test]
+fn package_dataset_bindings_use_stdin_instead_of_stale_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::create_dir(temp.path().join("data")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: demo\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("R/neighbor.R"),
+        "gold\nsilver\ncopper\nbronze\nplatinum\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("data/other.R"), "silver <- 1L\n").unwrap();
+    fs::write(temp.path().join("data/copper.rds"), b"").unwrap();
+    fs::write(
+        temp.path().join("data/bronze.rda"),
+        include_bytes!("../../../testdata/serialized/empty.rda"),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("data/platinum.RData"),
+        include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+    )
+    .unwrap();
+    let path = temp.path().join("data/preprocess.r");
+    for (old, source, expected) in [
+        (Some("gold <- 1L\n"), "1L\n", vec!["RY010"]),
+        (Some("1L\n"), "gold <- 1L\n", vec![]),
+        (None, "gold <- 1L\n", vec![]),
+    ] {
+        if let Some(old) = old {
+            fs::write(&path, old).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        let buffers: Vec<_> = ["data/preprocess.r", "./data/preprocess.r"]
+            .into_iter()
+            .map(|logical| {
+                run(
+                    temp.path(),
+                    &[
+                        "R/neighbor.R",
+                        "-",
+                        "--stdin-filename",
+                        logical,
+                        "--output-format",
+                        "json",
+                    ],
+                    source.as_bytes(),
+                )
+            })
+            .collect();
+        assert_eq!(fs::read_to_string(&path).ok().as_deref(), old);
+        fs::write(&path, source).unwrap();
+        let disk = run(
+            temp.path(),
+            &[
+                "R/neighbor.R",
+                "data/preprocess.r",
+                "--output-format",
+                "json",
+            ],
+            b"",
+        );
+        assert_eq!(codes(&disk), expected, "{disk:?}");
+        if !expected.is_empty() {
+            assert_eq!(json(&disk)[0]["path"], "R/neighbor.R");
+            assert!(json(&disk)[0]["message"].as_str().unwrap().contains("gold"));
+        }
+        assert!(disk.stderr.is_empty(), "{disk:?}");
+        for buffer in buffers {
+            assert_eq!(json(&buffer), json(&disk), "{buffer:?}");
+            assert_eq!(buffer.status, disk.status);
+            assert_eq!(buffer.stderr, disk.stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn package_dataset_bindings_replace_a_symlink_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::create_dir(temp.path().join("data")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: demo\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("R/neighbor.R"), "gold\n").unwrap();
+    fs::write(temp.path().join("data/preprocess.r"), "gold <- 1L\n").unwrap();
+    symlink("preprocess.r", temp.path().join("data/alias.R")).unwrap();
+    let buffer = run(
+        temp.path(),
+        &[
+            "R/neighbor.R",
+            "-",
+            "--stdin-filename",
+            "data/alias.R",
+            "--output-format",
+            "json",
+        ],
+        b"1L\n",
+    );
+    assert_eq!(codes(&buffer), ["RY010"], "{buffer:?}");
+    assert_eq!(json(&buffer)[0]["path"], "R/neighbor.R");
+    assert_eq!(
+        fs::read_to_string(temp.path().join("data/preprocess.r")).unwrap(),
+        "gold <- 1L\n"
+    );
+}
+
+#[test]
 fn test_helpers_use_stdin_for_neighboring_test_context() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir_all(temp.path().join("tests/testthat")).unwrap();

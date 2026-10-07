@@ -473,7 +473,7 @@ pub fn resolve_workspace_context<'a>(
             if source_package_lazy_data(&root) {
                 let datasets = dataset_cache
                     .entry(root.clone())
-                    .or_insert_with(|| source_package_datasets(&root, max_serialized_bytes))
+                    .or_insert_with(|| source_package_datasets(&root, &files, max_serialized_bytes))
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
                 for (path, reason) in &datasets.degraded {
@@ -900,13 +900,18 @@ fn source_package_lazy_data(root: &Path) -> bool {
 /// binding (`data/example.rda` -> `example`). This inventory is static,
 /// bounded to one directory, and cached indirectly by the per-run package
 /// scope construction.
-fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInventory {
-    let Ok(entries) = std::fs::read_dir(root.join("data")) else {
-        return DataInventory::default();
+fn source_package_datasets(
+    root: &Path,
+    files: &[&SourceFile],
+    max_serialized_bytes: u64,
+) -> DataInventory {
+    let paths = match std::fs::read_dir(root.join("data")) {
+        Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
+        Err(_) => Vec::new(),
     };
     let mut out = DataInventory::default();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    let mut sources = Vec::new();
+    for path in paths {
         let Some(extension) = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -937,28 +942,31 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                     out.bindings.insert(stem.to_string());
                 }
             }
-            "r" => {
-                let Ok(source) = read_r_source(&path) else {
-                    continue;
-                };
-                let Ok(mut parser) = ry_core::RParser::new() else {
-                    continue;
-                };
-                let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
-                    continue;
-                };
-                out.bindings
-                    .extend(file.stmts.iter().filter_map(|statement| match statement {
-                        Stmt::Assign {
-                            target: Expr::Ident { name, .. },
-                            ..
-                        } => Some(name.clone()),
-                        _ => None,
-                    }));
-            }
+            "r" => sources.push(path),
             _ => {}
         }
     }
+    visit_r_sources(
+        sources,
+        files.iter().copied().filter(|file| {
+            let path = Path::new(&file.path);
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_r_source_name)
+                && package_relative_path(path, root)
+                    .is_some_and(|relative| relative.parent() == Some(Path::new("data")))
+        }),
+        |file| {
+            out.bindings
+                .extend(file.stmts.iter().filter_map(|statement| match statement {
+                    Stmt::Assign {
+                        target: Expr::Ident { name, .. },
+                        ..
+                    } => Some(name.clone()),
+                    _ => None,
+                }));
+        },
+    );
     out
 }
 

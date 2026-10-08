@@ -1,4 +1,5 @@
 use super::*;
+use crate::collect::{MAX_DEFAULT_HELPER_CALLS, closed_literal_value};
 use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
@@ -56,9 +57,7 @@ impl Checker {
             None
         };
         if checking_declarations
-            && args
-                .iter()
-                .any(|arg| !declaration_closed_literal(&arg.value))
+            && args.iter().any(|arg| !closed_literal_value(&arg.value))
             && callee_name(func).is_some_and(|name| {
                 let name = semantic_argument_name(&name);
                 scope.lexical_definition(name).is_some()
@@ -137,7 +136,7 @@ impl Checker {
 
     fn declaration_known_call_writes(&self, name: &str, scope: &Scope) -> FxSet<String> {
         let mut writes = FxSet::default();
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         let mut visiting = FxSet::default();
         let mut alias_path = FxSet::default();
         self.declaration_named_helper_writes(
@@ -159,7 +158,7 @@ impl Checker {
         body: &[Stmt],
         scope: &Scope,
     ) -> FxSet<String> {
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
         let mut writes = FxSet::default();
         let mut visiting = FxSet::default();
@@ -431,7 +430,7 @@ impl Checker {
                 param
                     .default
                     .as_ref()
-                    .is_some_and(|default| !declaration_closed_literal(default))
+                    .is_some_and(|default| !closed_literal_value(default))
             })
         }) {
             // An omitted default is also a promise. Without call-specific
@@ -2762,18 +2761,6 @@ fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) 
             })
 }
 
-fn declaration_closed_literal(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Logical(..)
-            | Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::String(..)
-            | Expr::Null(..)
-            | Expr::Na(..)
-    )
-}
-
 #[cfg(test)]
 mod declaration_effect_budget_tests {
     use super::*;
@@ -2803,7 +2790,7 @@ mod declaration_effect_budget_tests {
             "a spent budget must not inspect even a direct nested write"
         );
 
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         writes.clear();
         checker.declaration_function_helper_writes(
             function,

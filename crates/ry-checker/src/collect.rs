@@ -56,7 +56,7 @@ fn note_capture_write(
 /// closure does not execute its outward assignments. The bound also handles
 /// recursive helpers without making declaration collection source-sized per
 /// call chain. Exhaustion makes captured identity uncertain.
-const MAX_DEFAULT_HELPER_CALLS: usize = 64;
+pub(crate) const MAX_DEFAULT_HELPER_CALLS: usize = 64;
 
 fn called_names_in_expr(expr: &Expr) -> FxSet<String> {
     let mut called = FxSet::default();
@@ -291,7 +291,7 @@ pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> b
     }
 }
 
-fn closed_literal_value(expr: &Expr) -> bool {
+pub(crate) fn closed_literal_value(expr: &Expr) -> bool {
     matches!(
         expr,
         Expr::Logical(..)

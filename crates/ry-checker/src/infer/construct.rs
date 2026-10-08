@@ -586,6 +586,7 @@ impl Checker {
             }
         };
         let mut result = RType::new(mode, length);
+        // Limit this value proof to short, fully observed concatenations.
         if matches!(mode, Mode::Integer | Mode::Double)
             && arg_types.len() <= 32
             && arg_types.iter().all(|t| t.value_facts.all_values_known)

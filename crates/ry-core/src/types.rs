@@ -431,10 +431,10 @@ pub struct ValueFacts {
     pub all_values_known: bool,
     pub prior_na: bool,
     pub new_na: NewNaProvenance,
-    /// Direct local assignment that produced a range NA. This is used only
-    /// to suppress a diagnostic for an immediately handled cast; it is not
-    /// a cross-function identity.
-    pub cast_site: Option<Span>,
+    /// Exact cast span and the end of its assignment, including grouping
+    /// parentheses removed during lowering. Used only for immediate repair
+    /// suppression, not as a cross-function identity.
+    pub cast_site: Option<(Span, usize)>,
 }
 
 impl ValueFacts {

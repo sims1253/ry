@@ -577,7 +577,7 @@ impl Checker {
                     if call::callee_name(func).as_deref().is_some_and(|name|
                         name == "as.integer" || name == "base::as.integer"))
                 {
-                    vt.value_facts.cast_site = Some(*assignment_span);
+                    vt.value_facts.cast_site = Some((span_of(value), assignment_span.end));
                 }
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
@@ -2324,18 +2324,18 @@ impl Checker {
                         updated.value_facts = ry_core::types::ValueFacts::default();
                     }
                 }
-                if let Some(site) = site
-                    && self.source.get(site.end..span.start).is_some_and(|gap| {
-                        gap.lines().all(|line| {
-                            line.trim().is_empty() || line.trim_start().starts_with('#')
+                if let Some((site, assignment_end)) = site
+                    && self
+                        .source
+                        .get(assignment_end..span.start)
+                        .is_some_and(|gap| {
+                            gap.lines().all(|line| {
+                                line.trim().is_empty() || line.trim_start().starts_with('#')
+                            })
                         })
-                    })
                 {
-                    self.diagnostics.retain(|diagnostic| {
-                        diagnostic.code != "RY119"
-                            || diagnostic.span.start < site.start
-                            || diagnostic.span.end > site.end
-                    });
+                    self.diagnostics
+                        .retain(|diagnostic| diagnostic.code != "RY119" || diagnostic.span != site);
                 }
                 updated.value_facts.cast_site = None;
             } else if !no_selection {
@@ -2715,19 +2715,12 @@ impl Checker {
             return t.clone();
         }
         match e {
-            Expr::Logical(_, _) => RType::scalar(Mode::Logical),
-            Expr::Integer(value, _) => RType::scalar(Mode::Integer)
-                .with_value_facts(ry_core::types::ValueFacts::exact_number(*value as f64)),
-            Expr::Double(value, _) => RType::scalar(Mode::Double)
-                .with_value_facts(ry_core::types::ValueFacts::exact_number(*value)),
-            Expr::String(_, _) => RType::scalar(Mode::Character),
-            Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
-            Expr::Na(t, _) => {
-                let mut result = t.clone();
-                result.value_facts.prior_na = true;
-                result.value_facts.all_values_known = true;
-                result
-            }
+            Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..) => infer_literal_default(e),
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
                 if !scope.literal_values_unknown {

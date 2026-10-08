@@ -221,3 +221,26 @@ fn missing_replacement_requires_base_operator_and_nonempty_plain_value() {
         0
     );
 }
+
+#[test]
+fn immediate_repair_suppresses_only_the_direct_cast() {
+    let source = "x <- as.integer({\n  as.integer(1e10)\n  1e10\n})\nx[is.na(x)] <- 0L";
+    let diags = check(source);
+    let warnings: Vec<_> = diags.iter().filter(|d| d.code == "RY119").collect();
+    assert_eq!(warnings.len(), 1, "{diags:?}");
+    assert_eq!(
+        source.get(warnings[0].span.start..warnings[0].span.end),
+        Some("as.integer(1e10)")
+    );
+    for source in [
+        "x <- as.integer(1e10)\nx[is.na(x)] <- 0L",
+        "x <- (as.integer(1e10))\nx[is.na(x)] <- 0L",
+        "x <- (as.integer(1e10) # handled\n)\nx[is.na(x)] <- 0L",
+    ] {
+        assert_eq!(range_warnings(source), 0, "{source}");
+    }
+    assert_eq!(
+        range_warnings("y <- as.integer(1e10)\nx <- c(y, 1e10)\nas.integer(x)"),
+        2
+    );
+}

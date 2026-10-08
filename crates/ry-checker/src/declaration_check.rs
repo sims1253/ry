@@ -147,6 +147,12 @@ impl DeclarationSet {
         &self.records
     }
 
+    pub(crate) fn has_contracts(&self) -> bool {
+        self.targets
+            .values()
+            .any(|decision| decision.signature.is_some())
+    }
+
     pub(crate) fn target(&self, path: &str, span: Span) -> Option<&TargetDecision> {
         self.targets.get(&TargetKey::new(path, span))
     }

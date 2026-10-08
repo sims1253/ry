@@ -189,6 +189,10 @@ pub(super) struct State {
     /// per-package project caches (see
     /// [`FolderAnalysisContext::package_caches`]).
     folder_contexts: Vec<FolderAnalysisContext>,
+    /// Notices already sent for the currently installed serialized scopes.
+    /// A repaired scope leaves this set on the next context install, so a
+    /// later failure can be reported again without repeating unchanged ones.
+    notified_degraded_scopes: std::collections::BTreeSet<(PathBuf, ry_workspace::InventoryFailure)>,
     /// On-disk `.R`/`.r` files discovered by the background indexer,
     /// keyed by absolute path. Open documents shadow these.
     disk_files: HashMap<String, Arc<SourceFile>>,
@@ -433,6 +437,19 @@ impl ProjectCache {
     }
 }
 
+fn serialized_inventory_notice(path: &Path, reason: ry_workspace::InventoryFailure) -> String {
+    let hint = if reason == ry_workspace::InventoryFailure::DecodedByteLimit {
+        " Raise max-serialized-bytes in ry.toml to enumerate it."
+    } else {
+        ""
+    };
+    format!(
+        "ry: {}: degraded scope ({}); serialized inventory unavailable.{hint}",
+        path.display(),
+        reason.description()
+    )
+}
+
 impl State {
     /// Classify the original URI and commit its complete edit batch under
     /// one lock. `didOpen`/`didClose` cannot change display-key ownership
@@ -609,6 +626,21 @@ impl State {
             self.trees.remove(path);
         }
         Some(survivor)
+    }
+
+    fn newly_degraded_scopes(&mut self) -> Vec<(PathBuf, ry_workspace::InventoryFailure)> {
+        let current: std::collections::BTreeSet<_> = self
+            .folder_contexts
+            .iter()
+            .flat_map(|folder| folder.workspace_contexts.values())
+            .flat_map(|context| context.degraded_scopes.iter().cloned())
+            .collect();
+        let new = current
+            .difference(&self.notified_degraded_scopes)
+            .cloned()
+            .collect();
+        self.notified_degraded_scopes = current;
+        new
     }
 
     /// Return the cached parse for `path` when its version matches the
@@ -1527,8 +1559,13 @@ impl Backend {
                             "RY117",
                             "Native source identity is ambiguous; typehint attachment was skipped.",
                         );
-                        let mut warnings =
-                            post.pre_demotion(vec![warning], &file.comments, &file.source);
+                        let mut warnings = post.pre_demotion(
+                            vec![warning],
+                            &file.comments,
+                            &file.source,
+                            &file.path,
+                            Some(&file),
+                        );
                         post.demote_non_source_paths(&mut warnings);
                         post.post_demotion(&mut warnings);
                         let warnings = warnings
@@ -1818,8 +1855,13 @@ impl Backend {
                     min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
                     repo_root: config_anchor.as_deref(),
                 };
-                let mut diagnostics =
-                    post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
+                let mut diagnostics = post.pre_demotion(
+                    diagnostics,
+                    comments,
+                    source_text.unwrap_or(""),
+                    &diagnostic_path,
+                    checked_file.map(AsRef::as_ref),
+                );
                 post.demote_non_source_paths(&mut diagnostics);
                 post.post_demotion(&mut diagnostics);
                 let diagnostics: Vec<LspDiagnostic> = diagnostics
@@ -1847,7 +1889,11 @@ impl Backend {
                         HashSet::from([uri.clone()])
                     };
                     self.client
-                        .publish_diagnostics(uri, diagnostics, None)
+                        .publish_diagnostics(
+                            uri,
+                            diagnostics,
+                            diagnostic_versions.get(&diagnostic_path).copied(),
+                        )
                         .await;
                     published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
                     continue;
@@ -1870,7 +1916,13 @@ impl Backend {
                         non_empty.insert(uri.clone());
                     }
                     self.client
-                        .publish_diagnostics(uri.clone(), for_uri, None)
+                        .publish_diagnostics(
+                            uri.clone(),
+                            for_uri,
+                            (active_collision_uris.get(&diagnostic_path) == Some(uri))
+                                .then(|| diagnostic_versions.get(&diagnostic_path).copied())
+                                .flatten(),
+                        )
                         .await;
                 }
                 published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
@@ -2144,16 +2196,15 @@ impl Backend {
                     }
                 }
                 state.initial_index_pending = false;
+                let newly_degraded = state.newly_degraded_scopes();
                 drop(state);
-                for (_, group) in &contexts {
-                    for context in group.values() {
-                        for (path, reason) in &context.degraded_scopes {
-                            self.client.log_message(
-                                tower_lsp::lsp_types::MessageType::WARNING,
-                                format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
-                            ).await;
-                        }
-                    }
+                for (path, reason) in &newly_degraded {
+                    self.client
+                        .log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            serialized_inventory_notice(path, *reason),
+                        )
+                        .await;
                 }
                 if cap_hit {
                     let _ = self
@@ -3072,12 +3123,7 @@ impl Backend {
             // the exact window the generation guard below exists for.
             #[cfg(feature = "test-util")]
             crate::test_seam::maybe_pause_context_install().await;
-            // Installed: degraded-scope warnings keep scan parity (the
-            // scan logs one line per scope per generation). Cloned before
-            // the insert moves the context; never re-read — a concurrent
-            // replacement's scopes are that writer's duty to log.
-            let degraded = context.degraded_scopes.clone();
-            {
+            let newly_degraded = {
                 let mut state = self.state.lock().await;
                 if state.index_generation != snapshot.generation {
                     // A newer writer landed during the blocking resolve;
@@ -3099,12 +3145,13 @@ impl Backend {
                     // cleared and republished.
                     return true;
                 }
-            }
-            for (path, reason) in &degraded {
+                state.newly_degraded_scopes()
+            };
+            for (path, reason) in &newly_degraded {
                 self.client
                     .log_message(
                         tower_lsp::lsp_types::MessageType::WARNING,
-                        format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
+                        serialized_inventory_notice(path, *reason),
                     )
                     .await;
             }
@@ -3619,5 +3666,57 @@ fn byte_offset_to_point_relative(start_position: ry_core::Point, new_text: &str)
             row: start_position.row + newlines,
             column: new_text.len() - last_newline - 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod degraded_notice_tests {
+    use super::*;
+
+    #[test]
+    fn byte_limit_notice_keeps_its_remediation_hint() {
+        let path = Path::new("/project/R/sysdata.rda");
+        let byte_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::DecodedByteLimit);
+        assert!(byte_limit.contains("R/sysdata.rda"));
+        assert!(byte_limit.contains("max-serialized-bytes in ry.toml"));
+        let parser_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::ParserResourceLimit);
+        assert!(parser_limit.contains("serialized parser resource limit exceeded"));
+        assert!(!parser_limit.contains("Raise max-serialized-bytes"));
+    }
+
+    #[test]
+    fn unchanged_scope_does_not_repeat_and_repaired_scope_can_fail_again() {
+        let path = PathBuf::from("/project/R/sysdata.rda");
+        let failed = ry_workspace::WorkspaceContext {
+            degraded_scopes: vec![(
+                path.clone(),
+                ry_workspace::InventoryFailure::ParserResourceLimit,
+            )],
+            ..Default::default()
+        };
+        let mut folder = FolderAnalysisContext::default();
+        folder.workspace_contexts.insert(None, failed);
+        let mut state = State {
+            folder_contexts: vec![folder],
+            ..Default::default()
+        };
+        assert_eq!(state.newly_degraded_scopes().len(), 1);
+        assert!(state.newly_degraded_scopes().is_empty());
+
+        state.folder_contexts[0]
+            .workspace_contexts
+            .insert(None, ry_workspace::WorkspaceContext::default());
+        assert!(state.newly_degraded_scopes().is_empty());
+
+        state.folder_contexts[0].workspace_contexts.insert(
+            None,
+            ry_workspace::WorkspaceContext {
+                degraded_scopes: vec![(path, ry_workspace::InventoryFailure::ParserResourceLimit)],
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.newly_degraded_scopes().len(), 1);
     }
 }

@@ -52,6 +52,10 @@ const EXCLUDED: &[(&str, &str)] = &[
     // CLI-level heuristic emitted by `ry-cli` from parser-recovery signals,
     // not by the checker, so it cannot be probed through `Checker::check`.
     ("RY097", "emitted by the CLI, not the checker"),
+    (
+        "RY113",
+        "opt-in post-processing audit, not emitted by Checker::check",
+    ),
     // The plain `run` helper intentionally installs no authored records.
     // Opted-in source records exercise these codes end-to-end in
     // ry-cli/tests/typehint_e2e.rs, including both positive and quiet cases.
@@ -307,6 +311,12 @@ static PROBES: &[Probe] = &[
         note: "`TRUE`/`FALSE` call argument for an identically-named formal of an enclosing function (callee has the formal)",
         positive: "f <- function(x, na.rm = FALSE) median(x, na.rm = TRUE)\n",
         negative: "f <- function(x, na.rm = FALSE) median(x, na.rm = na.rm)\n",
+    },
+    Probe {
+        code: "RY112",
+        note: "unknown native ignore code is rejected at its comment",
+        positive: "x <- 1L # ry: ignore[RX040]\n",
+        negative: "x <- 1L # noqa: E501\n",
     },
 ];
 

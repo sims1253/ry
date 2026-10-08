@@ -41,6 +41,13 @@ jobs:
         run: |
           cargo build --locked --release -p ry-cli
           cargo build --locked --release --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
+      - name: Measure version-correct server replay
+        run: |
+          mkdir -p performance-results
+          RY_REPLAY_BINARY="$PWD/target/release/ry" \
+          RY_REPLAY_OUTPUT="$PWD/performance-results/server-replay.json" \
+          RY_REPLAY_SAMPLES=31 RY_REPLAY_STARTUPS=5 \
+            cargo test --locked --release -p ry-lsp --test server_replay -- --nocapture
       - name: Package VS Code extension without bundled server
         working-directory: editors/code
         run: |
@@ -54,7 +61,7 @@ jobs:
       - name: Collect measurements
         run: |
           mkdir -p performance-results
-          python3 scripts/performance/collect.py --activation performance-results/activation.json --output performance-results/results.json
+          python3 scripts/performance/collect.py --activation performance-results/activation.json --server-replay performance-results/server-replay.json --output performance-results/results.json
           {
             rustc -Vv
             bun --version

@@ -631,7 +631,7 @@ impl Checker {
                     // opt-in declaration identity uses the decoded spelling
                     // of an unescaped backtick identifier.
                     let binding = if !self.discarding
-                        && !self.declarations.records().is_empty()
+                        && self.declarations.has_contracts()
                         && matches!(target, Expr::Ident { .. })
                         && !name.contains('\\')
                     {
@@ -886,7 +886,7 @@ impl Checker {
         // identity for eager calls until an actual call performs the write;
         // keep the widened value type and all unannotated behavior intact.
         let declaration_identities =
-            if !self.discarding && !self.declarations.records().is_empty() && !writes.opaque {
+            if !self.discarding && self.declarations.has_contracts() && !writes.opaque {
                 writes
                     .names
                     .iter()
@@ -2763,7 +2763,7 @@ impl Checker {
             Expr::Ident { name, span } => {
                 let result = self.infer_identifier(name, span, scope);
                 let semantic_name = semantic_argument_name(name);
-                if !self.declarations.records().is_empty()
+                if self.declarations.has_contracts()
                     && !proven_parameter_read(scope, name)
                     && scope.lexical_definition(semantic_name).is_none()
                     && scope.function_alias(semantic_name).is_none()
@@ -3115,7 +3115,7 @@ impl Checker {
     }
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
-        let possible_default_writes = if self.discarding || self.declarations.records().is_empty() {
+        let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
             FxSet::default()
         } else {
             crate::collect::collect_default_writes(params).0
@@ -3151,7 +3151,7 @@ impl Checker {
 
         (self.is_aliasable_function(target)
             || (!self.discarding
-                && !self.declarations.records().is_empty()
+                && self.declarations.has_contracts()
                 && (scope.lexical_definition(target).is_some()
                     || self.fn_table.fns.contains_key(target))))
         .then(|| target.to_string())

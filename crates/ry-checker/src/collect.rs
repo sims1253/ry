@@ -18,8 +18,7 @@ pub(crate) const UNKNOWN_CAPTURE_BINDING: &str = "\0";
 
 fn capture_binding_name(target: &Expr) -> &str {
     match target {
-        Expr::Ident { name, .. } if name.contains('\\') => UNKNOWN_CAPTURE_BINDING,
-        Expr::Ident { name, .. } => semantic_argument_name(name),
+        Expr::Ident { name, .. } => capture_identifier_name(name),
         Expr::String(name, _) => name,
         _ => UNKNOWN_CAPTURE_BINDING,
     }
@@ -57,7 +56,7 @@ fn note_capture_write(
 /// closure does not execute its outward assignments. The bound also handles
 /// recursive helpers without making declaration collection source-sized per
 /// call chain. Exhaustion makes captured identity uncertain.
-const MAX_DEFAULT_HELPER_CALLS: usize = 64;
+pub(crate) const MAX_DEFAULT_HELPER_CALLS: usize = 64;
 
 fn called_names_in_expr(expr: &Expr) -> FxSet<String> {
     let mut called = FxSet::default();
@@ -292,7 +291,7 @@ pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> b
     }
 }
 
-fn closed_literal_value(expr: &Expr) -> bool {
+pub(crate) fn closed_literal_value(expr: &Expr) -> bool {
     matches!(
         expr,
         Expr::Logical(..)
@@ -485,7 +484,7 @@ fn scan_possible_helper_node(
                 note_assignment(lhs, rhs);
             } else {
                 calls.operator_symbols.insert(op_symbol(*op));
-                if !closed_literal_operand(lhs) || !closed_literal_operand(rhs) {
+                if !closed_literal_value(lhs) || !closed_literal_value(rhs) {
                     // S3/S4 operator dispatch can run a mutating method.
                     calls.uncertain = true;
                 }
@@ -496,7 +495,7 @@ fn scan_possible_helper_node(
                 UnaryOpKind::Neg => "-",
                 UnaryOpKind::Not => "!",
             });
-            if !closed_literal_operand(expr) {
+            if !closed_literal_value(expr) {
                 calls.uncertain = true;
             }
         }
@@ -550,18 +549,6 @@ fn scan_possible_helper_node(
         }
         _ => {}
     }
-}
-
-fn closed_literal_operand(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Logical(..)
-            | Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::String(..)
-            | Expr::Null(..)
-            | Expr::Na(..)
-    )
 }
 
 fn scan_possible_helper_calls(

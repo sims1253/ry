@@ -103,6 +103,8 @@ against the source AST and current source text before it installs records.
 A matching display name alone does not identify a function. Readers must
 reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
+Records without a selected adopted contract retain their provenance and
+findings without activating declaration effects on ordinary inference.
 If distinct native filenames collapse to one display path, CLI checking
 declines their source-record attachment and reports RY117 once for that
 ambiguous path. It does not attach the scoped file's claim to its neighbor.
@@ -146,6 +148,8 @@ For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
 absent. Local assignments inside an immediately invoked closure belong to
 that closure; they cannot certify a later read in its caller.
+Named helpers use their own local binding proofs and stable project bindings.
+Caller-local definitions and aliases do not prove a helper's free-name lookup.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and
@@ -170,8 +174,9 @@ refusal, with uncertainty retained.
 Conversion inspects at most 64 inferred type nodes and checks the final
 constraint against the canonical grammar before reporting success. A narrowed
 union whose outer length is not carried by its members becomes a proposal
-with that loss stated explicitly. Very wide schemas are not scanned in full;
-their field identity remains unverified in the proposal.
+with that loss stated explicitly. Conversion does not inspect schema fields.
+It omits schema constraints and field identity and states that loss in the
+proposal.
 
 The annotation serializer validates same-file source and residual spans.
 `dump-facts --annotations` exports real adopted records in schema 3 with

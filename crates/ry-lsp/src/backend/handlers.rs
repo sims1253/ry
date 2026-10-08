@@ -296,7 +296,7 @@ impl LanguageServer for Backend {
         // cleared: the open documents, plus closed disk files whose last
         // publication came from the background index. The closed files
         // are not open, so the partition below misses them, and the
-        // `published_paths` retain further down forgets them — without
+        // `published_uris` retain further down forgets them — without
         // an explicit empty publication here they would keep their
         // squiggles in the client while being unreachable by
         // `clear_dropped_diagnostics` (#489).
@@ -315,19 +315,13 @@ impl LanguageServer for Backend {
             let mut docs_to_clear: std::collections::HashSet<Url> =
                 clear.into_iter().flat_map(|p| source_uris(p)).collect();
             // Mirror the `did_close` pattern: publish empty now, then
-            // leave the tracked set via the retain below.
-            for path in state
-                .published_paths
+            // leave the tracked map via the retain below.
+            for (_, uris) in state
+                .published_uris
                 .iter()
-                .filter(|p| under_removed_root(p.as_str()))
+                .filter(|(path, _)| under_removed_root(path.as_str()))
             {
-                docs_to_clear.extend(
-                    state
-                        .published_uris
-                        .get(path)
-                        .cloned()
-                        .unwrap_or_else(|| source_uris(path).into_iter().collect()),
-                );
+                docs_to_clear.extend(uris.iter().cloned());
             }
             (
                 docs_to_clear.into_iter().collect(),
@@ -347,8 +341,7 @@ impl LanguageServer for Backend {
             // Removed roots must not be reindexed through the root fallback.
             state.reconciliation.cancel_where(under_removed_root);
             // The explicit empty publications below clear these URIs, so
-            // they leave the tracked set too (#489).
-            state.published_paths.retain(|p| !under_removed_root(p));
+            // they leave the tracked map too (#489).
             state.published_uris.retain(|p, _| !under_removed_root(p));
 
             // Rebuild folder contexts from the surviving + added roots
@@ -485,8 +478,8 @@ impl LanguageServer for Backend {
                     self.state
                         .lock()
                         .await
-                        .published_paths
-                        .iter()
+                        .published_uris
+                        .keys()
                         .cloned()
                         .collect()
                 };
@@ -587,11 +580,9 @@ impl LanguageServer for Backend {
                 uris.remove(&uri);
                 if uris.is_empty() {
                     state.published_uris.remove(&path);
-                    state.published_paths.remove(&path);
                 }
             }
             if survivor.is_none() {
-                state.published_paths.remove(&path);
                 state.published_uris.remove(&path);
             }
             // Invalidate any in-flight debounced publish for this file.

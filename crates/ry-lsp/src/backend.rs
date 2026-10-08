@@ -104,15 +104,12 @@ pub(super) struct State {
     /// drains the whole set, so a burst of scheduled URIs publishes
     /// together instead of all but the last aborting as stale (#489).
     pending_diag_paths: HashSet<String>,
-    /// Paths whose last publication carried diagnostics. Each publish
-    /// pass reconciles this set — a URI that stopped receiving
-    /// publications (its folder was disabled, discovery now excludes
+    /// Actual URIs whose last publication carried diagnostics, keyed by
+    /// display path. Each publish pass reconciles this map — a URI
+    /// that stopped receiving publications (its folder was disabled, discovery now excludes
     /// it, or a rescan dropped the closed file from the index) is
     /// cleared with an empty publication so stale squiggles cannot
     /// linger in the editor (#489).
-    published_paths: HashSet<String>,
-    /// Actual URI used for the last non-empty publication at a display
-    /// path. It can differ from a URI rebuilt from lossy path text.
     published_uris: HashMap<String, HashSet<Url>>,
     /// Index generation stamp, bumped each time `spawn_background_index`
     /// starts so results from a prior folder set are discarded. The
@@ -1418,7 +1415,6 @@ impl Backend {
                 for path in &requested_ineligible {
                     uris_to_clear.extend(publication_uris(path));
                     uris_to_clear.extend(state.published_uris.remove(path).unwrap_or_default());
-                    state.published_paths.remove(path);
                 }
                 uris_to_clear
             };
@@ -1961,10 +1957,7 @@ impl Backend {
                 let previous = state.published_uris.remove(&path).unwrap_or_default();
                 previous_uris.extend(previous.difference(&destinations).cloned());
                 if !non_empty.is_empty() {
-                    state.published_paths.insert(path.clone());
                     state.published_uris.insert(path, non_empty);
-                } else {
-                    state.published_paths.remove(&path);
                 }
             }
             previous_uris
@@ -1988,8 +1981,8 @@ impl Backend {
         let dropped: Vec<Url> = {
             let mut state = self.state.lock().await;
             let dropped: Vec<String> = state
-                .published_paths
-                .iter()
+                .published_uris
+                .keys()
                 .filter(|path| {
                     !state.any_open_source_eligible(path.as_str())
                         || (!state.docs.contains_key(path.as_str())
@@ -1997,17 +1990,9 @@ impl Backend {
                 })
                 .cloned()
                 .collect();
-            for path in &dropped {
-                state.published_paths.remove(path);
-            }
             dropped
                 .iter()
-                .flat_map(|path| {
-                    state
-                        .published_uris
-                        .remove(path)
-                        .unwrap_or_else(|| HashSet::from([path_to_uri(path)]))
-                })
+                .flat_map(|path| state.published_uris.remove(path).unwrap_or_default())
                 .collect()
         };
         for uri in dropped {

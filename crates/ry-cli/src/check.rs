@@ -540,8 +540,21 @@ impl WatchState {
     /// Borrow the current inputs as one pass's context. Rebuilt per
     /// pass because a reload may have replaced everything it borrows.
     fn check_context(&self, min_confidence: ry_checker::Confidence) -> CheckContext<'_> {
+        let protected = self
+            .overrides
+            .error
+            .iter()
+            .chain(&self.overrides.warn)
+            .chain(&self.overrides.ignore)
+            .cloned()
+            .collect::<Vec<_>>();
         CheckContext {
             filter: &self.filter,
+            scoped_policy: ry_checker::ScopedRulePolicy::new(
+                &self.cfg,
+                self.config_root.as_deref(),
+                &protected,
+            ),
             format: self.format,
             resolution_config: &self.cfg,
             user_stubs: Arc::clone(&self.user_stubs),
@@ -1187,6 +1200,7 @@ impl CheckResult {
 /// of `run_check_once` because watch iterations change it.
 pub(crate) struct CheckContext<'a> {
     filter: &'a ry_checker::SeverityFilter,
+    scoped_policy: ry_checker::ScopedRulePolicy,
     format: ry_checker::format::OutputFormat,
     resolution_config: &'a config::Config,
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -1222,7 +1236,6 @@ fn run_check_once(
 ) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
-    let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
@@ -1231,33 +1244,31 @@ fn run_check_once(
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let parsed = pipeline::parse_files_with_overlay(paths, overlay, report_check_parse_failure)
-        .expect("check's parse-failure policy never aborts");
-    parse_errors += paths.len() - parsed.len();
-    let parsed: Vec<Arc<ry_core::SourceFile>> = parsed
-        .into_iter()
-        .filter(|parsed_file| {
-            file_count += 1;
-            srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
-            comments.insert(parsed_file.path.clone(), parsed_file.comments.clone());
-            if is_probably_not_r_source(parsed_file) {
-                not_r_diagnostics.push(ry_checker::Diagnostic::new(
+    let parsed_with_paths =
+        pipeline::parse_files_with_overlay(paths, overlay, report_check_parse_failure)
+            .expect("check's parse-failure policy never aborts");
+    parse_errors += paths.len() - parsed_with_paths.len();
+    let mut parsed: Vec<Arc<ry_core::SourceFile>> = Vec::with_capacity(parsed_with_paths.len());
+    let mut native_paths = Vec::with_capacity(parsed_with_paths.len());
+    for (native_path, parsed_file) in parsed_with_paths {
+        file_count += 1;
+        srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
+        if is_probably_not_r_source(&parsed_file) {
+            not_r_diagnostics.push((
+                native_path,
+                ry_checker::Diagnostic::new(
                     ry_checker::Severity::Info,
                     ry_core::Span::new(0, 1, 0, 0),
                     &parsed_file.path,
                     "RY097",
                     "File does not appear to be R source; diagnostics suppressed.",
-                ));
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
-    let parsed_by_path: HashMap<_, _> = parsed
-        .iter()
-        .map(|file| (file.path.as_str(), file.as_ref()))
-        .collect();
+                ),
+            ));
+        } else {
+            native_paths.push(native_path);
+            parsed.push(parsed_file);
+        }
+    }
 
     // Same per-package grouping as `ry dump-types`; check's fallback
     // resolution root for non-package files is the config root (check has
@@ -1271,7 +1282,15 @@ fn run_check_once(
 
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
-        per_file_diagnostics.extend(check_project(group.check_input));
+        let checked = check_project(group.check_input);
+        debug_assert_eq!(group.source_indices.len(), checked.len());
+        per_file_diagnostics.extend(
+            group
+                .source_indices
+                .into_iter()
+                .zip(checked)
+                .map(|(index, (path, diagnostics))| (index, path, diagnostics)),
+        );
         for (path, reason) in group.degraded_scopes {
             degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
@@ -1286,28 +1305,34 @@ fn run_check_once(
     // min-confidence threshold. The lexical (comment-based) suppression
     // filter keeps a `#` inside a string literal from being mistaken
     // for a directive.
-    let post = ry_checker::PostProcess {
-        filter: ctx.filter,
-        baseline: ctx.baseline,
-        min_confidence: ctx.min_confidence,
-        repo_root: ctx.repo_root,
-    };
-    for (path, diags) in &mut per_file_diagnostics {
-        let comments: &[ry_core::ast::Comment] = comments.get(path).map_or(&[], Vec::as_slice);
-        let src = srcs.get(path).map_or("", String::as_str);
+    for (index, path, diags) in &mut per_file_diagnostics {
+        let file = &parsed[*index];
+        let filter = ctx
+            .scoped_policy
+            .filter_for(&native_paths[*index], ctx.filter);
+        let post = ry_checker::PostProcess {
+            filter: &filter,
+            baseline: ctx.baseline,
+            min_confidence: ctx.min_confidence,
+            repo_root: ctx.repo_root,
+        };
         *diags = post.pre_demotion(
             std::mem::take(diags),
-            comments,
-            src,
+            &file.comments,
+            &file.source,
             path.as_str(),
-            parsed_by_path.get(path.as_str()).copied(),
+            Some(file.as_ref()),
         );
     }
     // The synthesized not-R diagnostics have no suppression comments to
     // honor, so they enter the pipeline at the severity filter.
-    ry_checker::apply_filter_to_diagnostics(&mut not_r_diagnostics, ctx.filter);
-    all_diagnostics.append(&mut not_r_diagnostics);
-    for (_path, diags) in per_file_diagnostics {
+    for (native_path, diagnostic) in not_r_diagnostics {
+        let filter = ctx.scoped_policy.filter_for(&native_path, ctx.filter);
+        let mut diagnostics = vec![diagnostic];
+        ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
+        all_diagnostics.extend(diagnostics);
+    }
+    for (_index, _path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }
 
@@ -1315,6 +1340,12 @@ fn run_check_once(
     // severity filter and the baseline, its documented position in the
     // shared order. The stage lives in the shared pipeline, so the LSP
     // demotes non-source paths exactly like the CLI (#492).
+    let post = ry_checker::PostProcess {
+        filter: ctx.filter,
+        baseline: ctx.baseline,
+        min_confidence: ctx.min_confidence,
+        repo_root: ctx.repo_root,
+    };
     post.demote_non_source_paths(&mut all_diagnostics);
     post.post_demotion(&mut all_diagnostics);
 
@@ -1613,6 +1644,7 @@ mod tests {
             None,
             &CheckContext {
                 filter: &filter,
+                scoped_policy: ry_checker::ScopedRulePolicy::default(),
                 format: ry_checker::format::OutputFormat::Json,
                 resolution_config: &resolution_config,
                 user_stubs: Arc::new(std::collections::BTreeMap::new()),
@@ -1678,6 +1710,7 @@ mod tests {
         let resolution_config = config::Config::default();
         let ctx = CheckContext {
             filter: &filter,
+            scoped_policy: ry_checker::ScopedRulePolicy::default(),
             format: ry_checker::format::OutputFormat::Json,
             resolution_config: &resolution_config,
             user_stubs: Arc::new(std::collections::BTreeMap::new()),

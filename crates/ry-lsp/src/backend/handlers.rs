@@ -105,6 +105,8 @@ impl LanguageServer for Backend {
 
         let (root_filter, root_min_confidence, root_excludes) =
             compute_folder_filter(&file_config, &folder_settings);
+        let root_scoped_policy =
+            scoped_rule_policy(&file_config, root_config_dir.as_deref(), &folder_settings);
 
         let mut state = self.state.lock().await;
         state.initial_index_pending = true;
@@ -114,6 +116,7 @@ impl LanguageServer for Backend {
         state.root_config_dir = root_config_dir;
         state.root_baseline = root_baseline;
         state.root_filter = root_filter;
+        state.root_scoped_policy = root_scoped_policy;
         state.root_min_confidence = root_min_confidence;
         state.root_excludes = root_excludes;
         state.folder_settings = folder_settings;

@@ -56,6 +56,35 @@ fn assert_context_changed(before: &Value, after: &Value, name: &str) {
     );
 }
 
+#[test]
+fn structured_configuration_exports_ordered_path_rule_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(temp.path().join("R/main.R"), "x <- 1L\n").unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let before = dump(temp.path(), &["R/main.R"]);
+    assert_eq!(
+        before["configuration"]["effective"]["rule_overrides"][0]["paths"],
+        serde_json::json!(["R/**"])
+    );
+    assert_eq!(
+        before["configuration"]["effective"]["rule_overrides"][0]["error"],
+        serde_json::json!(["RY040"])
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nignore = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let after = dump(temp.path(), &["R/main.R"]);
+    assert_context_changed(&before, &after, "R/main.R");
+}
+
 fn stub(mode: &str) -> String {
     serde_json::json!({
         "schema_version": "2", "package": "factspkg", "version": "test",

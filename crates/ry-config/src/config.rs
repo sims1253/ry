@@ -85,6 +85,114 @@ pub struct EnvironmentConfig {
     pub root: Option<PathBuf>,
 }
 
+/// One ordered per-file rule policy. Later matching tables replace earlier
+/// choices for codes they mention; unmatched rules retain the global policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RuleOverrideConfig {
+    pub paths: Vec<String>,
+    pub error: Vec<String>,
+    pub warn: Vec<String>,
+    pub ignore: Vec<String>,
+}
+
+/// A strict, reusable config-root-relative glob scope. Both the config root
+/// and source use physical filesystem identity: existing paths resolve their
+/// symlinks, while an unsaved path retains its unresolved normal suffix after
+/// the deepest existing ancestor. A `..` after a missing ancestor is
+/// ambiguous and does not match on Unix. Windows non-verbatim paths use
+/// native normalization, which removes parent components before lookup.
+#[derive(Debug, Clone)]
+pub struct ScopedPaths {
+    root: Option<PathBuf>,
+    patterns: Vec<glob::Pattern>,
+}
+
+impl ScopedPaths {
+    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
+        let patterns = patterns
+            .iter()
+            .map(String::as_str)
+            .map(compile_scoped_pattern)
+            .collect::<Result<Vec<_>, _>>()?;
+        let root = scoped_path_identity(root);
+        Ok(Self { root, patterns })
+    }
+
+    pub fn matches(&self, source: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let Some(source) = scoped_path_identity(source) else {
+            return false;
+        };
+        let Ok(relative) = source.strip_prefix(root) else {
+            return false;
+        };
+        // A lossy replacement character can collide with a real Unicode
+        // filename, so an unrepresentable native path cannot match a scope.
+        let Some(relative) = relative.to_str() else {
+            return false;
+        };
+        let relative = relative.replace(std::path::MAIN_SEPARATOR, "/");
+        self.patterns.iter().any(|pattern| {
+            pattern.matches_with(
+                &relative,
+                glob::MatchOptions {
+                    require_literal_separator: true,
+                    ..Default::default()
+                },
+            )
+        })
+    }
+}
+
+fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
+    let pattern = if cfg!(windows) {
+        pattern.replace('\\', "/")
+    } else {
+        pattern.to_owned()
+    };
+    glob::Pattern::new(&pattern)
+}
+
+/// Resolve the longest existing prefix with filesystem semantics. This
+/// preserves the meaning of `symlink/..` and of final symlink files while
+/// still matching unsaved files and virtual descendants under an existing
+/// folder. Parent components that remain after platform normalization cannot
+/// be resolved after a missing prefix and are declined.
+fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut suffix = Vec::new();
+    for ancestor in absolute.ancestors() {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in suffix.into_iter().rev() {
+                    match component {
+                        std::path::Component::Normal(name) => resolved.push(name),
+                        std::path::Component::CurDir => {}
+                        _ => return None,
+                    }
+                }
+                return Some(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // A dangling symlink exists but its physical target does not.
+                // It is not an ordinary unsaved component to append.
+                if ancestor
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+                {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+        suffix.push(ancestor.components().next_back()?);
+    }
+    None
+}
+
 /// Parsed contents of a `ry.toml` project config file.
 ///
 /// The schema is intentionally minimal and conservative; we can add
@@ -112,6 +220,9 @@ pub struct Config {
     pub warn: Vec<String>,
     /// Rules to suppress. Default: empty.
     pub ignore: Vec<String>,
+    /// Ordered config-root-relative rule severity overrides.
+    #[serde(alias = "rule-overrides")]
+    pub rule_overrides: Vec<RuleOverrideConfig>,
     /// Replace the default-enabled rule set. `Some([])` disables every rule;
     /// `None` retains the default-enabled set.
     pub select: Option<Vec<String>>,
@@ -164,6 +275,7 @@ impl Default for Config {
             error: Vec::new(),
             warn: Vec::new(),
             ignore: Vec::new(),
+            rule_overrides: Vec::new(),
             select: None,
             extend_select: Vec::new(),
             exclude: Vec::new(),
@@ -231,6 +343,24 @@ impl Config {
                 glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
                     ConfigError::InvalidEnvironmentPattern {
                         path: path.to_path_buf(),
+                        pattern: pattern.clone(),
+                        source,
+                    }
+                })?;
+            }
+        }
+        for (index, override_config) in cfg.rule_overrides.iter().enumerate() {
+            if override_config.paths.is_empty() {
+                return Err(ConfigError::EmptyRuleOverridePaths {
+                    path: path.to_path_buf(),
+                    index: index + 1,
+                });
+            }
+            for pattern in &override_config.paths {
+                compile_scoped_pattern(pattern).map_err(|source| {
+                    ConfigError::InvalidRuleOverridePattern {
+                        path: path.to_path_buf(),
+                        index: index + 1,
                         pattern: pattern.clone(),
                         source,
                     }
@@ -393,6 +523,7 @@ impl Config {
             error: errors,
             warn: warns,
             ignore: ignores,
+            rule_overrides: self.rule_overrides,
             select: self.select,
             extend_select: self.extend_select,
             exclude: self.exclude,
@@ -496,6 +627,17 @@ pub enum ConfigError {
     #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
     InvalidEnvironmentPattern {
         path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
+    #[error("config file {path} has rule-overrides table #{index} without paths")]
+    EmptyRuleOverridePaths { path: PathBuf, index: usize },
+    #[error(
+        "config file {path} has invalid rule-overrides table #{index} path pattern `{pattern}`: {source}"
+    )]
+    InvalidRuleOverridePattern {
+        path: PathBuf,
+        index: usize,
         pattern: String,
         source: glob::PatternError,
     },
@@ -616,6 +758,149 @@ paths = ["inst/shiny/**"]
         assert_eq!(cfg.environments[0].name, "shiny-server");
         assert_eq!(cfg.environments[0].bindings, ["input", "output", "session"]);
         assert_eq!(cfg.environments[0].paths, ["inst/shiny/**"]);
+    }
+
+    #[test]
+    fn rule_override_paths_are_config_root_relative_and_component_bounded() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let config_path = root.join("ry.toml");
+        fs::write(
+            &config_path,
+            "[[rule-overrides]]\npaths = [\"R/*.R\"]\nerror = [\"RY040\"]\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&config_path).unwrap();
+        assert_eq!(config.rule_overrides.len(), 1);
+        fs::create_dir_all(root.join("R/sub")).unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
+        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        assert!(paths.matches(&root.join("R/a.R")));
+        assert!(paths.matches(&root.join("R/sub/../a.R")));
+        assert!(paths.matches(&root.join("R/sub/../unsaved.R")));
+        let dotted_root =
+            ScopedPaths::new(&root.join("scripts/.."), &config.rule_overrides[0].paths).unwrap();
+        assert!(dotted_root.matches(&root.join("R/a.R")));
+        assert!(!paths.matches(&root.join("R/deep/a.R")));
+        assert!(!paths.matches(&root.join("else/R/a.R")));
+        assert!(!paths.matches(&root.join("R/../else/a.R")));
+        assert!(!paths.matches(&root.join("../outside/R/a.R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_resolve_symlink_parent_before_dotdot() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir_all(root.join("else/deep")).unwrap();
+        fs::create_dir_all(root.join("else/R")).unwrap();
+        fs::create_dir_all(root.join("R")).unwrap();
+        fs::write(root.join("else/R/a.R"), "x <- 1L\n").unwrap();
+        fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
+        symlink(root.join("else/deep"), root.join("link")).unwrap();
+
+        let r_only = ScopedPaths::new(root, &["R/**".into()]).unwrap();
+        let elsewhere = ScopedPaths::new(root, &["else/R/**".into()]).unwrap();
+        let through_link = root.join("link/../R/a.R");
+        assert!(!r_only.matches(&through_link));
+        assert!(elsewhere.matches(&through_link));
+        assert!(!r_only.matches(&root.join("link/../R/unsaved.R")));
+        assert!(elsewhere.matches(&root.join("link/../R/unsaved.R")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_use_one_physical_identity_for_symlinked_root_and_file() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(real.join("R/sub")).unwrap();
+        fs::create_dir_all(real.join("else")).unwrap();
+        fs::write(real.join("else/target.R"), "x <- 1L\n").unwrap();
+        symlink(&real, &alias).unwrap();
+
+        let in_r = ScopedPaths::new(&alias, &["R/**".into()]).unwrap();
+        let elsewhere = ScopedPaths::new(&alias, &["else/**".into()]).unwrap();
+        // A config reached through its alias still owns the real R tree.
+        assert!(in_r.matches(&alias.join("R/unsaved.R")));
+        assert!(in_r.matches(&alias.join("R/sub/../unsaved.R")));
+        assert!(in_r.matches(&real.join("R/unsaved.R")));
+
+        symlink(real.join("else/target.R"), real.join("R/a.R")).unwrap();
+        for spelling in [alias.join("R/a.R"), alias.join("R/sub/../a.R")] {
+            assert!(!in_r.matches(&spelling));
+            assert!(elsewhere.matches(&spelling));
+        }
+
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("target.R"), "x <- 1L\n").unwrap();
+        symlink(outside.path().join("target.R"), real.join("R/external.R")).unwrap();
+        assert!(!in_r.matches(&alias.join("R/external.R")));
+        assert!(!elsewhere.matches(&alias.join("R/external.R")));
+        symlink(outside.path().join("missing.R"), real.join("R/dangling.R")).unwrap();
+        assert!(!in_r.matches(&alias.join("R/dangling.R")));
+        assert!(!in_r.matches(&alias.join("R/a.R/child.R")));
+    }
+
+    // APFS requires valid UTF-8 filenames, so this raw-byte fixture cannot
+    // be created on macOS.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn scoped_paths_do_not_replace_non_utf8_filename_bytes() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+        let unicode = temp.path().join("bad\u{fffd}.R");
+        fs::write(&raw, "x <- 1L\n").unwrap();
+        fs::write(&unicode, "x <- 1L\n").unwrap();
+        let paths = ScopedPaths::new(temp.path(), &["bad\u{fffd}.R".into()]).unwrap();
+        assert!(!paths.matches(&raw));
+        assert!(paths.matches(&unicode));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_paths_keep_unix_backslash_as_a_literal_filename_byte() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        fs::create_dir(root.join("back")).unwrap();
+        let backslash = root.join("back\\slash.R");
+        let slash = root.join("back/slash.R");
+        fs::write(&backslash, "x <- 1L\n").unwrap();
+        fs::write(&slash, "x <- 1L\n").unwrap();
+        let config_path = root.join("ry.toml");
+        fs::write(
+            &config_path,
+            "[[rule-overrides]]\npaths = ['back\\slash.R']\nerror = ['RY040']\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&config_path).unwrap();
+        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        assert!(paths.matches(&backslash));
+        assert!(!paths.matches(&slash));
+    }
+
+    #[test]
+    fn invalid_rule_override_scope_is_a_config_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ry.toml");
+        fs::write(&path, "[[rule-overrides]]\nerror = [\"RY040\"]\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::EmptyRuleOverridePaths { index: 1, .. })
+        ));
+        fs::write(&path, "[[rule-overrides]]\npaths = [\"[\"]\n").unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidRuleOverridePattern { index: 1, .. })
+        ));
     }
 
     #[test]

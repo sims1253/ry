@@ -763,6 +763,13 @@ pub(crate) fn helper_fresh_target_formal(
             }
             Expr::Call { func, args, .. } if matches!(ident_name(func), Some("c" | "base::c")) => {
                 let mut needs_base_c = ident_name(func) == Some("c");
+                if needs_base_c
+                    && params
+                        .iter()
+                        .any(|param| caller_binding_identity(&param.name).as_deref() == Some("c"))
+                {
+                    return None;
+                }
                 for arg in args {
                     needs_base_c |= pure_value(&arg.value, params)?;
                 }
@@ -788,7 +795,6 @@ pub(crate) fn helper_fresh_target_formal(
         .iter()
         .any(|param| caller_binding_identity(&param.name).as_deref() == Some(&formal))
         || (variadic_callable_source(&formal) && params.iter().any(|param| param.name == "...")))
-        || params.iter().any(|param| param.name == "c")
     {
         return None;
     }

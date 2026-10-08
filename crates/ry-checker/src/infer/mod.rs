@@ -603,10 +603,7 @@ impl Checker {
                     // Its target is in an enclosing frame, never this
                     // function's same-named local binding.
                     if ops_chooser::operator_rebound(self, "<<-", scope) {
-                        scope.dynamic_bindings_unknown = true;
-                        for binding in scope.scalar_asserted_bindings.clone() {
-                            scope.clear_scalar_asserted(&binding);
-                        }
+                        scope.invalidate_scalar_assertions();
                     }
                     self.infer(rhs, scope);
                     return;
@@ -813,20 +810,7 @@ impl Checker {
                 self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                if let Some(frame) = self.loop_frames.last_mut() {
-                    frame.risky_caller_binding_targets = carried_risk.targets.clone();
-                    frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
-                    frame.bounded_caller_binding_sources = carried_risk.bounded_sources;
-                }
-                if carried_risk.unknown {
-                    inner.dynamic_bindings_unknown = true;
-                    for binding in inner.scalar_asserted_bindings.clone() {
-                        inner.clear_scalar_asserted(&binding);
-                    }
-                }
-                for target in carried_risk.targets {
-                    inner.mark_uncertain_caller_binding_alias(&target);
-                }
+                self.apply_loop_carried_binding_risk(&mut inner, carried_risk);
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
@@ -849,20 +833,7 @@ impl Checker {
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                if let Some(frame) = self.loop_frames.last_mut() {
-                    frame.risky_caller_binding_targets = carried_risk.targets.clone();
-                    frame.immediate_caller_binding_targets = carried_risk.immediate_targets;
-                    frame.bounded_caller_binding_sources = carried_risk.bounded_sources;
-                }
-                if carried_risk.unknown {
-                    inner.dynamic_bindings_unknown = true;
-                    for binding in inner.scalar_asserted_bindings.clone() {
-                        inner.clear_scalar_asserted(&binding);
-                    }
-                }
-                for target in carried_risk.targets {
-                    inner.mark_uncertain_caller_binding_alias(&target);
-                }
+                self.apply_loop_carried_binding_risk(&mut inner, carried_risk);
                 for s in body {
                     self.walk_stmt(s, &mut inner, returns.as_deref_mut());
                 }
@@ -3012,10 +2983,7 @@ impl Checker {
                         // replace a same-named binding in this function's
                         // frame, including a callable selected in a loop.
                         if ops_chooser::operator_rebound(self, "<<-", scope) {
-                            scope.dynamic_bindings_unknown = true;
-                            for binding in scope.scalar_asserted_bindings.clone() {
-                                scope.clear_scalar_asserted(&binding);
-                            }
+                            scope.invalidate_scalar_assertions();
                         }
                         return self.infer(rhs, scope);
                     }

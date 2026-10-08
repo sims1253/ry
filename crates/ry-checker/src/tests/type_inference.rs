@@ -3472,6 +3472,26 @@ fn scalar_cleanup_callable_paths_match_r_witnesses() {
             ),
             true,
         ),
+        (
+            "backtick_c_formal",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_backtick_c_formal.R"),
+            true,
+        ),
+        (
+            "plain_c_formal",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_plain_c_formal.R"),
+            true,
+        ),
+        (
+            "backtick_c_unused",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_backtick_c_unused.R"),
+            false,
+        ),
+        (
+            "plain_c_unused",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_plain_c_unused.R"),
+            false,
+        ),
     ];
     let failures: Vec<_> = cases
         .into_iter()

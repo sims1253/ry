@@ -758,8 +758,17 @@ impl Scope {
     }
 
     pub(crate) fn mark_scalar_asserted(&mut self, name: &str) {
-        self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
-        self.scalar_asserted_bindings.insert(name.to_string());
+        if !self.scalar_asserted_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
+            self.scalar_asserted_bindings.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn invalidate_scalar_assertions(&mut self) {
+        self.dynamic_bindings_unknown = true;
+        for binding in self.scalar_asserted_bindings.clone() {
+            self.clear_scalar_asserted(&binding);
+        }
     }
 
     pub(crate) fn clear_scalar_asserted(&mut self, name: &str) {

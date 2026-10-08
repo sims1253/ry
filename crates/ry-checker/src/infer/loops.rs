@@ -34,6 +34,24 @@ pub(super) struct LoopCallerBindingRisk {
 /// walk, then use the same caller-binding source resolution as computed
 /// call heads. This is an effect fact, not a general loop CFG or return type.
 impl Checker {
+    pub(super) fn apply_loop_carried_binding_risk(
+        &mut self,
+        inner: &mut Scope,
+        risk: LoopCallerBindingRisk,
+    ) {
+        if let Some(frame) = self.loop_frames.last_mut() {
+            frame.risky_caller_binding_targets = risk.targets.clone();
+            frame.immediate_caller_binding_targets = risk.immediate_targets;
+            frame.bounded_caller_binding_sources = risk.bounded_sources;
+        }
+        if risk.unknown {
+            inner.invalidate_scalar_assertions();
+        }
+        for target in risk.targets {
+            inner.mark_uncertain_caller_binding_alias(&target);
+        }
+    }
+
     pub(super) fn loop_selected_immediate_assign(&self, name: &str, scope: &Scope) -> bool {
         let Some(index) = scope.loop_frame else {
             return false;

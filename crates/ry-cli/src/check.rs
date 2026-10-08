@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -14,7 +15,9 @@ use miette::Result;
 use ry_config as config;
 
 use crate::CheckArgs;
-use crate::pipeline::{self, check_project, load_user_stubs, sort_and_deduplicate_paths};
+use crate::pipeline::{
+    self, SourceOverlay, check_project, load_user_stubs, sort_and_deduplicate_paths,
+};
 
 /// Drive `ry check`: merge the CLI flags with `ry.toml`, discover the
 /// R files, check them once, and keep re-checking in watch mode.
@@ -26,6 +29,7 @@ pub(crate) fn run_check(
 ) -> Result<ExitCode> {
     let CheckArgs {
         paths,
+        stdin_filename,
         error,
         warn,
         ignore,
@@ -42,12 +46,43 @@ pub(crate) fn run_check(
         min_confidence,
     } = args;
 
+    let stdin_count = paths.iter().filter(|path| path.as_os_str() == "-").count();
+    let stdin_path = match (stdin_count, stdin_filename) {
+        (0, None) => None,
+        (0, Some(_)) => return Err(miette::miette!("--stdin-filename requires a `-` input")),
+        (1, None) => return Err(miette::miette!("`-` requires --stdin-filename PATH")),
+        (1, Some(path)) => Some(path),
+        _ => return Err(miette::miette!("stdin (`-`) may be supplied only once")),
+    };
+    if watch && stdin_path.is_some() {
+        return Err(miette::miette!("--watch cannot be used with stdin (`-`)"));
+    }
+    if stdin_path.as_ref().is_some_and(|path| path.is_dir()) {
+        return Err(miette::miette!(
+            "--stdin-filename must name a source file, not a directory"
+        ));
+    }
+
     // Config discovery is anchored at the first input path (itself for a
     // directory, its parent for a file — `Config::discover` applies that
     // rule) or at the working directory when no paths were given, the
     // same anchor `ry dump-types` uses. Owned so watch mode can
     // re-discover after `paths` moves into `search_roots` below.
-    let search_start: PathBuf = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
+    let search_start: PathBuf = paths
+        .first()
+        .map(|path| {
+            if path.as_os_str() == "-" {
+                stdin_path
+                    .as_ref()
+                    .and_then(|path| path.parent())
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .to_path_buf()
+            } else {
+                path.clone()
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let (config_root, base_cfg) = match pipeline::discover_config(&search_start) {
         Ok(found) => found,
@@ -115,11 +150,37 @@ pub(crate) fn run_check(
     // Collect the initial file set via the shared bounded discovery
     // module (issue #48). CLI and LSP use the same eligibility,
     // extension, hidden-directory, symlink, exclude, and test-fixture rules.
-    let search_roots: Vec<PathBuf> = if paths.is_empty() {
-        vec![PathBuf::from(".")]
+    let overlay_identity = stdin_path.as_deref().map(source_identity).transpose()?;
+    let mut overlay_alias = None;
+    let mut search_roots = Vec::new();
+    if paths.is_empty() {
+        search_roots.push(PathBuf::from("."));
     } else {
-        paths
-    };
+        for path in paths {
+            if path.as_os_str() == "-" {
+                continue;
+            }
+            let aliases_overlay = match overlay_identity.as_ref() {
+                Some(_) if path.as_path() == stdin_path.as_deref().expect("stdin has a path") => {
+                    true
+                }
+                Some(identity) if path.exists() || source_parent(&path).is_dir() => {
+                    source_identity(&path)? == *identity
+                }
+                // A separate requested root with no directory parent is
+                // diagnosed by the missing-root check below, not silently
+                // treated as an alias of the stdin source.
+                _ => false,
+            };
+            if aliases_overlay {
+                // An explicit alias of the overlay is already supplied by
+                // stdin, including when this file has never been saved.
+                overlay_alias.get_or_insert(path);
+            } else {
+                search_roots.push(path);
+            }
+        }
+    }
 
     // Every requested input root must exist (#485): a missing path used
     // to fall into the directory branch of discovery, whose failed
@@ -147,9 +208,70 @@ pub(crate) fn run_check(
         &cfg,
         true,
         explain_files,
-    );
+        overlay_identity.as_deref(),
+    )?;
     report_read_errors(&scan.read_errors);
     let mut all_paths = scan.paths;
+
+    // The operand `-` is an explicit source, just like an explicitly named
+    // file: it is checked even when a directory walk would exclude it. A
+    // directory root may also discover a stale copy of the same path, so
+    // replace every spelling of that disk entry before project analysis.
+    let overlay = if let Some(path) = stdin_path {
+        let limit = cfg.index.max_file_bytes;
+        let mut bytes = Vec::new();
+        let read_result = std::io::stdin()
+            .lock()
+            .take(limit.saturating_add(1))
+            .read_to_end(&mut bytes);
+        if let Err(error) = read_result {
+            eprintln!("ry: stdin for {}: {error}", path.display());
+            print!(
+                "{}",
+                render_diagnostics(&[], format, &HashMap::new(), color)
+            );
+            return Ok(discovery_exit_code(&cfg));
+        }
+        if bytes.len() as u64 > limit {
+            eprintln!(
+                "ry: stdin for {} exceeds index.max-file-bytes ({limit} bytes)",
+                path.display()
+            );
+            print!(
+                "{}",
+                render_diagnostics(&[], format, &HashMap::new(), color)
+            );
+            return Ok(discovery_exit_code(&cfg));
+        }
+        let identity = overlay_identity.expect("stdin path has an identity");
+        let mut checked_path = None;
+        let mut distinct = Vec::with_capacity(all_paths.len() + 1);
+        for discovered in all_paths {
+            if source_identity(&discovered)? == identity {
+                checked_path.get_or_insert(discovered);
+            } else {
+                distinct.push(discovered);
+            }
+        }
+        let checked_path = match checked_path {
+            Some(path) => path,
+            None => {
+                overlay_path_for_roots(&path, &identity, &search_roots, overlay_alias.as_deref())?
+            }
+        };
+        all_paths = distinct;
+        all_paths.push(checked_path.clone());
+        sort_and_deduplicate_paths(&mut all_paths);
+        if explain_files {
+            eprintln!("ry: include {} (stdin overlay)", checked_path.display());
+        }
+        Some(SourceOverlay {
+            path: checked_path,
+            bytes,
+        })
+    } else {
+        None
+    };
 
     // A readable-but-empty discovery result enters the watch loop with
     // zero files instead of exiting: the loop's rescan already detects
@@ -197,7 +319,11 @@ pub(crate) fn run_check(
     );
 
     let min_confidence = min_confidence.into();
-    let mut result = run_check_once(&all_paths, &state.check_context(min_confidence))?;
+    let mut result = run_check_once(
+        &all_paths,
+        overlay.as_ref(),
+        &state.check_context(min_confidence),
+    )?;
     // Directories the initial scan could not read fail the run like
     // parse errors do, even when every discovered file checks clean
     // (#485).
@@ -244,7 +370,8 @@ pub(crate) fn run_check(
             state.config(),
             false,
             false,
-        );
+            None,
+        )?;
 
         // Poll the package-metadata dependencies AFTER the rescan: the
         // dependency set is derived from the discovered paths, so it must
@@ -292,7 +419,7 @@ pub(crate) fn run_check(
             // Using ANSI escape sequences rather than `clear` command
             // for portability (no external process spawn).
             eprint!("\x1b[2J\x1b[H");
-            let result = run_check_once(&all_paths, &state.check_context(min_confidence))?;
+            let result = run_check_once(&all_paths, None, &state.check_context(min_confidence))?;
             result.print_summary(state.format(), statistics);
         }
     }
@@ -1088,7 +1215,11 @@ fn report_check_parse_failure(
 /// Core check logic: parse all files, run the project checker, apply
 /// the severity filter, print diagnostics, and return a summary. Used
 /// by both one-shot `ry check` and `ry check --watch` iterations.
-fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> {
+fn run_check_once(
+    paths: &[PathBuf],
+    overlay: Option<&SourceOverlay>,
+    ctx: &CheckContext,
+) -> Result<CheckResult> {
     let mut all_diagnostics: Vec<ry_checker::Diagnostic> = Vec::new();
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut comments: HashMap<String, Vec<ry_core::ast::Comment>> = HashMap::new();
@@ -1100,7 +1231,7 @@ fn run_check_once(paths: &[PathBuf], ctx: &CheckContext) -> Result<CheckResult> 
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let parsed = pipeline::parse_files(paths, report_check_parse_failure)
+    let parsed = pipeline::parse_files_with_overlay(paths, overlay, report_check_parse_failure)
         .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - parsed.len();
     let parsed: Vec<Arc<ry_core::SourceFile>> = parsed
@@ -1329,7 +1460,8 @@ fn rescan(
     cfg: &config::Config,
     report: bool,
     explain: bool,
-) -> Scan {
+    overlay_identity: Option<&std::path::Path>,
+) -> Result<Scan> {
     let mut scan = Scan {
         paths: Vec::new(),
         read_errors: Vec::new(),
@@ -1339,7 +1471,13 @@ fn rescan(
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
         if explain {
             for file in &result.files {
-                eprintln!("ry: include {}", file.display());
+                let is_overlay = match overlay_identity {
+                    Some(identity) => source_identity(file)? == identity,
+                    None => false,
+                };
+                if !is_overlay {
+                    eprintln!("ry: include {}", file.display());
+                }
             }
             for (path, reason) in &result.skipped.entries {
                 eprintln!("ry: skip {} ({reason})", path.display());
@@ -1360,7 +1498,7 @@ fn rescan(
     sort_and_deduplicate_paths(&mut scan.paths);
     scan.read_errors.sort();
     scan.read_errors.dedup();
-    scan
+    Ok(scan)
 }
 
 /// Exit code for a run that could not walk a requested input: failure,
@@ -1371,6 +1509,60 @@ fn discovery_exit_code(cfg: &config::Config) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Resolve the filesystem identity of an existing file or the would-be
+/// identity of an unsaved final filename. Canonicalizing the parent first
+/// gives `link/../new.R` the OS meaning of `link/..` when `link` is a
+/// symlink; lexical `..` folding would alias an unrelated file. The parent
+/// must exist, just as it must before an ordinary file can be saved.
+fn source_parent(path: &std::path::Path) -> &std::path::Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."))
+}
+
+fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
+    use miette::IntoDiagnostic;
+
+    match path.canonicalize() {
+        Ok(identity) => Ok(identity),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let name = path
+                .file_name()
+                .ok_or_else(|| miette::miette!("--stdin-filename must end in a source filename"))?;
+            let parent = source_parent(path).canonicalize().map_err(|error| {
+                miette::miette!(
+                    "cannot resolve parent of --stdin-filename {}: {error}",
+                    path.display()
+                )
+            })?;
+            Ok(parent.join(name))
+        }
+        Err(error) => Err(error).into_diagnostic(),
+    }
+}
+
+/// Reuse the disk invocation's path spelling when a directory or direct
+/// operand also names the overlay. That keeps package-group keys and
+/// diagnostic paths consistent with neighboring discovered sources.
+fn overlay_path_for_roots(
+    logical: &std::path::Path,
+    identity: &std::path::Path,
+    roots: &[PathBuf],
+    alias: Option<&std::path::Path>,
+) -> Result<PathBuf> {
+    for root in roots {
+        if root.is_dir()
+            && let Ok(relative) = identity.strip_prefix(source_identity(root)?)
+        {
+            return Ok(root.join(relative));
+        }
+    }
+    if let Some(alias) = alias {
+        return Ok(alias.to_path_buf());
+    }
+    Ok(logical.to_path_buf())
 }
 
 /// Report directories the discovery walk could not read, in the same
@@ -1418,6 +1610,7 @@ mod tests {
         let resolution_config = config::Config::default();
         run_check_once(
             paths,
+            None,
             &CheckContext {
                 filter: &filter,
                 format: ry_checker::format::OutputFormat::Json,
@@ -1499,7 +1692,7 @@ mod tests {
         // the unsuppressed twin and the run is quiet. Subtracting first
         // would consume the count on the suppressed occurrence and
         // leave the twin reported.
-        let result = run_check_once(std::slice::from_ref(&file), &ctx).unwrap();
+        let result = run_check_once(std::slice::from_ref(&file), None, &ctx).unwrap();
         assert_eq!(result.diagnostics.len(), 0);
 
         // The same shape without the suppression comment shows the twin
@@ -1510,7 +1703,7 @@ mod tests {
             "if (c(TRUE, FALSE)) print(1)\nif (c(TRUE, FALSE)) print(1)\n",
         )
         .unwrap();
-        let result = run_check_once(std::slice::from_ref(&file), &ctx).unwrap();
+        let result = run_check_once(std::slice::from_ref(&file), None, &ctx).unwrap();
         assert_eq!(result.diagnostics.len(), 1);
 
         // Threshold plus baseline, as an outcome pin: with a high
@@ -1525,7 +1718,7 @@ mod tests {
             min_confidence: ry_checker::Confidence::High,
             ..ctx
         };
-        let result = run_check_once(&[file], &ctx).unwrap();
+        let result = run_check_once(&[file], None, &ctx).unwrap();
         assert_eq!(result.diagnostics.len(), 0);
     }
 

@@ -44,13 +44,23 @@ pub struct ResolutionEnvironment<'a> {
 /// directories, at the parent for files) holding a `DESCRIPTION` file:
 /// the enclosing R package's root, `None` outside any package. Shared by
 /// every frontend so the CLI and the language server agree on the library
-/// boundary.
+/// boundary. Resolve existing roots so equivalent path spellings share one
+/// package context; retain the ancestor if filesystem resolution fails.
 pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
     let start = if path.is_dir() { path } else { path.parent()? };
     start
         .ancestors()
         .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
-        .map(Path::to_path_buf)
+        .map(|ancestor| {
+            let ancestor = if ancestor.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                ancestor
+            };
+            ancestor
+                .canonicalize()
+                .unwrap_or_else(|_| ancestor.to_path_buf())
+        })
 }
 
 /// Group path strings by enclosing package root, keeping each group's
@@ -208,7 +218,7 @@ impl DecodedRSource {
 /// keeps it and only the flag records it. Both the valid-UTF-8 and the
 /// Latin-1 transcode path preserve the BOM's three bytes verbatim in
 /// `text`, so the flag is exactly `bytes.starts_with(BOM)`.
-fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
+pub fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
     let leading_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     if let Ok(text) = std::str::from_utf8(bytes) {
         return DecodedRSource {
@@ -345,7 +355,7 @@ pub fn resolve_workspace_context<'a>(
         )
         .collect();
 
-    for file in files {
+    for file in &files {
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
         let mut file_bindings = HashSet::new();
         let mut file_s3_methods = HashSet::new();
@@ -382,12 +392,12 @@ pub fn resolve_workspace_context<'a>(
                     .unwrap_or_else(|| Path::new(""))
                     .to_path_buf(),
             )
-            .or_insert_with(|| r_package_root(Path::new(&file.path)))
+            .or_insert_with(|| enclosing_package_root(Path::new(&file.path)))
             .clone()
         {
             let source_bindings = source_binding_cache
                 .entry(root.clone())
-                .or_insert_with(|| source_package_namespace_bindings(&root))
+                .or_insert_with(|| source_package_namespace_bindings(&root, &files))
                 .clone();
             file_bindings.extend(source_bindings.bindings.iter().cloned());
             if let Some(package) = source_package_name(&root) {
@@ -443,7 +453,8 @@ pub fn resolve_workspace_context<'a>(
             // `parent.env(asNamespace(pkg))` resolve from the clone).
             // `importFrom()` bindings above remain available wherever the
             // package context makes them meaningful.
-            let relative = Path::new(&file.path).strip_prefix(&root).ok();
+            let package_path = package_relative_path(Path::new(&file.path), &root);
+            let relative = package_path.as_deref();
             if relative.is_some_and(is_package_r_file)
                 || relative.is_some_and(is_testthat_runner_file)
             {
@@ -462,7 +473,7 @@ pub fn resolve_workspace_context<'a>(
             if source_package_lazy_data(&root) {
                 let datasets = dataset_cache
                     .entry(root.clone())
-                    .or_insert_with(|| source_package_datasets(&root, max_serialized_bytes))
+                    .or_insert_with(|| source_package_datasets(&root, &files, max_serialized_bytes))
                     .clone();
                 file_bindings.extend(datasets.bindings.iter().cloned());
                 for (path, reason) in &datasets.degraded {
@@ -519,7 +530,7 @@ pub fn resolve_workspace_context<'a>(
                 file_attached.insert("testthat".to_string());
             }
             if relative.is_some_and(|path| path.starts_with("tests/testthat")) {
-                let helpers = testthat_helper_context(&root);
+                let helpers = testthat_helper_context(&root, &files);
                 file_bindings.extend(helpers.bindings);
                 file_attached.extend(helpers.attached);
             }
@@ -601,6 +612,17 @@ fn is_test_or_script_file(path: &Path) -> bool {
     )
 }
 
+/// Resolve the parent rather than the final source: live buffers can name
+/// an unsaved file, and a final symlink keeps its logical package location.
+fn package_relative_path(path: &Path, root: &Path) -> Option<PathBuf> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let path = parent.canonicalize().ok()?.join(path.file_name()?);
+    path.strip_prefix(root).ok().map(Path::to_path_buf)
+}
+
 /// What a scan of a package's own `R/` sources establishes.
 #[derive(Default, Clone)]
 struct SourceBindings {
@@ -614,10 +636,10 @@ struct SourceBindings {
     native_symbols: HashSet<String>,
 }
 
-fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
+fn source_package_namespace_bindings(root: &Path, files: &[&SourceFile]) -> SourceBindings {
     // R creates this binding while loading every package namespace. It is
     // present even when the DESCRIPTION omits a Package field.
-    let mut found = source_package_dynamic_bindings(root);
+    let mut found = source_package_dynamic_bindings(root, files);
     found.bindings.insert(".packageName".to_string());
     found
 }
@@ -628,23 +650,59 @@ fn source_package_namespace_bindings(root: &Path) -> SourceBindings {
 /// a helper defined in a different file. We never evaluate source, and only
 /// retain literal names, so an unknown dynamic name cannot mask an unresolved
 /// variable.
-fn source_package_dynamic_bindings(root: &Path) -> SourceBindings {
+fn source_package_dynamic_bindings(root: &Path, files: &[&SourceFile]) -> SourceBindings {
     let mut found = SourceBindings::default();
     let mut paths = Vec::new();
     collect_r_source_files(&root.join("R"), &mut paths);
+    visit_r_sources(
+        paths,
+        files.iter().copied().filter(|file| {
+            let path = Path::new(&file.path);
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_r_source_name)
+                && package_relative_path(path, root)
+                    .as_deref()
+                    .is_some_and(is_package_r_file)
+        }),
+        |file| collect_dynamic_bindings_stmts(&file.stmts, &mut found),
+    );
+    found
+}
+
+/// Supplied ASTs include live buffers and unsaved sources. Collect those
+/// first, then read only other on-disk sources, including when a supplied
+/// path is a symlink alias of a discovered source.
+fn visit_r_sources<'a>(
+    paths: Vec<PathBuf>,
+    files: impl Iterator<Item = &'a SourceFile>,
+    mut visit: impl FnMut(&SourceFile),
+) {
+    let mut supplied = HashSet::new();
+    for file in files {
+        visit(file);
+        if let Ok(identity) = Path::new(&file.path).canonicalize() {
+            supplied.insert(identity);
+        }
+    }
     let Ok(mut parser) = ry_core::RParser::new() else {
-        return found;
+        return;
     };
     for path in paths {
+        let Ok(identity) = path.canonicalize() else {
+            continue;
+        };
+        if supplied.contains(&identity) {
+            continue;
+        }
         let Ok(source) = read_r_source(&path) else {
             continue;
         };
         let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
             continue;
         };
-        collect_dynamic_bindings_stmts(&file.stmts, &mut found);
+        visit(&file);
     }
-    found
 }
 
 fn collect_r_source_files(directory: &Path, paths: &mut Vec<PathBuf>) {
@@ -770,45 +828,49 @@ struct TestthatHelperContext {
     attached: HashSet<String>,
 }
 
-fn testthat_helper_context(root: &Path) -> TestthatHelperContext {
+fn testthat_helper_context(root: &Path, files: &[&SourceFile]) -> TestthatHelperContext {
     let directory = root.join("tests/testthat");
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return TestthatHelperContext::default();
+    let paths = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| is_testthat_helper(path))
+            .collect(),
+        Err(_) => Vec::new(),
     };
     let mut context = TestthatHelperContext::default();
-    let Ok(mut parser) = ry_core::RParser::new() else {
-        return context;
-    };
-    for path in entries.flatten().map(|entry| entry.path()) {
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !(name.starts_with("helper") || name.starts_with("setup"))
-            || !matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("R") | Some("r")
-            )
-        {
-            continue;
-        }
-        let Ok(source) = read_r_source(&path) else {
-            continue;
-        };
-        let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
-            continue;
-        };
-        context.attached.extend(packages::attached_packages(&file));
-        context
-            .bindings
-            .extend(file.stmts.iter().filter_map(|statement| match statement {
-                Stmt::Assign {
-                    target: Expr::Ident { name, .. },
-                    ..
-                } => Some(name.clone()),
-                _ => None,
-            }));
-    }
+    visit_r_sources(
+        paths,
+        files.iter().copied().filter(|file| {
+            let path = Path::new(&file.path);
+            is_testthat_helper(path)
+                && package_relative_path(path, root)
+                    .is_some_and(|relative| relative.parent() == Some(Path::new("tests/testthat")))
+        }),
+        |file| {
+            context.attached.extend(packages::attached_packages(file));
+            context
+                .bindings
+                .extend(file.stmts.iter().filter_map(|statement| match statement {
+                    Stmt::Assign {
+                        target: Expr::Ident { name, .. },
+                        ..
+                    } => Some(name.clone()),
+                    _ => None,
+                }));
+        },
+    );
     context
+}
+
+fn is_testthat_helper(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("helper") || name.starts_with("setup"))
+        && matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("R") | Some("r")
+        )
 }
 
 fn source_package_name(root: &Path) -> Option<String> {
@@ -838,13 +900,18 @@ fn source_package_lazy_data(root: &Path) -> bool {
 /// binding (`data/example.rda` -> `example`). This inventory is static,
 /// bounded to one directory, and cached indirectly by the per-run package
 /// scope construction.
-fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInventory {
-    let Ok(entries) = std::fs::read_dir(root.join("data")) else {
-        return DataInventory::default();
+fn source_package_datasets(
+    root: &Path,
+    files: &[&SourceFile],
+    max_serialized_bytes: u64,
+) -> DataInventory {
+    let paths = match std::fs::read_dir(root.join("data")) {
+        Ok(entries) => entries.flatten().map(|entry| entry.path()).collect(),
+        Err(_) => Vec::new(),
     };
     let mut out = DataInventory::default();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    let mut sources = Vec::new();
+    for path in paths {
         let Some(extension) = path
             .extension()
             .and_then(|extension| extension.to_str())
@@ -875,28 +942,31 @@ fn source_package_datasets(root: &Path, max_serialized_bytes: u64) -> DataInvent
                     out.bindings.insert(stem.to_string());
                 }
             }
-            "r" => {
-                let Ok(source) = read_r_source(&path) else {
-                    continue;
-                };
-                let Ok(mut parser) = ry_core::RParser::new() else {
-                    continue;
-                };
-                let Ok(file) = parser.parse(&path.to_string_lossy(), &source) else {
-                    continue;
-                };
-                out.bindings
-                    .extend(file.stmts.iter().filter_map(|statement| match statement {
-                        Stmt::Assign {
-                            target: Expr::Ident { name, .. },
-                            ..
-                        } => Some(name.clone()),
-                        _ => None,
-                    }));
-            }
+            "r" => sources.push(path),
             _ => {}
         }
     }
+    visit_r_sources(
+        sources,
+        files.iter().copied().filter(|file| {
+            let path = Path::new(&file.path);
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_r_source_name)
+                && package_relative_path(path, root)
+                    .is_some_and(|relative| relative.parent() == Some(Path::new("data")))
+        }),
+        |file| {
+            out.bindings
+                .extend(file.stmts.iter().filter_map(|statement| match statement {
+                    Stmt::Assign {
+                        target: Expr::Ident { name, .. },
+                        ..
+                    } => Some(name.clone()),
+                    _ => None,
+                }));
+        },
+    );
     out
 }
 
@@ -1015,15 +1085,6 @@ fn read_namespace(path: &Path) -> NamespaceMetadata {
         return NamespaceMetadata::default();
     };
     packages::namespace_metadata(&file)
-}
-
-/// Find the nearest enclosing R package for a checked source path.
-fn r_package_root(path: &Path) -> Option<PathBuf> {
-    let start = if path.is_dir() { path } else { path.parent()? };
-    start
-        .ancestors()
-        .find(|dir| dir.join("DESCRIPTION").is_file())
-        .map(Path::to_path_buf)
 }
 
 /// Candidate R library roots that can be inspected without starting R.
@@ -1585,7 +1646,7 @@ mod package_grouping_tests {
             format!("Package: {name}\nVersion: 0.0.1\n"),
         )
         .unwrap();
-        root
+        root.canonicalize().unwrap()
     }
 
     /// Files group by nearest `DESCRIPTION` ancestor: each package's

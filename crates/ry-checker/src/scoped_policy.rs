@@ -3,7 +3,7 @@
 //! filter passed to the common post-processing pipeline.
 
 use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use ry_config::{Config, ScopedPaths};
 
@@ -19,7 +19,6 @@ struct Table {
 pub struct ScopedRulePolicy {
     tables: Vec<Table>,
     protected: Vec<String>,
-    global_ignores: Vec<&'static str>,
 }
 
 impl ScopedRulePolicy {
@@ -59,14 +58,11 @@ impl ScopedRulePolicy {
         Self {
             tables,
             protected: protected.to_vec(),
-            global_ignores: config
-                .ignore
-                .iter()
-                .flat_map(|token| SeverityFilter::expand(token))
-                .collect(),
         }
     }
 
+    /// Apply scopes to the frontend's effective base filter. Ignores in that
+    /// filter stay disabled; editor settings may have replaced config lists.
     pub fn filter_for<'a>(
         &self,
         source: &Path,
@@ -83,27 +79,14 @@ impl ScopedRulePolicy {
                     filter
                 });
                 for &(code, severity) in &table.choices {
-                    if !self.global_ignores.contains(&code) {
-                        filter.set_scoped(code, severity);
-                    }
+                    filter.set_scoped(code, severity);
                 }
             }
         }
-        let Some(mut filter) = scoped else {
+        let Some(filter) = scoped else {
             return Cow::Borrowed(base);
         };
-        for code in &self.global_ignores {
-            filter.add_ignore(code);
-        }
         Cow::Owned(filter)
-    }
-
-    pub fn filter_for_str<'a>(
-        &self,
-        source: &str,
-        base: &'a SeverityFilter,
-    ) -> Cow<'a, SeverityFilter> {
-        self.filter_for(&PathBuf::from(source), base)
     }
 }
 

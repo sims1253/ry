@@ -150,8 +150,10 @@ such filenames.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global
-policy. A global `ignore` remains disabled even when a path table enables the
-rule. Explicit CLI `--error`/`--warn`/`--ignore` and editor `lint.error`/
+policy. A rule ignored by the effective global policy remains disabled even
+when a path table enables it. Editor `lint.ignore` replaces the config's
+`ignore` list, including when set to `[]`; scopes preserve that replacement.
+Explicit CLI `--error`/`--warn`/`--ignore` and editor `lint.error`/
 `lint.warn`/`lint.ignore` lists take priority over path tables for the rules
 they name, while retaining the existing global bucket precedence (`ignore` >
 `error` > `warn`). A path table can enable a rule disabled by `select`, unless

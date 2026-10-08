@@ -1367,7 +1367,7 @@ impl Backend {
                 let source_text = checked_file.map(|file| file.source.as_str());
                 let comments: &[ry_core::ast::Comment] =
                     checked_file.map_or(&[], |file| file.comments.as_slice());
-                let file_filter = policy.filter_for_str(&diagnostic_path, &filter);
+                let file_filter = policy.filter_for(Path::new(&diagnostic_path), &filter);
                 let post = ry_checker::PostProcess {
                     filter: &file_filter,
                     baseline: baseline.as_ref(),

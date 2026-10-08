@@ -1326,22 +1326,12 @@ fn run_check_once(
     }
     // The synthesized not-R diagnostics have no suppression comments to
     // honor, so they enter the pipeline at the severity filter.
-    not_r_diagnostics.retain_mut(|(native_path, diagnostic)| {
-        let filter = ctx.scoped_policy.filter_for(native_path, ctx.filter);
-        let mut one = vec![diagnostic.clone()];
-        ry_checker::apply_filter_to_diagnostics(&mut one, &filter);
-        if let Some(filtered) = one.pop() {
-            *diagnostic = filtered;
-            true
-        } else {
-            false
-        }
-    });
-    all_diagnostics.extend(
-        not_r_diagnostics
-            .into_iter()
-            .map(|(_, diagnostic)| diagnostic),
-    );
+    for (native_path, diagnostic) in not_r_diagnostics {
+        let filter = ctx.scoped_policy.filter_for(&native_path, ctx.filter);
+        let mut diagnostics = vec![diagnostic];
+        ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
+        all_diagnostics.extend(diagnostics);
+    }
     for (_index, _path, diags) in per_file_diagnostics {
         all_diagnostics.extend(diags);
     }

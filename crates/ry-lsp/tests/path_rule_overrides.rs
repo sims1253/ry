@@ -143,6 +143,66 @@ fn explicit_editor_rule_choice_wins_over_matching_path_table() {
     })
 }
 
+#[test]
+fn editor_ignore_list_replacement_survives_unrelated_path_table() {
+    run(async {
+        for (settings, expected) in [
+            (json!({"lint": {"ignore": [], "error": ["RY040"]}}), Some(1)),
+            (json!({"lint": {"error": ["RY040"]}}), None),
+        ] {
+            let fixture = FixtureProject::empty().unwrap();
+            fixture
+                .write_file("ry.toml", "ignore = [\"RY040\"]\n")
+                .unwrap();
+            let source = "x <- \"a\" + 1L\n";
+            let mut uris = Vec::new();
+            for path in ["R/inside.R", "scripts/outside.R"] {
+                fixture.write_file(path, source).unwrap();
+                uris.push(file_uri(&fixture.path(path)).unwrap());
+            }
+            let (mut session, server) = spawn_session(
+                &[fixture.root()],
+                json!({}),
+                Some(json!({"settings": [settings], "globalSettings": {}})),
+            )
+            .await;
+            for uri in &uris {
+                let mark = session.publication_mark();
+                session.open(uri, 1, source).await.unwrap();
+                let publish = session
+                    .published_diagnostics_after(uri, mark)
+                    .await
+                    .unwrap();
+                assert_eq!(severity(&publish, "RY040"), expected, "{publish}");
+            }
+            harness::sync_barrier(&mut session, &uris[0]).await;
+
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "ignore = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nwarn = [\"RY010\"]\n",
+                )
+                .unwrap();
+            let mark = session.publication_mark();
+            session
+                .notify(
+                    "workspace/didChangeWatchedFiles",
+                    json!({"changes": [{"uri": file_uri(&fixture.path("ry.toml")).unwrap(), "type": 2}]}),
+                )
+                .await
+                .unwrap();
+            for uri in &uris {
+                let publish = session
+                    .published_diagnostics_after(uri, mark)
+                    .await
+                    .unwrap();
+                assert_eq!(severity(&publish, "RY040"), expected, "{publish}");
+            }
+            join_session(session, server).await;
+        }
+    })
+}
+
 #[cfg(unix)]
 #[test]
 fn symlinked_workspace_config_root_keeps_scoped_editor_severity() {

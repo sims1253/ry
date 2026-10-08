@@ -50,10 +50,11 @@ impl Checker {
             ..
         } = func
             && let Some(object_name) = ident_name(base)
+            && let Some(object) = scope.box_objects.get(object_name).cloned()
             && let Some(member) = members
                 .first()
                 .and_then(|argument| argument.name.as_deref())
-            && let Some(object) = scope.box_objects.get(object_name).cloned()
+                .and_then(box_imports::binding_name_token)
         {
             match object {
                 box_imports::BoxObject::Package(package) => {
@@ -61,7 +62,7 @@ impl Checker {
                     if !self
                         .box_package_inventory(&package)
                         .exports
-                        .contains_key(member)
+                        .contains_key(&member)
                     {
                         self.infer_args_for_diagnostics(args, scope);
                         return RType::unknown();
@@ -80,10 +81,10 @@ impl Checker {
                 }
                 box_imports::BoxObject::Module(inventory) => {
                     let member_type = self.infer(func, scope);
-                    if let Some(function) = inventory.functions.get(member) {
-                        return self.infer_box_function_call(member, function, args, scope, span);
+                    if let Some(function) = inventory.functions.get(&member) {
+                        return self.infer_box_function_call(&member, function, args, scope, span);
                     }
-                    if let Some(target) = inventory.package_functions.get(member) {
+                    if let Some(target) = inventory.package_functions.get(&member) {
                         let qualified = Expr::Ident {
                             name: target.clone(),
                             span,

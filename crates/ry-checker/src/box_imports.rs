@@ -66,7 +66,7 @@ struct Import {
     selection_unknown: bool,
 }
 
-fn binding_name_token(raw: &str) -> Option<String> {
+pub(crate) fn binding_name_token(raw: &str) -> Option<String> {
     if matches!(raw.as_bytes().first(), Some(b'`' | b'\'' | b'"')) {
         ry_core::parser::decode_r_quoted_name(raw)
     } else {

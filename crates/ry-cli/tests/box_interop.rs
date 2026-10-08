@@ -71,6 +71,41 @@ fn search_path_module_imports_reach_cli_as_opaque_bindings() {
 }
 
 #[test]
+fn quoted_members_reach_cli_with_types_and_proven_absence() {
+    let files = FixtureProject::empty().unwrap();
+    files
+        .write_file(
+            "mod.r",
+            "foo <- function() 1L\ntext <- function() 'wrong'\nbox::export(foo, text)\n",
+        )
+        .unwrap();
+    for (source, expected) in [
+        ("value <- m$`foo`\nm$\"\\u0066oo\"()\n", &[][..]),
+        ("m$`text`() + 1L\n", &["RY040"][..]),
+        ("m$\"missing\"\n", &["RY118"][..]),
+    ] {
+        files
+            .write_file("run.R", format!("box::use(m = ./mod)\n{source}"))
+            .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .args(["check", "--output-format", "json", "--exit-zero"])
+            .arg(files.path("run.R"))
+            .env("RY_NO_INSTALLED_LIBRARIES", "1")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(codes(&diagnostics), expected, "{source}: {diagnostics:#?}");
+        if expected == ["RY118"] {
+            assert_eq!(
+                diagnostics[0]["message"],
+                "box module does not export `missing`"
+            );
+        }
+    }
+}
+
+#[test]
 fn installed_namespace_gates_package_stub_import_without_loading_r() {
     let files = FixtureProject::empty().unwrap();
     files

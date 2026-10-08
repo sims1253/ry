@@ -44,6 +44,90 @@ fn box_modules_bind_objects_selected_names_and_exports() {
 }
 
 #[test]
+fn quoted_module_members_preserve_values_calls_and_proven_absence() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("mod.r"),
+        "foo <- function() 1L\ntext <- function() 'wrong'\nlabel <- 'label'\nbox::export(foo, text, label)\n",
+    )
+    .unwrap();
+    for member in ["foo", "`foo`", "\"foo\"", "`\\x66oo`", "\"\\u0066oo\""] {
+        let source = format!("box::use(m = ./mod)\nvalue <- m${member}\nm${member}() + 1L\n");
+        assert!(codes_for(root.path(), &source).is_empty(), "{source}");
+    }
+    for member in ["text", "`text`", "\"text\"", "`te\\x78t`"] {
+        let source = format!("box::use(m = ./mod)\nm${member}() + 1L\n");
+        let diagnostics = codes_for(root.path(), &source);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|(code, _, _)| code.as_str())
+                .collect::<Vec<_>>(),
+            ["RY040"],
+            "{source}: {diagnostics:#?}"
+        );
+    }
+    for member in ["label", "`label`", "\"la\\u0062el\""] {
+        let source = format!("box::use(m = ./mod)\nm${member} + 1L\n");
+        let diagnostics = codes_for(root.path(), &source);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|(code, _, _)| code.as_str())
+                .collect::<Vec<_>>(),
+            ["RY040"],
+            "{source}: {diagnostics:#?}"
+        );
+    }
+    for member in ["foo", "`foo`", "\"foo\""] {
+        let diagnostics = codes_for(
+            root.path(),
+            &format!("box::use(m = ./mod)\nm${member}(wrong = 1L)\n"),
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|(code, _, _)| code.as_str())
+                .collect::<Vec<_>>(),
+            ["RY090"],
+            "{member}: {diagnostics:#?}"
+        );
+    }
+    for member in ["missing", "`miss\\x69ng`", "\"missing\""] {
+        for call in ["", "()"] {
+            let source = format!("box::use(m = ./mod)\nm${member}{call}\n");
+            let diagnostics = codes_for(root.path(), &source);
+            assert_eq!(
+                diagnostics
+                    .iter()
+                    .map(|(code, _, message)| (code.as_str(), message.as_str()))
+                    .collect::<Vec<_>>(),
+                [("RY118", "box module does not export `missing`")],
+                "{source}: {diagnostics:#?}"
+            );
+        }
+    }
+    fs::write(
+        root.path().join("renamed.r"),
+        "#' @export\nbox::use(./mod[\"my-fn\" = foo, \"my-text\" = text])\n",
+    )
+    .unwrap();
+    for member in ["`my-fn`", "\"my-\\u0066n\""] {
+        let source = format!("box::use(m = ./renamed)\nvalue <- m${member}\nm${member}() + 1L\n");
+        assert!(codes_for(root.path(), &source).is_empty(), "{source}");
+    }
+    let diagnostics = codes_for(root.path(), "box::use(m = ./renamed)\nm$`my-text`() + 1L\n");
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|(code, _, _)| code.as_str())
+            .collect::<Vec<_>>(),
+        ["RY040"],
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
 fn box_package_selective_import_uses_package_stub_without_attaching_package() {
     let source = "box::use(dplyr[filter])\nd <- data.frame(mpg = c(21, 22.8))\nfilter(d, mpg > 21)\nselect(d, mpg)\n";
     let mut checker = Checker::new("box-package.R");
@@ -387,7 +471,7 @@ fn spaced_namespace_import_remains_visible_to_project_overlay() {
 
 #[test]
 fn package_aliases_and_objects_use_exact_package_signatures() {
-    let source = "box::use(dplyr[other = filter])\nbox::use(dplyr)\nd <- data.frame(mpg = c(21, 22.8))\nother(d, mpg > 21)\ndplyr$filter(d, mpg > 21)\n";
+    let source = "box::use(dplyr[other = filter])\nbox::use(dplyr)\nd <- data.frame(mpg = c(21, 22.8))\nother(d, mpg > 21)\ndplyr$filter(d, mpg > 21)\ndplyr$`filter`(d, mpg > 21)\ndplyr$\"filt\\u0065r\"(d, mpg > 21)\n";
     let mut checker = Checker::new("box-package-alias.R");
     let diagnostics = checker.check(&parse(Path::new("box-package-alias.R"), source));
     assert!(

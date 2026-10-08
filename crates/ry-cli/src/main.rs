@@ -1,6 +1,10 @@
 mod check;
 mod dump;
 mod facts;
+// The serializer is exercised with populated records now; the public flag is
+// enabled when an adapter can provide real source records in #594.
+#[allow(dead_code)]
+mod facts_declarations;
 mod facts_types;
 mod pipeline;
 
@@ -179,7 +183,8 @@ enum Cmd {
     /// Dump inferred scope types as JSON.
     ///
     /// Write lexical scope bindings and their inferred types to stdout.
-    /// Type strings use the same format as the language server's inline hints.
+    /// Type strings keep the historical compact format. Editor hints use a
+    /// separate bounded summary and expanded details.
     DumpTypes {
         /// R files or directories to dump. A directory expands to every
         /// discoverable R file under it, using `ry check`'s discovery

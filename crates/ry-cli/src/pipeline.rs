@@ -293,7 +293,7 @@ pub(crate) struct ResolvedGroup {
     /// Indices into the parsed input, in the same order as check output.
     pub source_indices: Vec<usize>,
     pub check_input: CheckInput,
-    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+    pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
 }
 
 /// Resolve parsed files into per-package checker inputs, shared by

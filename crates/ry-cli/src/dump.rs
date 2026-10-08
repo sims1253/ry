@@ -66,10 +66,9 @@ pub(crate) fn parse_dump_position(value: &str) -> Result<(usize, usize), String>
     Ok((line, col))
 }
 
-/// The type string for one binding. Same `Display` rendering the LSP
-/// inlay hints show, except the fully-uninformed type is reported as
-/// "unknown" so consumers never mistake `opaque<len=?>:?` for a real
-/// inference result.
+/// The historical `Display` type string for one binding. The fully-uninformed
+/// type is reported as "unknown" so consumers never mistake `opaque<len=?>:?`
+/// for a real inference result. Editor hints have their own bounded renderer.
 fn dump_type_string(t: &ry_core::RType) -> String {
     if *t == ry_core::RType::unknown() {
         "unknown".to_string()
@@ -522,8 +521,9 @@ pub(crate) fn run_dump_types(
         // the same precision loss without polluting the JSON on stdout.
         for (path, reason) in &group.degraded_scopes {
             eprintln!(
-                "ry: {}: degraded scope ({reason}); serialized data file(s) over the byte cap fell back to file stems",
-                path.display()
+                "ry: {}: degraded scope ({}); serialized inventory unavailable",
+                path.display(),
+                reason.description()
             );
         }
         for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {

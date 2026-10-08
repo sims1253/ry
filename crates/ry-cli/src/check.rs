@@ -164,10 +164,10 @@ pub(crate) fn run_check(
                 Some(_) if path.as_path() == stdin_path.as_deref().expect("stdin has a path") => {
                     true
                 }
-                Some(identity) if path.exists() || source_parent(&path).exists() => {
+                Some(identity) if path.exists() || source_parent(&path).is_dir() => {
                     source_identity(&path)? == *identity
                 }
-                // A separate requested root with no existing parent is
+                // A separate requested root with no directory parent is
                 // diagnosed by the missing-root check below, not silently
                 // treated as an alias of the stdin source.
                 _ => false,
@@ -244,19 +244,21 @@ pub(crate) fn run_check(
             return Ok(discovery_exit_code(&cfg));
         }
         let identity = overlay_identity.expect("stdin path has an identity");
-        let checked_path = overlay_path_for_roots(
-            &path,
-            &identity,
-            &all_paths,
-            &search_roots,
-            overlay_alias.as_deref(),
-        )?;
+        let mut checked_path = None;
         let mut distinct = Vec::with_capacity(all_paths.len() + 1);
         for discovered in all_paths {
-            if source_identity(&discovered)? != identity {
+            if source_identity(&discovered)? == identity {
+                checked_path.get_or_insert(discovered);
+            } else {
                 distinct.push(discovered);
             }
         }
+        let checked_path = match checked_path {
+            Some(path) => path,
+            None => {
+                overlay_path_for_roots(&path, &identity, &search_roots, overlay_alias.as_deref())?
+            }
+        };
         all_paths = distinct;
         all_paths.push(checked_path.clone());
         sort_and_deduplicate_paths(&mut all_paths);
@@ -1160,8 +1162,7 @@ impl CheckResult {
     }
 
     /// Surface scopes whose RY010 (unbound-variable) precision dropped
-    /// because a serialized data file exceeded the byte cap and was reduced
-    /// to a file-stem binding. Printed to stderr (never the stdout
+    /// because a serialized data file could not be inventoried. Printed to stderr (never the stdout
     /// diagnostic stream) so it is visible in both the human summary and
     /// `--statistics` without disturbing machine-readable output.
     fn print_degraded(&self) {
@@ -1169,13 +1170,15 @@ impl CheckResult {
             return;
         }
         eprintln!(
-            "ry: {} degraded scope(s) — serialized data file(s) over the byte cap fell back to file stems; RY010 precision reduced:",
+            "ry: {} degraded scope(s) — serialized inventory unavailable; RY010 precision may be reduced:",
             self.degraded.len()
         );
         for note in &self.degraded {
             eprintln!("  - {note}");
         }
-        eprintln!("ry: raise `max-serialized-bytes` in ry.toml to enumerate them precisely");
+        eprintln!(
+            "ry: inspect the listed files; raise `max-serialized-bytes` only for decoded-byte limit failures"
+        );
     }
 
     fn exit_code(&self, cfg: &config::Config) -> ExitCode {
@@ -1236,7 +1239,7 @@ fn run_check_once(
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
     let mut not_r_diagnostics = Vec::new();
-    // Degraded scopes (serialized data over the byte cap), deduplicated and
+    // Degraded serialized scopes, deduplicated and
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
@@ -1289,7 +1292,7 @@ fn run_check_once(
                 .map(|(index, (path, diagnostics))| (index, path, diagnostics)),
         );
         for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason));
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
         }
     }
 
@@ -1587,15 +1590,9 @@ fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
 fn overlay_path_for_roots(
     logical: &std::path::Path,
     identity: &std::path::Path,
-    discovered: &[PathBuf],
     roots: &[PathBuf],
     alias: Option<&std::path::Path>,
 ) -> Result<PathBuf> {
-    for path in discovered {
-        if source_identity(path)? == identity {
-            return Ok(path.clone());
-        }
-    }
     for root in roots {
         if root.is_dir()
             && let Ok(relative) = identity.strip_prefix(source_identity(root)?)

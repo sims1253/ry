@@ -253,6 +253,315 @@ fn unsaved_file_is_checked_without_writing_it() {
 }
 
 #[test]
+fn missing_roots_keep_disk_output_and_exit_policy_with_stdin() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("blocker"), "not a directory").unwrap();
+    for missing in ["blocker/missing.R", "missing/child.R"] {
+        for exit_zero in [false, true] {
+            let mut disk_args = vec![missing, "--output-format", "json"];
+            let mut buffer_args = vec![
+                missing,
+                "-",
+                "--stdin-filename",
+                "source.R",
+                "--output-format",
+                "json",
+            ];
+            if exit_zero {
+                disk_args.push("--exit-zero");
+                buffer_args.push("--exit-zero");
+            }
+            let disk = run(temp.path(), &disk_args, b"");
+            let buffer = run(temp.path(), &buffer_args, b"x <- 1L\n");
+            assert_eq!(disk.status.code(), Some(i32::from(!exit_zero)));
+            assert_eq!(json(&disk), serde_json::json!([]));
+            assert!(String::from_utf8_lossy(&disk.stderr).contains("no such file or directory"));
+            assert_eq!(buffer.status, disk.status, "{buffer:?}");
+            assert_eq!(buffer.stdout, disk.stdout, "{buffer:?}");
+            assert_eq!(buffer.stderr, disk.stderr, "{buffer:?}");
+        }
+    }
+}
+
+#[test]
+fn package_dynamic_bindings_use_stdin_instead_of_stale_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(temp.path().join("DESCRIPTION"), "Package: demo\n").unwrap();
+    let path = temp.path().join("R/main.R");
+    for (old, source, expected) in [
+        (Some("assign(\"ghost\", 1L)\n"), "ghost\n", vec!["RY010"]),
+        (None, "assign(\"ghost\", 1L)\nghost\n", vec![]),
+    ] {
+        if let Some(old) = old {
+            fs::write(&path, old).unwrap();
+        } else if path.exists() {
+            fs::remove_file(&path).unwrap();
+        }
+        let buffer = run(
+            temp.path(),
+            &[
+                "-",
+                "--stdin-filename",
+                "R/main.R",
+                "--output-format",
+                "json",
+            ],
+            source.as_bytes(),
+        );
+        assert_eq!(fs::read_to_string(&path).ok().as_deref(), old);
+        fs::write(&path, source).unwrap();
+        let disk = run(temp.path(), &["R/main.R", "--output-format", "json"], b"");
+        assert_eq!(codes(&disk), expected, "{disk:?}");
+        assert_eq!(json(&buffer), json(&disk), "{buffer:?}");
+        assert_eq!(buffer.status, disk.status);
+        assert_eq!(buffer.stderr, disk.stderr);
+    }
+}
+
+#[test]
+fn package_dataset_bindings_use_stdin_instead_of_stale_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::create_dir(temp.path().join("data")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: demo\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("R/neighbor.R"),
+        "gold\nsilver\ncopper\nbronze\nplatinum\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("data/other.R"), "silver <- 1L\n").unwrap();
+    fs::write(temp.path().join("data/copper.rds"), b"").unwrap();
+    fs::write(
+        temp.path().join("data/bronze.rda"),
+        include_bytes!("../../../testdata/serialized/empty.rda"),
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("data/platinum.RData"),
+        include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+    )
+    .unwrap();
+    let path = temp.path().join("data/preprocess.r");
+    for (old, source, expected) in [
+        (Some("gold <- 1L\n"), "1L\n", vec!["RY010"]),
+        (Some("1L\n"), "gold <- 1L\n", vec![]),
+        (None, "gold <- 1L\n", vec![]),
+    ] {
+        if let Some(old) = old {
+            fs::write(&path, old).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        let buffers: Vec<_> = ["data/preprocess.r", "./data/preprocess.r"]
+            .into_iter()
+            .map(|logical| {
+                run(
+                    temp.path(),
+                    &[
+                        "R/neighbor.R",
+                        "-",
+                        "--stdin-filename",
+                        logical,
+                        "--output-format",
+                        "json",
+                    ],
+                    source.as_bytes(),
+                )
+            })
+            .collect();
+        assert_eq!(fs::read_to_string(&path).ok().as_deref(), old);
+        fs::write(&path, source).unwrap();
+        let disk = run(
+            temp.path(),
+            &[
+                "R/neighbor.R",
+                "data/preprocess.r",
+                "--output-format",
+                "json",
+            ],
+            b"",
+        );
+        assert_eq!(codes(&disk), expected, "{disk:?}");
+        if !expected.is_empty() {
+            assert_eq!(json(&disk)[0]["path"], "R/neighbor.R");
+            assert!(json(&disk)[0]["message"].as_str().unwrap().contains("gold"));
+        }
+        assert!(disk.stderr.is_empty(), "{disk:?}");
+        for buffer in buffers {
+            assert_eq!(json(&buffer), json(&disk), "{buffer:?}");
+            assert_eq!(buffer.status, disk.status);
+            assert_eq!(buffer.stderr, disk.stderr);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn package_dataset_bindings_replace_a_symlink_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::create_dir(temp.path().join("data")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: demo\nLazyData: true\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("R/neighbor.R"), "gold\n").unwrap();
+    fs::write(temp.path().join("data/preprocess.r"), "gold <- 1L\n").unwrap();
+    symlink("preprocess.r", temp.path().join("data/alias.R")).unwrap();
+    let buffer = run(
+        temp.path(),
+        &[
+            "R/neighbor.R",
+            "-",
+            "--stdin-filename",
+            "data/alias.R",
+            "--output-format",
+            "json",
+        ],
+        b"1L\n",
+    );
+    assert_eq!(codes(&buffer), ["RY010"], "{buffer:?}");
+    assert_eq!(json(&buffer)[0]["path"], "R/neighbor.R");
+    assert_eq!(
+        fs::read_to_string(temp.path().join("data/preprocess.r")).unwrap(),
+        "gold <- 1L\n"
+    );
+}
+
+#[test]
+fn test_helpers_use_stdin_for_neighboring_test_context() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("tests/testthat")).unwrap();
+    fs::write(temp.path().join("DESCRIPTION"), "Package: demo\n").unwrap();
+    fs::write(temp.path().join("tests/testthat/test-main.R"), "ghost\n").unwrap();
+    let path = temp.path().join("tests/testthat/helper-main.R");
+    for (old, source, expected) in [
+        (Some("ghost <- 1L\n"), "1L\n", vec!["RY010"]),
+        (None, "ghost <- 1L\n", vec![]),
+    ] {
+        if let Some(old) = old {
+            fs::write(&path, old).unwrap();
+        } else if path.exists() {
+            fs::remove_file(&path).unwrap();
+        }
+        let buffers: Vec<_> = [
+            "tests/testthat/helper-main.R",
+            "./tests/testthat/helper-main.R",
+        ]
+        .into_iter()
+        .map(|logical| {
+            run(
+                temp.path(),
+                &[
+                    "tests/testthat/test-main.R",
+                    "-",
+                    "--stdin-filename",
+                    logical,
+                    "--output-format",
+                    "json",
+                ],
+                source.as_bytes(),
+            )
+        })
+        .collect();
+        assert_eq!(fs::read_to_string(&path).ok().as_deref(), old);
+        fs::write(&path, source).unwrap();
+        let disk = run(
+            temp.path(),
+            &[
+                "tests/testthat/test-main.R",
+                "tests/testthat/helper-main.R",
+                "--output-format",
+                "json",
+            ],
+            b"",
+        );
+        assert_eq!(codes(&disk), expected, "{disk:?}");
+        for buffer in buffers {
+            assert_eq!(json(&buffer), json(&disk), "{buffer:?}");
+            assert_eq!(buffer.status, disk.status);
+            assert_eq!(buffer.stderr, disk.stderr);
+        }
+    }
+}
+
+#[test]
+fn package_dynamic_bindings_share_context_across_root_spellings() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(temp.path().join("DESCRIPTION"), "Package: demo\n").unwrap();
+    fs::write(temp.path().join("R/main.R"), "assign(\"ghost\", 1L)\n").unwrap();
+    fs::write(temp.path().join("R/neighbor.R"), "ghost\n").unwrap();
+    let buffers: Vec<_> = ["R/main.R", "./R/main.R"]
+        .into_iter()
+        .map(|logical| {
+            run(
+                temp.path(),
+                &[
+                    "R/neighbor.R",
+                    "-",
+                    "--stdin-filename",
+                    logical,
+                    "--output-format",
+                    "json",
+                ],
+                b"1L\n",
+            )
+        })
+        .collect();
+    fs::write(temp.path().join("R/main.R"), "1L\n").unwrap();
+    let disk = run(
+        temp.path(),
+        &["R/neighbor.R", "R/main.R", "--output-format", "json"],
+        b"",
+    );
+    assert_eq!(codes(&disk), ["RY010"], "{disk:?}");
+    assert_eq!(json(&disk)[0]["path"], "R/neighbor.R");
+    for buffer in buffers {
+        assert_eq!(json(&buffer), json(&disk), "{buffer:?}");
+        assert_eq!(buffer.status, disk.status);
+        assert_eq!(buffer.stderr, disk.stderr);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn package_dynamic_bindings_replace_a_symlink_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(temp.path().join("DESCRIPTION"), "Package: demo\n").unwrap();
+    fs::write(temp.path().join("R/main.R"), "assign(\"ghost\", 1L)\n").unwrap();
+    symlink("main.R", temp.path().join("R/alias.R")).unwrap();
+    let buffer = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/alias.R",
+            "--output-format",
+            "json",
+        ],
+        b"ghost\n",
+    );
+    assert_eq!(codes(&buffer), ["RY010"], "{buffer:?}");
+    assert_eq!(json(&buffer)[0]["path"], "R/alias.R");
+    assert_eq!(
+        fs::read_to_string(temp.path().join("R/main.R")).unwrap(),
+        "assign(\"ghost\", 1L)\n"
+    );
+}
+
+#[test]
 fn explicit_stdin_errors_and_watch_rejection_are_clear() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("directory")).unwrap();

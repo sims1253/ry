@@ -80,9 +80,13 @@ these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
 materialized element storage per collection, including metadata read in lazy
 mode. These are separate from the decoded-file cap and are not a total memory
-budget. Unlike the decoded-file cap, a parser limit does not report a degraded
-scope: the file's inventory comes back empty and unflagged, and the package's
-bindings resolve through their other sources.
+budget. A parser resource-limit failure reports a degraded scope and uses the
+same file-stem fallback as the decoded-byte cap. Malformed, unsupported,
+unreadable, or undecodable serialized input also reports a degraded scope and contributes no
+enumerated bindings. The `data/` convention still contributes the file stem
+when enumeration yields no names. A valid empty workspace reports no degradation. These
+outcomes do not disable diagnostics in other files; the CLI keeps notices on
+stderr, and `dump-facts` includes their paths and reasons in context inputs.
 
 Use an environment profile for bindings supplied only to selected files:
 

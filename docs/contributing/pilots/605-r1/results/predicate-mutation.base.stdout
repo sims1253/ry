@@ -1,0 +1,11 @@
+[
+  {
+    "code": "RY032",
+    "severity": "warning",
+    "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands",
+    "path": "predicate-mutation.R",
+    "line": 3,
+    "column": 6,
+    "confidence": "medium"
+  }
+]

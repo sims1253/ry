@@ -85,6 +85,8 @@ against the source AST and current source text before it installs records.
 A matching display name alone does not identify a function. Readers must
 reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
+Records without a selected adopted contract retain their provenance and
+findings without activating declaration effects on ordinary inference.
 
 Only an explicitly adopted, exact `entry_only` signature can supply a body
 entry type. Its declared parameters must be an ordered subset of the R formals,
@@ -114,6 +116,8 @@ For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
 absent. Local assignments inside an immediately invoked closure belong to
 that closure; they cannot certify a later read in its caller.
+Named helpers use their own local binding proofs and stable project bindings.
+Caller-local definitions and aliases do not prove a helper's free-name lookup.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and

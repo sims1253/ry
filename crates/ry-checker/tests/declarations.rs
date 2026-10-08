@@ -160,7 +160,10 @@ fn unadopted_records_preserve_ordinary_local_function_diagnostics() {
     );
     let baseline = Checker::new(&file.path).check(&file).to_vec();
     assert!(baseline.iter().any(|diagnostic| diagnostic.code == "RY002"));
-    for evidence in [EvidenceUse::DocumentationCandidate, EvidenceUse::RuntimeGuard] {
+    for evidence in [
+        EvidenceUse::DocumentationCandidate,
+        EvidenceUse::RuntimeGuard,
+    ] {
         let mut declaration = record(
             &file,
             "f",
@@ -174,6 +177,68 @@ fn unadopted_records_preserve_ordinary_local_function_diagnostics() {
         assert_eq!(checker.declaration_records(), &[declaration]);
         assert!(checker.declaration_findings().is_empty());
     }
+}
+
+#[test]
+fn global_helper_project_proofs_respect_unknown_current_bindings() {
+    let file = parse(
+        "unknown-global-helper-binding.R",
+        r#"h <- function() 1L
+get("assign")("h", function() get("assign")("f", function(x) x, envir = .GlobalEnv), envir = .GlobalEnv)
+f <- function(x) x
+g <- function() h()
+g()
+f("bad")
+"#,
+    );
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    )]);
+    checker.check(&file);
+    assert!(
+        mismatch_sources(&checker, &file).is_empty(),
+        "findings: {:?}",
+        checker.declaration_findings()
+    );
+}
+
+#[test]
+fn captured_helper_project_proofs_respect_unknown_current_bindings() {
+    let file = parse(
+        "unknown-helper-binding.R",
+        r#"f <- function(x) x
+h <- function() 1L
+outer <- function() {
+    get("assign")("h", function() get("assign")("f", function(x) x, envir = parent.env(environment())), envir = .GlobalEnv)
+    f <- function(x) x
+    g <- function() h()
+    g()
+    f("bad")
+}
+outer()
+"#,
+    );
+    let mut declaration = record(
+        &file,
+        "f",
+        ("x", AtomicMode::Integer, SupplyStatus::Required),
+        None,
+    );
+    if let DeclarationTarget::LocalFunction { definition, .. } = &mut declaration.source.target {
+        *definition = nested_function_span(&file, "outer", "f");
+    }
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(vec![declaration]);
+    checker.check(&file);
+    assert!(
+        mismatch_sources(&checker, &file).is_empty(),
+        "findings: {:?}",
+        checker.declaration_findings()
+    );
 }
 
 fn all_named_function_spans(file: &SourceFile, name: &str) -> Vec<Span> {

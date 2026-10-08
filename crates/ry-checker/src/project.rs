@@ -17,12 +17,12 @@
 //! tests rely on this).
 
 use crate::declaration_check::DeclarationSet;
-use crate::{
-    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
-};
 use crate::trace::{
     ProjectTrace, TraceEventKind, TraceFileId, TraceFunctionId, TraceOptions, TraceReason,
     TraceRecorder,
+};
+use crate::{
+    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
 };
 use rayon::prelude::*;
 use ry_core::SourceFile;

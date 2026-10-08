@@ -11,7 +11,7 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
-        let checking_declarations = !self.discarding && !self.declarations.records().is_empty();
+        let checking_declarations = !self.discarding && self.declarations.has_contracts();
         let mut direct_writes = FxSet::default();
         if checking_declarations {
             crate::collect::collect_callable_binding_write(func, args, &mut direct_writes);
@@ -108,10 +108,10 @@ impl Checker {
     }
 
     /// Discard declaration-only exact identities after evaluating an
-    /// expression whose binding effects cannot be excluded. Ordinary type
-    /// inference still runs only when declarations were explicitly adopted.
+    /// expression whose binding effects cannot be excluded. This extra
+    /// invalidation runs only when an adopted contract is selected.
     pub(crate) fn invalidate_declaration_identities(&self, scope: &mut Scope) {
-        if self.discarding || self.declarations.records().is_empty() {
+        if self.discarding || !self.declarations.has_contracts() {
             return;
         }
         let mut names = scope
@@ -459,10 +459,37 @@ impl Checker {
                 .iter()
                 .map(|param| semantic_argument_name(&param.name).to_string()),
         );
+        // Keep negative current-binding evidence, but only a collected
+        // global literal can transfer a positive proof into another helper's
+        // environment. A nested helper's captured frame remains unproved.
+        let mut captured_scope = Scope::default();
+        for name in scope.bindings.keys() {
+            let global_literal = scope.lexical_definition(name).is_some_and(|span| {
+                self.fn_table
+                    .capture_literal_bindings
+                    .get(name)
+                    .is_some_and(|definitions| {
+                        definitions.contains(&(self.path.clone(), span.start, span.end))
+                    })
+            });
+            if !global_literal {
+                captured_scope.insert(name.clone(), RType::unknown());
+            }
+        }
+        if !self
+            .fn_table
+            .capture_literal_bindings
+            .values()
+            .any(|definitions| definitions.contains(&key))
+        {
+            for name in self.fn_table.capture_literal_bindings.keys() {
+                captured_scope.insert(name.clone(), RType::unknown());
+            }
+        }
         self.declaration_possible_helper_writes(
             &possible,
             &function.source_path,
-            scope,
+            &captured_scope,
             remaining,
             visiting,
             writes,

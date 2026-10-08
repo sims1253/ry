@@ -287,6 +287,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "A statically resolved local box module has a complete export inventory, but a selected import or exact `$` access names no export. Missing modules, dynamic export declarations, and package inventories are not proof of absence and stay silent.",
     },
+    Rule {
+        code: "RY119",
+        name: "integer-coercion-range-loss",
+        default_severity: Severity::Warning,
+        summary: "`as.integer()` converts a proven out-of-range numeric value to `NA_integer_`; handle the new NA or constrain the input before casting.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

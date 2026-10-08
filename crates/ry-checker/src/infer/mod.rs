@@ -553,7 +553,11 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                span: assignment_span,
+            } => {
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -563,7 +567,18 @@ impl Checker {
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let class_write = self.prepare_class_attribute(target, value, scope);
-                let vt = self.infer(value, scope);
+                let mut vt = self.infer(value, scope);
+                vt.value_facts.cast_site = None;
+                if matches!(
+                    vt.coercion_new_na(),
+                    ry_core::types::NewNaProvenance::ProvenContains
+                        | ry_core::types::NewNaProvenance::ProvenOnly
+                ) && matches!(value, Expr::Call { func, .. }
+                    if call::callee_name(func).as_deref().is_some_and(|name|
+                        name == "as.integer" || name == "base::as.integer"))
+                {
+                    vt.value_facts.cast_site = Some((span_of(value), assignment_span.end));
+                }
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
                 // declarations, since a user-defined list-returning
@@ -2242,6 +2257,93 @@ impl Checker {
                 return true;
             }
         }
+        if matches!(kind, IndexKind::Single | IndexKind::Double)
+            && matches!(base_t.mode, Mode::Integer | Mode::Double)
+            && base_t.columns.is_none()
+        {
+            for argument in args {
+                self.infer(&argument.value, scope);
+            }
+            let only_missing = matches!(kind, IndexKind::Single)
+                && args.len() == 1
+                && !base_t.class.is_unknown()
+                && !base_t.class.has_known_class()
+                && self.resolves_to_base("[<-", scope)
+                && !ops_chooser::operator_rebound(self, "[<-", scope)
+                && matches!(&args[0].value,
+                    Expr::Call { func, args: check_args, .. }
+                        if check_args.len() == 1
+                            && check_args[0].name.as_deref().is_none_or(|name| name == "x")
+                            && matches!(&check_args[0].value, Expr::Ident { name, .. } if name == base_name)
+                            && call::callee_name(func).as_deref() == Some("is.na")
+                            && matches!(self.special_call_provenance(
+                                "is.na", func, "is.na", "is.na", "base", scope,
+                            ), crate::resolve::SpecialCallProvenance::Proven)
+                );
+            let mut updated = base_t;
+            let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
+                && !vt.class.is_unknown()
+                && !vt.class.has_known_class();
+            let no_selection = only_missing
+                && numeric_replacement
+                && (matches!(updated.length, Length::Zero | Length::Known(0))
+                    || (updated.value_facts.all_values_known
+                        && !updated.value_facts.prior_na
+                        && updated.value_facts.new_na == ry_core::types::NewNaProvenance::None));
+            if only_missing && numeric_replacement {
+                updated.mode = updated.mode.combine_result(vt.mode);
+            }
+            if only_missing
+                && numeric_replacement
+                && vt.value_facts.all_values_known
+                && !vt.value_facts.prior_na
+                && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
+                && !vt.length.may_be_empty()
+            {
+                let site = updated.value_facts.cast_site;
+                if !no_selection {
+                    // A scalar is recycled to every selected NA. A vector's
+                    // extrema need not occur among the values actually used.
+                    // Mixed cast results may also lack the surviving bounds.
+                    if updated.value_facts.all_values_known
+                        && (updated.value_facts.prior_na
+                            || matches!(
+                                updated.value_facts.new_na,
+                                ry_core::types::NewNaProvenance::ProvenContains
+                                    | ry_core::types::NewNaProvenance::ProvenOnly
+                            ))
+                        && matches!(vt.length, Length::One | Length::Known(1))
+                        && (updated.value_facts.numeric_bounds.is_some()
+                            || updated.value_facts.new_na
+                                != ry_core::types::NewNaProvenance::ProvenContains)
+                    {
+                        updated.value_facts.prior_na = false;
+                        updated.value_facts.new_na = ry_core::types::NewNaProvenance::None;
+                        updated.value_facts = updated.value_facts.merge_vector(vt.value_facts);
+                    } else {
+                        updated.value_facts = ry_core::types::ValueFacts::default();
+                    }
+                }
+                if let Some((site, assignment_end)) = site
+                    && self
+                        .source
+                        .get(assignment_end..span.start)
+                        .is_some_and(|gap| {
+                            gap.lines().all(|line| {
+                                line.trim().is_empty() || line.trim_start().starts_with('#')
+                            })
+                        })
+                {
+                    self.diagnostics
+                        .retain(|diagnostic| diagnostic.code != "RY119" || diagnostic.span != site);
+                }
+                updated.value_facts.cast_site = None;
+            } else if !no_selection {
+                updated.value_facts = ry_core::types::ValueFacts::default();
+            }
+            scope.insert(base_name.clone(), updated);
+            return true;
+        }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
             // additional fields. Preserve known fields but mark the schema
@@ -2613,12 +2715,12 @@ impl Checker {
             return t.clone();
         }
         match e {
-            Expr::Logical(_, _) => RType::scalar(Mode::Logical),
-            Expr::Integer(_, _) => RType::scalar(Mode::Integer),
-            Expr::Double(_, _) => RType::scalar(Mode::Double),
-            Expr::String(_, _) => RType::scalar(Mode::Character),
-            Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
-            Expr::Na(t, _) => t.clone(),
+            Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..) => infer_literal_default(e),
             Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
             Expr::BinOp { op, lhs, rhs, span } => {
                 if !scope.literal_values_unknown {
@@ -2811,7 +2913,16 @@ impl Checker {
                                 Mode::Logical | Mode::Null => Mode::Integer,
                                 other => other,
                             };
-                            RType::new(mode, t.length)
+                            let mut result = RType::new(mode, t.length);
+                            result.value_facts = t.value_facts;
+                            result.value_facts.numeric_bounds =
+                                t.value_facts.numeric_bounds.map(|(lo, hi)| {
+                                    (
+                                        (-f64::from_bits(hi)).to_bits(),
+                                        (-f64::from_bits(lo)).to_bits(),
+                                    )
+                                });
+                            result
                         }
                     }
                     UnaryOpKind::Not => {

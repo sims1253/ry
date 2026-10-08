@@ -53,6 +53,8 @@ explanation for one rule.
 | RY112 | invalid-ignore | warning | A ry-owned inline ignore has malformed brackets or names an unknown rule. It cannot suppress findings; fix the comment or disable RY112 with a severity override. Foreign-only `noqa` lists are ignored by ry. |
 | RY113 | unused-ignore | warning | Default-off audit of valid ry-owned selective line and standalone ignores for RY034 and RY102. Reports each enabled code absent from the raw checker findings at the target line; parse errors and unsupported analyses remain unaudited. Baselines and confidence thresholds cannot create unused findings. Enable with `--warn RY113` or `warn = ["RY113"]`; disable with `--ignore RY113` or `ignore = ["RY113"]`. |
 | RY118 | missing-box-export | warning | A selected name or exact `$` member is absent from a statically resolved local `box` module's complete export inventory. Missing modules, computed paths, dynamic export declarations, and package metadata that cannot prove absence stay silent. |
+| RY119 | integer-coercion-range-loss | warning | An unshadowed base `as.integer()` receives a plain numeric value with a proven element outside R's integer range. Truncation toward zero permits values through `2147483647.9` and `-2147483647.9`; values at `2147483648`, `-2147483648`, or infinity become a new `NA_integer_` with a warning. Prior `NA`/`NaN`, unknown values, class dispatch, and an immediately repaired `x <- as.integer(...); x[is.na(x)] <- value` stay quiet. The result retains distinct new-NA provenance for condition consumers. |
+
 RY003 and RY113 are registered but default-off: they are omitted from output
 unless a severity override or rule selection names them (for example
 `warn = ["RY003", "RY113"]`).

@@ -491,6 +491,82 @@ impl Checker {
             return result;
         }
 
+        // A base integer cast can create an NA even from a finite double.
+        // Keep that fact separate from the integer return mode, and decline
+        // to model classed inputs whose S3 method may change the result.
+        if lookup_name == "as.integer"
+            && matches!(
+                self.special_call_provenance(
+                    &name,
+                    func,
+                    &semantic_name,
+                    &lookup_name,
+                    "base",
+                    scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+            && let Some(input) = call.arg_types.first()
+        {
+            use ry_core::types::NewNaProvenance;
+            let mut result = RType::new(Mode::Integer, input.length);
+            result.value_facts.prior_na = input.value_facts.prior_na;
+            result.value_facts.all_values_known = input.value_facts.all_values_known;
+            let plain_numeric = matches!(input.mode, Mode::Double | Mode::Integer)
+                && !input.class.is_unknown()
+                && !input.class.has_known_class();
+            let mut introduced_here = false;
+            result.value_facts.new_na =
+                match input.value_facts.numeric_bounds.filter(|_| plain_numeric) {
+                    Some((low, high)) => {
+                        let low = f64::from_bits(low);
+                        let high = f64::from_bits(high);
+                        if low <= -2_147_483_648.0 || high >= 2_147_483_648.0 {
+                            introduced_here = true;
+                            if (low >= 2_147_483_648.0 || high <= -2_147_483_648.0)
+                                && !input.value_facts.prior_na
+                            {
+                                NewNaProvenance::ProvenOnly
+                            } else {
+                                NewNaProvenance::ProvenContains
+                            }
+                        } else {
+                            result.value_facts.numeric_bounds =
+                                Some((low.trunc().to_bits(), high.trunc().to_bits()));
+                            input.value_facts.new_na
+                        }
+                    }
+                    None if matches!(
+                        input.value_facts.new_na,
+                        NewNaProvenance::ProvenContains | NewNaProvenance::ProvenOnly
+                    ) =>
+                    {
+                        input.value_facts.new_na
+                    }
+                    None if plain_numeric && input.value_facts.all_values_known => {
+                        NewNaProvenance::None
+                    }
+                    None if plain_numeric && input.mode == Mode::Integer => {
+                        input.value_facts.new_na
+                    }
+                    None if input.mode == Mode::Null
+                        || matches!(input.length, Length::Zero | Length::Known(0)) =>
+                    {
+                        NewNaProvenance::None
+                    }
+                    None => NewNaProvenance::Possible,
+                };
+            if introduced_here {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY119",
+                    "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
+                );
+            }
+            return result;
+        }
+
         // The typeshed stage: a qualified call (`pkg::fun`) resolves
         // against `load_package(pkg)`; an unqualified call falls back
         // from base to loaded packages (reverse load order).

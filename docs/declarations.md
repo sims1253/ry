@@ -7,10 +7,10 @@ scope exit describes one analysis snapshot. A declaration describes a
 provider's claim about a function, with its original source and attachment.
 Neither a compact hint nor an inferred fact silently becomes a contract.
 
-This document describes the declaration core introduced in [#592]. The first
-external reader and public `dump-facts` annotation export are delivered in
-[#594]. Until then, `dump-facts` keeps schema versions 1 and 2 and has no
-annotation flag or empty annotation placeholder.
+This document describes the declaration core in [#592] and shared checking in
+[#593]. The first external reader and public `dump-facts` annotation export
+belong to [#594]. Until then, `dump-facts` keeps schema versions 1 and 2 and
+has no annotation flag or empty annotation placeholder.
 
 ## Supported canonical vocabulary
 
@@ -74,9 +74,56 @@ Translation status is independent of whether the user adopted the claim:
 
 Evidence use separately records `adopted_contract`, `runtime_guard`, or
 `documentation_candidate`. Recognition alone establishes none of these as a
-runtime guard. The shared checker in [#593] will decide how adopted contracts
-affect analysis and diagnostics. It must keep an unresolved conflict visible
-rather than selecting a declaration by file order.
+runtime guard. The shared checker keeps an unresolved conflict visible rather
+than selecting a declaration by file order.
+
+## Shared checking boundary
+
+`Checker::set_declaration_records` and `Project::set_declaration_records`
+accept structured records. A source reader must verify each local target
+against the source AST and current source text before it installs records.
+A matching display name alone does not identify a function. Readers must
+reinstall records after an annotation-only edit or a configuration change.
+Project rechecks affected files when its record set changes.
+Records without a selected adopted contract retain their provenance and
+findings without activating declaration effects on ordinary inference.
+
+Only an explicitly adopted, exact `entry_only` signature can supply a body
+entry type. Its declared parameters must be an ordered subset of the R formals,
+with matching supplied/defaulted status. Partial, unsupported,
+invalid, and ambiguous records retain their status but supply no entry type.
+Equivalent adopted signatures share provenance. Conflicting adopted signatures
+block adoption. A declaration of more than four union alternatives remains
+checkable at a known call but exceeds the body inference cap; the checker
+reports this limit and leaves the body entry type unknown.
+
+The checker keeps a defaulted formal's default marker when it applies a
+declared entry type. Later assignments update the local type in the usual
+way. Call checks use R's exact-name, unambiguous partial-name, and positional
+argument matching. They skip omitted arguments and unknown evidence. A mixed
+inferred union cannot prove a mismatch. Return checks use independently
+inferred returns; a declaration does not verify itself.
+
+Known-call mismatch checks require a current callable identity. A local
+assignment later in a body does not prove that an earlier read used that
+binding, and a historical function definition does not prove a call head still
+resolves to it after removal or active-binding installation. When an evaluated
+read, call, or operator can change a binding and its effects cannot be proved
+absent, later call checks become inconclusive; source attachment, default
+checks, and independent return evidence remain available. A typeshed
+signature alone does not establish that a call is effect-free.
+For precision, even an ordinary local data read or subscript can make a later
+contract check inconclusive when the checker cannot prove its binding effects
+absent. Local assignments inside an immediately invoked closure belong to
+that closure; they cannot certify a later read in its caller.
+Named helpers use their own local binding proofs and stable project bindings.
+Caller-local definitions and aliases do not prove a helper's free-name lookup.
+
+`Checker::declaration_findings` and `Project::declaration_findings` expose
+structured mismatch, partial, unsupported, conflict, invalid-syntax, and
+ambiguous-attachment findings. Parse or encoding errors suppress findings
+from a repaired source tree. These findings are separate from public RY rule
+codes; [#594] maps them after a real source reader supplies records.
 
 ## Export boundary
 

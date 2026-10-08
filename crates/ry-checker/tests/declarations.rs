@@ -108,6 +108,74 @@ fn mismatch_sources<'a>(checker: &Checker, file: &'a SourceFile) -> Vec<&'a str>
         .collect()
 }
 
+#[test]
+fn captured_helper_effects_do_not_borrow_caller_local_proofs() {
+    for (setup, body, local) in [
+        (
+            "h <- function() get(\"assign\")(\"f\", function(x) x, envir = .GlobalEnv)",
+            "h()",
+            "h <- function() 1L",
+        ),
+        (
+            "h <- function() get(\"assign\")(\"f\", function(x) x, envir = .GlobalEnv)",
+            "h()",
+            "pure <- function() 1L; h <- pure",
+        ),
+        (
+            "makeActiveBinding(\"h\", function() { get(\"assign\")(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
+            "h",
+            "h <- function() 1L",
+        ),
+        (
+            "makeActiveBinding(\"h\", function() { get(\"assign\")(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
+            "h",
+            "pure <- function() 1L; h <- pure",
+        ),
+    ] {
+        let source = format!(
+            "f <- function(x) x\n{setup}\ng <- function() {{ {body} }}\nouter <- function() {{ {local}; g(); f(\"bad\") }}\nouter()\n"
+        );
+        let file = parse("captured-helper-scope.R", &source);
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        )]);
+        checker.check(&file);
+        assert!(
+            mismatch_sources(&checker, &file).is_empty(),
+            "setup: {setup}, caller local: {local}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+#[test]
+fn unadopted_records_preserve_ordinary_local_function_diagnostics() {
+    let file = parse(
+        "unadopted-effects.R",
+        "f <- function(x) x\nouter <- function() { g <- function() c(TRUE, FALSE); base::identity(1L); if (g()) 1L }\nouter()\n",
+    );
+    let baseline = Checker::new(&file.path).check(&file).to_vec();
+    assert!(baseline.iter().any(|diagnostic| diagnostic.code == "RY002"));
+    for evidence in [EvidenceUse::DocumentationCandidate, EvidenceUse::RuntimeGuard] {
+        let mut declaration = record(
+            &file,
+            "f",
+            ("x", AtomicMode::Integer, SupplyStatus::Required),
+            None,
+        );
+        declaration.evidence = evidence;
+        let mut checker = Checker::new(&file.path);
+        checker.set_declaration_records(vec![declaration.clone()]);
+        assert_eq!(checker.check(&file), baseline, "evidence: {evidence:?}");
+        assert_eq!(checker.declaration_records(), &[declaration]);
+        assert!(checker.declaration_findings().is_empty());
+    }
+}
+
 fn all_named_function_spans(file: &SourceFile, name: &str) -> Vec<Span> {
     use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
     use std::ops::ControlFlow;

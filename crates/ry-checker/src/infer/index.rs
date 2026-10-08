@@ -860,13 +860,6 @@ pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
     NSE_SYMBOL_FNS.contains(&name)
 }
 
-pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {
-    matches!(
-        name,
-        ".by" | ".groups" | ".keep" | ".before" | ".after" | ".drop"
-    )
-}
-
 /// Whether `name` is an operator that ry models as an S3 generic, e.g. the
 /// `+` in `` `+.widget` ``. This is exactly the Arith + Compare operator
 /// set registered as [`crate::semantic_lists::OPERATORS`] and already used

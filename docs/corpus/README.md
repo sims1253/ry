@@ -11,8 +11,8 @@ each label. `posit-0.9.0.json` has 16 groups; most name a cause
 (`type-narrowing`, `test-fixture`, `ifelse-mode`, `ry001-null-union`,
 `ry111-constant-shadowing`), one an owner (`upstream-package`), and the
 largest, `manual-audit`, is the manually classified batch.
-`tidyverse-0.7.1.json` has 17 groups: 10 are batch ids
-(`P2`, `P3e`, `P4a`, `P4b`, `P4c`, `P7a`, `P7b`, `P8`, `plan-32-33`,
+`tidyverse-0.7.1.json` has 16 groups: 9 are batch ids
+(`P2`, `P4a`, `P4b`, `P4c`, `P7a`, `P7b`, `P8`, `plan-32-33`,
 `pr195-nse-stubs`), kept verbatim because the planning records that defined
 them were local-only and no longer exist; `upstream-ggplot2` and
 `upstream-glue` name upstream packages and `ifelse-mode`, `seq-defaulted`,
@@ -21,8 +21,8 @@ causes.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 99 | 36 / 41 / 0 (+22 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 432 | 85 / 347 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 97 | 36 / 39 / 0 (+22 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 430 | 85 / 345 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.
@@ -135,3 +135,9 @@ manifest selects its corpus, and a `# === full tier` marker separates the
 fast-tier packages from the rest. Non-default manifests also namespace their
 committed reports (for example `posit.glue.root.txt`) so packages pinned at
 different commits never overwrite another corpus's baseline.
+
+The package cache skips a fetch when the exact pinned commit object is already
+present, but still forces checkout of that pin and removes untracked files.
+A cached partial clone may have the commit without its trees or blobs; checkout
+can still contact the origin for those promised objects. An offline run works
+only after all objects needed for the checkout are local.

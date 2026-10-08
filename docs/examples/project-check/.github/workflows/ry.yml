@@ -1,0 +1,30 @@
+name: ry project check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install ry 0.11.0
+        shell: bash
+        env:
+          RY_CLI_INSTALL_DIR: ${{ runner.temp }}/ry-cli
+          RY_CLI_NO_MODIFY_PATH: "1"
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/sims1253/ry/releases/download/v0.11.0/ry-cli-installer.sh | sh
+          echo "$RY_CLI_INSTALL_DIR" >> "$GITHUB_PATH"
+      - name: Check project
+        shell: bash
+        run: |
+          test "$(ry --version)" = "ry 0.11.0"
+          ry check --output-format github .

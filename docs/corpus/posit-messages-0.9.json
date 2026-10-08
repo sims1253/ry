@@ -585,24 +585,6 @@
       "severity": "error",
       "message": "cannot apply arithmetic op to `double` and `character`"
     },
-    "dplyr::RY060::tests/testthat/test-group-by.R:26:16": {
-      "package": "dplyr",
-      "code": "RY060",
-      "path": "tests/testthat/test-group-by.R",
-      "line": 26,
-      "column": 16,
-      "severity": "error",
-      "message": "column `big` not found in data frame schema; available columns: x, g"
-    },
-    "dplyr::RY060::tests/testthat/test-group-by.R:40:16": {
-      "package": "dplyr",
-      "code": "RY060",
-      "path": "tests/testthat/test-group-by.R",
-      "line": 40,
-      "column": 16,
-      "severity": "error",
-      "message": "column `big` not found in data frame schema; available columns: x, g"
-    },
     "dplyr::RY090::tests/testthat/test-sets.R:60:25": {
       "package": "dplyr",
       "code": "RY090",

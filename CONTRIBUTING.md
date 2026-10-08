@@ -27,12 +27,17 @@ cargo test -p ry-checker --test oracle -- --include-ignored
 Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
 status determines whether R errored; fixtures cannot leak bindings, attached
 packages, or daemon state into later fixtures.
+The [bounded semantic-generation guide](docs/corpus/semantic-generation.md)
+describes the audited condition family, required R gate, reducer, sandboxed
+campaign, and retained case records.
 
 The [instruction-count corpus guide](docs/corpus/instructions.md) explains
 the fixed performance sample, local measurements, and warn-only CI deltas.
 Run `python3 ecosystem/test-instructions.py` after changing that harness.
 The [performance tracking guide](docs/performance.md) covers core timings,
 extension activation, package sizes, and the historical dashboard.
+The [project trace guide](docs/project-trace.md) shows how to inspect bounded
+collection, refinement, and emission decisions during checker development.
 
 ## Fixture conventions
 
@@ -72,6 +77,10 @@ merges only if:
 3. it produces zero unexplained findings on the vendored CRAN code.
 
 When inference is uncertain, return `unknown` and say nothing.
+
+For semantic, performance, and concurrency changes, use the short
+[evidence playbook](docs/contributing/evidence.md) and its optional experiment
+template to retain decisive controls, failed approaches, and replay commands.
 
 ## Typeshed changes
 

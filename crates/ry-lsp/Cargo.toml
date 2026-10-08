@@ -33,3 +33,5 @@ test-util = []
 ry-lsp = { path = ".", features = ["test-util"] }
 ry-testkit = { path = "../ry-testkit" }
 proptest = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread"] }

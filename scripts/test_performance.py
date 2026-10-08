@@ -1,9 +1,9 @@
 """Tests for the compact CI performance report."""
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from performance.collect import collect
 
@@ -34,6 +34,39 @@ class PerformanceReportTests(unittest.TestCase):
                 'confidence_interval': {'lower_bound': 40, 'upper_bound': 44},
             },
         }))
+
+    def write_replay(self):
+        path = self.root / 'server-replay.json'
+        report = {
+            'schema_version': 1,
+            'correctness': 'passed',
+            'workload_sha256': 'a' * 64,
+            'binary_sha256': 'b' * 64,
+            'binary_version': 'ry 0.11.0',
+            'rustc': 'rustc 1.96.1',
+            'rayon_threads': '2',
+            'sample_counts': {'startup': 5, 'warm_per_scenario': 30},
+            'startup_ns': [n * 1_000_000 for n in (1, 3, 5, 7, 9)],
+            'warm': {},
+        }
+        for scenario, target in {
+            'local-clean': 'R/local.R',
+            'cross-file-caller': 'R/caller.R',
+            'unrelated-file': 'R/unrelated.R',
+        }.items():
+            report['warm'][scenario] = [
+                {
+                    'duration_ns': n * 1_000_000,
+                    'snapshot_sha256': 'c' * 64,
+                    'completion': target,
+                    'edited_version': n + 1,
+                    'completion_version': 1,
+                    'analysis_generation': None if scenario == 'local-clean' else n + 100,
+                }
+                for n in range(1, 31)
+            ]
+        path.write_text(json.dumps(report))
+        return path, report
 
     def test_collects_grouped_estimates_and_sizes(self):
         # Old Criterion baselines must not become additional measurements.
@@ -77,6 +110,48 @@ class PerformanceReportTests(unittest.TestCase):
         (self.root / 'editors/code/ry.vsix').unlink()
         with self.assertRaises(FileNotFoundError):
             collect(self.root)
+
+    def test_server_replay_uses_raw_warm_samples_for_median_and_nearest_rank_p95(self):
+        path, _ = self.write_replay()
+        rows = collect(self.root, server_replay=path)
+        by_name = {row['name']: row['value'] for row in rows}
+        self.assertEqual(by_name['server/startup-median'], 5)
+        self.assertEqual(by_name['server/local-clean/median'], 15.5)
+        self.assertEqual(by_name['server/local-clean/p95'], 29)
+        self.assertNotIn('server/startup-p95', by_name)
+        self.assertEqual(len(rows), 12)
+
+    def test_server_replay_rejects_failed_or_small_measurements(self):
+        path, report = self.write_replay()
+        report['correctness'] = 'failed'
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'correctness'):
+            collect(self.root, server_replay=path)
+        report['correctness'] = 'passed'
+        report['warm']['local-clean'].pop()
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'exactly 30'):
+            collect(self.root, server_replay=path)
+
+    def test_server_replay_requires_snapshot_and_binary_identity(self):
+        path, report = self.write_replay()
+        report['binary_sha256'] = ''
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'binary_sha256'):
+            collect(self.root, server_replay=path)
+        report['binary_sha256'] = 'b' * 64
+        report['warm']['cross-file-caller'][0]['completion'] = 'R/helper.R'
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'completion snapshot'):
+            collect(self.root, server_replay=path)
+
+    def test_server_replay_rejects_reused_caller_analysis_generation(self):
+        path, report = self.write_replay()
+        caller = report['warm']['cross-file-caller']
+        caller[1]['analysis_generation'] = caller[0]['analysis_generation']
+        path.write_text(json.dumps(report))
+        with self.assertRaisesRegex(ValueError, 'fresh analysis generation'):
+            collect(self.root, server_replay=path)
 
 
 if __name__ == '__main__':

@@ -4,8 +4,17 @@ All notable changes to ry are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
+  replaces its disk source and uses the same project context and diagnostics
+  as a saved file (#582).
+
 ### Changed
 
+- Keep editor inlay labels short while marking hidden known fields and
+  uncertainty; expanded inlay details show the represented type facts within
+  a visible budget. `dump-types` keeps its historical strings (#591).
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
 - Validate selective `ry: ignore[...]` comments and report malformed or
@@ -18,6 +27,10 @@ All notable changes to ry are documented in this file.
   where their identity is known.
   Preserve a proven vector alternative through simple aliases and loop joins
   so RY032 reports a reachable first-iteration or empty-iterator error.
+
+### Fixed
+
+- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 
 ## [0.11.0] - 2026-09-22
 

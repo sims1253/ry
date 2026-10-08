@@ -263,8 +263,8 @@ impl Checker {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn declaration_named_helper_writes(
-        &self,
+    fn declaration_named_helper_writes<'a>(
+        &'a self,
         name: &str,
         owner_path: &str,
         possible: Option<&crate::collect::PotentialHelperCalls>,
@@ -281,16 +281,16 @@ impl Checker {
         // A long chain of local or scope aliases must spend the same bound
         // as function and immediate-closure descent before recursing.
         *remaining -= 1;
-        let mut candidates = Vec::<UserFn>::new();
+        let mut candidates = Vec::<&UserFn>::new();
         let mut candidate_keys = FxSet::default();
-        let mut add = |function: &UserFn| {
+        let mut add = |function: &'a UserFn| {
             let key = (
                 function.source_path.clone(),
                 function.definition_span.start,
                 function.definition_span.end,
             );
             if candidate_keys.insert(key) {
-                candidates.push(function.clone());
+                candidates.push(function);
             }
         };
         if let Some(possible) = possible {
@@ -381,7 +381,7 @@ impl Checker {
         }
         let found = !candidates.is_empty();
         for function in candidates {
-            self.declaration_function_helper_writes(&function, scope, remaining, visiting, writes);
+            self.declaration_function_helper_writes(function, scope, remaining, visiting, writes);
         }
         if !found
             && possible.is_some_and(|possible| {

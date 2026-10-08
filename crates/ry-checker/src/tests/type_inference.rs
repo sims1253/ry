@@ -3456,6 +3456,11 @@ fn scalar_cleanup_callable_paths_match_r_witnesses() {
             true,
         ),
         (
+            "loop_masked_colon",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_loop_masked_colon.R"),
+            true,
+        ),
+        (
             "nested_callback",
             include_str!("../../testdata/oracle/assertion_subject_cleanup_nested_callback.R"),
             true,

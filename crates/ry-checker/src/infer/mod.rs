@@ -3052,6 +3052,11 @@ impl Checker {
                 // `infer_binop`'s lattice-based `seq` (Unknown length).
                 if matches!(*op, BinOpKind::Colon) {
                     scope.invalidate_ops_environment();
+                    // A replaced sequence operator need not return a nonempty
+                    // vector, even when both endpoints are integer literals.
+                    if ops_chooser::operator_rebound(self, ":", scope) {
+                        return RType::unknown();
+                    }
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
                     {
                         let len = (b - a).unsigned_abs() as usize;

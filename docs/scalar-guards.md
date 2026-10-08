@@ -78,8 +78,9 @@ carry the same callable provenance.
 A branch that stops contributes no scalar-binding state to the continuation.
 An entered loop keeps the callable value on its reachable exits; an all-path
 pure overwrite removes an earlier installer. Possibly empty loops retain the
-entry value. Fresh installer targets include `assign`'s `pos` argument and
-helper formals forwarded through a simple default alias. A base-resolved
+entry value. Literal `:` endpoints prove entry only while the sequence
+operator retains base identity. Fresh installer targets include `assign`'s
+`pos` argument and helper formals forwarded through a simple default alias. A base-resolved
 `list()` supplies the same `do.call()` evidence as `base::list()`.
 
 Other return expressions are covered. For example, the first function above

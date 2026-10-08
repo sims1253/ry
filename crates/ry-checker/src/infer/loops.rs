@@ -111,15 +111,9 @@ impl Checker {
                             let supplied = matched
                                 .arg_for_param(1)
                                 .and_then(|index| args.get(index))
-                                .and_then(|arg| match &arg.value {
-                                    Expr::Call { func, args, .. }
-                                        if ident_name(func) == Some("base::list") =>
-                                    {
-                                        Some(args.clone())
-                                    }
-                                    _ => None,
-                                })
-                                .unwrap_or_default();
+                                .and_then(|arg| self.base_list_arguments(&arg.value, scope))
+                                .unwrap_or_default()
+                                .to_vec();
                             for source in crate::collect::global_caller_binding_value_sources(
                                 &target.value,
                                 64,
@@ -735,6 +729,20 @@ impl Checker {
                 let exit_inert = exit.inert_caller_binding_functions.contains(&binding);
                 let prior_local = scope.local_caller_binding_functions.get(&binding).cloned();
                 let exit_local = exit.local_caller_binding_functions.get(&binding).cloned();
+                // An all-path exit value replaces the carried alternatives.
+                // Keep the entry union when zero iterations or a joined
+                // uncertain value can still reach this call.
+                let known_exit = entered
+                    && !exit.uncertain_caller_binding_aliases.contains(&binding)
+                    && (exit_alias.is_some() || exit_local.is_some() || exit_inert);
+                let bounded_sources = if known_exit {
+                    exit.bounded_caller_binding_sources.get(&binding).cloned()
+                } else {
+                    frame
+                        .bounded_caller_binding_sources
+                        .get(&binding)
+                        .map(|sources| sources.iter().cloned().collect())
+                };
                 let aliases_differ =
                     prior_alias.as_deref() != exit_alias || prior_inert != exit_inert;
                 let alias = if entered || !aliases_differ {
@@ -777,8 +785,7 @@ impl Checker {
                     && exit.default_parameter_bindings.contains(&binding);
                 let scalar_asserted = scalar_before.contains(&binding)
                     && exit.scalar_asserted_bindings.contains(&binding);
-                let inert = inert_before.contains(&binding)
-                    && exit.inert_caller_binding_functions.contains(&binding);
+                let inert = exit_inert && (entered || prior_inert);
                 let loop_vector = exit.loop_vector_bindings.contains(&binding)
                     || (!entered
                         && (vector_before.contains(&binding)
@@ -808,14 +815,12 @@ impl Checker {
                 if let Some(function) = local_function {
                     scope.set_local_caller_binding_function(&binding, function);
                 }
-                if !scope.dynamic_bindings_unknown
+                if !inert
+                    && !scope.dynamic_bindings_unknown
                     && !scope.effects_unknown
-                    && let Some(sources) = frame.bounded_caller_binding_sources.get(&binding)
+                    && let Some(sources) = bounded_sources
                 {
-                    scope.set_bounded_caller_binding_sources(
-                        &binding,
-                        sources.iter().cloned().collect(),
-                    );
+                    scope.set_bounded_caller_binding_sources(&binding, sources);
                 }
                 if loop_vector {
                     scope.mark_loop_vector(&binding);

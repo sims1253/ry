@@ -67,6 +67,21 @@ can install a binding. A `do.call()` target and a function-valued formal may
 invoke an installer too, while a proven pure target or a later pure overwrite
 keeps the guarded binding stable.
 
+Direct calls, computed calls, and `do.call()` use the same helper argument
+proof. Numeric, logical, NULL, and NA actuals cannot select an installer.
+Omitted callbacks use the helper's default effect summary; `...` and `..n`
+select unmatched actuals. A stored closure contributes effects only when
+called. Unresolved string callback targets remain uncertain because
+`do.call()` can resolve them by name. Statement and expression assignments
+carry the same callable provenance.
+
+A branch that stops contributes no scalar-binding state to the continuation.
+An entered loop keeps the callable value on its reachable exits; an all-path
+pure overwrite removes an earlier installer. Possibly empty loops retain the
+entry value. Fresh installer targets include `assign`'s `pos` argument and
+helper formals forwarded through a simple default alias. A base-resolved
+`list()` supplies the same `do.call()` evidence as `base::list()`.
+
 Other return expressions are covered. For example, the first function above
 receives RY032 even though the expression is outside an `if` condition.
 

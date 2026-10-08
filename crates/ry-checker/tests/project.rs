@@ -2422,3 +2422,27 @@ fn cross_file_helper_application_stays_silent() {
         "cross-file helper application must stay silent: {all:?}"
     );
 }
+
+#[test]
+fn fresh_helper_default_alias_retracts_warm_and_cold() {
+    let fresh = "put <- function(env, e2 = env) base::assign('x', c(1L, 2L), envir = e2)\n";
+    let caller =
+        "put <- function(env, e2 = parent.frame()) base::assign('x', c(1L, 2L), envir = e2)\n";
+    let consumer = "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); put(base::new.env()); if(is.null(x) || x == 1L) TRUE else FALSE }; f()\n";
+    let mut warm = callback_project(&[("helper.R", fresh), ("consumer.R", consumer)]);
+    for (helper, warns) in [(fresh, false), (caller, true), (fresh, false)] {
+        warm.update_file("helper.R".into(), Arc::new(parse("helper.R", helper)));
+        let diagnostics = warm.check_incremental();
+        assert_eq!(
+            diagnostics,
+            callback_project(&[("helper.R", helper), ("consumer.R", consumer)]).check()
+        );
+        assert_eq!(
+            diagnostics
+                .iter()
+                .any(|(_, ds)| ds.iter().any(|d| d.code == "RY032")),
+            warns,
+            "{diagnostics:?}"
+        );
+    }
+}

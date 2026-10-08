@@ -643,28 +643,6 @@ impl Checker {
                     && ops_chooser::ordinary_assignment(self, target, value)
                     && !ops_chooser::operator_rebound(self, "<-", scope)
                     && !ops_chooser::operator_rebound(self, "=", scope);
-                let function_alias = self.function_alias_target(value, scope);
-                let inert_caller_binding_function = inert_caller_binding_value(value, scope);
-                let uncertain_caller_binding_alias =
-                    function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
-                let local_caller_binding_function = match value {
-                    // Project functions already have a cross-file, fixpoint
-                    // summary. A lexical-only summary here would shadow that
-                    // result and lose transitive callback effects.
-                    _ if self.enclosing_formals.is_empty() => None,
-                    Expr::Function { params, body, span } => Some(Arc::new(
-                        crate::collect::local_caller_binding_function(params, body, *span),
-                    )),
-                    _ => {
-                        let sources =
-                            crate::collect::global_caller_binding_value_sources(value, 64);
-                        (sources.len() == 1)
-                            .then(|| sources.iter().next())
-                            .flatten()
-                            .and_then(|source| scope.local_caller_binding_functions.get(source))
-                            .cloned()
-                    }
-                };
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 // A rebound name no longer carries any armed
@@ -682,7 +660,7 @@ impl Checker {
                 // A fresh `result <- map(data, helper)` verdict binding
                 // records its provenance for the `all(result)` hooks.
                 self.note_vacuous_map_result(target, value, scope);
-                if self.try_assign_value(target, vt, class_write, scope)
+                if self.try_assign_value(target, value, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
                     if let Some(value) = known_string {
@@ -714,17 +692,6 @@ impl Checker {
                             semantic_argument_name(name).to_string(),
                             function,
                         );
-                    }
-                    if let Some(alias) = function_alias {
-                        scope.set_function_alias(name.to_string(), alias);
-                    } else if uncertain_caller_binding_alias {
-                        scope.mark_uncertain_caller_binding_alias(name);
-                    }
-                    if inert_caller_binding_function {
-                        scope.mark_inert_caller_binding_function(name);
-                    }
-                    if let Some(function) = local_caller_binding_function {
-                        scope.set_local_caller_binding_function(name, function);
                     }
                 }
                 // Named function bodies (`f <- function(...) body`) must
@@ -1384,28 +1351,6 @@ impl Checker {
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let has_else = else_.is_some();
-        // Assertions before this `if` remain valid only if neither arm can
-        // replace their binding. A same-typed assignment still invalidates
-        // the proof, even though ordinary type merging would see no change.
-        let lost_scalar_assertions: Vec<_> = scope
-            .scalar_asserted_bindings
-            .iter()
-            .filter(|name| {
-                !then_delta
-                    .changed
-                    .get(*name)
-                    .is_none_or(|state| state.scalar_asserted)
-                    || (has_else
-                        && !else_delta
-                            .changed
-                            .get(*name)
-                            .is_none_or(|state| state.scalar_asserted))
-            })
-            .cloned()
-            .collect();
-        for name in lost_scalar_assertions {
-            scope.clear_scalar_asserted(&name);
-        }
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
         let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
@@ -1417,6 +1362,30 @@ impl Checker {
         let then_diverges = then_diverges_in_loop || self.block_diverges_for_continuation(then);
         let else_diverges = else_diverges_in_loop
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        // Assertions before this `if` remain valid only if neither arm can
+        // replace their binding. A same-typed assignment still invalidates
+        // the proof, even though ordinary type merging would see no change.
+        let lost_scalar_assertions: Vec<_> = scope
+            .scalar_asserted_bindings
+            .iter()
+            .filter(|name| {
+                !then_diverges
+                    && !then_delta
+                        .changed
+                        .get(*name)
+                        .is_none_or(|state| state.scalar_asserted)
+                    || (has_else
+                        && !else_diverges
+                        && !else_delta
+                            .changed
+                            .get(*name)
+                            .is_none_or(|state| state.scalar_asserted))
+            })
+            .cloned()
+            .collect();
+        for name in lost_scalar_assertions {
+            scope.clear_scalar_asserted(&name);
+        }
         let mut vector_candidates: HashSet<String> =
             scope.loop_vector_bindings.iter().cloned().collect();
         for delta in [&then_delta, &else_delta] {
@@ -1547,8 +1516,8 @@ impl Checker {
         scope.ops_environment_unknown |=
             then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
         scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
-        scope.dynamic_bindings_unknown |=
-            then_delta.dynamic_bindings_unknown || else_delta.dynamic_bindings_unknown;
+        scope.dynamic_bindings_unknown |= (!then_diverges && then_delta.dynamic_bindings_unknown)
+            || (!else_diverges && else_delta.dynamic_bindings_unknown);
         scope.literal_values_unknown |=
             then_delta.literal_values_unknown || else_delta.literal_values_unknown;
         scope.has_escaped_slot_names |=
@@ -2199,11 +2168,12 @@ impl Checker {
     /// special assignment forms the checker models separately — a
     /// class-attribute write (`class(x) <- ...`) or a
     /// replacement-function mutation (`names(x) <- ...`). Returns
-    /// whether the plain binding ran; the statement walker layers its
-    /// list-origin and function-alias provenance marks on that outcome.
+    /// whether the plain binding ran. Both statement and expression writes
+    /// transfer callable provenance here before installing the new binding.
     fn try_assign_value(
         &mut self,
         target: &Expr,
+        value: &Expr,
         vt: RType,
         class_write: Option<ClassLiteral>,
         scope: &mut Scope,
@@ -2229,7 +2199,41 @@ impl Checker {
                 .and_modify(|previous| *previous = previous.clone().join(vt.clone()))
                 .or_insert_with(|| vt.clone());
         }
+        let function_alias = self.function_alias_target(value, scope);
+        let inert_caller_binding_function = inert_caller_binding_value(value, scope);
+        let uncertain_caller_binding_alias =
+            function_alias.is_none() && self.uncertain_caller_binding_value(value, scope);
+        let local_caller_binding_function = match value {
+            // Project functions already have a cross-file, fixpoint
+            // summary. A lexical-only summary here would shadow that
+            // result and lose transitive callback effects.
+            _ if self.enclosing_formals.is_empty() => None,
+            Expr::Function { params, body, span } => Some(Arc::new(
+                crate::collect::local_caller_binding_function(params, body, *span),
+            )),
+            _ => {
+                let sources = crate::collect::global_caller_binding_value_sources(value, 64);
+                (sources.len() == 1)
+                    .then(|| sources.iter().next())
+                    .flatten()
+                    .and_then(|source| scope.local_caller_binding_functions.get(source))
+                    .cloned()
+            }
+        };
         self.assign_target(target, vt, scope);
+        if let Some(name) = binding_name(target) {
+            if let Some(alias) = function_alias {
+                scope.set_function_alias(name.to_string(), alias);
+            } else if uncertain_caller_binding_alias {
+                scope.mark_uncertain_caller_binding_alias(name);
+            }
+            if inert_caller_binding_function {
+                scope.mark_inert_caller_binding_function(name);
+            }
+            if let Some(function) = local_caller_binding_function {
+                scope.set_local_caller_binding_function(name, function);
+            }
+        }
         true
     }
 
@@ -2622,7 +2626,7 @@ impl Checker {
             Stmt::Assign { target, value, .. } => {
                 let class_write = self.prepare_class_attribute(target, value, scope);
                 let vt = self.infer(value, scope);
-                self.try_assign_value(target, vt.clone(), class_write, scope);
+                self.try_assign_value(target, value, vt.clone(), class_write, scope);
                 vt
             }
             Stmt::Expr(e) => self.infer(e, scope),
@@ -3030,7 +3034,7 @@ impl Checker {
                                 && !ops_chooser::operator_rebound(self, "=", scope)
                         })
                         .map(Arc::<str>::from);
-                    if self.try_assign_value(lhs, rt.clone(), class_write, scope)
+                    if self.try_assign_value(lhs, rhs, rt.clone(), class_write, scope)
                         && let Some(name) = binding_name(lhs)
                         && let Some(value) = known_string
                     {
@@ -3298,6 +3302,7 @@ impl Checker {
                                 | Expr::Integer(..)
                                 | Expr::Double(..)
                                 | Expr::String(..)
+                                | Expr::Na(..)
                         )
                     )
                 })

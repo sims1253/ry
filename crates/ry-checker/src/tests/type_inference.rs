@@ -3334,3 +3334,146 @@ fn logical_condition_length_survives_nested_math_warning() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn scalar_cleanup_callable_paths_match_r_witnesses() {
+    let cases = [
+        (
+            "numeric_callback",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_numeric_callback.R"),
+            false,
+        ),
+        (
+            "local_dots",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_local_dots.R"),
+            false,
+        ),
+        (
+            "local_default",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_local_default.R"),
+            false,
+        ),
+        (
+            "local_environment",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_local_environment.R"),
+            false,
+        ),
+        (
+            "local_inert_value",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_local_inert_value.R"),
+            false,
+        ),
+        (
+            "closure_storage",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_closure_storage.R"),
+            false,
+        ),
+        (
+            "local_definition",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_local_definition.R"),
+            false,
+        ),
+        (
+            "uncalled_closure",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_uncalled_closure.R"),
+            false,
+        ),
+        (
+            "shadowed_installer",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_shadowed_installer.R"),
+            false,
+        ),
+        (
+            "na_default",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_na_default.R"),
+            false,
+        ),
+        (
+            "diverging_installer",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_diverging_installer.R"),
+            false,
+        ),
+        (
+            "loop_overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_loop_overwrite.R"),
+            false,
+        ),
+        (
+            "fresh_pos",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_fresh_pos.R"),
+            false,
+        ),
+        (
+            "bare_list",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_bare_list.R"),
+            false,
+        ),
+        (
+            "fresh_helper_value",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_fresh_helper_value.R"),
+            false,
+        ),
+        (
+            "fresh_helper_default",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_fresh_helper_default.R"),
+            false,
+        ),
+        (
+            "docall_project_callback",
+            include_str!(
+                "../../testdata/oracle/assertion_subject_cleanup_docall_project_callback.R"
+            ),
+            true,
+        ),
+        (
+            "expression_installer",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_expression_installer.R"),
+            true,
+        ),
+        (
+            "fresh_alias",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_fresh_alias.R"),
+            false,
+        ),
+        (
+            "fresh_dots_target",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_fresh_dots_target.R"),
+            false,
+        ),
+        (
+            "loop_conditional",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_loop_conditional.R"),
+            true,
+        ),
+        (
+            "loop_for_overwrite",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_loop_for_overwrite.R"),
+            false,
+        ),
+        (
+            "loop_maybe_empty",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_loop_maybe_empty.R"),
+            true,
+        ),
+        (
+            "nested_callback",
+            include_str!("../../testdata/oracle/assertion_subject_cleanup_nested_callback.R"),
+            true,
+        ),
+        (
+            "fresh_helper_effectful_default",
+            include_str!(
+                "../../testdata/oracle/assertion_subject_cleanup_fresh_helper_effectful_default.R"
+            ),
+            true,
+        ),
+    ];
+    let failures: Vec<_> = cases
+        .into_iter()
+        .filter_map(|(name, source, warn)| {
+            let diagnostics = check(source);
+            (diagnostics.iter().any(|d| d.code == "RY032") != warn).then_some((name, diagnostics))
+        })
+        .collect();
+    assert!(failures.is_empty(), "{failures:#?}");
+}

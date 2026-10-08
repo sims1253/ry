@@ -68,27 +68,22 @@ pub(crate) fn inert_caller_binding_body(body: &[Stmt]) -> bool {
 /// be invoked; a pure `base::identity` or `base::list` alone does not.
 /// Exhaustion or an escaped name withdraws the negative effect proof.
 fn caller_binding_value_sources(expression: &Expr) -> Option<HashSet<String>> {
-    let mut sources = HashSet::new();
-    let mut uncertain = false;
-    let walk = Walk {
-        assign_targets: false,
-        assign_operands: true,
-        dollar_args: false,
-        fn_bodies: true,
-        control_tests: true,
-    };
-    let _ = walk_expr(expression, walk, |node, _| {
-        if let AstNode::Expr(Expr::Ident { name, .. }) = node {
-            match caller_binding_identity(name) {
-                Some(name) if sources.len() < 128 => {
-                    sources.insert(name);
-                }
-                _ => uncertain = true,
-            }
+    if let Expr::Function { params, body, .. } = expression {
+        let (effect, callees, _, _) = helper_caller_binding_summary(params, body);
+        let formals: HashSet<_> = params
+            .iter()
+            .filter_map(|p| caller_binding_identity(&p.name))
+            .collect();
+        let mut sources: HashSet<_> = callees
+            .into_iter()
+            .filter(|name| !formals.contains(name))
+            .collect();
+        if effect {
+            sources.insert(UNKNOWN_CALLER_BINDING_IDENTITY.to_string());
         }
-        ControlFlow::<(), Descend>::Continue(Descend::Into)
-    });
-    (!uncertain).then_some(sources)
+        return Some(sources);
+    }
+    Some(global_caller_binding_value_sources(expression, 64))
 }
 
 fn expand_block_value_sources(
@@ -372,6 +367,11 @@ fn installer_environment_arg<'a>(name: &str, args: &'a [Arg]) -> Result<Option<&
     }
     Ok(matched
         .arg_for_param(environment)
+        .or_else(|| {
+            (bare_name(name) == "assign")
+                .then(|| matched.arg_for_param(2))
+                .flatten()
+        })
         .and_then(|index| args.get(index))
         .map(|arg| &arg.value))
 }
@@ -728,14 +728,14 @@ pub(crate) fn helper_caller_binding_summary(
 }
 
 /// A one-call helper can be certified harmless for a fresh actual only when
-/// its sole installer target is a formal and all other actual expressions
-/// are closed values. Bare `c()` additionally needs its base identity at the
+/// its sole installer target is a formal and its other arguments are values
+/// or formals with no executable default. Bare `c()` needs base identity at the
 /// caller; a lexical mask can execute arbitrary code while forming `value`.
 pub(crate) fn helper_fresh_target_formal(
-    params: &[String],
+    params: &[Param],
     body: &[Stmt],
 ) -> Option<(String, bool)> {
-    fn pure_value(value: &Expr) -> Option<bool> {
+    fn pure_value(value: &Expr, params: &[Param]) -> Option<bool> {
         match value {
             Expr::Null(_)
             | Expr::Na(_, _)
@@ -743,10 +743,28 @@ pub(crate) fn helper_fresh_target_formal(
             | Expr::Integer(_, _)
             | Expr::Double(_, _)
             | Expr::String(_, _) => Some(false),
+            Expr::Ident { name, .. } => {
+                let param = params
+                    .iter()
+                    .find(|param| caller_binding_identity(&param.name).as_deref() == Some(name))?;
+                // A nonliteral omitted default is executable inside the helper.
+                param.default.as_ref().map_or(Some(false), |default| {
+                    matches!(
+                        default,
+                        Expr::Null(_)
+                            | Expr::Na(..)
+                            | Expr::Logical(..)
+                            | Expr::Integer(..)
+                            | Expr::Double(..)
+                            | Expr::String(..)
+                    )
+                    .then_some(false)
+                })
+            }
             Expr::Call { func, args, .. } if matches!(ident_name(func), Some("c" | "base::c")) => {
                 let mut needs_base_c = ident_name(func) == Some("c");
                 for arg in args {
-                    needs_base_c |= pure_value(&arg.value)?;
+                    needs_base_c |= pure_value(&arg.value, params)?;
                 }
                 Some(needs_base_c)
             }
@@ -766,7 +784,12 @@ pub(crate) fn helper_fresh_target_formal(
         return None;
     };
     let formal = caller_binding_identity(formal)?;
-    if !params.contains(&formal) || formal == "..." || params.iter().any(|name| name == "c") {
+    if !(params
+        .iter()
+        .any(|param| caller_binding_identity(&param.name).as_deref() == Some(&formal))
+        || (variadic_callable_source(&formal) && params.iter().any(|param| param.name == "...")))
+        || params.iter().any(|param| param.name == "c")
+    {
         return None;
     }
     let mut needs_base_c = false;
@@ -774,7 +797,7 @@ pub(crate) fn helper_fresh_target_formal(
         if std::ptr::eq(&arg.value, environment) {
             continue;
         }
-        needs_base_c |= pure_value(&arg.value)?;
+        needs_base_c |= pure_value(&arg.value, params)?;
     }
     Some((formal, needs_base_c))
 }
@@ -799,13 +822,35 @@ pub(crate) fn local_caller_binding_function(
     definition: Span,
 ) -> LocalCallerBindingFunction {
     let (may_install, _, called_formals, _) = helper_caller_binding_summary(params, body);
+    caller_binding_function_shape(params, body, definition, may_install, called_formals)
+}
+
+fn caller_binding_function_shape(
+    params: &[Param],
+    body: &[Stmt],
+    definition: Span,
+    may_install: bool,
+    called_formals: Vec<String>,
+) -> LocalCallerBindingFunction {
     let names: Vec<_> = params
         .iter()
         .map(|param| caller_binding_identity(&param.name).unwrap_or_default())
         .collect();
-    let fresh_target = helper_fresh_target_formal(&names, body);
+    let fresh_target = helper_fresh_target_formal(params, body);
     LocalCallerBindingFunction {
         params: names.clone(),
+        default_aliases: params
+            .iter()
+            .filter_map(|param| {
+                let Expr::Ident { name, .. } = param.default.as_ref()? else {
+                    return None;
+                };
+                Some((
+                    caller_binding_identity(&param.name)?,
+                    caller_binding_identity(name)?,
+                ))
+            })
+            .collect(),
         may_install,
         called_formals,
         fresh_target_formal: fresh_target.as_ref().map(|(formal, _)| formal.clone()),
@@ -888,6 +933,8 @@ fn helper_caller_binding_summary_bounded(
         }
     }
 
+    let mut local_function_summaries = HashMap::new();
+    let mut inline_callback_calls = Vec::new();
     let mut call_sites = Vec::new();
     let mut callees = HashSet::new();
     let mut potential_callback_arguments = Vec::new();
@@ -906,10 +953,34 @@ fn helper_caller_binding_summary_bounded(
             _ => None,
         };
         if let Some((Expr::Ident { name: target, .. }, value)) = assignment {
-            match (
-                caller_binding_identity(target),
-                caller_binding_value_sources(value),
-            ) {
+            let sources = if let Expr::Function { params, body, .. } = value {
+                if *remaining_default_bodies == 0 {
+                    indirect_call = true;
+                    None
+                } else {
+                    *remaining_default_bodies -= 1;
+                    let summary = helper_caller_binding_summary_bounded(
+                        params,
+                        body,
+                        remaining_default_bodies,
+                    );
+                    let formals: HashSet<_> = params
+                        .iter()
+                        .filter_map(|param| caller_binding_identity(&param.name))
+                        .collect();
+                    let sources = summary
+                        .1
+                        .iter()
+                        .filter(|name| !formals.contains(*name))
+                        .cloned()
+                        .collect();
+                    local_function_summaries.insert(target.clone(), summary);
+                    Some(sources)
+                }
+            } else {
+                caller_binding_value_sources(value)
+            };
+            match (caller_binding_identity(target), sources) {
                 (Some(target), Some(sources)) => {
                     local_aliases.entry(target).or_default().extend(sources);
                 }
@@ -961,8 +1032,23 @@ fn helper_caller_binding_summary_bounded(
                     }
                 }
                 callees.insert(name.clone());
-                call_sites.push((span.start, name, args.clone()));
-            } else if !matches!(func.as_ref(), Expr::Function { .. }) {
+                call_sites.push((span.start, name, Arc::<[Arg]>::from(args.as_slice())));
+            } else if let Expr::Function { params, body, .. } = func.as_ref() {
+                if *remaining_default_bodies == 0 {
+                    indirect_call = true;
+                } else {
+                    *remaining_default_bodies -= 1;
+                    let (effect, nested_callees, called_formals, callbacks) =
+                        helper_caller_binding_summary_bounded(
+                            params,
+                            body,
+                            remaining_default_bodies,
+                        );
+                    indirect_call |= effect || !called_formals.is_empty();
+                    callees.extend(nested_callees);
+                    inline_callback_calls.extend(callbacks);
+                }
+            } else {
                 // A computed function value can be a known installer reached
                 // through `get("install")`, indexing, or another expression.
                 indirect_call = true;
@@ -970,7 +1056,14 @@ fn helper_caller_binding_summary_bounded(
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     };
-    let _ = walk_stmts(body, Walk::ALL, &mut collect_effect);
+    let _ = walk_stmts(
+        body,
+        Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        },
+        &mut collect_effect,
+    );
     for param in params {
         if caller_binding_identity(&param.name).is_some_and(|name| forced_defaults.contains(&name))
             && let Some(default) = &param.default
@@ -1060,7 +1153,15 @@ fn helper_caller_binding_summary_bounded(
     // environment. A later default can invoke one declared earlier, so keep
     // discovering callees until no unvisited function default is reachable.
     let mut visited_defaults = HashSet::new();
-    let mut nested_callback_calls = Vec::new();
+    let mut nested_callback_calls = inline_callback_calls;
+    expand_aliases(&mut callees);
+    for (name, (effect, nested_callees, called_formals, callbacks)) in local_function_summaries {
+        if caller_binding_identity(&name).is_some_and(|name| callees.contains(&name)) {
+            indirect_call |= effect || !called_formals.is_empty();
+            callees.extend(nested_callees);
+            nested_callback_calls.extend(callbacks);
+        }
+    }
     loop {
         expand_aliases(&mut callees);
         let next = params.iter().enumerate().find(|(index, param)| {
@@ -1130,7 +1231,7 @@ fn helper_caller_binding_summary_bounded(
             }
             match installer_environment_arg(candidate, args) {
                 Ok(Some(environment)) => {
-                    installer_environments.push((*start, environment.clone()));
+                    installer_environments.push((*start, environment));
                 }
                 Err(()) => indirect_call = true,
                 Ok(None) => {}
@@ -1169,10 +1270,13 @@ fn helper_caller_binding_summary_bounded(
                     straight_local.remove(name);
                 }
             }
-            Stmt::Expr(Expr::Call { func, args, span }) => {
-                if let Some(name) = ident_name(func)
-                    && let Ok(Some(environment)) = installer_environment_arg(bare_name(name), args)
-                    && definitely_local_installer_env(environment, &straight_local)
+            Stmt::Expr(Expr::Call { span, .. }) => {
+                if installer_environments
+                    .iter()
+                    .filter(|(start, _)| *start == span.start)
+                    .all(|(_, environment)| {
+                        definitely_local_installer_env(environment, &straight_local)
+                    })
                 {
                     certified_calls.insert(span.start);
                 }
@@ -1207,6 +1311,7 @@ fn helper_caller_binding_summary_bounded(
     for (_, callee, args) in call_sites {
         let mut possible = HashSet::from([callee]);
         expand_aliases(&mut possible);
+        possible.retain(|name| !local_aliases.contains_key(name));
         if possible.len() > 128 || callback_calls.len().saturating_add(possible.len()) > 256 {
             indirect_call = true;
             break;
@@ -1229,6 +1334,7 @@ fn helper_caller_binding_summary_bounded(
                 }),
         );
     }
+    callees.retain(|callee| !local_aliases.contains_key(callee));
     (
         uncertain_installer_environment || indirect_call,
         callees.into_iter().collect(),
@@ -1545,6 +1651,13 @@ impl Checker {
             caller_binding_called_formals,
             caller_binding_callback_calls,
         ) = helper_caller_binding_summary(params, &body);
+        let caller_binding_local_summary = Arc::new(caller_binding_function_shape(
+            params,
+            &body,
+            Span::default(),
+            may_install_caller_binding,
+            caller_binding_called_formals.clone(),
+        ));
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -1588,6 +1701,7 @@ impl Checker {
                 caller_binding_callees,
                 caller_binding_called_formals,
                 caller_binding_callback_calls: Arc::from(caller_binding_callback_calls),
+                caller_binding_local_summary,
                 return_slot: slot,
             },
         );

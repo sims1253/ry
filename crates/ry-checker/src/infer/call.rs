@@ -3,70 +3,6 @@ use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
 
-struct HelperCallEffects<'a> {
-    params: &'a [String],
-    may_install: bool,
-    called_formals: &'a [String],
-    fresh_target_formal: Option<&'a str>,
-    fresh_target_needs_base_c: bool,
-    forwarded_installer: Option<&'a str>,
-}
-
-fn supplied_callable_may_install_caller_binding(
-    checker: &Checker,
-    function: &UserFn,
-    args: &[Arg],
-    scope: &Scope,
-) -> bool {
-    if function.caller_binding_called_formals.is_empty() {
-        return false;
-    }
-    let Some((param_names, matches)) = crate::match_caller_binding_arguments(function, args) else {
-        return true;
-    };
-    let dots_actuals: Vec<_> = matches
-        .param_for_arg
-        .iter()
-        .enumerate()
-        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
-        .collect();
-    let actual_may_install = |actual: usize| {
-        args.get(actual).is_some_and(|actual| {
-            let known_environment = matches!(
-                &actual.value,
-                Expr::Call { func, args, .. }
-                    if args.is_empty()
-                        && ident_name(func).is_some_and(|name| {
-                            crate::semantic_lists::bare_name(name) == "environment"
-                                && checker.resolves_to_base(name, scope)
-                        })
-            );
-            !known_environment && !crate::collect::inert_caller_binding_actual(&actual.value)
-        })
-    };
-    function.caller_binding_called_formals.iter().any(|called| {
-        let named = param_names.iter().enumerate().any(|(formal, param)| {
-            param == called
-                && matches
-                    .arg_for_param(formal)
-                    .is_some_and(actual_may_install)
-        });
-        if named || matches.dots.is_none() {
-            return named;
-        }
-        if called == "..." {
-            return dots_actuals.iter().copied().any(actual_may_install);
-        }
-        called
-            .strip_prefix("..")
-            .and_then(|index| index.parse::<usize>().ok())
-            .and_then(|index| index.checked_sub(1))
-            .and_then(|index| dots_actuals.get(index))
-            .copied()
-            .is_some_and(actual_may_install)
-    })
-}
-
 impl Checker {
     pub(crate) fn infer_call(
         &mut self,
@@ -92,7 +28,8 @@ impl Checker {
         // argument is evaluated by do.call, so retain that check below.
         let named_installer = callee_name(func).is_some_and(|name| {
             self.caller_binding_source_matches(&name, scope, |source| {
-                crate::collect::installer_may_replace_current_binding(source, args)
+                (self.resolves_to_base(source, scope)
+                    && crate::collect::installer_may_replace_current_binding(source, args))
                     || self.named_helper_may_replace_current_binding(source, args, scope)
             }) || (scope.is_parameter(&name)
                 && scope.get(&name).is_some_and(|binding| {
@@ -223,9 +160,8 @@ impl Checker {
             )
         } else if scope.is_parameter(source) || scope.is_lexical_function(source) {
             true
-        } else if let Some(function) = self.fn_table.fns.get(source) {
+        } else if self.fn_table.fns.contains_key(source) {
             self.named_helper_may_replace_current_binding(source, args, scope)
-                || supplied_callable_may_install_caller_binding(self, function, args, scope)
         } else if let Some(aliases) = self.fn_table.caller_binding_aliases.get(source) {
             aliases.iter().any(|alias| {
                 self.computed_source_may_replace_current_binding(
@@ -303,48 +239,103 @@ impl Checker {
 
     fn helper_effect_with_actuals(
         &self,
-        effects: HelperCallEffects<'_>,
+        effects: &LocalCallerBindingFunction,
+        may_install: bool,
+        called_formals: &[String],
         args: &[Arg],
         scope: &Scope,
     ) -> bool {
-        if let Some(installer) = effects.forwarded_installer {
+        if let Some(installer) = effects.forwarded_installer.as_deref() {
             return crate::collect::installer_may_replace_current_binding(installer, args);
         }
-        if !effects.may_install && effects.called_formals.is_empty() {
+        if !may_install && called_formals.is_empty() {
             return false;
         }
         let formal_refs: Vec<_> = effects.params.iter().map(String::as_str).collect();
         let matched = crate::match_caller_binding_argument_names(&formal_refs, args);
-        if effects.may_install
-            && let Some(formal) = effects.fresh_target_formal
-            && let Some(index) = effects.params.iter().position(|name| name == formal)
-            && let Some(actual) = matched
-                .as_ref()
-                .and_then(|bindings| bindings.arg_for_param(index))
-                .and_then(|index| args.get(index))
+        let target_actual = |formal: &str| {
+            let matched = matched.as_ref()?;
+            let mut formal = formal;
+            for _ in 0..=effects.params.len() {
+                if let Some(index) = effects.params.iter().position(|name| name == formal) {
+                    if let Some(actual) = matched.arg_for_param(index) {
+                        return args.get(actual);
+                    }
+                    formal = effects.default_aliases.get(formal)?;
+                } else {
+                    let index = formal
+                        .strip_prefix("..")?
+                        .parse::<usize>()
+                        .ok()?
+                        .checked_sub(1)?;
+                    let actual = matched
+                        .param_for_arg
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
+                        .nth(index)?;
+                    return args.get(actual);
+                }
+            }
+            None
+        };
+        if may_install
+            && let Some(actual) = effects
+                .fresh_target_formal
+                .as_deref()
+                .and_then(target_actual)
             && crate::collect::definitely_fresh_installer_env(&actual.value)
             && (!effects.fresh_target_needs_base_c || self.resolves_to_base("c", scope))
             && !scope.effects_unknown
         {
             return false;
         }
-        if effects.may_install {
+        if may_install {
             return true;
         }
         let Some(matched) = matched else {
             return true;
         };
-        effects.called_formals.iter().any(|called| {
-            let Some(index) = effects.params.iter().position(|name| name == called) else {
-                return true;
-            };
-            let Some(actual) = matched
-                .arg_for_param(index)
-                .and_then(|index| args.get(index))
-            else {
-                return true;
-            };
-            !inert_caller_binding_value(&actual.value, scope)
+        let dots_actuals: Vec<_> = matched
+            .param_for_arg
+            .iter()
+            .enumerate()
+            .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
+            .collect();
+        let actual_may_install = |actual: usize| {
+            let value = &args[actual].value;
+            let known_environment = matches!(value, Expr::Call { func, args, .. }
+                if args.is_empty() && ident_name(func).is_some_and(|name|
+                    crate::semantic_lists::bare_name(name) == "environment"
+                        && self.resolves_to_base(name, scope)));
+            !known_environment
+                && !matches!(
+                    value,
+                    Expr::Null(_)
+                        | Expr::Na(..)
+                        | Expr::Logical(..)
+                        | Expr::Integer(..)
+                        | Expr::Double(..)
+                )
+                && !inert_caller_binding_value(value, scope)
+        };
+        called_formals.iter().any(|called| {
+            if let Some(index) = effects.params.iter().position(|name| name == called) {
+                return matched.arg_for_param(index).is_some_and(actual_may_install);
+            }
+            if matched.dots.is_none() {
+                return false;
+            }
+            if called == "..." {
+                return dots_actuals.iter().copied().any(actual_may_install);
+            }
+            called
+                .strip_prefix("..")
+                .and_then(|index| index.parse::<usize>().ok())
+                .and_then(|index| index.checked_sub(1))
+                .and_then(|index| dots_actuals.get(index))
+                .copied()
+                .is_some_and(actual_may_install)
         })
     }
 
@@ -356,14 +347,9 @@ impl Checker {
     ) -> bool {
         if let Some(function) = scope.local_caller_binding_functions.get(source) {
             return self.helper_effect_with_actuals(
-                HelperCallEffects {
-                    params: &function.params,
-                    may_install: function.may_install,
-                    called_formals: &function.called_formals,
-                    fresh_target_formal: function.fresh_target_formal.as_deref(),
-                    fresh_target_needs_base_c: function.fresh_target_needs_base_c,
-                    forwarded_installer: function.forwarded_installer.as_deref(),
-                },
+                function,
+                function.may_install,
+                &function.called_formals,
                 args,
                 scope,
             );
@@ -380,23 +366,10 @@ impl Checker {
         let Some(function) = self.fn_table.fns.get(source) else {
             return false;
         };
-        let params: Vec<_> = function
-            .params
-            .iter()
-            .map(|param| param.name.clone())
-            .collect();
-        let fresh_target = crate::collect::helper_fresh_target_formal(&params, &function.body);
-        let forwarded_installer =
-            crate::collect::helper_forwarded_installer(&params, &function.body);
         self.helper_effect_with_actuals(
-            HelperCallEffects {
-                params: &params,
-                may_install: function.may_install_caller_binding,
-                called_formals: &[],
-                fresh_target_formal: fresh_target.as_ref().map(|(formal, _)| formal.as_str()),
-                fresh_target_needs_base_c: fresh_target.as_ref().is_some_and(|(_, needs)| *needs),
-                forwarded_installer: forwarded_installer.as_deref(),
-            },
+            &function.caller_binding_local_summary,
+            function.may_install_caller_binding,
+            &function.caller_binding_called_formals,
             args,
             scope,
         )
@@ -439,6 +412,31 @@ impl Checker {
         false
     }
 
+    pub(super) fn base_list_arguments<'a>(
+        &self,
+        value: &'a Expr,
+        scope: &Scope,
+    ) -> Option<&'a [Arg]> {
+        let value = match value {
+            Expr::Block { body, .. } => match body.last() {
+                Some(Stmt::Expr(value)) => value,
+                _ => value,
+            },
+            value => value,
+        };
+        match value {
+            Expr::Call { func, args, .. }
+                if ident_name(func).is_some_and(|name| {
+                    crate::semantic_lists::bare_name(name) == "list"
+                        && self.resolves_to_base(name, scope)
+                }) =>
+            {
+                Some(args)
+            }
+            _ => None,
+        }
+    }
+
     fn do_call_may_replace_current_binding(&self, args: &[Arg], scope: &Scope) -> bool {
         let Some(matched) =
             crate::match_caller_binding_argument_names(&["what", "args", "quote", "envir"], args)
@@ -451,21 +449,7 @@ impl Checker {
         let supplied = matched
             .arg_for_param(1)
             .and_then(|index| args.get(index))
-            .and_then(|arg| {
-                let value = match &arg.value {
-                    Expr::Block { body, .. } => match body.last() {
-                        Some(Stmt::Expr(value)) => value,
-                        _ => &arg.value,
-                    },
-                    value => value,
-                };
-                match value {
-                    Expr::Call { func, args, .. } if ident_name(func) == Some("base::list") => {
-                        Some(args.as_slice())
-                    }
-                    _ => None,
-                }
-            });
+            .and_then(|arg| self.base_list_arguments(&arg.value, scope));
         crate::collect::global_caller_binding_value_sources(&target.value, 64)
             .iter()
             .any(|source| {
@@ -712,10 +696,8 @@ impl Checker {
         // caller-binding effect on that path too. A formal or nested lexical
         // callable is not certified by the project-wide name table.
         if !scope.is_parameter(&lookup_name)
-            && call.user_function.as_ref().is_some_and(|function| {
-                self.named_helper_may_replace_current_binding(&lookup_name, args, scope)
-                    || supplied_callable_may_install_caller_binding(self, function, args, scope)
-            })
+            && call.user_function.is_some()
+            && self.named_helper_may_replace_current_binding(&lookup_name, args, scope)
         {
             scope.dynamic_bindings_unknown = true;
             for name in scope.scalar_asserted_bindings.clone() {

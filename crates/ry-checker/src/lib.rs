@@ -471,6 +471,7 @@ pub struct Scope {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LocalCallerBindingFunction {
     pub(crate) params: Vec<String>,
+    pub(crate) default_aliases: FxMap<String, String>,
     pub(crate) may_install: bool,
     pub(crate) called_formals: Vec<String>,
     pub(crate) fresh_target_formal: Option<String>,
@@ -954,6 +955,7 @@ pub(crate) struct UserFn {
     /// Calls whose supplied actuals may be invoked through a callee's formal.
     /// Resolved against the shared table after every file is collected.
     pub(crate) caller_binding_callback_calls: Arc<[CallerBindingCallbackCall]>,
+    pub(crate) caller_binding_local_summary: Arc<LocalCallerBindingFunction>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -963,7 +965,7 @@ pub(crate) struct UserFn {
 #[derive(Debug, Clone)]
 pub(crate) struct CallerBindingCallbackCall {
     callee: String,
-    args: Vec<Arg>,
+    args: Arc<[Arg]>,
     forwarded_only: Vec<bool>,
 }
 
@@ -1115,6 +1117,7 @@ pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
     may_install_caller_binding: bool,
     called_formals: Vec<String>,
+    caller_binding_local_summary: Arc<LocalCallerBindingFunction>,
 }
 
 impl UserFn {
@@ -1123,6 +1126,7 @@ impl UserFn {
             parameters: self.params.clone(),
             may_install_caller_binding: self.may_install_caller_binding,
             called_formals: self.caller_binding_called_formals.clone(),
+            caller_binding_local_summary: self.caller_binding_local_summary.clone(),
         }
     }
 

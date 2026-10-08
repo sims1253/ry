@@ -196,6 +196,7 @@ impl Checker {
         }
         scope.loop_vector_bindings = loop_vectors_after;
         for (name, alias, uncertain, inert_function, local_function) in caller_alias_updates {
+            scope.clear_bounded_caller_binding_sources(&name);
             scope.clear_local_caller_binding_function(&name);
             if let Some(function) = local_function {
                 scope.set_local_caller_binding_function(&name, function);
@@ -238,10 +239,20 @@ impl Checker {
             then_scope.literal_values_unknown || else_scope.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
+        let then_diverges =
+            self.block_diverges_for_continuation(branches.0) || then_scope.unreachable;
+        let else_diverges = branches
+            .1
+            .is_some_and(|body| self.block_diverges_for_continuation(body))
+            || else_scope.unreachable;
         scope.scalar_asserted_bindings.retain(|name| {
-            then_scope.scalar_asserted_bindings.contains(name)
-                && (!has_else || else_scope.scalar_asserted_bindings.contains(name))
+            (then_diverges || then_scope.scalar_asserted_bindings.contains(name))
+                && (!has_else
+                    || else_diverges
+                    || else_scope.scalar_asserted_bindings.contains(name))
         });
+        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
+            || (!else_diverges && else_scope.dynamic_bindings_unknown);
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

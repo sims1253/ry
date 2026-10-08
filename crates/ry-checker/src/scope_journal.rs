@@ -779,6 +779,7 @@ mod tests {
             FxSet::from_iter(["base::assign".to_string()]),
         );
         let local_function = Arc::new(LocalCallerBindingFunction {
+            default_aliases: FxMap::default(),
             params: vec!["env".to_string()],
             may_install: true,
             called_formals: Vec::new(),

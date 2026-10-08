@@ -80,9 +80,13 @@ these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
 materialized element storage per collection, including metadata read in lazy
 mode. These are separate from the decoded-file cap and are not a total memory
-budget. Unlike the decoded-file cap, a parser limit does not report a degraded
-scope: the file's inventory comes back empty and unflagged, and the package's
-bindings resolve through their other sources.
+budget. A parser resource-limit failure reports a degraded scope and uses the
+same file-stem fallback as the decoded-byte cap. Malformed, unsupported,
+unreadable, or undecodable serialized input also reports a degraded scope and contributes no
+enumerated bindings. The `data/` convention still contributes the file stem
+when enumeration yields no names. A valid empty workspace reports no degradation. These
+outcomes do not disable diagnostics in other files; the CLI keeps notices on
+stderr, and `dump-facts` includes their paths and reasons in context inputs.
 
 Use an environment profile for bindings supplied only to selected files:
 
@@ -140,11 +144,46 @@ when writing custom stubs.
 ``` r
 x <- bad  # ry: ignore                 # suppress all rules on this line
 x <- bad  # ry: ignore[RY010, RY040]   # suppress specific rules
+x <- bad  # ry: ignore[]               # legacy alias for all rules
 x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 
 # ry: ignore                           # standalone: suppresses the next line
 # ry: ignore-file                      # file-level, anywhere in the file
 ```
+
+Selective `ry: ignore[...]` lists must contain registered `RY` codes.
+The older unbracketed code-list form (`ry: ignore RY040 RY010`) is also
+selective when its first word resembles a rule code. Commas may have spaces
+on either side. Code-like words before trailing prose must name registered
+rules; after the first ordinary word, the rest is explanation and may itself
+mention rule codes. The colon form
+requires only code tokens. Brackets make the boundary between codes and an
+explanation explicit.
+Unknown codes and malformed brackets produce RY112 at the comment and do
+not suppress findings. A `noqa` list can also name another tool's codes;
+ry uses only its registered `RY` entries. A foreign-only list suppresses
+nothing in ry. Bare `ry: ignore` (including explanatory prose) and bare
+`noqa` suppress all rules on their target line. Any nonempty text after
+`noqa` is interpreted as a code list; if it contains no registered `RY`
+codes, it suppresses nothing in ry. Put explanatory prose after a native
+`ry: ignore` instead. `ignore[ ]` is an alias for
+`ignore[]`. Use `--ignore RY112` or the corresponding severity
+configuration to disable directive validation; a bare ignore cannot hide
+its own RY112 finding.
+
+Enable the unused-ignore audit with `--warn RY113` or `warn = ["RY113"]` in
+`ry.toml`. It checks valid `ry: ignore[...]` comments, including standalone
+ones, one code at a time. The initial audit covers RY034 and RY102, whose
+premises are local syntax; ignores for inference-dependent rules remain
+unaudited until the checker can prove their analysis was complete. A code is
+considered used if the checker found it on the target line before inline
+suppression, severity filtering, baseline subtraction, or confidence
+thresholds. Disabled rules, files with parse errors, excluded files, bare
+ignores, `noqa`, and file ignores receive no unused finding. Anonymous
+function bodies and unmodeled expression regions are unaudited; direct named
+function bodies remain eligible. RY113 points to the comment. Use
+`--ignore RY113` or `ignore = ["RY113"]` to disable it;
+an inline ignore cannot hide the audit itself.
 
 Prefer a rule-specific inline suppression or `globals` entry for dynamic
 workspaces. ry intentionally does not suppress diagnostics merely because an

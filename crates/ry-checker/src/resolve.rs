@@ -16,6 +16,12 @@ const BASE_DATABASE_PACKAGES: &[&str] = &[
     "datasets",
 ];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchemaProvider {
+    Base,
+    Package,
+}
+
 /// Whether a direct call may use package-specific inference.
 pub(crate) enum SpecialCallProvenance {
     Proven,
@@ -141,21 +147,22 @@ impl Checker {
     /// Resolve only signatures that declare checker schema semantics. Unlike
     /// ordinary call resolution, a same-named base function without an effect
     /// does not mask an attached package's declarative verb.
-    pub(crate) fn resolve_schema_sig(&self, name: &str) -> Option<FunctionSig> {
+    pub(crate) fn resolve_schema_sig(&self, name: &str) -> Option<(FunctionSig, SchemaProvider)> {
         if let Some((pkg, fun)) = split_qualified(name) {
             if let Some(signature) = self
                 .package_typeshed(pkg)
                 .and_then(|typeshed| typeshed.functions.get(fun))
                 .filter(|sig| has_schema_semantics(sig))
             {
-                return Some(signature.clone());
+                return Some((signature.clone(), SchemaProvider::Package));
             }
-            return self
-                .typeshed
-                .functions
-                .get(fun)
+            return BASE_DATABASE_PACKAGES
+                .contains(&pkg)
+                .then(|| self.typeshed.functions.get(fun))
+                .flatten()
                 .filter(|sig| has_schema_semantics(sig))
-                .cloned();
+                .cloned()
+                .map(|signature| (signature, SchemaProvider::Base));
         }
         if let Some(package) = self.imported_from.get(name)
             && let Some(sig) = self
@@ -163,7 +170,7 @@ impl Checker {
                 .and_then(|typeshed| typeshed.functions.get(name))
                 .filter(|sig| has_schema_semantics(sig))
         {
-            return Some(sig.clone());
+            return Some((sig.clone(), SchemaProvider::Package));
         }
         if let Some(sig) = self
             .typeshed
@@ -171,13 +178,14 @@ impl Checker {
             .get(name)
             .filter(|sig| has_schema_semantics(sig))
         {
-            return Some(sig.clone());
+            return Some((sig.clone(), SchemaProvider::Base));
         }
         self.schema_attached_packages().find_map(|package| {
             self.package_typeshed(package)
                 .and_then(|typeshed| typeshed.functions.get(name))
                 .filter(|sig| has_schema_semantics(sig))
                 .cloned()
+                .map(|signature| (signature, SchemaProvider::Package))
         })
     }
 

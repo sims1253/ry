@@ -59,3 +59,41 @@ fn suppression_edits_remove_only_the_target_and_preserve_source() {
         }
     });
 }
+
+#[test]
+fn malformed_directive_actions_either_repair_or_withhold() {
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        for (marker, repairs) in [
+            ("ry: ignore[RX040] reason", true),
+            ("ry: ignore[RY040]]", false),
+            ("ry: ignore[RY040] ]", false),
+            ("noqa[RY040]]", false),
+        ] {
+            let source = format!("\"a\" + 1L # {marker}\n");
+            let fixture = FixtureProject::empty().unwrap();
+            let path = fixture.write_file("main.R", &source).unwrap();
+            let uri = file_uri(&path);
+            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+            let mark = session.publication_mark();
+            session.open(&uri, 1, &source).await.unwrap();
+            let before = session.published_diagnostics_after(&uri, mark).await.unwrap();
+            let diagnostics = normalize_diagnostics(&before);
+            let target = diagnostics.iter().find(|diag| diag["code"] == "RY040").unwrap_or_else(|| panic!("{marker}: {before}"));
+            let request = json!({"textDocument":{"uri":uri}, "range":target["range"], "context":{"diagnostics":[target]}});
+            let actions = session.request("textDocument/codeAction", request).await.unwrap();
+            let action = actions.as_array().and_then(|actions| actions.iter().find(|action| action["title"] == "Ignore RY040 on this line"));
+            assert_eq!(action.is_some(), repairs, "{marker}: {actions}");
+            if let Some(action) = action {
+                let new_text = action["edit"]["changes"][&uri][0]["newText"].as_str().unwrap();
+                assert!(new_text.ends_with("# ry: ignore[RY040] reason"));
+                let updated = format!("{new_text}\n");
+                let mark = session.publication_mark();
+                session.change(&uri, 2, json!([{"text":updated}])).await.unwrap();
+                let after = session.published_diagnostics_after(&uri, mark).await.unwrap();
+                let after = normalize_diagnostics(&after);
+                assert!(!after.iter().any(|diag| diag["code"] == "RY040" || diag["code"] == "RY112"), "{marker}: {after:?}");
+            }
+            join_session(session, server).await;
+        }
+    });
+}

@@ -16,7 +16,7 @@ pub struct Rule {
 /// severity override. Keep this policy in the registry so every checker
 /// entry point and CLI output path agrees.
 pub fn enabled_by_default(code: &str) -> bool {
-    code != "RY003"
+    !matches!(code, "RY003" | "RY113")
 }
 
 /// All rules currently emitted by the checker. Keep codes lexicographic.
@@ -268,6 +268,18 @@ pub const RULES: &[Rule] = &[
         name: "constant-argument-shadowing",
         default_severity: Severity::Warning,
         summary: "A call argument passes `TRUE`/`FALSE` for a formal an enclosing function exposes under the identical name (`na.rm = TRUE` inside `function(x, na.rm = FALSE)`), silently hardcoding instead of forwarding the caller's value — haven's `median.labelled` shipped this shape. Fires only when the tag is an exact (not partial) match on both the enclosing formal and a callee formal (typeshed or collected user signature) and the owning function never reads the formal anywhere in its body (a guard, validation, by-name forward, or `missing()` test all stay silent); forwarding the formal, non-literal expressions, renaming idioms, and numeric/string constants stay quiet.",
+    },
+    Rule {
+        code: "RY112",
+        name: "invalid-ignore",
+        default_severity: Severity::Warning,
+        summary: "A ry-owned inline ignore has malformed brackets or names an unknown rule. It cannot suppress diagnostics; correct the spelling or remove the directive. Foreign-only noqa lists are left to their owning tool and do not suppress ry findings.",
+    },
+    Rule {
+        code: "RY113",
+        name: "unused-ignore",
+        default_severity: Severity::Warning,
+        summary: "Opt-in audit: a valid ry-owned selective line or standalone ignore names an enabled rule whose local syntax was checked in diagnostic mode and produced no matching finding before baseline or confidence filtering. The initial supported codes are RY034 and RY102. Invalid, bare, noqa, and file directives are outside this audit; parser errors, anonymous function bodies, and other unavailable analysis are left unaudited. Enable with `--warn RY113` or a severity override.",
     },
 ];
 

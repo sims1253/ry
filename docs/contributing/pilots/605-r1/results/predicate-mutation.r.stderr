@@ -1,0 +1,3 @@
+Error in is.null(x) || x == 1L : 'length = 2' in coercion to 'logical(1)'
+Calls: f
+Execution halted

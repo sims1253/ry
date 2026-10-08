@@ -32,16 +32,21 @@ pub use reference_facts::{
 };
 pub mod rules;
 pub mod semantic_lists;
+pub mod trace;
 
 pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
+pub use trace::{
+    ProjectTrace, TraceCompletion, TraceEvent, TraceEventKind, TraceFileId, TraceFunctionId,
+    TraceOptions, TraceReason, TraceTrigger,
+};
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, apply_filter_to_diagnostics,
-    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
-    parse_suppressions_from_comments,
+    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, SuppressionKind,
+    SuppressionOrigin, apply_filter_to_diagnostics, filter_suppressed_with_comments,
+    has_file_suppression_from_comments, is_suppressed, parse_suppressions_from_comments,
 };
 pub use post_process::PostProcess;
 
@@ -1589,6 +1594,13 @@ impl Checker {
             // Declarations are semantic claims too. A repaired AST cannot
             // establish their attachment or a call/return mismatch.
             self.declaration_findings.clear();
+        } else {
+            self.diagnostics
+                .extend(diagnostics::invalid_suppression_diagnostics(
+                    &file.comments,
+                    &file.source,
+                    &self.path,
+                ));
         }
         // The top level is itself a lexical scope in R; record it after
         // the walk so the snapshot reflects every top-level assignment.

@@ -229,6 +229,38 @@ fn inlay_hints_for_basic_assignments() {
 }
 
 #[test]
+fn inlay_hint_summary_and_detail_keep_schema_meanings_separate() {
+    let hints = inlay_hints("x <- list(a = 1L, b = 2L, c = 3L, d = 4L)\n");
+    assert_eq!(hints.len(), 1);
+    let InlayHintLabel::String(label) = &hints[0].label else {
+        panic!("expected string label");
+    };
+    assert!(label.contains("+1 known fields; complete"), "{label}");
+    let Some(InlayHintTooltip::String(detail)) = &hints[0].tooltip else {
+        panic!("expected expanded detail");
+    };
+    assert!(detail.contains("\"d\": integer"), "{detail}");
+    assert!(detail.contains("locally constructed: true"), "{detail}");
+}
+
+#[test]
+fn inlay_hint_expands_classed_union_from_function_body() {
+    let hints = inlay_hints(
+        "f <- function(flag) {\n  x <- structure(if (flag) 1L else \"a\", class = \"tagged\")\n  x\n}\n",
+    );
+    let hint = hints
+        .iter()
+        .find(
+            |hint| matches!(&hint.label, InlayHintLabel::String(label) if label.contains("union")),
+        )
+        .expect("assignment of classed union has a hint");
+    let Some(InlayHintTooltip::String(detail)) = &hint.tooltip else {
+        panic!("expected expanded detail");
+    };
+    assert!(detail.contains("class=[\"tagged\"]"), "{detail}");
+}
+
+#[test]
 fn inlay_hints_skip_opaque_types() {
     // A call to an unknown function resolves to `Mode::Opaque`
     // ("we don't know"), so `result` must NOT get a hint: showing
@@ -497,14 +529,25 @@ fn code_action_ignore_line_bare_directive_withholds_any_code() {
 }
 
 #[test]
-fn code_action_ignore_line_standalone_directive_defers_to_next_line() {
-    // A standalone directive applies to the next code line, not itself.
-    let text = "# ry: ignore\n";
+fn code_action_ignore_line_on_comment_only_line_has_no_effective_edit() {
+    // A synthetic diagnostic on a comment-only line has no expression the
+    // proposed action could suppress, even though the standalone directive
+    // targets the next code line. The shared-parser check rejects the no-op.
+    let text = "# ry: ignore\n\"a\" + 1L\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let file = parse_src("test.R", text);
+    let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
+    assert_eq!(suppressions.len(), 1);
+    assert_eq!(suppressions[0].line, 1);
     assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
-        "a standalone directive must not suppress its own line"
+        !suppressions
+            .iter()
+            .any(|s| s.line == 0 && s.suppresses("RY040"))
+    );
+    assert!(
+        make_ignore_action(&uri, &diag, &file).is_none(),
+        "an ignore action on a comment-only line would have no effect"
     );
 }
 
@@ -622,6 +665,38 @@ fn code_action_ignore_line_not_blocked_by_prose_mention() {
 }
 
 #[test]
+fn code_action_uses_checker_parser_for_invalid_and_foreign_directives() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let diag = lsp_diag(0, 0, 1, "RY040");
+    for marker in [
+        "ry: ignore[RX040]",
+        "ry: ignore[RY999999]",
+        "noqa: E501",
+        "noqa-ish note",
+    ] {
+        let text = format!("\"a\" + 1L  # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_some(),
+            "{marker}"
+        );
+    }
+    let text = "\"a\" + 1L  # noqa: E501, RY040\n";
+    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
+    for marker in [
+        "ry: ignore[RY040]]",
+        "ry: ignore[RY040] ]",
+        "ry: ignore[RY040][RX040]",
+        "noqa[RY040]]",
+    ] {
+        let text = format!("\"a\" + 1L  # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_none(),
+            "{marker}"
+        );
+    }
+}
+
+#[test]
 fn code_action_ignore_line_marker_is_case_insensitive() {
     // The checker's parser matches `ry:` / `noqa` markers
     // case-insensitively; the quick-fix availability follows it.
@@ -651,6 +726,26 @@ fn code_action_ignore_line_handles_missing_code() {
     assert_eq!(
         action.title, "Ignore this diagnostic on its line",
         "missing code should use a generic title"
+    );
+}
+
+#[test]
+fn code_action_missing_code_withholds_still_malformed_replacement() {
+    let uri = Url::parse("file:///tmp/test.R").unwrap();
+    let mut diag = lsp_diag(0, 0, 1, "RY040");
+    diag.code = None;
+    for marker in ["ry: ignore[RY040]]", "ry: ignore[RY040] ]", "noqa[RY040]]"] {
+        let src = format!("\"a\" + 1L # {marker}\n");
+        assert!(
+            make_ignore_action(&uri, &diag, &parse_src("test.R", &src)).is_none(),
+            "{marker}: a code-less action must not leave an invalid directive"
+        );
+    }
+
+    let src = "\"a\" + 1L # ry: ignore[RY010] reason\n";
+    assert!(
+        make_ignore_action(&uri, &diag, &parse_src("test.R", src)).is_some(),
+        "a valid bracketed directive must still be replaceable by a bare ignore"
     );
 }
 

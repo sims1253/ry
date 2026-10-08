@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::process::Command;
 
-use ry_checker::{Checker, Severity};
+use ry_checker::{Checker, Confidence, PostProcess, Severity, SeverityFilter};
 use ry_core::RParser;
 use ry_core::ast::Expr;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
@@ -306,6 +306,7 @@ fn r_package_available(pkg: &str, cache: &mut HashMap<String, bool>) -> bool {
 fn checker_diagnostics(
     path: &std::path::Path,
     decoded: ry_workspace::DecodedRSource,
+    opt_in_unused_ignore: bool,
 ) -> Vec<(String, Severity)> {
     let name = path.to_string_lossy();
     let mut parser = RParser::new().expect("parser init");
@@ -315,7 +316,18 @@ fn checker_diagnostics(
     decoded.attach_boundary_findings(&mut file);
     let mut c = Checker::new(&name);
     c.check(&file);
-    let diags = c.take_diagnostics();
+    let mut diags = c.take_diagnostics();
+    if opt_in_unused_ignore {
+        let mut filter = SeverityFilter::default();
+        filter.add_warn("RY113");
+        let post = PostProcess {
+            filter: &filter,
+            baseline: None,
+            min_confidence: Confidence::Low,
+            repo_root: None,
+        };
+        diags = post.pre_demotion(diags, &file.comments, &file.source, name, Some(&file));
+    }
     diags
         .into_iter()
         .map(|d| (d.code.to_string(), d.severity))
@@ -401,7 +413,8 @@ fn oracle_check_each_fixture() {
         total += 1;
 
         let (r_errored, r_message) = r_errors(&path);
-        let diagnostics = checker_diagnostics(&path, decoded);
+        let opt_in_unused_ignore = matches!(&tag, Tag::MustWarn(code) if code == "RY113");
+        let diagnostics = checker_diagnostics(&path, decoded, opt_in_unused_ignore);
         let errs: Vec<&str> = diagnostics
             .iter()
             .filter(|(_, severity)| *severity == Severity::Error)
@@ -677,7 +690,7 @@ fn must_flag_only_fixtures_emit_exactly_ry000() {
                 continue;
             }
         }
-        let diagnostics = checker_diagnostics(std::path::Path::new(name), decoded);
+        let diagnostics = checker_diagnostics(std::path::Path::new(name), decoded, false);
         let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
         // The same predicate the harness arm uses, so the pin cannot
         // drift from the real `must-flag-only` semantics.

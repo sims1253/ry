@@ -7,6 +7,17 @@ analysis context. It uses the same configuration, file discovery, package
 resolution, and scope capture as `ry dump-types`. It does not run the analyzed
 R code or load its packages through R.
 
+Editor hints abbreviate wide types and mark hidden fields as known; their
+tooltip expands the represented facts within a visible output limit. Neither
+view is a declaration language. When a tooltip says it was truncated, use
+this structured export. Complete output here means that all *represented*
+type fields are present, not that static analysis knows every runtime fact.
+
+The [authored declaration model](declarations.md) is separate. Its canonical
+syntax and populated-record serializer are available to adapters internally;
+the public annotation option and schema-3 records arrive with the first
+source adapter. Schema 1 and 2 output remains unchanged meanwhile.
+
 ```sh
 ry dump-facts R/ --format json > facts.json
 ```

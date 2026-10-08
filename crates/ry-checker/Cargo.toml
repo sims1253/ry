@@ -16,6 +16,7 @@ ry-typeshed = { path = "../ry-typeshed" }
 tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 rayon = { workspace = true }
 
 [dev-dependencies]
@@ -24,6 +25,7 @@ criterion = "0.8"
 insta = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
+libc = "0.2"
 
 [[bench]]
 name = "performance"

@@ -2,7 +2,9 @@
 //! Does NOT depend on the checker; the checker depends on this.
 
 pub mod ast;
+pub mod declarations;
 pub mod parser;
+pub mod presentation;
 pub mod span;
 pub mod types;
 pub mod walk;

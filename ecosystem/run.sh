@@ -290,9 +290,14 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
         exit 1
       fi
     fi
-    echo "ecosystem: refreshing $name at $pinned_ref"
-    git -C "$package_dir" fetch --depth 1 origin "$pinned_ref"
-    git -C "$package_dir" checkout --detach --force FETCH_HEAD
+    # A full immutable pin already in this clone needs no refetch. Disable
+    # promisor lazy fetching for the probe; checkout may still need the remote
+    # for trees or blobs omitted by a partial clone.
+    if [[ "$(GIT_NO_LAZY_FETCH=1 git -C "$package_dir" cat-file -t "$pinned_ref" 2>/dev/null || true)" != commit ]]; then
+      echo "ecosystem: fetching $name at $pinned_ref"
+      git -C "$package_dir" fetch --depth 1 origin "$pinned_ref"
+    fi
+    git -C "$package_dir" checkout --detach --force "$pinned_ref"
     git -C "$package_dir" clean -fdx
   fi
 

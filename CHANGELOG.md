@@ -11,11 +11,24 @@ All notable changes to ry are documented in this file.
   signatures, and local module return types. RY118 warns when a complete
   local module inventory proves a selected export or exact `$` member is
   missing (#579).
+- Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
+  replaces its disk source and uses the same project context and diagnostics
+  as a saved file (#582).
 
 ### Changed
 
+- Keep editor inlay labels short while marking hidden known fields and
+  uncertainty; expanded inlay details show the represented type facts within
+  a visible budget. `dump-types` keeps its historical strings (#591).
 - Simplify CLI analysis, LSP refresh bookkeeping, and argument supply analysis.
 - Reduce the VS Code extension bundle by replacing Effect with async functions.
+- Validate selective `ry: ignore[...]` comments and report malformed or
+  unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
+  lists no longer suppress ry findings; bare ignores still do.
+
+### Fixed
+
+- Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 
 ## [0.11.0] - 2026-09-22
 

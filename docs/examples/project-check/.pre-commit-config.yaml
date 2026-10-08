@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ry-project
+        name: ry project check
+        entry: ry check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

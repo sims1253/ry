@@ -109,6 +109,43 @@ fn overlay_replaces_stale_disk_copy_in_directory_scan() {
 }
 
 #[test]
+fn typehint_adoption_uses_the_stdin_overlay_at_its_native_path() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    let disk = "f <- function(x) {\n #| x character\n x\n}\nf('ok')\n";
+    fs::write(temp.path().join("R/main.R"), disk).unwrap();
+    for path in ["R/main.R", "R/unsaved.R"] {
+        for (class, mismatches) in [("integer", 1), ("character", 0)] {
+            let source = format!("f <- function(x) {{\n #| x {class}\n x\n}}\nf('text')\n");
+            let output = run(
+                temp.path(),
+                &["-", "--stdin-filename", path, "--output-format", "json"],
+                source.as_bytes(),
+            );
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                codes(&output)
+                    .iter()
+                    .filter(|code| *code == "RY114")
+                    .count(),
+                mismatches,
+                "path: {path}, class: {class}"
+            );
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(temp.path().join("R/main.R")).unwrap(),
+        disk
+    );
+    assert!(!temp.path().join("R/unsaved.R").exists());
+}
+
+#[test]
 fn unsaved_file_is_checked_without_writing_it() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("R")).unwrap();

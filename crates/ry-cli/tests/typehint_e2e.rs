@@ -75,6 +75,47 @@ fn adopted_contract_checks_and_exports_the_same_source_record() {
 }
 
 #[test]
+fn environment_guard_does_not_establish_or_erase_an_explicit_class() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("R/main.R"),
+        include_str!("../../ry-checker/testdata/oracle/typehint_environment_guard.R"),
+    )
+    .unwrap();
+    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY114"));
+
+    for (value, guard) in [
+        ("new.env()", "TRUE"),
+        ("new.env()", "is.environment(x)"),
+        ("1L", "is.integer(x)"),
+    ] {
+        for (class, mismatches) in [("foo", 0), ("bar", 1)] {
+            fs::write(
+                temp.path().join("R/main.R"),
+                format!(
+                    "g <- function() {{\n x <- structure({value}, class = '{class}')\n if ({guard}) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f(x)\n }}\n}}\ng()\n"
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                check_codes(temp.path())
+                    .iter()
+                    .filter(|code| *code == "RY114")
+                    .count(),
+                mismatches,
+                "value: {value}, guard: {guard}, class: {class}"
+            );
+        }
+    }
+}
+
+#[test]
 fn nested_headers_and_inline_comments_cannot_create_an_outer_contract() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("R")).unwrap();

@@ -288,13 +288,10 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
         "is.complex" => Some(RType::scalar(Mode::Complex)),
         "is.list" => Some(RType::scalar(Mode::List)),
         "is.function" => Some(RType::scalar(Mode::Function)),
-        // Data frames are list-backed in the current type lattice. There is
-        // no distinct environment mode yet, so retain its opaque storage
-        // mode while recording the class evidence from the guard.
+        // Data frames are list-backed in the current type lattice.
         "is.data.frame" => {
             Some(RType::scalar(Mode::List).with_class(ClassVector::single("data.frame")))
         }
-        "is.environment" => Some(RType::unknown().with_class(ClassVector::single("environment"))),
         "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
         "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
@@ -303,7 +300,9 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
 
 pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
     let class = name.strip_prefix("is.")?;
-    if class.is_empty() {
+    // is.environment() tests storage, and environments can have any class.
+    // The lattice has no environment mode to refine.
+    if class.is_empty() || class == "environment" {
         return None;
     }
     Some(RType::unknown().with_class(ClassVector::single(class)))
@@ -532,7 +531,7 @@ fn apply_single_narrowing_branch<'a>(
             // describe it here; degrade to unknown in this branch only.
             // Mode predicates carry a concrete or union mode and no class
             // claim. `Mode::Opaque` targets are class predicates
-            // (`inherits`, `is.environment`, `is.<class>`), and a concrete
+            // (`inherits`, `is.<class>`), and a concrete
             // mode target can still carry an explicit class
             // (`is.data.frame` is list + "data.frame"; stub-declared
             // predicates can express the same shape) — a false path there

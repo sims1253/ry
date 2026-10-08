@@ -127,7 +127,9 @@ fn ry_check_in(cwd: &std::path::Path, arg: &std::path::Path) -> std::process::Ou
         .expect("failed to invoke ry binary")
 }
 
-#[cfg(unix)]
+// APFS requires valid UTF-8 filenames, so these raw-byte fixtures cannot
+// be created on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn scoped_severity_does_not_match_lossy_non_utf8_filename() {
     use std::ffi::OsString;
@@ -158,7 +160,7 @@ fn scoped_severity_does_not_match_lossy_non_utf8_filename() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn scoped_severity_keeps_raw_and_replacement_character_neighbors_separate() {
     use std::ffi::OsString;

@@ -100,7 +100,8 @@ pub struct RuleOverrideConfig {
 /// and source use physical filesystem identity: existing paths resolve their
 /// symlinks, while an unsaved path retains its unresolved normal suffix after
 /// the deepest existing ancestor. A `..` after a missing ancestor is
-/// ambiguous and does not match.
+/// ambiguous and does not match on Unix. Windows non-verbatim paths use
+/// native normalization, which removes parent components before lookup.
 #[derive(Debug, Clone)]
 pub struct ScopedPaths {
     root: Option<PathBuf>,
@@ -158,8 +159,8 @@ fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternE
 /// Resolve the longest existing prefix with filesystem semantics. This
 /// preserves the meaning of `symlink/..` and of final symlink files while
 /// still matching unsaved files and virtual descendants under an existing
-/// folder. Parent components after a missing prefix cannot be resolved
-/// faithfully by the filesystem and are declined.
+/// folder. Parent components that remain after platform normalization cannot
+/// be resolved after a missing prefix and are declined.
 fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
@@ -846,7 +847,9 @@ paths = ["inst/shiny/**"]
         assert!(!in_r.matches(&alias.join("R/a.R/child.R")));
     }
 
-    #[cfg(unix)]
+    // APFS requires valid UTF-8 filenames, so this raw-byte fixture cannot
+    // be created on macOS.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn scoped_paths_do_not_replace_non_utf8_filename_bytes() {
         use std::ffi::OsString;

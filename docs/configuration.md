@@ -135,9 +135,11 @@ representable as UTF-8, the CLI, watch mode, and editor use the same matcher
 and filesystem identity for the config root and each source: existing symlinks
 and `..` components resolve before matching.
 For an unsaved file, the deepest existing ancestor resolves first and the
-remaining ordinary path components keep their names. A `..` after a missing
-ancestor cannot be resolved and does not match. A symlink that points outside
-the config root is scoped by its target location, not its textual alias.
+remaining ordinary path components keep their names. On Unix, a `..` after a
+missing ancestor cannot be resolved and does not match. Windows non-verbatim
+paths use native normalization, which removes `..` before filesystem lookup.
+A symlink that points outside the config root is scoped by its target location,
+not its textual alias.
 On Unix, a backslash in a pattern is a literal filename character; use
 forward slashes to separate directories.
 The CLI and watch mode retain native paths when selecting rule policy. Path

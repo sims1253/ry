@@ -52,7 +52,7 @@ pub(crate) fn inert_caller_binding_body(body: &[Stmt]) -> bool {
         // A nested function literal is a value. Its body and defaults are
         // deferred until that returned function is invoked.
         Stmt::FunctionDef { .. } => true,
-        Stmt::Return { value, .. } => value.as_ref().is_none_or(&inert_value),
+        Stmt::Return { value, .. } => value.as_ref().is_none_or(inert_value),
         Stmt::Expr(Expr::Call { func, args, .. })
             if ident_name(func)
                 .is_some_and(|name| matches!(name, "base::invisible" | "base::return")) =>

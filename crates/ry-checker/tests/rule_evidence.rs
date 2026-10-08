@@ -700,6 +700,7 @@ const VERDICTS: &[Verdict] = &[
         code: "RY113",
         verdict: "default-off",
     },
+    Verdict {
         code: "RY118",
         verdict: "keep",
     },

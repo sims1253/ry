@@ -403,6 +403,117 @@ fn function_local_import_does_not_escape_its_lexical_scope() {
 }
 
 #[test]
+fn exported_returns_do_not_borrow_base_signatures_over_module_imports() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "paste0 <- function(...) 1L\n").unwrap();
+    for (module, source) in [
+        (
+            "module_scope",
+            "box::use(./a[paste0])\nfoo <- function(x = 1L) paste0('x')\nbox::export(foo)\n",
+        ),
+        (
+            "function_scope",
+            "foo <- function(x = 1L) { box::use(./a[paste0]); paste0('x') }\nbox::export(foo)\n",
+        ),
+    ] {
+        fs::write(root.path().join(format!("{module}.r")), source).unwrap();
+        for selection in ["[foo]", "[...]"] {
+            let diagnostics = codes_for(
+                root.path(),
+                &format!(
+                    "box::use(m = ./{module}{selection})\nfoo() + 1L\nm$foo() + 1L\nfoo(wrong = 1L)\nm$foo(wrong = 1L)\n"
+                ),
+            );
+            assert!(
+                diagnostics.iter().all(|(code, _, _)| code != "RY040"),
+                "{module}{selection}: {diagnostics:#?}"
+            );
+            assert_eq!(
+                diagnostics
+                    .iter()
+                    .filter(|(code, _, _)| code == "RY090")
+                    .count(),
+                2,
+                "formals survive unknown returns: {diagnostics:#?}"
+            );
+        }
+    }
+    fs::write(
+        root.path().join("base.r"),
+        "foo <- function() paste0('x')\n",
+    )
+    .unwrap();
+    let control = codes_for(root.path(), "box::use(./base[foo])\nfoo() + 1L\n");
+    assert!(control.iter().any(|(code, _, _)| code == "RY040"));
+}
+
+#[test]
+fn roxygen_regions_accept_comments_blank_lines_and_multiple_hashes() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.r"), "foo <- 1L\n").unwrap();
+    for region in [
+        "#' @export\n\n",
+        "#' @export\n# ordinary comment\n",
+        "##' @export\n",
+        " \t###' \t@export\n",
+    ] {
+        for statement in ["foo <- 1L", "box::use(./a[foo])"] {
+            fs::write(
+                root.path().join("tagged.r"),
+                format!("before <- function() {{\n  1L\n}}\n{region}{statement}\n#' @export\nbaz <- 2L\nafter <- 3L\n"),
+            ).unwrap();
+            let diagnostics = codes_for(
+                root.path(),
+                "box::use(./tagged[foo, baz, before, after, absent])\n",
+            );
+            assert_eq!(
+                diagnostics
+                    .iter()
+                    .filter(|(code, _, _)| code == "RY118")
+                    .map(|(_, _, message)| message.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "box module does not export `before`",
+                    "box module does not export `after`",
+                    "box module does not export `absent`"
+                ],
+                "{region:?} {statement}: {diagnostics:#?}"
+            );
+        }
+    }
+    // A tag inside the preceding function's source region cannot annotate
+    // the following assignment, including two statements on the same line.
+    for source in [
+        "#' @export\nfoo <- function() {\n#' @export\n1L\n}\nbar <- 2L\n",
+        "#' @export\nfoo <- 1L; bar <- 2L\n",
+    ] {
+        fs::write(root.path().join("boundary.r"), source).unwrap();
+        let diagnostics = codes_for(root.path(), "box::use(./boundary[bar])\n");
+        assert!(
+            diagnostics.iter().any(|(code, _, _)| code == "RY118"),
+            "{diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
+fn box_123_does_not_recognize_export_tags_with_trailing_whitespace() {
+    let root = tempfile::tempdir().unwrap();
+    for suffix in [" ", "\t"] {
+        fs::write(
+            root.path().join("legacy.r"),
+            format!("#' @export{suffix}\nfoo <- 1L\nbar <- 2L\n"),
+        )
+        .unwrap();
+        let diagnostics = codes_for(root.path(), "box::use(./legacy[bar])\n");
+        assert!(
+            diagnostics.iter().all(|(code, _, _)| code != "RY118"),
+            "{suffix:?}: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn explicit_reexport_keeps_local_function_signature() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("a.r"), "foo <- function() 'wrong'\n").unwrap();
@@ -762,6 +873,8 @@ fn direct_superassignment_does_not_create_a_box_module_export() {
     // provide a proven absence. The ordinary tagged-only control is above.
     let tagged = codes_for(root.path(), "box::use(./tagged_super[bar])\n");
     assert!(tagged.iter().all(|(code, _, _)| code != "RY118"));
+    let absent = codes_for(root.path(), "box::use(./tagged_super[absent])\n");
+    assert!(absent.iter().all(|(code, _, _)| code != "RY118"));
 }
 
 #[cfg(unix)]

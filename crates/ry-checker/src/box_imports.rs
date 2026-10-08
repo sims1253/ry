@@ -282,9 +282,10 @@ fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]>
 /// bindings, including through qualified writers and sourced files. We do
 /// not execute them, so a missing syntactic assignment is not proof that a
 /// name is absent. Function bodies are inert until called; box's quoted
-/// import declaration itself does not write an own-module binding.
-fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
+/// imports also change the lexical environment used by exported functions.
+fn module_load_effects(file: &SourceFile) -> (bool, bool) {
     let mut uncertain = false;
+    let mut imports = false;
     let _ = walk_stmts(
         &file.stmts,
         Walk {
@@ -299,6 +300,7 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
                 AstNode::Expr(Expr::Call { func, args, .. })
                     if ident_name(func) == Some("box::use") =>
                 {
+                    imports = true;
                     uncertain |= args.iter().any(|argument| parse_import(argument).is_none());
                     return ControlFlow::<(), Descend>::Continue(Descend::Skip);
                 }
@@ -325,7 +327,7 @@ fn has_unmodeled_load_effects(file: &SourceFile) -> bool {
             ControlFlow::<(), Descend>::Continue(Descend::Into)
         },
     );
-    uncertain
+    (uncertain, imports)
 }
 
 /// The collector indexes literal functions by spelling. A later wrapper
@@ -415,20 +417,21 @@ struct RoxygenExports {
     complete: bool,
 }
 
-fn has_export_tag(lines: &[&str], line: usize) -> bool {
-    let mut before = line;
-    while before > 0 {
-        before -= 1;
-        let text = lines.get(before).copied().unwrap_or("").trim_start();
-        if !text.starts_with("#'") {
-            break;
-        }
-        if text[2..]
-            .trim_start()
-            .strip_prefix("@export")
-            .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace))
-        {
-            return true;
+fn has_export_tag(lines: &[&str]) -> bool {
+    for line in lines {
+        let text = line.trim_start_matches([' ', '\t']);
+        if text.starts_with('#') {
+            if text
+                .trim_start_matches('#')
+                .strip_prefix('\'')
+                .is_some_and(|tag| tag.trim_start_matches([' ', '\t']) == "@export")
+            {
+                // box 1.2.3's scanner requires the tag to end the line;
+                // even trailing spaces make it an ordinary comment.
+                return true;
+            }
+        } else if !text.is_empty() {
+            return false;
         }
     }
     false
@@ -442,12 +445,22 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
         complete: true,
     };
     let lines: Vec<&str> = file.source.lines().collect();
+    let mut region_start = 0;
     for statement in &file.stmts {
-        if let Stmt::Expr(Expr::Call { func, args, span }) = statement
+        let span = infer::vacuous::stmt_span(statement);
+        // box begins each comment region on the line after the preceding
+        // expression ends. Blank lines and ordinary comments do not end it.
+        let tagged = has_export_tag(lines.get(region_start..span.line).unwrap_or_default());
+        region_start = span.line
+            + file.source[span.start..span.end]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+            + 1;
+        roxygen.tagged |= tagged;
+        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
             && ident_name(func) == Some("box::use")
         {
-            let tagged = has_export_tag(&lines, span.line);
-            roxygen.tagged |= tagged;
             for argument in args {
                 let Some(import) = parse_import(argument) else {
                     roxygen.complete &= !tagged;
@@ -469,6 +482,7 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
                     roxygen.complete &= !import.wildcard && !import.selection_unknown;
                 }
             }
+            continue;
         }
         let Stmt::Assign {
             target,
@@ -476,6 +490,7 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
             span,
         } = statement
         else {
+            roxygen.complete &= !tagged;
             continue;
         };
         // The parser wraps a direct `foo <<- value` or `value ->> foo`
@@ -486,7 +501,7 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
         if matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
             if marker == span && binding_name(lhs) == binding_name(target))
         {
-            if has_export_tag(&lines, span.line) {
+            if tagged {
                 // box rejects a tag on a missing own binding at load time.
                 // Its inventory cannot prove any requested name absent.
                 roxygen.tagged = true;
@@ -495,11 +510,12 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
             continue;
         }
         let Some(name) = binding_name(target) else {
+            roxygen.complete &= !tagged;
             continue;
         };
         let name = infer::semantic_argument_name(name).to_string();
         assigned.insert(name.clone());
-        if has_export_tag(&lines, span.line) {
+        if tagged {
             roxygen.tagged = true;
             roxygen.names.insert(name);
         }
@@ -573,6 +589,31 @@ fn declared_exports(
     )
 }
 
+fn bind_export(
+    scope: &mut Scope,
+    bound: &str,
+    original: &str,
+    object: Option<&BoxObject>,
+    value: RType,
+) {
+    let is_function = value.mode == Mode::Function;
+    scope.insert(bound.to_string(), value);
+    match object {
+        Some(BoxObject::Module(module)) => {
+            if let Some(function) = module.functions.get(original) {
+                scope.set_box_object(bound, BoxObject::ModuleFunction(Arc::clone(function)));
+            }
+            if let Some(target) = module.package_functions.get(original) {
+                scope.set_function_alias(bound, format!("__ry_box_import::{target}"));
+            }
+        }
+        Some(BoxObject::Package(package)) if is_function => {
+            scope.set_function_alias(bound, format!("__ry_box_import::{package}::{original}"));
+        }
+        _ => {}
+    }
+}
+
 impl Checker {
     pub(crate) fn box_package_inventory(&self, package: &str) -> BoxInventory {
         let mut exports = BTreeMap::new();
@@ -611,7 +652,7 @@ impl Checker {
         for candidate in module_candidates(caller, segments)? {
             let identity = path_identity(&candidate)?;
             if let Some(inventory) = self.box_module_cache.get(&identity) {
-                return inventory.clone();
+                return Some(Arc::clone(inventory));
             }
             let file = if let Some(source) = self.box_sources.get(&identity) {
                 if source.source.len() as u64 > MAX_MODULE_BYTES {
@@ -656,7 +697,7 @@ impl Checker {
                 return None;
             }
             let (assigned, roxygen) = top_level_bindings(&file);
-            let unmodeled_load_effects = has_unmodeled_load_effects(&file);
+            let (unmodeled_load_effects, module_imports) = module_load_effects(&file);
             let writes = module_writes(&file);
             // Legacy box modules export bindings made by executed assignment
             // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
@@ -705,7 +746,14 @@ impl Checker {
                     if scope.get(name)?.mode != Mode::Function {
                         return None;
                     }
-                    let return_type = nested.return_slots.0.get(function.return_slot)?.clone();
+                    // Refinement starts from formals, without the module's
+                    // lexical imports. It can borrow a base signature for a
+                    // replaced name, so retain formals with an unknown return.
+                    let return_type = if module_imports {
+                        RType::unknown()
+                    } else {
+                        nested.return_slots.0.get(function.return_slot)?.clone()
+                    };
                     let params = function
                         .params
                         .iter()
@@ -751,7 +799,7 @@ impl Checker {
                 complete,
             });
             self.box_module_cache
-                .insert(identity, Some(Arc::clone(&inventory)));
+                .insert(identity, Arc::clone(&inventory));
             return Some(inventory);
         }
         None
@@ -816,31 +864,13 @@ impl Checker {
                             .cloned()
                             .unwrap_or_else(RType::unknown)
                     };
-                    scope.insert(selection.bound.clone(), value.clone());
-                    if let Some(BoxObject::Module(module)) = &object
-                        && let Some(function) = module.functions.get(&selection.original)
-                    {
-                        scope.set_box_object(
-                            selection.bound.clone(),
-                            BoxObject::ModuleFunction(Arc::clone(function)),
-                        );
-                    }
-                    if let Some(BoxObject::Module(module)) = &object
-                        && let Some(target) = module.package_functions.get(&selection.original)
-                    {
-                        scope.set_function_alias(
-                            selection.bound.clone(),
-                            format!("__ry_box_import::{target}"),
-                        );
-                    }
-                    if matches!(value.mode, Mode::Function)
-                        && let Some(BoxObject::Package(package)) = &object
-                    {
-                        scope.set_function_alias(
-                            selection.bound,
-                            format!("__ry_box_import::{package}::{}", selection.original),
-                        );
-                    }
+                    bind_export(
+                        scope,
+                        &selection.bound,
+                        &selection.original,
+                        object.as_ref(),
+                        value,
+                    );
                 }
                 if import.wildcard {
                     if let Some(inventory) = &inventory {
@@ -848,31 +878,7 @@ impl Checker {
                             if renamed.contains(name.as_str()) {
                                 continue;
                             }
-                            scope.insert(name.clone(), value.clone());
-                            if let Some(BoxObject::Module(module)) = &object
-                                && let Some(function) = module.functions.get(name)
-                            {
-                                scope.set_box_object(
-                                    name.clone(),
-                                    BoxObject::ModuleFunction(Arc::clone(function)),
-                                );
-                            }
-                            if let Some(BoxObject::Module(module)) = &object
-                                && let Some(target) = module.package_functions.get(name)
-                            {
-                                scope.set_function_alias(
-                                    name.clone(),
-                                    format!("__ry_box_import::{target}"),
-                                );
-                            }
-                            if matches!(value.mode, Mode::Function)
-                                && let Some(BoxObject::Package(package)) = &object
-                            {
-                                scope.set_function_alias(
-                                    name.clone(),
-                                    format!("__ry_box_import::{package}::{name}"),
-                                );
-                            }
+                            bind_export(scope, name, name, object.as_ref(), value.clone());
                         }
                         if !inventory.complete {
                             scope.search_path_unknown = true;

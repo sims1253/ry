@@ -963,7 +963,7 @@ pub struct Checker {
     /// Editor/project buffers take precedence over the disk copy of a
     /// relative box module. Keys use the existing ancestor's identity.
     box_sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>,
-    box_module_cache: HashMap<PathBuf, Option<Arc<box_imports::BoxInventory>>>,
+    box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
     box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) path: String,

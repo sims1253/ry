@@ -309,6 +309,47 @@ fn unresolved_modules_bind_named_imports_without_inventing_absence() {
 }
 
 #[test]
+fn search_path_modules_bind_opaque_names_without_resolving_their_sources() {
+    let root = tempfile::tempdir().unwrap();
+    for source in [
+        "box::use(mod/hello[answer])\nvalue <- answer\nother <- unbound\n",
+        "box::use(mod/hello[renamed = answer])\nvalue <- renamed\nother <- unbound\n",
+        "box::use(\"m\" = mod/hello)\nvalue <- m\nother <- unbound\n",
+        "box::use(`\\x6d` = mod/hello)\nvalue <- m\nother <- unbound\n",
+        "box::use(mod/hello)\nvalue <- hello\nother <- unbound\n",
+    ] {
+        let diagnostics = codes_for(root.path(), source);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(|(code, _, message)| (code.as_str(), message.as_str()))
+                .collect::<Vec<_>>(),
+            [("RY010", "variable `unbound` is not bound in this scope")],
+            "{source}: {diagnostics:#?}"
+        );
+    }
+    for source in [
+        "box::use(mod/hello[...])\nvalue <- answer\nother <- unenumerated\n",
+        "box::use(mod/hello[renamed = answer, ...])\nvalue <- renamed\nother <- unenumerated\n",
+    ] {
+        assert!(codes_for(root.path(), source).is_empty(), "{source}");
+    }
+    // A search-path module is not a relative path, even if the same suffix
+    // happens to exist beside the caller. Its signatures remain opaque.
+    fs::create_dir(root.path().join("mod")).unwrap();
+    fs::write(
+        root.path().join("mod/hello.r"),
+        "answer <- function() 'wrong'\n",
+    )
+    .unwrap();
+    let diagnostics = codes_for(
+        root.path(),
+        "box::use(m = mod/hello[answer, missing])\nanswer() + 1L\nm$missing\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
 fn computed_target_retains_explicit_alias_as_opaque() {
     let root = tempfile::tempdir().unwrap();
     let diagnostics = codes_for(

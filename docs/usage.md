@@ -138,6 +138,10 @@ wildcard attachment. Bare package imports such as `dplyr[filter]` use that
 package's installed `NAMESPACE` exports and ry's bundled function stubs.
 The import does not attach the package to the ordinary search path.
 
+Search-path module imports such as `mod/hello` bind opaque objects and
+selected names. Their wildcards leave unenumerated names unknown. ry does
+not resolve the configured `box.path`.
+
 Local paths resolve from the file containing the import. ry checks `.r`,
 `.R`, `__init__.r`, then `__init__.R`, appending an extension to the full
 module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file that

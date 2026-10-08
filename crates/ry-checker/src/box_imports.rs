@@ -47,6 +47,7 @@ pub(crate) struct BoxInventory {
 enum Target {
     Package(String),
     Module(Vec<String>),
+    UnresolvedModule,
 }
 
 #[derive(Debug)]
@@ -194,7 +195,10 @@ fn parse_import(argument: &Arg) -> Option<Import> {
     let target = match segments.as_slice() {
         [package] if package != "." && package != ".." => Target::Package(package.clone()),
         [first, ..] if first == "." || first == ".." => Target::Module(segments),
-        _ => return None,
+        // Non-relative modules use box's configured search path. We do not
+        // model that lookup, but their static aliases and selections still
+        // bind opaque values through the ordinary import path.
+        _ => Target::UnresolvedModule,
     };
     // A selective import binds only the selected names unless the import
     // explicitly names the module/package object.
@@ -827,6 +831,7 @@ impl Checker {
                         .map(|inventory| BoxObject::Module(Arc::clone(inventory)));
                     (inventory, object)
                 }
+                Target::UnresolvedModule => (None, None),
             };
             if let Some(object_name) = import.object_name {
                 // box module objects are environments, not lists. Their

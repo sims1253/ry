@@ -45,6 +45,32 @@ fn package_local_module_and_dplyr_import_reach_cli_pipeline() {
 }
 
 #[test]
+fn search_path_module_imports_reach_cli_as_opaque_bindings() {
+    let files = FixtureProject::empty().unwrap();
+    files
+        .write_file(
+            "run.R",
+            "box::use(mod/hello[answer])\nvalue <- answer\nbefore <- unbound\nbox::use(\"m\" = mod/hello)\nobject <- m\nbox::use(mod/hello[...])\nafter <- unenumerated\n",
+        )
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--output-format", "json", "--exit-zero"])
+        .arg(files.path("run.R"))
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(codes(&diagnostics), ["RY010"], "{diagnostics:#?}");
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unbound")
+    );
+}
+
+#[test]
 fn installed_namespace_gates_package_stub_import_without_loading_r() {
     let files = FixtureProject::empty().unwrap();
     files

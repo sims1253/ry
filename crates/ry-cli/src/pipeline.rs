@@ -362,6 +362,8 @@ fn parse_one(
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
+    /// Indices into the parsed input, in the same order as check output.
+    pub source_indices: Vec<usize>,
     pub check_input: CheckInput,
     pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
 }
@@ -428,6 +430,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         resolved.push(ResolvedGroup {
             resolution_root,
+            source_indices: indices.clone(),
             check_input: CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),

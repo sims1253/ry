@@ -56,6 +56,8 @@ explanation for one rule.
 | RY115 | declaration-incomplete | info | An adopted declaration has an unsupported residual or a predicate that body inference cannot represent. The source expression is retained without claiming complete checking. |
 | RY116 | declaration-conflict | warning | Multiple adopted records for one lexical function cannot be selected as one complete contract; none is used for checking. |
 | RY117 | declaration-invalid | warning | An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking. |
+| RY119 | integer-coercion-range-loss | warning | An unshadowed base `as.integer()` receives a plain numeric value with a proven element outside R's integer range. Truncation toward zero permits values through `2147483647.9` and `-2147483647.9`; values at `2147483648`, `-2147483648`, or infinity become a new `NA_integer_` with a warning. Prior `NA`/`NaN`, unknown values, class dispatch, and an immediately repaired `x <- as.integer(...); x[is.na(x)] <- value` stay quiet. The result retains distinct new-NA provenance for condition consumers. |
+
 RY003 and RY113 are registered but default-off: they are omitted from output
 unless a severity override or rule selection names them (for example
 `warn = ["RY003", "RY113"]`).

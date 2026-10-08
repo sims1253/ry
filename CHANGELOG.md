@@ -6,6 +6,12 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Add RY119 for proven `as.integer()` range loss. The checker distinguishes
+  a newly created integer `NA` from an input `NA`, retains that fact for
+  condition analysis, and stays quiet for unknown inputs and immediately
+  repaired casts (#569).
+- Set per-file rule severities with ordered `[[rule-overrides]]` tables in
+  `ry.toml`, while keeping matching files in project analysis (#583).
 - Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
   replaces its disk source and uses the same project context and diagnostics
   as a saved file (#582).

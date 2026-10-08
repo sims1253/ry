@@ -157,6 +157,7 @@ pub(super) struct State {
     /// A document outside every folder root must be filtered by root-level
     /// config.
     root_filter: ry_checker::SeverityFilter,
+    root_scoped_policy: ry_checker::ScopedRulePolicy,
     root_min_confidence: Option<ry_checker::Confidence>,
     root_excludes: ry_config::Excludes,
     /// Editor-supplied per-folder settings, received via
@@ -236,6 +237,8 @@ pub(super) struct FolderAnalysisContext {
     pub baseline: Option<ry_config::Baseline>,
     /// Severity filter compiled once during context construction.
     pub filter: ry_checker::SeverityFilter,
+    /// Compiled per-file rule severities for this config and editor settings.
+    pub scoped_policy: ry_checker::ScopedRulePolicy,
     /// Precomputed minimum confidence threshold.
     pub min_confidence: Option<ry_checker::Confidence>,
     /// Precompiled exclude glob patterns.
@@ -295,6 +298,22 @@ fn compute_folder_filter(
     (filter, min_confidence, excludes)
 }
 
+fn scoped_rule_policy(
+    config: &ry_config::Config,
+    config_root: Option<&Path>,
+    settings: &FolderSettings,
+) -> ry_checker::ScopedRulePolicy {
+    let lint = &settings.lint;
+    let protected = lint
+        .error
+        .iter()
+        .chain(&lint.warn)
+        .chain(&lint.ignore)
+        .flat_map(|tokens| tokens.iter().cloned())
+        .collect::<Vec<_>>();
+    ry_checker::ScopedRulePolicy::new(config, config_root, &protected)
+}
+
 /// Recompute the cached filter / min_confidence / excludes for every
 /// folder context and the root-level fallback from their installed
 /// `folder_settings`. Never called from `publish_diagnostics`, which
@@ -304,12 +323,22 @@ fn refresh_cached_folder_filters(state: &mut State) {
         let (filter, min_confidence, excludes) =
             compute_folder_filter(&ctx.config, &ctx.folder_settings);
         ctx.filter = filter;
+        ctx.scoped_policy = scoped_rule_policy(
+            &ctx.config,
+            ctx.config_root.as_deref(),
+            &ctx.folder_settings,
+        );
         ctx.min_confidence = min_confidence;
         ctx.excludes = excludes;
     }
     let (root_filter, root_min_confidence, root_excludes) =
         compute_folder_filter(&state.file_config, &state.folder_settings);
     state.root_filter = root_filter;
+    state.root_scoped_policy = scoped_rule_policy(
+        &state.file_config,
+        state.root_config_dir.as_deref(),
+        &state.folder_settings,
+    );
     state.root_min_confidence = root_min_confidence;
     state.root_excludes = root_excludes;
 }
@@ -1063,6 +1092,7 @@ impl Backend {
             state.user_stubs = ctx.stubs.clone();
             state.root_baseline = ctx.baseline.clone();
             state.root_filter = ctx.filter.clone();
+            state.root_scoped_policy = ctx.scoped_policy.clone();
             state.root_min_confidence = ctx.min_confidence;
             state.root_excludes = ctx.excludes.clone();
         }
@@ -1478,6 +1508,7 @@ impl Backend {
         let (
             folder_contexts,
             root_filter,
+            root_scoped_policy,
             root_min_confidence,
             root_excludes,
             root_baseline,
@@ -1489,6 +1520,7 @@ impl Backend {
             (
                 state.folder_contexts.clone(),
                 state.root_filter.clone(),
+                state.root_scoped_policy.clone(),
                 state.root_min_confidence,
                 state.root_excludes.clone(),
                 state.root_baseline.clone(),
@@ -1510,13 +1542,15 @@ impl Backend {
                 .find(|ctx| Path::new(&path).starts_with(&ctx.root));
             let config = ctx.map_or(&root_config, |ctx| &ctx.config);
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
-                let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx {
+                let (filter, min_confidence, excludes, baseline, config_anchor, policy) = match ctx
+                {
                     Some(ctx) => (
                         &ctx.filter,
                         ctx.min_confidence,
                         &ctx.excludes,
                         ctx.baseline.as_ref(),
                         ctx.config_root.as_deref().or(Some(ctx.root.as_path())),
+                        &ctx.scoped_policy,
                     ),
                     None => (
                         &root_filter,
@@ -1524,6 +1558,7 @@ impl Backend {
                         &root_excludes,
                         root_baseline.as_ref(),
                         root_config_dir.as_deref().or(root.as_deref()),
+                        &root_scoped_policy,
                     ),
                 };
                 let excluded = !excludes.is_empty()
@@ -1542,8 +1577,12 @@ impl Backend {
                         if ry_checker::typehint::read_records(&file, &scope).is_empty() {
                             continue;
                         }
+                        let file_filter = uri
+                            .to_file_path()
+                            .ok()
+                            .map(|native| policy.filter_for(&native, filter));
                         let post = ry_checker::PostProcess {
-                            filter,
+                            filter: file_filter.as_deref().unwrap_or(filter),
                             baseline,
                             min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
                             repo_root: config_anchor,
@@ -1801,26 +1840,29 @@ impl Backend {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
-            let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx.as_ref() {
-                Some(ctx) => (
-                    ctx.filter.clone(),
-                    ctx.min_confidence,
-                    ctx.excludes.clone(),
-                    ctx.baseline.clone(),
-                    // Config-relative exclude patterns and baseline keys
-                    // anchor at the originating `ry.toml`'s directory —
-                    // the same `repo_root` `ry check` derives from its
-                    // discovered config (#493) — not at the folder root.
-                    ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
-                ),
-                None => (
-                    root_filter.clone(),
-                    root_min_confidence,
-                    root_excludes.clone(),
-                    root_baseline.clone(),
-                    root_config_dir.clone().or(root.clone()),
-                ),
-            };
+            let (filter, min_confidence, excludes, baseline, config_anchor, policy) =
+                match ctx.as_ref() {
+                    Some(ctx) => (
+                        ctx.filter.clone(),
+                        ctx.min_confidence,
+                        ctx.excludes.clone(),
+                        ctx.baseline.clone(),
+                        // Config-relative exclude patterns and baseline keys
+                        // anchor at the originating `ry.toml`'s directory —
+                        // the same `repo_root` `ry check` derives from its
+                        // discovered config (#493) — not at the folder root.
+                        ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
+                        ctx.scoped_policy.clone(),
+                    ),
+                    None => (
+                        root_filter.clone(),
+                        root_min_confidence,
+                        root_excludes.clone(),
+                        root_baseline.clone(),
+                        root_config_dir.clone().or(root.clone()),
+                        root_scoped_policy.clone(),
+                    ),
+                };
             for (diagnostic_path, diagnostics) in per_file {
                 if !excludes.is_empty() {
                     let rel =
@@ -1845,8 +1887,9 @@ impl Backend {
                 let source_text = checked_file.map(|file| file.source.as_str());
                 let comments: &[ry_core::ast::Comment] =
                     checked_file.map_or(&[], |file| file.comments.as_slice());
+                let file_filter = policy.filter_for(Path::new(&diagnostic_path), &filter);
                 let post = ry_checker::PostProcess {
-                    filter: &filter,
+                    filter: &file_filter,
                     baseline: baseline.as_ref(),
                     min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
                     repo_root: config_anchor.as_deref(),
@@ -3463,6 +3506,7 @@ pub(super) fn build_folder_contexts(
         let stubs = load_stubs_from_config(&config).unwrap_or_default();
 
         let (filter, min_confidence, excludes) = compute_folder_filter(&config, &folder_settings);
+        let scoped_policy = scoped_rule_policy(&config, config_root.as_deref(), &folder_settings);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config_root,
@@ -3472,6 +3516,7 @@ pub(super) fn build_folder_contexts(
             workspace_contexts: HashMap::new(),
             baseline,
             filter,
+            scoped_policy,
             min_confidence,
             excludes,
             package_caches: HashMap::new(),
@@ -3554,6 +3599,7 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
         }
     };
     let (filter, min_confidence, excludes) = compute_folder_filter(&config, &old.folder_settings);
+    let scoped_policy = scoped_rule_policy(&config, config_root.as_deref(), &old.folder_settings);
     FolderAnalysisContext {
         root: old.root.clone(),
         config_root,
@@ -3563,6 +3609,7 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
         workspace_contexts: old.workspace_contexts.clone(),
         baseline,
         filter,
+        scoped_policy,
         min_confidence,
         excludes,
         package_caches: old.package_caches.clone(),

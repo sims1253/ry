@@ -193,6 +193,29 @@ fn native_filename_and_unicode_collision_never_adopt_the_wrong_contract() {
             assert_eq!(count_code(&collision_unicode, "RY114"), 0);
             assert_eq!(count_code(&collision_unicode, "RY117"), 1);
 
+            fixture
+                .write_file(
+                    "ry.toml",
+                    "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n\n[[rule-overrides]]\npaths = ['R/bad�.R']\nignore = ['RY117']\n",
+                )
+                .unwrap();
+            session
+                .notify("workspace/didChangeConfiguration", json!({"settings": {}}))
+                .await
+                .unwrap();
+            sync_barrier(&mut session, &unicode_uri).await;
+            let mark = session.publication_mark();
+            session.open(&raw_uri, 1, source).await.unwrap();
+            let scoped = session
+                .quiesce_diagnostics(&raw_uri, mark, std::time::Duration::from_millis(200))
+                .await
+                .unwrap();
+            assert_eq!(scoped[&unicode_uri].iter().filter(|d| d["code"] == "RY117").count(), 0);
+            assert_eq!(scoped[&raw_uri].iter().filter(|d| d["code"] == "RY117").count(), 1);
+            session
+                .notify("textDocument/didClose", json!({"textDocument": {"uri": raw_uri}}))
+                .await
+                .unwrap();
             std::fs::remove_file(&raw).unwrap();
             let mark = session.publication_mark();
             session

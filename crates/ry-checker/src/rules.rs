@@ -281,6 +281,12 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "Opt-in audit: a valid ry-owned selective line or standalone ignore names an enabled rule whose local syntax was checked in diagnostic mode and produced no matching finding before baseline or confidence filtering. The initial supported codes are RY034 and RY102. Invalid, bare, noqa, and file directives are outside this audit; parser errors, anonymous function bodies, and other unavailable analysis are left unaudited. Enable with `--warn RY113` or a severity override.",
     },
+    Rule {
+        code: "RY119",
+        name: "integer-coercion-range-loss",
+        default_severity: Severity::Warning,
+        summary: "`as.integer()` converts a proven out-of-range numeric value to `NA_integer_`; handle the new NA or constrain the input before casting.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

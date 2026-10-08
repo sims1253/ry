@@ -111,10 +111,9 @@ pub(super) fn make_ignore_action(
     let code = diag_code_from_lsp(diag);
 
     let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
-    let already_ignored = suppressions.iter().any(|suppression| {
-        suppression.line == line
-            && (suppression.rules.is_empty() || suppression.rules.iter().any(|rule| rule == &code))
-    });
+    let already_ignored = suppressions
+        .iter()
+        .any(|suppression| suppression.line == line && suppression.suppresses(&code));
     if already_ignored {
         return None;
     }
@@ -136,7 +135,7 @@ pub(super) fn make_ignore_action(
     } else {
         let mut codes = trailing
             .iter()
-            .flat_map(|s| s.rules.iter().cloned())
+            .flat_map(|s| s.valid_rules().unwrap_or_default().iter().cloned())
             .collect::<Vec<_>>();
         codes.push(code.clone());
         codes.sort();
@@ -193,6 +192,22 @@ pub(super) fn make_ignore_action(
         .comments
         .iter()
         .any(|comment| comment.line == line && comment.col == marker_col)
+    {
+        return None;
+    }
+    // A malformed suffix can survive a textual replacement and leave the
+    // proposed ignore invalid. Ask the checker's parser whether this edit
+    // actually suppresses the requested code before offering the action.
+    if !ry_checker::parse_suppressions_from_comments(&edited_file.comments, &edited)
+        .iter()
+        .any(|suppression| {
+            suppression.line == line
+                && if code.is_empty() {
+                    suppression.kind == ry_checker::SuppressionKind::All
+                } else {
+                    suppression.suppresses(&code)
+                }
+        })
     {
         return None;
     }

@@ -26,11 +26,70 @@
 //! it already owns the suppression and severity filters and already
 //! depends on ry-config (the reverse dependency would be a cycle).
 
+use std::collections::HashSet;
+use std::ops::ControlFlow;
 use std::path::Path;
 
 use ry_config::Baseline;
+use ry_core::ast::{Expr, Stmt};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use ry_core::{SourceFile, Span};
 
-use crate::diagnostics::{Confidence, Diagnostic, SeverityFilter};
+use crate::diagnostics::{
+    Confidence, Diagnostic, SeverityFilter, SuppressionKind, SuppressionOrigin,
+};
+
+/// The initial audit covers only rules whose premise is recognized from
+/// local syntax. For inference-dependent rules, absence of a diagnostic can
+/// mean that analysis lacked a type, signature, or package fact; that is not
+/// evidence that an ignore is unused.
+const UNUSED_IGNORE_AUDITABLE_CODES: &[&str] = &["RY034", "RY102"];
+
+fn unchecked_audit_regions(file: &SourceFile) -> Vec<Span> {
+    let mut assigned_functions = HashSet::new();
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk::ALL,
+        |node, _| -> ControlFlow<(), Descend> {
+            if let AstNode::Stmt(Stmt::Assign {
+                value: Expr::Function { span, .. },
+                ..
+            }) = node
+            {
+                assigned_functions.insert(*span);
+            }
+            ControlFlow::Continue(Descend::Into)
+        },
+    );
+
+    let mut unchecked = Vec::new();
+    let _ = walk_stmts(
+        &file.stmts,
+        Walk::ALL,
+        |node, _| -> ControlFlow<(), Descend> {
+            match node {
+                AstNode::Expr(Expr::Function { span, .. })
+                    if !assigned_functions.contains(span) =>
+                {
+                    unchecked.push(*span);
+                    ControlFlow::Continue(Descend::Skip)
+                }
+                AstNode::Expr(Expr::Unknown(span)) => {
+                    unchecked.push(*span);
+                    ControlFlow::Continue(Descend::Skip)
+                }
+                _ => ControlFlow::Continue(Descend::Into),
+            }
+        },
+    );
+    unchecked
+}
+
+fn line_starts(src: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(src.match_indices('\n').map(|(index, _)| index + 1))
+        .collect()
+}
 
 /// The post-processing configuration shared by the CLI and the LSP.
 pub struct PostProcess<'a> {
@@ -56,10 +115,107 @@ impl PostProcess<'_> {
         diagnostics: Vec<Diagnostic>,
         comments: &[ry_core::ast::Comment],
         src: &str,
+        path: &str,
+        file: Option<&SourceFile>,
     ) -> Vec<Diagnostic> {
+        let audit = self.unused_ignore_diagnostics(&diagnostics, comments, src, path, file);
         let mut diagnostics = crate::filter_suppressed_with_comments(diagnostics, comments, src);
+        diagnostics.extend(audit);
         crate::apply_filter_to_diagnostics(&mut diagnostics, self.filter);
         diagnostics
+    }
+
+    fn unused_ignore_diagnostics(
+        &self,
+        raw: &[Diagnostic],
+        comments: &[ry_core::ast::Comment],
+        src: &str,
+        path: &str,
+        file: Option<&SourceFile>,
+    ) -> Vec<Diagnostic> {
+        if self
+            .filter
+            .effective("RY113", crate::Severity::Warning)
+            .is_none()
+            || raw.iter().any(|d| d.code == "RY000")
+            || crate::has_file_suppression_from_comments(comments)
+        {
+            return Vec::new();
+        }
+        let directives = crate::parse_suppressions_from_comments(comments, src);
+        if !directives.iter().any(|directive| {
+            directive.origin == SuppressionOrigin::Ry
+                && matches!(directive.kind, SuppressionKind::Selective(_))
+        }) {
+            return Vec::new();
+        }
+        // A missing raw finding proves nothing where pass 3 did not visit
+        // the source in diagnostic mode. Anonymous function values are
+        // traversed for their return signatures with emissions discarded;
+        // direct assigned functions and bare function definitions receive
+        // a separate diagnostic walk. Unknown AST nodes are also opaque.
+        let Some(file) = file else {
+            return Vec::new();
+        };
+        let uncovered = unchecked_audit_regions(file);
+        let line_starts = line_starts(src);
+        let mut unchecked_lines = vec![false; line_starts.len()];
+        for region in uncovered {
+            let first = line_starts
+                .partition_point(|start| *start <= region.start)
+                .saturating_sub(1);
+            let last = line_starts
+                .partition_point(|start| *start < region.end.max(region.start + 1))
+                .saturating_sub(1);
+            unchecked_lines[first..=last].fill(true);
+        }
+
+        let mut audit = Vec::new();
+        for directive in directives {
+            if directive.origin != SuppressionOrigin::Ry {
+                continue;
+            }
+            let SuppressionKind::Selective(codes) = directive.kind else {
+                continue;
+            };
+            if unchecked_lines.get(directive.line).copied().unwrap_or(true)
+                || unchecked_lines
+                    .get(directive.span.line)
+                    .copied()
+                    .unwrap_or(true)
+            {
+                continue;
+            }
+            for code in codes {
+                if !UNUSED_IGNORE_AUDITABLE_CODES.contains(&code.as_str()) {
+                    continue;
+                }
+                let Some(rule) = crate::rules::find(&code) else {
+                    continue;
+                };
+                if self
+                    .filter
+                    .effective(&code, rule.default_severity)
+                    .is_none()
+                {
+                    continue;
+                }
+                if raw
+                    .iter()
+                    .any(|d| d.code == code && d.span.line == directive.line)
+                {
+                    continue;
+                }
+                audit.push(Diagnostic::new(
+                    crate::Severity::Warning,
+                    directive.span,
+                    path,
+                    "RY113",
+                    format!("unused ry ignore for `{code}`"),
+                ));
+            }
+        }
+        audit
     }
 
     /// Step 3: demote diagnostics from a package's non-source trees
@@ -179,7 +335,12 @@ mod tests {
         src: &str,
         post: &PostProcess<'_>,
     ) -> Vec<Diagnostic> {
-        let mut diagnostics = post.pre_demotion(diagnostics, comments, src);
+        let path = diagnostics
+            .first()
+            .map_or("a.R", |d| d.path.as_str())
+            .to_string();
+        let file = ry_core::RParser::new().unwrap().parse(&path, src).unwrap();
+        let mut diagnostics = post.pre_demotion(diagnostics, comments, src, &path, Some(&file));
         post.post_demotion(&mut diagnostics);
         diagnostics
     }
@@ -190,6 +351,220 @@ mod tests {
             .parse("test.R", src)
             .unwrap()
             .comments
+    }
+
+    fn checked(src: &str) -> (Vec<Diagnostic>, Vec<ry_core::ast::Comment>) {
+        let file = ry_core::RParser::new().unwrap().parse("a.R", src).unwrap();
+        let mut checker = crate::Checker::new("a.R");
+        checker.check(&file);
+        (checker.take_diagnostics(), file.comments)
+    }
+
+    fn audit_filter() -> SeverityFilter {
+        let mut filter = SeverityFilter::default();
+        filter.add_warn("RY113");
+        filter
+    }
+
+    #[test]
+    fn unused_ignore_is_opt_in_and_points_to_the_comment() {
+        let src = "1L == 1L # ry: ignore[RY034]\n";
+        let (raw, comments) = checked(src);
+        assert!(
+            run(
+                raw.clone(),
+                &comments,
+                src,
+                &pipeline(&SeverityFilter::default(), None, Confidence::Low)
+            )
+            .is_empty()
+        );
+
+        let filter = audit_filter();
+        let findings = run(
+            raw,
+            &comments,
+            src,
+            &pipeline(&filter, None, Confidence::Low),
+        );
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, "RY113");
+        assert!(findings[0].message.contains("RY034"));
+        assert_eq!(findings[0].span.start, src.find('#').unwrap());
+    }
+
+    #[test]
+    fn mixed_codes_and_duplicate_standalone_directives_use_raw_facts_independently() {
+        let filter = audit_filter();
+        let src = "1L == NA # ry: ignore[RY034, RY102]\n";
+        let (raw, comments) = checked(src);
+        assert!(raw.iter().any(|d| d.code == "RY034"));
+        let findings = run(
+            raw,
+            &comments,
+            src,
+            &pipeline(&filter, None, Confidence::Low),
+        );
+        assert_eq!(
+            findings.iter().filter(|d| d.code == "RY113").count(),
+            1,
+            "{findings:?}"
+        );
+        assert!(findings[0].message.contains("RY102"), "{findings:?}");
+
+        for (expression, expected_unused) in [("1L == NA", 0), ("1L == 1L", 2)] {
+            let src = format!("# ry: ignore[RY034]\n# ry: ignore[RY034]\n\n{expression}\n");
+            let (raw, comments) = checked(&src);
+            let findings = run(
+                raw,
+                &comments,
+                &src,
+                &pipeline(&filter, None, Confidence::Low),
+            );
+            assert_eq!(
+                findings.iter().filter(|d| d.code == "RY113").count(),
+                expected_unused,
+                "{expression}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn anonymous_function_bodies_without_diagnostic_walk_are_not_audited() {
+        let filter = audit_filter();
+        for (code, used, corrected) in [
+            ("RY034", "1L == NA", "1L == 1L"),
+            ("RY102", "list(\"a\" <- 1L)", "list(\"a\" = 1L)"),
+        ] {
+            for expression in [used, corrected] {
+                let src =
+                    format!("identity(function() {{\n  {expression} # ry: ignore[{code}]\n}})\n");
+                let (raw, comments) = checked(&src);
+                assert!(
+                    !raw.iter().any(|d| d.code == code),
+                    "anonymous body is visited only in discarding mode: {raw:?}"
+                );
+                let findings = run(
+                    raw,
+                    &comments,
+                    &src,
+                    &pipeline(&filter, None, Confidence::Low),
+                );
+                assert!(
+                    !findings.iter().any(|d| d.code == "RY113"),
+                    "{src}: {findings:?}"
+                );
+            }
+
+            let named_used = format!("f <- function() {{\n  {used} # ry: ignore[{code}]\n}}\n");
+            let (raw, comments) = checked(&named_used);
+            assert!(raw.iter().any(|d| d.code == code), "{named_used}: {raw:?}");
+            let findings = run(
+                raw,
+                &comments,
+                &named_used,
+                &pipeline(&filter, None, Confidence::Low),
+            );
+            assert!(!findings.iter().any(|d| d.code == "RY113"));
+
+            let named_corrected =
+                format!("f <- function() {{\n  {corrected} # ry: ignore[{code}]\n}}\n");
+            let (raw, comments) = checked(&named_corrected);
+            let findings = run(
+                raw,
+                &comments,
+                &named_corrected,
+                &pipeline(&filter, None, Confidence::Low),
+            );
+            assert!(
+                findings.iter().any(|d| d.code == "RY113"),
+                "{named_corrected}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_confidence_and_disabled_rules_do_not_invent_unused_facts() {
+        let src = "1L == NA # ry: ignore[RY034]\n";
+        let (raw, comments) = checked(src);
+        let original = raw.iter().find(|d| d.code == "RY034").unwrap();
+        let baseline = Baseline {
+            version: 1,
+            entries: vec![entry("a.R", "RY034", &original.message, 1)],
+        };
+        let filter = audit_filter();
+        let post = pipeline(&filter, Some(&baseline), Confidence::High);
+        let file = ry_core::RParser::new().unwrap().parse("a.R", src).unwrap();
+        let pre = post.pre_demotion(raw, &comments, src, "a.R", Some(&file));
+        assert!(!pre.iter().any(|d| d.code == "RY113"), "{pre:?}");
+        let mut kept = pre;
+        post.post_demotion(&mut kept);
+        assert!(kept.is_empty(), "{kept:?}");
+
+        let mut disabled = audit_filter();
+        disabled.add_ignore("RY034");
+        let corrected = "1L == 1L # ry: ignore[RY034]\n";
+        let (raw, comments) = checked(corrected);
+        assert!(
+            run(
+                raw,
+                &comments,
+                corrected,
+                &pipeline(&disabled, None, Confidence::Low)
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn incomplete_and_unsupported_analysis_is_left_unaudited() {
+        let filter = audit_filter();
+        for src in [
+            "1L == 1L # ry: ignore[RY034]\nif (\n",
+            "1L + 1L # ry: ignore[RY040]\n",
+            "1L == 1L # noqa: RY034\n",
+            "1L == 1L # ry: ignore\n",
+            "# ry: ignore-file\n1L == 1L # ry: ignore[RY034]\n",
+        ] {
+            let (raw, comments) = checked(src);
+            let findings = run(
+                raw,
+                &comments,
+                src,
+                &pipeline(&filter, None, Confidence::Low),
+            );
+            assert!(
+                !findings.iter().any(|d| d.code == "RY113"),
+                "{src}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_ignore_cannot_hide_audit_and_severity_override_can_disable_it() {
+        let src = "# ry: ignore\n1L == 1L # ry: ignore[RY034, RY113]\n";
+        let (raw, comments) = checked(src);
+        let filter = audit_filter();
+        let findings = run(
+            raw,
+            &comments,
+            src,
+            &pipeline(&filter, None, Confidence::Low),
+        );
+        assert!(findings.iter().any(|d| d.code == "RY113"), "{findings:?}");
+
+        let mut disabled = filter;
+        disabled.add_ignore("RY113");
+        let (raw, comments) = checked(src);
+        assert!(
+            run(
+                raw,
+                &comments,
+                src,
+                &pipeline(&disabled, None, Confidence::Low)
+            )
+            .is_empty()
+        );
     }
 
     /// The #491 scenario: two identical `(path, code, message)`
@@ -249,7 +624,7 @@ mod tests {
         let filter = SeverityFilter::default();
         let post = pipeline(&filter, None, Confidence::High);
         let before = vec![diag("a.R", Confidence::High, 0)];
-        let mut diagnostics = post.pre_demotion(before, &[], "");
+        let mut diagnostics = post.pre_demotion(before, &[], "", "a.R", None);
         for diagnostic in &mut diagnostics {
             diagnostic.confidence = diagnostic.confidence.demote();
         }

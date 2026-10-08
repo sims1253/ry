@@ -109,7 +109,7 @@ fn custom_typeshed_value(stubs: &BTreeMap<String, ry_typeshed::Typeshed>) -> Val
     json!(packages)
 }
 
-fn source_span(source: &str, span: Span) -> Value {
+pub(crate) fn source_span(source: &str, span: Span) -> Value {
     if span.start > span.end
         || span.end > source.len()
         || !source.is_char_boundary(span.start)
@@ -399,7 +399,7 @@ pub(crate) fn run_dump_facts(
             "sources": context_sources,
             "workspace_hash": json_digest(&workspace_value(workspace)),
             "degraded_scopes": group.degraded_scopes.iter().map(|(path, reason)| {
-                Ok((utf8_path(path)?, reason))
+                Ok((utf8_path(path)?, reason.description()))
             }).collect::<Result<Vec<_>>>()?,
         });
         let context_id = json_digest(&context);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::trace::{RoundMetrics, TraceCompletion, TraceEventKind, TraceReason, TraceRecorder};
 
 /// Resolve method identities once; only their parameter metadata changes
 /// during refinement. Include every dot prefix because generic names may
@@ -52,7 +53,11 @@ impl Checker {
     // iterating `fns` refines their bodies alongside regular
     // functions; dispatch reads the refined slot via `s3_methods`.
     pub(crate) fn run_fixpoint(&mut self) {
-        self.run_fixpoint_inner(None);
+        self.run_fixpoint_inner(None, None);
+    }
+
+    pub(crate) fn run_fixpoint_traced(&mut self, trace: &mut TraceRecorder) {
+        self.run_fixpoint_inner(None, Some(trace));
     }
 
     /// Run the fixpoint, but only refine functions in `scope`. Functions
@@ -66,13 +71,28 @@ impl Checker {
     /// function whose return type changes can still affect other scoped
     /// functions that call it.
     pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
-        self.run_fixpoint_inner(Some(scope));
+        self.run_fixpoint_inner(Some(scope), None);
+    }
+
+    pub(crate) fn run_fixpoint_scoped_traced(
+        &mut self,
+        scope: &HashSet<String>,
+        trace: &mut TraceRecorder,
+    ) {
+        self.run_fixpoint_inner(Some(scope), Some(trace));
     }
 
     /// Shared fixpoint loop. When `scope` is `None`, refines all functions;
     /// when `Some`, only functions in the scope set.
-    fn run_fixpoint_inner(&mut self, scope: Option<&HashSet<String>>) {
+    fn run_fixpoint_inner(
+        &mut self,
+        scope: Option<&HashSet<String>>,
+        mut trace: Option<&mut TraceRecorder>,
+    ) {
         if scope.is_some_and(|s| s.is_empty()) {
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.completion(TraceCompletion::Converged, 0);
+            }
             return;
         }
         let prev_discarding = self.discarding;
@@ -83,6 +103,16 @@ impl Checker {
             .iter()
             .map(|name| self.fn_table.fns[name].return_slot)
             .collect();
+        let mut names_by_slot = if trace.is_some() || self.refinement_dependencies.is_some() {
+            vec![Vec::new(); self.return_slots.0.len()]
+        } else {
+            Vec::new()
+        };
+        if !names_by_slot.is_empty() {
+            for (index, slot) in slots.iter().enumerate() {
+                names_by_slot[*slot].push(index);
+            }
+        }
         let active: Vec<_> = names
             .iter()
             .map(|name| scope.is_none_or(|scope| scope.contains(name)))
@@ -93,10 +123,19 @@ impl Checker {
         let methods = s3_evaluation_methods(&self.fn_table);
         let mut reads = Vec::new();
         let mut evaluation_pending = true;
-        for _ in 0..MAX_FIXPOINT_DEPTH {
+        let mut completion = TraceCompletion::BoundReached;
+        let mut rounds = 0;
+        for round in 1..=MAX_FIXPOINT_DEPTH {
+            rounds = round;
+            let pending_before = pending.len();
+            let mut refined = 0;
+            let mut scheduled = trace
+                .as_ref()
+                .map(|_| std::collections::BTreeMap::<usize, (TraceReason, Option<usize>)>::new());
             let attached_before = (self.loaded.len(), self.bare_loaded.len());
             let mut changed = HashSet::new();
             for index in std::mem::take(&mut pending) {
+                refined += 1;
                 *self.refinement_reads.get_mut() = Some(std::mem::take(&mut reads));
                 if self.refine_fn_return(&names[index]) {
                     changed.insert(slots[index]);
@@ -115,6 +154,9 @@ impl Checker {
             } else {
                 HashSet::new()
             };
+            let return_changes = changed.len();
+            let metadata_changes = metadata_changed.len();
+            let return_changed_slots = trace.as_ref().map(|_| changed.clone());
             // Returns do not affect argument evaluation metadata. Once the
             // latter converges, only an attachment can invalidate it.
             evaluation_pending = !metadata_changed.is_empty();
@@ -122,28 +164,103 @@ impl Checker {
             // as callers, even when its return slot has not changed yet.
             for (index, slot) in slots.iter().enumerate() {
                 if active[index] && metadata_changed.contains(slot) {
-                    pending.insert(index);
+                    if pending.insert(index) {
+                        if let Some(scheduled) = &mut scheduled {
+                            scheduled.insert(
+                                index,
+                                (TraceReason::EvaluationMetadataChanged, Some(*slot)),
+                            );
+                        }
+                    }
                 }
             }
-            changed.extend(metadata_changed);
-            for slot in changed {
-                pending.extend(callers[slot].iter().copied());
+            changed.extend(metadata_changed.iter().copied());
+            if let Some(scheduled) = &mut scheduled {
+                let mut changed: Vec<_> = changed.into_iter().collect();
+                changed.sort_unstable();
+                for slot in changed {
+                    for &index in &callers[slot] {
+                        if pending.insert(index) {
+                            scheduled.insert(
+                                index,
+                                (
+                                    match (
+                                        return_changed_slots
+                                            .as_ref()
+                                            .is_some_and(|slots| slots.contains(&slot)),
+                                        metadata_changed.contains(&slot),
+                                    ) {
+                                        (true, true) => {
+                                            TraceReason::ReturnAndEvaluationMetadataChanged
+                                        }
+                                        (true, false) => TraceReason::ReturnChanged,
+                                        (false, true) => TraceReason::EvaluationMetadataChanged,
+                                        (false, false) => unreachable!("slot came from a change"),
+                                    },
+                                    Some(slot),
+                                ),
+                            );
+                        }
+                    }
+                }
+            } else {
+                // Preserve the original untraced hot path: the BTreeSet
+                // pending queue already fixes refinement order.
+                for slot in changed {
+                    pending.extend(callers[slot].iter().copied());
+                }
             }
             // Inference can discover library()/require() through an alias.
             // Attaching a package changes bare-name resolution for every body.
             if attachments_changed {
-                pending.extend((0..names.len()).filter(|&index| active[index]));
+                for index in (0..names.len()).filter(|&index| active[index]) {
+                    if pending.insert(index) {
+                        if let Some(scheduled) = &mut scheduled {
+                            scheduled.insert(index, (TraceReason::PackageAttachmentChanged, None));
+                        }
+                    }
+                }
+            }
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.round(RoundMetrics {
+                    round,
+                    pending_before,
+                    refined,
+                    return_changes,
+                    metadata_changes,
+                    attachments_changed,
+                    pending_after: pending.len(),
+                });
+                if let Some(scheduled) = scheduled {
+                    for (index, (reason, slot)) in scheduled {
+                        let trigger = slot.map(|slot| {
+                            trace.return_slot_trigger(
+                                slot,
+                                names_by_slot[slot]
+                                    .iter()
+                                    .map(|&owner| names[owner].as_str()),
+                            )
+                        });
+                        trace.function_event_with_trigger(
+                            &names[index],
+                            TraceEventKind::Scheduled { round, reason },
+                            trigger,
+                        );
+                    }
+                }
             }
             if pending.is_empty() && !evaluation_pending {
+                completion = TraceCompletion::Converged;
                 break;
             }
+        }
+        if let Some(trace) = trace {
+            trace.completion(completion, rounds);
         }
         if let Some(dependencies) = &mut self.refinement_dependencies {
             // Slots are local to the rebuilt table. Persist owning names, and
             // retain reads from every round rather than only the final pass.
-            let mut names_by_slot = vec![Vec::new(); self.return_slots.0.len()];
-            for (index, slot) in slots.iter().enumerate() {
-                names_by_slot[*slot].push(index);
+            for (index, _) in slots.iter().enumerate() {
                 if active[index] {
                     dependencies.insert(names[index].clone(), HashSet::new());
                 }

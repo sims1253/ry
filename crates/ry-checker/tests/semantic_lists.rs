@@ -479,7 +479,14 @@ fn no_unregistered_hardcoded_lists() {
     //   `every_known_package_loads`); this list only names one
     //   R-verified export per newly registered package so the test
     //   matrix stays reviewable.
-    let known_non_semantic: &[&str] = &["BASE_DATABASE_PACKAGES", "DEMOTED", "CANDIDATE_PACKAGES"];
+    // * `UNUSED_IGNORE_AUDITABLE_CODES`: checker diagnostic IDs whose
+    //   absence can be audited from local syntax, not R runtime names.
+    let known_non_semantic: &[&str] = &[
+        "BASE_DATABASE_PACKAGES",
+        "DEMOTED",
+        "CANDIDATE_PACKAGES",
+        "UNUSED_IGNORE_AUDITABLE_CODES",
+    ];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut found_lists = Vec::new();

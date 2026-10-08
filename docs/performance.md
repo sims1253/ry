@@ -10,16 +10,20 @@ PR checks. It measures:
 - Release CLI executable size.
 - VS Code activation and activation-to-first-diagnostic latency, plus
   JavaScript bundle size and VSIX size without the bundled server.
+- Startup and warm edit-to-diagnostics latency through a release `ry server`
+  process and real stdio JSON-RPC frames.
 - Release Zed WASM size.
 
 Extension sizes measure distribution cost. Zed runtime latency and memory use
 are not measured. The incremental core benchmarks model part of the
-LSP workload but do not exercise an editor or the JSON-RPC transport.
+LSP workload; the server replay measures the JSON-RPC transport without an
+editor, extension, or rendering time.
 
 ## Reading results
 
 Each run writes a measurement table to its GitHub Actions summary and uploads
-`results.json` and `environment.txt` as a 14-day artifact. The report job compares
+`results.json`, `server-replay.json`, and `environment.txt` as a 14-day artifact.
+The report job compares
 against the latest recorded `main` result. The first run establishes a baseline.
 A slowdown or size increase above 20% is advisory; it does not fail the workflow.
 The existing performance budget and scaling tests in `CI` remain enforced.
@@ -69,16 +73,60 @@ resolution, server startup, document opening, and the first check. Editor launch
 and downloading VS Code are outside both timers. These are fresh-process
 measurements with potentially warm OS caches, not cold-disk startup timings.
 
+## Server edit replay
+
+The versioned fixture in `crates/ry-lsp/testdata/server-replay/v1.json` opens
+four R files in a real release `ry server` process. It measures three edits:
+a local diagnostic clear, a helper signature change that produces a diagnostic
+in an unchanged caller, and a diagnostic in an unrelated file. The unchanged
+caller is the completion target for the cross-file case; an earlier publication
+for the edited helper cannot stop that timer.
+
+For a warm sample, the timer starts just before the client sends the complete
+`didChange` JSON-RPC frame. It stops on the first publication for the scenario's
+completion file after that edit. The test requires the analyzed open-document
+version and the expected findings in that notification. For a nonempty result,
+it also requires diagnostic origin data with an analysis generation newer than
+the previous accepted result. This disambiguates identical findings in the
+unchanged caller across repetitions, whose document version stays fixed.
+The stop timestamp is taken when the client receives and decodes the target
+notification, so the duration includes client receive, JSON decoding, and
+notification routing overhead. The test then drains other notifications and
+compares the entire observed diagnostic state with a fresh
+CLI check of equivalent source bytes in an isolated tree. That independent
+comparison, fixture writes, and reset edits occur outside the timed interval.
+The clean case requires a versioned empty analysis publication, distinct from
+the unversioned clear sent on document close. A missing, stale, or incorrect
+completion fails the test rather than contributing a fast sample.
+
+The workflow runs 31 warm samples per scenario after resetting the project to
+the fixture's initial bytes, and five fresh-process startup observations.
+Startup runs from process spawn through the first versioned diagnostic; it does
+not claim cold disk caches. The report shows a median for startup and a median
+and nearest-rank p95 for each warm scenario (the value at sorted one-based rank
+`ceil(0.95 × n)`). It never derives a startup tail estimate from five samples.
+Raw nanosecond durations, per-sample snapshot hashes, document versions,
+nonempty-result analysis generations, fixture and binary SHA-256 hashes,
+binary/Rust versions, Rayon setting, and
+sample counts are retained in `server-replay.json`. These server timings are
+advisory, like the other hosted-runner measurements; confirm suspected changes
+with repeated runs on the same machine.
+
 ## Run locally
 
 ```sh
 RAYON_NUM_THREADS=2 cargo bench --locked -p ry-checker --bench performance -- --noplot
 cargo build --locked --release -p ry-cli
+mkdir -p /tmp/ry-replay-results
+RY_REPLAY_BINARY="$PWD/target/release/ry" \
+RY_REPLAY_OUTPUT=/tmp/ry-replay-results/server-replay.json \
+RY_REPLAY_SAMPLES=31 RY_REPLAY_STARTUPS=5 RAYON_NUM_THREADS=2 \
+  cargo test --locked --release -p ry-lsp --test server_replay -- --nocapture
 rustup target add wasm32-wasip2
 cargo build --locked --release --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2
 (cd editors/code && bun install --frozen-lockfile && bun run vsce-package)
 (cd editors/code && xvfb-run -a node test/performance.cjs /tmp/ry-activation.json)
-python3 scripts/performance/collect.py --activation /tmp/ry-activation.json --output /tmp/ry-performance.json
+python3 scripts/performance/collect.py --activation /tmp/ry-activation.json --server-replay /tmp/ry-replay-results/server-replay.json --output /tmp/ry-performance.json
 ```
 
 Use a clean checkout without `editors/code/bundled/bin/ry` when measuring the VSIX

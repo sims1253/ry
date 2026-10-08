@@ -5,6 +5,7 @@ mod call_head_lookup;
 mod constructors;
 mod data_frames_s3;
 mod diagnostics;
+mod dplyr_schema_effects;
 mod functions_classes;
 mod narrowing;
 mod operator_s3_dispatch;

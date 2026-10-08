@@ -31,6 +31,8 @@ pub use reference_facts::{
     ReferenceRecord, ReferenceResolution,
 };
 pub mod rules;
+mod scoped_policy;
+pub use scoped_policy::ScopedRulePolicy;
 pub mod semantic_lists;
 pub mod trace;
 

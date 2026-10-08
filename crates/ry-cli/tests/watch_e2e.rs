@@ -212,6 +212,33 @@ fn watch_reloads_config_without_r_file_touch() {
     session.assert_alive("after config reload");
 }
 
+#[test]
+fn watch_reloads_path_rule_policy_without_r_file_touch() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("R")).unwrap();
+    std::fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/**\"]\nignore = [\"RY040\"]\n",
+    )
+    .unwrap();
+    std::fs::write(temp.path().join("R/main.R"), "\"a\" + 1L\n").unwrap();
+    let mut session = WatchSession::spawn(temp.path());
+    wait_for(&session.stderr, "watching 1 file(s)", "initial scoped pass");
+    assert!(!session.stdout.lock().unwrap().contains("RY040"));
+
+    std::fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+    wait_for(
+        &session.stdout,
+        "error: [RY040]",
+        "scoped severity after config reload",
+    );
+    session.assert_alive("after scoped rule reload");
+}
+
 /// A regenerated baseline mid-watch takes effect on the next pass: the
 /// accepted finding disappears from output without touching an R file
 /// (#530). The baseline stores counts per (path, code, message), so the

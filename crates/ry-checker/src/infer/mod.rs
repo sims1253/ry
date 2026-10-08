@@ -2261,13 +2261,19 @@ impl Checker {
             && matches!(base_t.mode, Mode::Integer | Mode::Double)
             && base_t.columns.is_none()
         {
+            for argument in args {
+                self.infer(&argument.value, scope);
+            }
             let only_missing = matches!(kind, IndexKind::Single)
                 && args.len() == 1
                 && !base_t.class.is_unknown()
                 && !base_t.class.has_known_class()
+                && self.resolves_to_base("[<-", scope)
+                && !ops_chooser::operator_rebound(self, "[<-", scope)
                 && matches!(&args[0].value,
                     Expr::Call { func, args: check_args, .. }
                         if check_args.len() == 1
+                            && check_args[0].name.as_deref().is_none_or(|name| name == "x")
                             && matches!(&check_args[0].value, Expr::Ident { name, .. } if name == base_name)
                             && call::callee_name(func).as_deref() == Some("is.na")
                             && matches!(self.special_call_provenance(
@@ -2275,15 +2281,50 @@ impl Checker {
                             ), crate::resolve::SpecialCallProvenance::Proven)
                 );
             let mut updated = base_t;
+            let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
+                && !vt.class.is_unknown()
+                && !vt.class.has_known_class();
+            let no_selection = only_missing
+                && numeric_replacement
+                && (matches!(updated.length, Length::Zero | Length::Known(0))
+                    || (updated.value_facts.all_values_known
+                        && !updated.value_facts.prior_na
+                        && updated.value_facts.new_na == ry_core::types::NewNaProvenance::None));
+            if only_missing && numeric_replacement {
+                updated.mode = updated.mode.combine_result(vt.mode);
+            }
             if only_missing
+                && numeric_replacement
                 && vt.value_facts.all_values_known
                 && !vt.value_facts.prior_na
                 && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
-                && matches!(vt.mode, Mode::Integer | Mode::Double)
+                && !vt.length.may_be_empty()
             {
-                updated.value_facts.prior_na = false;
-                updated.value_facts.new_na = ry_core::types::NewNaProvenance::None;
-                if let Some(site) = updated.value_facts.cast_site
+                let site = updated.value_facts.cast_site;
+                if !no_selection {
+                    // A scalar is recycled to every selected NA. A vector's
+                    // extrema need not occur among the values actually used.
+                    // Mixed cast results may also lack the surviving bounds.
+                    if updated.value_facts.all_values_known
+                        && (updated.value_facts.prior_na
+                            || matches!(
+                                updated.value_facts.new_na,
+                                ry_core::types::NewNaProvenance::ProvenContains
+                                    | ry_core::types::NewNaProvenance::ProvenOnly
+                            ))
+                        && matches!(vt.length, Length::One | Length::Known(1))
+                        && (updated.value_facts.numeric_bounds.is_some()
+                            || updated.value_facts.new_na
+                                != ry_core::types::NewNaProvenance::ProvenContains)
+                    {
+                        updated.value_facts.prior_na = false;
+                        updated.value_facts.new_na = ry_core::types::NewNaProvenance::None;
+                        updated.value_facts = updated.value_facts.merge_vector(vt.value_facts);
+                    } else {
+                        updated.value_facts = ry_core::types::ValueFacts::default();
+                    }
+                }
+                if let Some(site) = site
                     && self.source.get(site.end..span.start).is_some_and(|gap| {
                         gap.lines().all(|line| {
                             line.trim().is_empty() || line.trim_start().starts_with('#')
@@ -2297,7 +2338,7 @@ impl Checker {
                     });
                 }
                 updated.value_facts.cast_site = None;
-            } else {
+            } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
             }
             scope.insert(base_name.clone(), updated);

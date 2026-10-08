@@ -322,12 +322,15 @@ impl ColumnSchema {
     /// `lapply` / `for` should see the unwrapped `double<1>` rather than
     /// `list<1>`. Heterogeneous or empty schemas return `None`.
     pub fn homogeneous_element_type(&self) -> Option<RType> {
-        let first = self.columns.first().map(|(_, t)| t.clone())?;
-        if self.columns.iter().all(|(_, t)| t == &first) {
-            Some(first)
-        } else {
-            None
+        let mut columns = self.columns.iter();
+        let mut common = columns.next()?.1.clone();
+        for (_, ty) in columns {
+            if !common.same_shape(ty) {
+                return None;
+            }
+            common = common.merge_same_shape(ty);
         }
+        Some(common)
     }
 }
 
@@ -403,6 +406,7 @@ pub struct RType {
     pub members: Option<Arc<[RType]>>,
     /// Bounded value evidence for numeric coercion. It is deliberately not
     /// rendered as a type: losing this evidence must never invent a warning.
+    /// Equality includes these facts so fixpoint refinement reaches callers.
     pub value_facts: ValueFacts,
 }
 
@@ -481,50 +485,68 @@ impl ValueFacts {
 pub const MAX_UNION_MEMBERS: usize = 4;
 
 impl RType {
-    fn without_value_facts(mut self) -> Self {
-        self.value_facts = ValueFacts::default();
-        self.columns = self.columns.map(|schema| {
-            Arc::new(ColumnSchema {
-                columns: schema
-                    .columns
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), ty.clone().without_value_facts()))
-                    .collect(),
-                complete: schema.complete,
-                locally_constructed: schema.locally_constructed,
-            })
-        });
-        self.fn_sig = self.fn_sig.map(|signature| {
-            Arc::new(FunctionSignature {
-                params: signature
-                    .params
-                    .iter()
-                    .cloned()
-                    .map(RType::without_value_facts)
-                    .collect(),
-                return_type: Box::new(signature.return_type.clone().without_value_facts()),
-            })
-        });
-        self.members = self.members.map(|members| {
-            Arc::from(
-                members
-                    .iter()
-                    .cloned()
-                    .map(RType::without_value_facts)
-                    .collect::<Vec<_>>(),
-            )
-        });
-        self
+    /// Compare type structure without allocating or comparing value evidence.
+    fn same_shape(&self, other: &Self) -> bool {
+        if self.mode != other.mode || self.length != other.length || self.class != other.class {
+            return false;
+        }
+        let columns = match (&self.columns, &other.columns) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.complete == right.complete
+                        && left.locally_constructed == right.locally_constructed
+                        && left.columns.len() == right.columns.len()
+                        && left.columns.iter().zip(&right.columns).all(
+                            |((name, ty), (other_name, other_ty))| {
+                                name == other_name && ty.same_shape(other_ty)
+                            },
+                        ))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let signature = match (&self.fn_sig, &other.fn_sig) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.params.len() == right.params.len()
+                        && left
+                            .params
+                            .iter()
+                            .zip(&right.params)
+                            .all(|(ty, other_ty)| ty.same_shape(other_ty))
+                        && left.return_type.same_shape(&right.return_type))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let members = match (&self.members, &other.members) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.len() == right.len()
+                        && left
+                            .iter()
+                            .zip(right.iter())
+                            .all(|(ty, other_ty)| ty.same_shape(other_ty)))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        columns && signature && members
     }
 
     fn merge_same_shape(mut self, other: &Self) -> Self {
+        if &self == other {
+            return self;
+        }
         self.value_facts = ValueFacts {
             numeric_bounds: (self.value_facts.numeric_bounds == other.value_facts.numeric_bounds)
                 .then_some(self.value_facts.numeric_bounds)
                 .flatten(),
             all_values_known: self.value_facts.all_values_known
                 && other.value_facts.all_values_known
-                && self.value_facts.numeric_bounds == other.value_facts.numeric_bounds,
+                && self.value_facts.numeric_bounds == other.value_facts.numeric_bounds
+                && self.value_facts.prior_na == other.value_facts.prior_na
+                && self.value_facts.new_na == other.value_facts.new_na,
             prior_na: self.value_facts.prior_na || other.value_facts.prior_na,
             new_na: if self.value_facts.new_na == other.value_facts.new_na {
                 self.value_facts.new_na
@@ -822,16 +844,7 @@ impl RType {
         if self == other {
             return self;
         }
-        if self.mode != other.mode
-            || self.length != other.length
-            || self.class != other.class
-            || self.columns.is_some() != other.columns.is_some()
-            || self.fn_sig.is_some() != other.fn_sig.is_some()
-            || self.members.is_some() != other.members.is_some()
-        {
-            return union_of(self, other);
-        }
-        if self.clone().without_value_facts() == other.clone().without_value_facts() {
+        if self.same_shape(&other) {
             return self.merge_same_shape(&other);
         }
         union_of(self, other)

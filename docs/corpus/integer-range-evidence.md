@@ -19,7 +19,11 @@ out-of-range element emits the warning and records its new-NA provenance in
 the inferred result. Unknown inputs carry only a *possible* new-NA fact and
 do not warn. A prior input NA remains distinct. An immediate unshadowed
 `x[is.na(x)] <- nonmissing_value` repairs the value fact and suppresses that
-cast's warning; arbitrary indexed writes discard numeric evidence.
+cast's warning. A proven scalar repair merges the replacement bounds and
+promotes integer storage when needed. A repair selecting nothing keeps the
+original bounds. Unknown selection, vector replacements, and mixed casts with
+unknown surviving bounds discard numeric evidence, as do arbitrary indexed
+writes.
 
 The founding sources are [readxl `standardise_limits()` at pin
 `47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af`](https://github.com/tidyverse/readxl/blob/47f8aeac0a99eee6c6db2d64ead2225e5e3ae4af/R/read_excel.R#L319)

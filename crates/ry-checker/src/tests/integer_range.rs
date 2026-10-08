@@ -147,3 +147,77 @@ fn control_flow_join_keeps_only_supported_na_claims() {
         NewNaProvenance::Possible
     );
 }
+
+#[test]
+fn numeric_replacement_infers_index_expressions() {
+    for values in ["c(1, 2)", "c(1L, 2L)", "c(TRUE, FALSE)"] {
+        for target in ["x[yy]", "x[[yy]]", "x[1, yy]"] {
+            let source = format!("x <- {values}; {target} <- 1");
+            let diags = check(&source);
+            assert!(
+                diags.iter().any(|d| d.code == "RY010"),
+                "{source}: {diags:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_replacement_updates_bounds_and_numeric_mode() {
+    for source in [
+        "x <- c(5, NA_real_); x[is.na(x)] <- 1e10; as.integer(x)",
+        "x <- as.integer(1e10)\nx[is.na(x)] <- 1e10\nas.integer(x)",
+        "x <- c(5L, NA_integer_); x[is.na(x)] <- 1e10; as.integer(x)",
+        "x <- 1e10; x[is.na(x)] <- numeric(1); as.integer(x)",
+    ] {
+        assert_eq!(range_warnings(source), 1, "{source}");
+    }
+    for source in [
+        "x <- c(5, 6); x[is.na(x)] <- 1e10; as.integer(x)",
+        "x <- as.integer(structure(5, class = 'Date')); x[is.na(x)] <- 1e10; as.integer(x)",
+        "x <- numeric(0); x[is.na(x)] <- 1e10; as.integer(x)",
+        "x <- c(5, NA_real_); x[is.na(x)] <- 0L; as.integer(x)",
+        "x <- c(5, NA_real_); x[is.na(x)] <- scan(); as.integer(x)",
+        "x <- c(5, NA_real_); x[is.na(x)] <- c(0, 1e10); as.integer(x)",
+        "flag <- scan(); x <- if (flag) c(5, NA_real_) else c(5, 5); x[is.na(x)] <- 1e10; as.integer(x)",
+    ] {
+        assert_eq!(range_warnings(source), 0, "{source}");
+    }
+    let (_, scope) = check_with_scope("x <- as.integer(1e10); x[is.na(x)] <- 1e10");
+    assert_eq!(scope.get("x").unwrap().mode, Mode::Double);
+    let (_, scope) = check_with_scope("x <- c(5L, NA_integer_); x[is.na(x)] <- numeric(1)");
+    assert_eq!(scope.get("x").unwrap().mode, Mode::Double);
+}
+
+#[test]
+fn list_homogeneity_ignores_values_and_merges_their_facts() {
+    for values in ["list(list(1), list(2))", "list(list(1), list(1))"] {
+        let source = format!("for (x in {values}) if (x) 1");
+        let diags = check(&source);
+        assert!(
+            diags.iter().any(|d| d.code == "RY001"),
+            "{source}: {diags:?}"
+        );
+    }
+    assert_eq!(range_warnings("for (x in list(1, 1e10)) as.integer(x)"), 0);
+}
+
+#[test]
+fn missing_replacement_requires_base_operator_and_nonempty_plain_value() {
+    for source in [
+        "`[<-` <- function(x, i, value) x\nx <- as.integer(1e10)\nx[is.na(x)] <- 0L",
+        "x <- as.integer(1e10)\nx[is.na(x)] <- numeric(0)",
+        "x <- as.integer(1e10)\nx[is.na(x)] <- structure(0L, class = 'special')",
+        "x <- as.integer(1e10)\nx[is.na(wrong = x)] <- 0L",
+    ] {
+        assert_eq!(range_warnings(source), 1, "{source}");
+    }
+    assert_eq!(
+        range_warnings("x <- as.integer(1e10); x[is.na(x)] <- 1e10; as.integer(x)"),
+        2
+    );
+    assert_eq!(
+        range_warnings("x <- as.integer(1e10)\nx[is.na(x)] <- c(0L, 1L)"),
+        0
+    );
+}

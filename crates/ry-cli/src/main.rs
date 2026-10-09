@@ -93,9 +93,13 @@ struct Cli {
 /// [`CheckArgs::default`] cannot drift apart.
 #[derive(Debug, Args)]
 struct CheckArgs {
-    /// Files or directories to check. Defaults to the current working
-    /// directory, mirroring `ty check` semantics.
+    /// Files or directories to check. Use `-` with --stdin-filename PATH
+    /// for one in-memory source. Defaults to the current working directory.
     paths: Vec<PathBuf>,
+    /// Logical source path for an explicit `-` stdin operand. Used for
+    /// config discovery, package context, and diagnostic paths.
+    #[arg(long, value_name = "PATH")]
+    stdin_filename: Option<PathBuf>,
     /// Treat the given rule as severity 'error'. Accepts a rule code
     /// (RY040), a rule name (invalid-arithmetic), or 'all'. Repeatable.
     #[arg(long)]
@@ -150,6 +154,7 @@ impl Default for CheckArgs {
     fn default() -> Self {
         Self {
             paths: Vec::new(),
+            stdin_filename: None,
             error: Vec::new(),
             warn: Vec::new(),
             ignore: Vec::new(),

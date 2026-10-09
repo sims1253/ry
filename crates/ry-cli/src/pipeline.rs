@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use ry_config as config;
+use ry_core::declarations::DeclarationRecord;
 
 /// Input for a unified diagnostics check.
 pub(crate) struct CheckInput {
@@ -19,14 +20,7 @@ pub(crate) struct CheckInput {
 }
 
 impl CheckInput {
-    fn into_project(self) -> ry_checker::Project {
-        self.into_project_with_records(Vec::new())
-    }
-
-    fn into_project_with_records(
-        self,
-        records: Vec<ry_core::declarations::DeclarationRecord>,
-    ) -> ry_checker::Project {
+    fn into_project(self, records: Vec<DeclarationRecord>) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
         project.set_declaration_records(records);
         let workspace = self.workspace;
@@ -87,30 +81,27 @@ pub(crate) fn adopted_records(
 
 #[derive(Default)]
 pub(crate) struct AdoptedRecords {
-    pub records: Vec<ry_core::declarations::DeclarationRecord>,
+    pub records: Vec<DeclarationRecord>,
     pub diagnostics: Vec<ry_checker::Diagnostic>,
 }
 
-pub(crate) fn check_project_with_records(
+/// Run a one-shot project check with workspace metadata and adopted
+/// declaration records.
+pub(crate) fn check_project(
     input: CheckInput,
-    records: Vec<ry_core::declarations::DeclarationRecord>,
+    records: Vec<DeclarationRecord>,
 ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    let mut project = input.into_project_with_records(records);
+    let mut project = input.into_project(records);
     let mut diagnostics = project.check();
     ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
     diagnostics
-}
-
-/// Run a one-shot project check with workspace metadata.
-pub(crate) fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    input.into_project().check()
 }
 
 /// Capture each file's lexical scopes in input order. Diagnostics are discarded.
 pub(crate) fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    check_project_with_facts_capture(input, false).scopes
+    check_project_with_facts_capture(input, false, Vec::new()).scopes
 }
 
 pub(crate) struct CapturedFacts {
@@ -122,16 +113,9 @@ pub(crate) struct CapturedFacts {
 pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
+    records: Vec<DeclarationRecord>,
 ) -> CapturedFacts {
-    check_project_with_facts_and_records(input, references, Vec::new())
-}
-
-pub(crate) fn check_project_with_facts_and_records(
-    input: CheckInput,
-    references: bool,
-    records: Vec<ry_core::declarations::DeclarationRecord>,
-) -> CapturedFacts {
-    let mut project = input.into_project_with_records(records);
+    let mut project = input.into_project(records);
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();
@@ -270,21 +254,29 @@ pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
-    parse_files_with_native_paths(paths, on_failure)
+    parse_files_with_native_paths(paths, None, on_failure)
         .map(|files| files.into_iter().map(|(_, file)| file).collect())
+}
+
+/// One in-memory source substituted at its logical path. The same parser,
+/// decoder, and downstream project analysis are used as for disk sources.
+pub(crate) struct SourceOverlay {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
 }
 
 /// Keep the native path alongside the parser's display path. These can differ
 /// for non-UTF-8 filenames, and source adoption must use native identity.
 pub(crate) fn parse_files_with_native_paths(
     paths: &[PathBuf],
+    overlay: Option<&SourceOverlay>,
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
-        .map(|path| match parse_one(path) {
+        .map(|path| match parse_one(path, overlay) {
             Ok(file) => Some(Ok((path.clone(), file))),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
@@ -297,12 +289,19 @@ pub(crate) fn parse_files_with_native_paths(
 
 /// Read and parse one file on the calling thread, using that thread's
 /// parser from the pool (see [`parse_files`]).
-fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
+fn parse_one(
+    path: &Path,
+    overlay: Option<&SourceOverlay>,
+) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
     thread_local! {
         static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
             const { std::cell::RefCell::new(None) };
     }
-    let decoded = match ry_workspace::read_r_source_decoded(path) {
+    let source = match overlay.filter(|source| source.path == path) {
+        Some(source) => Ok(ry_workspace::decode_r_source(&source.bytes)),
+        None => ry_workspace::read_r_source_decoded(path),
+    };
+    let decoded = match source {
         Ok(decoded) => decoded,
         Err(error) => {
             return Err(ParseFailure {
@@ -353,8 +352,10 @@ fn parse_one(path: &Path) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
+    /// Indices into the parsed input, in the same order as check output.
+    pub source_indices: Vec<usize>,
     pub check_input: CheckInput,
-    pub degraded_scopes: Vec<(PathBuf, &'static str)>,
+    pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
 }
 
 /// Resolve parsed files into per-package checker inputs, shared by
@@ -417,6 +418,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         resolved.push(ResolvedGroup {
             resolution_root,
+            source_indices: indices.clone(),
             check_input: CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),

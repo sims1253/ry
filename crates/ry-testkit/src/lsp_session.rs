@@ -3,11 +3,20 @@ use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::io;
 use std::path::Path;
+use std::time::Instant;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 struct RoutedMessage {
     sequence: u64,
     value: Value,
+}
+
+/// A publication checkpoint with the first target notification's receipt
+/// instant kept separate from the later multi-URI drain.
+pub struct QuiescedDiagnostics {
+    pub first: Value,
+    pub first_received_at: Instant,
+    pub publications: std::collections::BTreeMap<String, Vec<Value>>,
 }
 
 /// Wall-clock budget for one routed JSON-RPC receive wait — a request
@@ -246,7 +255,23 @@ where
         mark: u64,
         idle_timeout: std::time::Duration,
     ) -> io::Result<std::collections::BTreeMap<String, Vec<Value>>> {
+        Ok(self
+            .quiesce_diagnostics_timed(target_uri, mark, idle_timeout)
+            .await?
+            .publications)
+    }
+
+    /// Like [`Self::quiesce_diagnostics`], but retain the first target
+    /// publication and its receipt time. A benchmark can stop its timer at
+    /// that notification while still validating the settled multi-URI state.
+    pub async fn quiesce_diagnostics_timed(
+        &mut self,
+        target_uri: &str,
+        mark: u64,
+        idle_timeout: std::time::Duration,
+    ) -> io::Result<QuiescedDiagnostics> {
         let target = self.published_diagnostics_after(target_uri, mark).await?;
+        let first_received_at = Instant::now();
         let mut result: std::collections::BTreeMap<String, Vec<Value>> =
             std::collections::BTreeMap::new();
         let collect = |msg: &Value, result: &mut std::collections::BTreeMap<String, Vec<Value>>| {
@@ -311,7 +336,11 @@ where
                 Err(_) => break,
             }
         }
-        Ok(result)
+        Ok(QuiescedDiagnostics {
+            first: target,
+            first_received_at,
+            publications: result,
+        })
     }
 
     /// Complete the protocol shutdown. The owning adapter remains

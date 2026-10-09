@@ -11,7 +11,7 @@ use std::path::Path;
 
 use ry_config::config::ScopedPaths;
 use ry_core::Span;
-use ry_core::ast::{Expr, SourceFile, Stmt};
+use ry_core::ast::{Expr, FunctionBody, SourceFile, Stmt};
 use ry_core::declarations::{
     AssignmentSemantics, DeclarationRecord, DeclarationSource, DeclarationTarget,
     DeclaredParameter, DeclaredSignature, EvaluationSemantics, EvidenceUse, ParameterForm,
@@ -109,7 +109,7 @@ pub fn read_records_at(
         .collect::<Vec<_>>();
     comments.sort_by_key(|(start, _)| *start);
     let mut next_function = 0;
-    let mut containing = Vec::new();
+    let mut containing: Vec<&FunctionBody> = Vec::new();
     for (start, comment) in comments {
         while let Some(entry) = file.function_bodies.get(next_function) {
             if entry.function.start > start {
@@ -117,9 +117,7 @@ pub fn read_records_at(
             }
             while containing
                 .last()
-                .is_some_and(|active: &&ry_core::ast::FunctionBody| {
-                    active.function.end <= entry.function.start
-                })
+                .is_some_and(|active| active.function.end <= entry.function.start)
             {
                 containing.pop();
             }
@@ -128,7 +126,7 @@ pub fn read_records_at(
         }
         while containing
             .last()
-            .is_some_and(|active: &&ry_core::ast::FunctionBody| active.function.end <= start)
+            .is_some_and(|active| active.function.end <= start)
         {
             containing.pop();
         }
@@ -267,23 +265,19 @@ fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
     let argument_range = next_token(raw, 2);
     let class_range = argument_range.and_then(|(_, end)| next_token(raw, end));
     let argument = argument_range.map(|(start, end)| &raw[start..end]);
-    let class = class_range.map(|(start, end)| &raw[start..end]);
     let mut clause = Clause {
         span,
         argument,
-        class,
+        class: class_range.map(|(start, end)| &raw[start..end]),
         residual: None,
         error: None,
     };
-    match (argument, class) {
-        (Some(argument), Some(_)) if valid_formal(argument) => {}
-        _ => {
-            clause.error = Some("expected `#| formal class`".into());
-            return clause;
-        }
-    }
-    let (class_start, class_end) = class_range.expect("validated class token");
-    if !valid_class(class.expect("validated class token")) {
+    let Some((class_start, class_end)) = class_range.filter(|_| argument.is_some_and(valid_formal))
+    else {
+        clause.error = Some("expected `#| formal class`".into());
+        return clause;
+    };
+    if !valid_class(&raw[class_start..class_end]) {
         let start = span.start + class_start;
         clause.residual = Some(ResidualConstraint {
             raw: raw[class_start..].into(),
@@ -309,20 +303,19 @@ fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
     clause
 }
 
-fn valid_formal(word: &str) -> bool {
-    word != "..."
-        && !word.is_empty()
+fn simple_word(word: &str) -> bool {
+    !word.is_empty()
         && word
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_'))
 }
 
+fn valid_formal(word: &str) -> bool {
+    word != "..." && simple_word(word)
+}
+
 fn valid_class(word: &str) -> bool {
-    !word.is_empty()
-        && word.len() <= 256
-        && word
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_'))
+    word.len() <= 256 && simple_word(word)
 }
 
 fn build_record(
@@ -333,11 +326,8 @@ fn build_record(
     let first = clauses.first().expect("group is nonempty").span;
     let last = clauses.last().expect("group is nonempty").span;
     let full_span = Span::new(first.start, last.end, first.line, first.col);
-    let source_span = if full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES {
-        first
-    } else {
-        full_span
-    };
+    let oversized = full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES;
+    let source_span = if oversized { first } else { full_span };
     let mut parameters = Vec::new();
     let mut residuals = Vec::new();
     let mut invalid = None;
@@ -347,7 +337,7 @@ fn build_record(
             "more than {MAX_CLAUSES_PER_FUNCTION} typehint clauses for one function"
         ));
     }
-    if full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES {
+    if oversized {
         invalid = Some(format!(
             "typehint annotation range exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
         ));
@@ -357,10 +347,7 @@ fn build_record(
             invalid.get_or_insert(error);
             continue;
         }
-        let Some(argument) = clause.argument else {
-            continue;
-        };
-        let Some(class) = clause.class else {
+        let (Some(argument), Some(class)) = (clause.argument, clause.class) else {
             continue;
         };
         let Some((_, defaulted)) = target.params.iter().find(|formal| formal.0 == argument) else {
@@ -415,7 +402,7 @@ fn build_record(
         Translation::InvalidSyntax(reason)
     } else if let Some(reason) = ambiguous {
         Translation::AmbiguousAttachment(reason)
-    } else if let Err(error) = signature.validate() {
+    } else if let Err(error) = signature.canonical() {
         Translation::InvalidSyntax(error.to_string())
     } else if residuals.is_empty() {
         Translation::Exact(signature)
@@ -733,6 +720,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn canonical_signature_budget_decides_the_record_status() {
+        // 64 clauses fit the reader budget but not the canonical signature,
+        // which both checking and schema-3 export consume.
+        let names: Vec<_> = (0..64)
+            .map(|index| format!("p{index:02}{}", "x".repeat(29)))
+            .collect();
+        let clauses: String = names
+            .iter()
+            .map(|name| format!(" #| {name} integer\n"))
+            .collect();
+        assert!(clauses.len() <= MAX_ANNOTATION_BYTES);
+        let records = read(&format!(
+            "f <- function({}) {{\n{clauses}}}\n",
+            names.join(", ")
+        ));
+        let [record] = &records[..] else {
+            panic!("expected one record, got {}", records.len());
+        };
+        let Translation::InvalidSyntax(reason) = &record.translation else {
+            panic!("an unrepresentable signature must not be adopted");
+        };
+        assert!(reason.contains("signature exceeds"), "{reason}");
     }
 
     #[test]

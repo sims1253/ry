@@ -32,7 +32,8 @@ The `typehint` adapter also supports `class["name"]`: one exact effective R
 explicit class attribute exists. A double or character value with an explicit
 `"integer"` class can satisfy `class["integer"]`; ordinary `1` does not, while
 ordinary `1L` does. Unknown, incomplete, or dimension-dependent class facts
-cannot prove a mismatch. A class clause does not seed a body-entry type.
+cannot prove a mismatch, and neither can a passing class test such as
+`inherits()` or `is.object()`. A class clause does not seed a body-entry type.
 
 An atomic constraint can omit length, specify an exact nonnegative length, or
 specify `1+` for nonempty. `null` can only have length zero. Unions contain
@@ -103,20 +104,18 @@ against the source AST and current source text before it installs records.
 A matching display name alone does not identify a function. Readers must
 reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
-If distinct native filenames collapse to one display path, CLI checking
-declines their source-record attachment and reports RY117 once for that
-ambiguous path. It does not attach the scoped file's claim to its neighbor.
-The editor retains each opened file URI and native path when checking this
-identity. A native path that cannot be represented exactly, or a real Unicode
-replacement-character path with a colliding native neighbor, cannot supply
-an adopted contract; the editor reports RY117 at the opened URI. A sole,
-genuine Unicode replacement-character filename remains eligible.
-When several open native URIs share a display key, each annotated buffer gets
-its own RY117; closing one clears that URI and keeps the survivor's source.
-Backtick quoting of an AST formal is equivalent to the same unquoted R name;
-structured declaration-record names are literal semantic names. The reader's
-bounded simple clause grammar does not decode encoded or escaped source
-spellings; unsupported attachment stays ambiguous rather than guessing.
+Records without a selected adopted contract retain their provenance and
+findings without activating declaration effects on ordinary inference.
+Attachment requires an exact native file identity. Distinct native filenames
+that collapse to one display path supply no contract: CLI checking reports
+RY117 once for that path, and the editor reports RY117 at each opened URI with
+a clause while keeping each URI's own buffer. A native path that is not exactly
+representable also supplies no contract. CLI scope matching excludes it
+without a diagnostic; the editor reports RY117 at its opened URI. A sole,
+genuine Unicode replacement-character filename remains eligible. Backtick quoting of an AST formal is equivalent to
+the same unquoted R name; structured declaration-record names are literal
+semantic names. The simple clause grammar does not decode encoded or escaped
+formal spellings; such attachments are reported as ambiguous.
 
 Only an explicitly adopted, exact `entry_only` signature can supply a body
 entry type. Its declared parameters must be an ordered subset of the R formals,
@@ -146,6 +145,8 @@ For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
 absent. Local assignments inside an immediately invoked closure belong to
 that closure; they cannot certify a later read in its caller.
+Named helpers use their own local binding proofs and stable project bindings.
+Caller-local definitions and aliases do not prove a helper's free-name lookup.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and
@@ -170,8 +171,9 @@ refusal, with uncertainty retained.
 Conversion inspects at most 64 inferred type nodes and checks the final
 constraint against the canonical grammar before reporting success. A narrowed
 union whose outer length is not carried by its members becomes a proposal
-with that loss stated explicitly. Very wide schemas are not scanned in full;
-their field identity remains unverified in the proposal.
+with that loss stated explicitly. Conversion does not inspect schema fields.
+It omits schema constraints and field identity and states that loss in the
+proposal.
 
 The annotation serializer validates same-file source and residual spans.
 `dump-facts --annotations` exports real adopted records in schema 3 with

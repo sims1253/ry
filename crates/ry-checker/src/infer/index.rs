@@ -681,11 +681,18 @@ fn literal_negative_exclusion_length(base: Length, expr: &Expr) -> Option<Length
 pub(crate) fn infer_literal_default(e: &Expr) -> RType {
     match e {
         Expr::Logical(_, _) => RType::scalar(Mode::Logical),
-        Expr::Integer(_, _) => RType::scalar(Mode::Integer),
-        Expr::Double(_, _) => RType::scalar(Mode::Double),
+        Expr::Integer(value, _) => RType::scalar(Mode::Integer)
+            .with_value_facts(ry_core::types::ValueFacts::exact_number(*value as f64)),
+        Expr::Double(value, _) => RType::scalar(Mode::Double)
+            .with_value_facts(ry_core::types::ValueFacts::exact_number(*value)),
         Expr::String(_, _) => RType::scalar(Mode::Character),
         Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
-        Expr::Na(t, _) => t.clone(),
+        Expr::Na(t, _) => {
+            let mut result = t.clone();
+            result.value_facts.prior_na = true;
+            result.value_facts.all_values_known = true;
+            result
+        }
         // Anything more complex (call, ident, binop) needs a scope; defer
         // to the first fixpoint iteration by starting as UNKNOWN.
         _ => RType::unknown(),
@@ -858,13 +865,6 @@ pub(crate) const NSE_SYMBOL_FNS: &[&str] = &[
 pub(crate) fn is_nse_symbol_fn(name: &str) -> bool {
     let name = crate::semantic_lists::bare_name(name);
     NSE_SYMBOL_FNS.contains(&name)
-}
-
-pub(crate) fn is_dplyr_control_arg(name: &str) -> bool {
-    matches!(
-        name,
-        ".by" | ".groups" | ".keep" | ".before" | ".after" | ".drop"
-    )
 }
 
 /// Whether `name` is an operator that ry models as an S3 generic, e.g. the

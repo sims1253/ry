@@ -147,6 +147,12 @@ impl DeclarationSet {
         &self.records
     }
 
+    pub(crate) fn has_contracts(&self) -> bool {
+        self.targets
+            .values()
+            .any(|decision| decision.signature.is_some())
+    }
+
     pub(crate) fn target(&self, path: &str, span: Span) -> Option<&TargetDecision> {
         self.targets.get(&TargetKey::new(path, span))
     }
@@ -336,19 +342,18 @@ pub(crate) enum Evidence {
 /// This is a comparison of independently inferred facts with an authored
 /// predicate. A mixed union or an unknown fact is never a proven violation.
 pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
+    if ty.mode == Mode::Union {
+        let Some(members) = &ty.members else {
+            return Evidence::Insufficient;
+        };
+        return combine_all(members.iter().map(|member| compare(member, constraint)));
+    }
     if let TypeExpr::ExactClass(expected) = constraint {
-        if ty.mode == Mode::Union {
-            return ty
-                .members
-                .as_ref()
-                .map_or(Evidence::Insufficient, |members| {
-                    combine_all(members.iter().map(|member| compare(member, constraint)))
-                });
-        }
         // `RType::class` describes an explicit class attribute. An empty
         // attribute does not establish effective `class(x)`: dimensions and
-        // implicit atomic classes may still determine that result.
-        return if !ty.class.known || ty.class.len == 0 || ty.class.len >= 4 {
+        // implicit atomic classes may still determine that result. A class
+        // test proves only that the value passed it.
+        return if !ty.class.known || ty.class.guarded || ty.class.len == 0 || ty.class.len >= 4 {
             Evidence::Insufficient
         } else if ty.class.len == 1
             && ty.class.names[0]
@@ -363,30 +368,11 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
     if ty.mode == Mode::Opaque {
         return Evidence::Insufficient;
     }
-    if ty.mode == Mode::Union {
-        let Some(members) = &ty.members else {
-            return Evidence::Insufficient;
-        };
-        return combine_all(members.iter().map(|member| compare(member, constraint)));
-    }
     match constraint {
         TypeExpr::Unknown => Evidence::Insufficient,
         TypeExpr::ExactClass(_) => unreachable!("handled before mode comparison"),
         TypeExpr::Union(alternatives) => {
-            if alternatives.is_empty() {
-                return Evidence::Insufficient;
-            }
-            let results: Vec<_> = alternatives.iter().map(|part| compare(ty, part)).collect();
-            if results.contains(&Evidence::Compatible) {
-                Evidence::Compatible
-            } else if results
-                .iter()
-                .all(|result| *result == Evidence::Incompatible)
-            {
-                Evidence::Incompatible
-            } else {
-                Evidence::Insufficient
-            }
+            combine_any(alternatives.iter().map(|part| compare(ty, part)))
         }
         TypeExpr::Atomic { mode, length } => {
             if ty.mode != atomic_mode(*mode) {
@@ -436,11 +422,8 @@ fn direct_literal_class(expr: &ry_core::ast::Expr) -> Option<&'static str> {
 
 fn compare_actual(ty: &RType, expression: &ry_core::ast::Expr, constraint: &TypeExpr) -> Evidence {
     match constraint {
-        TypeExpr::ExactClass(expected) => {
-            let known = compare(ty, constraint);
-            if known != Evidence::Insufficient {
-                known
-            } else {
+        TypeExpr::ExactClass(expected) => match compare(ty, constraint) {
+            Evidence::Insufficient => {
                 direct_literal_class(expression).map_or(Evidence::Insufficient, |actual| {
                     if actual == expected {
                         Evidence::Compatible
@@ -449,25 +432,33 @@ fn compare_actual(ty: &RType, expression: &ry_core::ast::Expr, constraint: &Type
                     }
                 })
             }
-        }
-        TypeExpr::Union(alternatives) => {
-            let results: Vec<_> = alternatives
+            known => known,
+        },
+        TypeExpr::Union(alternatives) => combine_any(
+            alternatives
                 .iter()
-                .map(|part| compare_actual(ty, expression, part))
-                .collect();
-            if results.contains(&Evidence::Compatible) {
-                Evidence::Compatible
-            } else if !results.is_empty()
-                && results
-                    .iter()
-                    .all(|result| *result == Evidence::Incompatible)
-            {
-                Evidence::Incompatible
-            } else {
-                Evidence::Insufficient
-            }
-        }
+                .map(|part| compare_actual(ty, expression, part)),
+        ),
         _ => compare(ty, constraint),
+    }
+}
+
+/// A union constraint holds when any alternative holds, and is violated
+/// only when every alternative is (an empty union proves nothing).
+fn combine_any(results: impl Iterator<Item = Evidence>) -> Evidence {
+    let mut any = false;
+    let mut all_incompatible = true;
+    for result in results {
+        if result == Evidence::Compatible {
+            return Evidence::Compatible;
+        }
+        any = true;
+        all_incompatible &= result == Evidence::Incompatible;
+    }
+    if any && all_incompatible {
+        Evidence::Incompatible
+    } else {
+        Evidence::Insufficient
     }
 }
 
@@ -583,7 +574,8 @@ impl crate::Checker {
                 && declared.form == ParameterForm::Ordinary
         })?;
         let declared = selected.constraint.as_ref()?;
-        if selected.supplied != SupplyStatus::DefaultedSuppliedOnly
+        let supplied_only = selected.supplied == SupplyStatus::DefaultedSuppliedOnly;
+        if !supplied_only
             && parameter.default.as_ref().is_some_and(|default| {
                 compare_actual(independent_default, default, declared) == Evidence::Incompatible
             })
@@ -601,13 +593,13 @@ impl crate::Checker {
                 ),
             ));
         }
-        let entry = if selected.supplied == SupplyStatus::DefaultedSuppliedOnly {
+        let entry = if supplied_only {
             None
         } else {
             body_entry_type(declared)
         };
         if entry.is_none() {
-            let reason = if selected.supplied == SupplyStatus::DefaultedSuppliedOnly {
+            let reason = if supplied_only {
                 "only explicitly supplied arguments are constrained; no unconditional body entry type is assumed"
             } else if matches!(declared, TypeExpr::ExactClass(_)) {
                 "effective class does not establish a storage mode; no body entry type is assumed"

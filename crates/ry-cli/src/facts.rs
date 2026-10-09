@@ -407,7 +407,7 @@ pub(crate) fn run_dump_facts(
             "sources": context_sources,
             "workspace_hash": json_digest(&workspace_value(workspace)),
             "degraded_scopes": group.degraded_scopes.iter().map(|(path, reason)| {
-                Ok((utf8_path(path)?, reason))
+                Ok((utf8_path(path)?, reason.description()))
             }).collect::<Result<Vec<_>>>()?,
         });
         let context_id = json_digest(&context);
@@ -435,11 +435,7 @@ pub(crate) fn run_dump_facts(
         } else {
             Vec::new()
         };
-        let facts = if records.is_empty() {
-            pipeline::check_project_with_facts_capture(input, references)
-        } else {
-            pipeline::check_project_with_facts_and_records(input, references, records.clone())
-        };
+        let facts = pipeline::check_project_with_facts_capture(input, references, records.clone());
         let mut captures: HashMap<_, _> = facts.scopes.into_iter().collect();
         let mut reference_captures: HashMap<_, _> = facts.references.into_iter().collect();
         for (path, file) in group_files {

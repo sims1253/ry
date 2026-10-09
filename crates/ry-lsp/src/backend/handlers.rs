@@ -105,6 +105,8 @@ impl LanguageServer for Backend {
 
         let (root_filter, root_min_confidence, root_excludes) =
             compute_folder_filter(&file_config, &folder_settings);
+        let root_scoped_policy =
+            scoped_rule_policy(&file_config, root_config_dir.as_deref(), &folder_settings);
 
         let mut state = self.state.lock().await;
         state.initial_index_pending = true;
@@ -114,6 +116,7 @@ impl LanguageServer for Backend {
         state.root_config_dir = root_config_dir;
         state.root_baseline = root_baseline;
         state.root_filter = root_filter;
+        state.root_scoped_policy = root_scoped_policy;
         state.root_min_confidence = root_min_confidence;
         state.root_excludes = root_excludes;
         state.folder_settings = folder_settings;
@@ -211,10 +214,7 @@ impl LanguageServer for Backend {
             if collides {
                 state.active_collision_uri.insert(path.clone(), uri.clone());
             }
-            state.docs.insert(path.clone(), text);
-            state.versions.insert(path.clone(), version);
-            state.parsed.remove(&path);
-            state.hints.remove(&path);
+            state.update_doc(&path, text, version);
         }
         self.schedule_diagnostics(uri).await;
     }
@@ -223,19 +223,19 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        let mut changes = params.content_changes;
         #[cfg(feature = "test-util")]
         let paused_transition = crate::test_seam::maybe_pause_change_transition().await;
-        let result =
-            self.state
-                .lock()
-                .await
-                .apply_document_changes(&path, &uri, &mut changes, version);
+        let applied = self.state.lock().await.apply_document_changes(
+            &path,
+            &uri,
+            params.content_changes,
+            version,
+        );
         #[cfg(feature = "test-util")]
         if paused_transition {
             crate::test_seam::note_change_transition_landed();
         }
-        if result == CollisionChangeResult::Rejected {
+        if !applied {
             return;
         }
         self.schedule_diagnostics(uri).await;
@@ -296,7 +296,7 @@ impl LanguageServer for Backend {
         // cleared: the open documents, plus closed disk files whose last
         // publication came from the background index. The closed files
         // are not open, so the partition below misses them, and the
-        // `published_paths` retain further down forgets them — without
+        // `published_uris` retain further down forgets them — without
         // an explicit empty publication here they would keep their
         // squiggles in the client while being unreachable by
         // `clear_dropped_diagnostics` (#489).
@@ -304,30 +304,17 @@ impl LanguageServer for Backend {
             let state = self.state.lock().await;
             let (keep, clear): (Vec<&String>, Vec<&String>) =
                 state.docs.keys().partition(|p| !under_removed_root(p));
-            let source_uris = |path: &str| {
-                state
-                    .open_source_paths
-                    .get(path)
-                    .map(|open| open.keys().cloned().collect::<Vec<_>>())
-                    .filter(|uris| !uris.is_empty())
-                    .unwrap_or_else(|| vec![path_to_uri(path)])
-            };
+            let source_uris = |path: &str| source_uris(&state.open_source_paths, path);
             let mut docs_to_clear: std::collections::HashSet<Url> =
                 clear.into_iter().flat_map(|p| source_uris(p)).collect();
             // Mirror the `did_close` pattern: publish empty now, then
-            // leave the tracked set via the retain below.
-            for path in state
-                .published_paths
+            // leave the tracked map via the retain below.
+            for (_, uris) in state
+                .published_uris
                 .iter()
-                .filter(|p| under_removed_root(p.as_str()))
+                .filter(|(path, _)| under_removed_root(path.as_str()))
             {
-                docs_to_clear.extend(
-                    state
-                        .published_uris
-                        .get(path)
-                        .cloned()
-                        .unwrap_or_else(|| source_uris(path).into_iter().collect()),
-                );
+                docs_to_clear.extend(uris.iter().cloned());
             }
             (
                 docs_to_clear.into_iter().collect(),
@@ -347,8 +334,7 @@ impl LanguageServer for Backend {
             // Removed roots must not be reindexed through the root fallback.
             state.reconciliation.cancel_where(under_removed_root);
             // The explicit empty publications below clear these URIs, so
-            // they leave the tracked set too (#489).
-            state.published_paths.retain(|p| !under_removed_root(p));
+            // they leave the tracked map too (#489).
             state.published_uris.retain(|p, _| !under_removed_root(p));
 
             // Rebuild folder contexts from the surviving + added roots
@@ -485,8 +471,8 @@ impl LanguageServer for Backend {
                     self.state
                         .lock()
                         .await
-                        .published_paths
-                        .iter()
+                        .published_uris
+                        .keys()
                         .cloned()
                         .collect()
                 };
@@ -574,25 +560,20 @@ impl LanguageServer for Backend {
         let (remaining_open_paths, survivor) = {
             let mut state = self.state.lock().await;
             let survivor = state.close_open_source(&path, &uri);
+            // The empty publication below clears this URI, so it must
+            // leave the tracked set too (#489).
             if survivor.is_none() {
                 state.docs.remove(&path);
                 state.versions.remove(&path);
                 state.parsed.remove(&path);
                 state.hints.remove(&path);
                 state.trees.remove(&path);
-            }
-            // The empty publication below clears this URI, so it must
-            // leave the tracked set too (#489).
-            if let Some(uris) = state.published_uris.get_mut(&path) {
+                state.published_uris.remove(&path);
+            } else if let Some(uris) = state.published_uris.get_mut(&path) {
                 uris.remove(&uri);
                 if uris.is_empty() {
                     state.published_uris.remove(&path);
-                    state.published_paths.remove(&path);
                 }
-            }
-            if survivor.is_none() {
-                state.published_paths.remove(&path);
-                state.published_uris.remove(&path);
             }
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
@@ -771,12 +752,7 @@ impl LanguageServer for Backend {
 
         {
             let state = self.state.lock().await;
-            if !state.eligibility_for_path(&path)
-                || state
-                    .open_source_paths
-                    .get(&path)
-                    .is_some_and(|open| open.len() > 1)
-            {
+            if !state.eligibility_for_path(&path) || state.has_collision(&path) {
                 // A display-keyed parse can belong to another native URI.
                 // Even matching document version numbers do not prove that
                 // an edit uses the requesting buffer's source text.
@@ -795,10 +771,7 @@ impl LanguageServer for Backend {
             if !Arc::ptr_eq(cached, &file)
                 || state.versions.get(&path) != Some(version)
                 || !state.eligibility_for_path(&path)
-                || state
-                    .open_source_paths
-                    .get(&path)
-                    .is_some_and(|open| open.len() > 1)
+                || state.has_collision(&path)
             {
                 return Ok(None);
             }

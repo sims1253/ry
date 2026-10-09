@@ -191,13 +191,18 @@ const R7_CASES: &[R7Case] = &[
         literal_src: "f <- function(x) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\nf(character())\n",
         default_src: "f <- function(x = character()) {\n  if (is.numeric(x) || all(is.na(x))) sqrt(x)\n}\nf()\n",
     },
+    R7Case {
+        rule: "RY119",
+        literal_src: "f <- function(x) as.integer(x)\nf(1e10)\n",
+        default_src: "f <- function(x = 1e10) as.integer(x)\nf()\n",
+    },
 ];
 
 /// Rules for which R7 is not applicable: purely syntactic or structural.
 const R7_NA_RULES: &[&str] = &[
     "RY000", "RY010", "RY041", "RY042", "RY050", "RY051", "RY060", "RY070", "RY080", "RY090",
     "RY091", "RY092", "RY094", "RY096", "RY097", "RY098", "RY101", "RY102", "RY108", "RY109",
-    "RY111", "RY114", "RY115", "RY116", "RY117", "RY120", "RY121",
+    "RY111", "RY112", "RY113", "RY114", "RY115", "RY116", "RY117", "RY120", "RY121",
 ];
 
 /// Run R7 over all applicable rule families and report the classification.
@@ -693,6 +698,18 @@ const VERDICTS: &[Verdict] = &[
         verdict: "keep",
     },
     Verdict {
+        code: "RY119",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY112",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY113",
+        verdict: "default-off",
+    },
+    Verdict {
         code: "RY114",
         verdict: "keep",
     },
@@ -766,13 +783,13 @@ fn default_off_verdicts_match_the_registry() {
 }
 
 #[test]
-fn reverting_ry003_default_off_fails() {
+fn reverting_default_off_rules_fails() {
     assert!(
         !enabled_by_default("RY003"),
         "RY003 must be disabled by default (default-off verdict)"
     );
     for rule in RULES {
-        if rule.code == "RY003" {
+        if matches!(rule.code, "RY003" | "RY113") {
             continue;
         }
         assert!(

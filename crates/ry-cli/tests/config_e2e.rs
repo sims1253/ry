@@ -127,6 +127,320 @@ fn ry_check_in(cwd: &std::path::Path, arg: &std::path::Path) -> std::process::Ou
         .expect("failed to invoke ry binary")
 }
 
+// APFS requires valid UTF-8 filenames, so these raw-byte fixtures cannot
+// be created on macOS.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn scoped_severity_does_not_match_lossy_non_utf8_filename() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['bad\u{fffd}.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+    let unicode = temp.path().join("bad\u{fffd}.R");
+    for (path, expected, exit) in [(&raw, "warning", 0), (&unicode, "error", 1)] {
+        fs::write(path, "\"text\" + 1L\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .arg("check")
+            .arg(path)
+            .args(["--output-format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(exit), "{output:?}");
+        let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let findings = diagnostics.as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["code"], "RY040");
+        assert_eq!(findings[0]["severity"], expected, "{findings:?}");
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn scoped_severity_keeps_raw_and_replacement_character_neighbors_separate() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['bad\u{fffd}.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let raw = temp.path().join(OsString::from_vec(b"bad\xff.R".to_vec()));
+    let unicode = temp.path().join("bad\u{fffd}.R");
+    fs::write(&raw, "\"text\" + 1L\n").unwrap();
+    fs::write(&unicode, "1L + \"text\"\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .arg("check")
+        .args([&raw, &unicode])
+        .args(["--output-format", "json"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let findings = diagnostics.as_array().unwrap();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for (operation, severity) in [
+        ("`character` and `integer`", "warning"),
+        ("`integer` and `character`", "error"),
+    ] {
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(operation))
+            })
+            .unwrap_or_else(|| panic!("missing {operation}: {findings:?}"));
+        assert_eq!(finding["severity"], severity, "{findings:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_severity_keeps_unix_backslash_distinct_from_separator() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("back")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['back\\slash.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let backslash = temp.path().join("back\\slash.R");
+    let slash = temp.path().join("back/slash.R");
+    for (path, expected, exit) in [(&backslash, "error", 1), (&slash, "warning", 0)] {
+        fs::write(path, "\"text\" + 1L\n").unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .arg("check")
+            .arg(path)
+            .args(["--output-format", "json"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(exit), "{output:?}");
+        let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let findings = diagnostics.as_array().unwrap();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["code"], "RY040");
+        assert_eq!(findings[0]["severity"], expected, "{findings:?}");
+    }
+}
+
+#[test]
+fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R/scratch")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(
+        temp.path().join("DESCRIPTION"),
+        "Package: scoped\nVersion: 0.1\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    fs::write(temp.path().join("R/defs.R"), "shared <- 1L\n\"x\" + 1L\n").unwrap();
+    fs::write(temp.path().join("R/scratch/try.R"), "\"x\" + 1L\n").unwrap();
+    fs::write(temp.path().join("scripts/use.R"), "shared\n\"x\" + 1L\n").unwrap();
+
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(temp.path())
+            .arg("check")
+            .args(args)
+            .args([".", "--output-format", "json"])
+            .output()
+            .unwrap();
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let result = run(&[]);
+    let findings = result.as_array().unwrap();
+    let scoped = findings
+        .iter()
+        .filter(|finding| finding["code"] == "RY040")
+        .map(|finding| {
+            (
+                finding["path"].as_str().unwrap().to_string(),
+                finding["severity"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scoped,
+        [
+            ("./R/defs.R".into(), "error".into()),
+            ("./R/scratch/try.R".into(), "warning".into()),
+            ("./scripts/use.R".into(), "warning".into()),
+        ]
+    );
+    assert!(
+        !findings.iter().any(|finding| finding["code"] == "RY010"),
+        "scripts/use.R must still resolve bindings from R/defs.R: {findings:?}"
+    );
+
+    // A direct file input from a different working directory must resolve
+    // the same owning ry.toml and report the same scoped severity.
+    let direct = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(temp.path().join("scripts"))
+        .args(["check", "../R/defs.R", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let direct: serde_json::Value = serde_json::from_slice(&direct.stdout).unwrap();
+    assert!(
+        direct
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|finding| finding["code"] == "RY040" && finding["severity"] == "error")
+    );
+
+    let cli = run(&["--error", "RY040"]);
+    assert!(
+        cli.as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| finding["code"] == "RY040")
+            .all(|finding| finding["severity"] == "error")
+    );
+
+    let high = run(&["--min-confidence", "high"]);
+    assert!(
+        high.as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["code"] != "RY040"),
+        "scoped errors must retain their original medium confidence: {high}"
+    );
+
+    let snapshot = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(temp.path())
+        .args(["check", ".", "--write-baseline", "baseline.json"])
+        .output()
+        .unwrap();
+    assert!(
+        matches!(snapshot.status.code(), Some(0 | 1)),
+        "{}",
+        String::from_utf8_lossy(&snapshot.stderr)
+    );
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\nbaseline = \"baseline.json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let accepted = run(&[]);
+    assert!(
+        accepted.as_array().unwrap().is_empty(),
+        "baseline subtraction must see scoped diagnostics: {accepted}"
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "ignore = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let sticky = run(&["--error", "RY040"]);
+    assert!(
+        sticky
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["code"] != "RY040"),
+        "global ignore must remain sticky even with a scoped rule and explicit CLI error: {sticky}"
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/defs.R\"]\nignore = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let suppressed = run(&[]);
+    let suppressed = suppressed.as_array().unwrap();
+    assert!(
+        suppressed.iter().all(|finding| {
+            finding["code"] != "RY040" || !finding["path"].as_str().unwrap().ends_with("R/defs.R")
+        }),
+        "source-local suppression must hide its own diagnostic: {suppressed:?}"
+    );
+    assert!(
+        suppressed.iter().all(|finding| finding["code"] != "RY010"),
+        "the suppressed defining file must still supply its binding: {suppressed:?}"
+    );
+}
+
+#[test]
+fn path_rule_overrides_normalize_equivalent_in_root_operands() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R/sub")).unwrap();
+    fs::create_dir_all(temp.path().join("scripts")).unwrap();
+    fs::write(temp.path().join("anchor.R"), "x <- 1L\n").unwrap();
+    fs::write(temp.path().join("R/a.R"), "\"bad\" + 1L\n").unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\noutput-format = \"json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+
+    let root = temp.path().to_str().unwrap();
+    let scripts = temp.path().join("scripts");
+    let absolute_anchor = temp.path().join("anchor.R");
+    let absolute_source = temp.path().join("R/a.R");
+    let cases = [
+        (
+            temp.path(),
+            vec!["anchor.R".to_string(), "R/a.R".to_string()],
+        ),
+        (
+            temp.path(),
+            vec!["anchor.R".to_string(), "R/sub/../a.R".to_string()],
+        ),
+        (temp.path(), vec!["anchor.R".to_string(), "R".to_string()]),
+        (
+            scripts.as_path(),
+            vec![
+                absolute_anchor.to_string_lossy().into_owned(),
+                "../R/a.R".to_string(),
+            ],
+        ),
+        (
+            scripts.as_path(),
+            vec![
+                "../anchor.R".to_string(),
+                absolute_source.to_string_lossy().into_owned(),
+            ],
+        ),
+    ];
+    for (cwd, args) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(cwd)
+            .arg("check")
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{root} {args:?}: {output:?}");
+        let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            findings
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| { finding["code"] == "RY040" && finding["severity"] == "error" }),
+            "{args:?}: {findings}"
+        );
+    }
+}
+
 fn ry_check_with_r_lib(arg: &std::path::Path, r_lib: &std::path::Path) -> std::process::Output {
     let bin = env!("CARGO_BIN_EXE_ry");
     Command::new(bin)
@@ -220,6 +534,61 @@ fn ry_toml_without_error_override_keeps_warning_non_fatal() {
         output.status.success(),
         "warnings must not fail the run without error-on-warning, got {:?}",
         output.status
+    );
+}
+
+#[test]
+fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("example.R");
+    fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
+    let default = ry_check(&path);
+    assert!(!String::from_utf8_lossy(&default.stdout).contains("RY113"));
+
+    fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
+    let audited = ry_check(&path);
+    let output = String::from_utf8_lossy(&audited.stdout);
+    assert!(
+        output.contains("RY113") && output.contains("RY034"),
+        "{output}"
+    );
+
+    fs::write(&path, "1L == NA # ry: ignore[RY034]\n").unwrap();
+    let used = ry_check(&path);
+    assert!(!String::from_utf8_lossy(&used.stdout).contains("RY113"));
+
+    fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
+    fs::write(
+        tmp.path().join("ry.toml"),
+        "warn = [\"RY113\"]\nexclude = [\"example.R\"]\n",
+    )
+    .unwrap();
+    let excluded = ry_check(tmp.path());
+    assert!(!String::from_utf8_lossy(&excluded.stdout).contains("RY113"));
+}
+
+#[test]
+fn unused_ignore_audit_skips_anonymous_bodies_without_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
+    let path = tmp.path().join("example.R");
+    for (code, expression) in [("RY034", "1L == NA"), ("RY102", "list(\"a\" <- 1L)")] {
+        let source = format!("identity(function() {{\n  {expression} # ry: ignore[{code}]\n}})\n");
+        fs::write(&path, source).unwrap();
+        let output = ry_check(&path);
+        let displayed = String::from_utf8_lossy(&output.stdout);
+        assert!(!displayed.contains("RY113"), "{code}: {displayed}");
+    }
+    fs::write(
+        &path,
+        "f <- function() {\n  1L == 1L # ry: ignore[RY034]\n}\n",
+    )
+    .unwrap();
+    let output = ry_check(&path);
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("RY113"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 
@@ -1216,6 +1585,132 @@ fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
     assert!(
         !json_stdout.contains("degraded"),
         "the degraded note must not leak into JSON diagnostics: {json_stdout}"
+    );
+}
+
+#[test]
+fn parser_limit_is_reported_and_repair_restores_a_known_empty_inventory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(
+        pkg.join("R/use.R"),
+        "ok <- sysdata\nbad <- genuinely_missing\n",
+    )
+    .unwrap();
+    let serialized = pkg.join("R/sysdata.rda");
+    let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
+    assert!(nested.len() < 16 * 1024 * 1024);
+    fs::write(&serialized, nested).unwrap();
+
+    let run_check = || {
+        Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(pkg)
+            .args(["check", "R/use.R"])
+            .output()
+            .unwrap()
+    };
+    let run_facts = || {
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(pkg)
+            .args(["dump-facts", "R/use.R"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+
+    let failed = run_check();
+    let diagnostics = String::from_utf8_lossy(&failed.stdout);
+    let notice = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        notice.contains("sysdata.rda (serialized parser resource limit exceeded)"),
+        "{notice}"
+    );
+    assert!(diagnostics.contains("genuinely_missing"), "{diagnostics}");
+    assert!(
+        !diagnostics.contains("variable `sysdata` is not bound"),
+        "{diagnostics}"
+    );
+    let facts = run_facts();
+    let degraded = &facts["contexts"][0]["inputs"]["degraded_scopes"];
+    assert_eq!(degraded.as_array().unwrap().len(), 1);
+    assert_eq!(degraded[0][1], "serialized parser resource limit exceeded");
+
+    fs::write(
+        &serialized,
+        include_bytes!("../../../testdata/serialized/empty.rda"),
+    )
+    .unwrap();
+    let repaired = run_check();
+    let diagnostics = String::from_utf8_lossy(&repaired.stdout);
+    let notice = String::from_utf8_lossy(&repaired.stderr);
+    assert!(!notice.contains("degraded scope"), "{notice}");
+    assert!(
+        diagnostics.contains("variable `sysdata` is not bound"),
+        "{diagnostics}"
+    );
+    assert!(diagnostics.contains("genuinely_missing"), "{diagnostics}");
+    let repaired_facts = run_facts();
+    assert_eq!(
+        repaired_facts["contexts"][0]["inputs"]["degraded_scopes"],
+        serde_json::json!([])
+    );
+
+    // This is a real R-produced empty workspace in ASCII serialization.
+    // Static XDR inventory cannot read it, but its valid envelope must not
+    // be mislabeled as corrupt by the upstream parser's generic error.
+    fs::write(
+        &serialized,
+        include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+    )
+    .unwrap();
+    let unsupported = run_check();
+    let notice = String::from_utf8_lossy(&unsupported.stderr);
+    assert!(
+        notice.contains("sysdata.rda (unsupported serialized input)"),
+        "{notice}"
+    );
+    assert!(!notice.contains("malformed serialized input"), "{notice}");
+    let unsupported_facts = run_facts();
+    assert_eq!(
+        unsupported_facts["contexts"][0]["inputs"]["degraded_scopes"][0][1],
+        "unsupported serialized input"
+    );
+}
+
+#[test]
+fn missing_load_target_is_unavailable_but_absent_optional_sysdata_is_normal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkg = tmp.path();
+    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
+    fs::create_dir_all(pkg.join("R")).unwrap();
+    fs::write(pkg.join("R/use.R"), "load('missing.rda')\n").unwrap();
+    fs::write(pkg.join("R/other.R"), "genuinely_missing\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .current_dir(pkg)
+        .args(["check", "R/"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stderr.contains("missing.rda (serialized input could not be read)"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("sysdata.rda"),
+        "optional absent sysdata is normal: {stderr}"
+    );
+    assert!(
+        stdout.contains("genuinely_missing"),
+        "unrelated RY010 must remain: {stdout}"
     );
 }
 

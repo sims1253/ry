@@ -9,6 +9,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::Span;
 use crate::ast::BinOpKind;
 
 /// Atomic mode of an R vector, mirrors `typeof()` for vectors.
@@ -183,11 +184,16 @@ impl Length {
 ///   * `known == true`, `len == 0`: we know there is no class attribute.
 ///   * `known == true`, `len > 0`: we know the class vector.
 ///   * `known == false`: we couldn't determine the class (do not warn).
+///
+/// `guarded` marks names established by a passing class test such as
+/// `inherits(x, "foo")` or `is.data.frame(x)`. Such a test proves the
+/// guard held, not the value's whole class vector.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClassVector {
     pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
+    pub guarded: bool,
 }
 
 impl ClassVector {
@@ -199,6 +205,7 @@ impl ClassVector {
             names: [None, None, None, None],
             len: 0,
             known: true,
+            guarded: false,
         }
     }
 
@@ -208,6 +215,15 @@ impl ClassVector {
             names: [Some(Arc::from(name)), None, None, None],
             len: 1,
             known: true,
+            guarded: false,
+        }
+    }
+
+    /// The class named by a passing class test, e.g. `inherits(x, "foo")`.
+    pub fn guard(name: &str) -> Self {
+        ClassVector {
+            guarded: true,
+            ..ClassVector::single(name)
         }
     }
 
@@ -220,6 +236,7 @@ impl ClassVector {
             names: [None, None, None, None],
             len: 0,
             known: false,
+            guarded: false,
         }
     }
 
@@ -321,12 +338,15 @@ impl ColumnSchema {
     /// `lapply` / `for` should see the unwrapped `double<1>` rather than
     /// `list<1>`. Heterogeneous or empty schemas return `None`.
     pub fn homogeneous_element_type(&self) -> Option<RType> {
-        let first = self.columns.first().map(|(_, t)| t.clone())?;
-        if self.columns.iter().all(|(_, t)| t == &first) {
-            Some(first)
-        } else {
-            None
+        let mut columns = self.columns.iter();
+        let mut common = columns.next()?.1.clone();
+        for (_, ty) in columns {
+            if !common.same_shape(ty) {
+                return None;
+            }
+            common = common.merge_same_shape(ty);
         }
+        Some(common)
     }
 }
 
@@ -400,6 +420,78 @@ pub struct RType {
     /// capped at `MAX_UNION_MEMBERS` (beyond the cap, join collapses to
     /// `RType::unknown()`).
     pub members: Option<Arc<[RType]>>,
+    /// Bounded value evidence for numeric coercion. It is deliberately not
+    /// rendered as a type: losing this evidence must never invent a warning.
+    /// Equality includes these facts so fixpoint refinement reaches callers.
+    pub value_facts: ValueFacts,
+}
+
+/// What is known about an NA introduced by a coercion, as distinct from an
+/// NA already present in the input. Consumers may only make definite claims
+/// from `ProvenContains` or `ProvenOnly`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NewNaProvenance {
+    #[default]
+    None,
+    Possible,
+    ProvenContains,
+    ProvenOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ValueFacts {
+    /// Exact extrema of a fully observed numeric value, as f64 bit patterns.
+    /// None means an unknown element may be present. NaN is tracked separately.
+    pub numeric_bounds: Option<(u64, u64)>,
+    /// Every element was observed, including literal NA/NaN elements.
+    pub all_values_known: bool,
+    pub prior_na: bool,
+    pub new_na: NewNaProvenance,
+    /// Exact cast span and the end of its assignment, including grouping
+    /// parentheses removed during lowering. Used only for immediate repair
+    /// suppression, not as a cross-function identity.
+    pub cast_site: Option<(Span, usize)>,
+}
+
+impl ValueFacts {
+    pub fn exact_number(value: f64) -> Self {
+        Self {
+            numeric_bounds: (!value.is_nan()).then_some((value.to_bits(), value.to_bits())),
+            all_values_known: true,
+            prior_na: value.is_nan(),
+            new_na: NewNaProvenance::None,
+            cast_site: None,
+        }
+    }
+
+    pub fn merge_vector(self, other: Self) -> Self {
+        let numeric_bounds = match (self.numeric_bounds, other.numeric_bounds) {
+            (Some((a, b)), Some((c, d))) => Some((
+                f64::from_bits(a).min(f64::from_bits(c)).to_bits(),
+                f64::from_bits(b).max(f64::from_bits(d)).to_bits(),
+            )),
+            (Some(bounds), None) if other.all_values_known => Some(bounds),
+            (None, Some(bounds)) if self.all_values_known => Some(bounds),
+            _ => None,
+        };
+        Self {
+            numeric_bounds,
+            all_values_known: self.all_values_known && other.all_values_known,
+            prior_na: self.prior_na || other.prior_na,
+            new_na: match (self.new_na, other.new_na) {
+                (NewNaProvenance::ProvenOnly, NewNaProvenance::ProvenOnly) => {
+                    NewNaProvenance::ProvenOnly
+                }
+                (NewNaProvenance::ProvenContains, _)
+                | (_, NewNaProvenance::ProvenContains)
+                | (NewNaProvenance::ProvenOnly, _)
+                | (_, NewNaProvenance::ProvenOnly) => NewNaProvenance::ProvenContains,
+                (NewNaProvenance::None, NewNaProvenance::None) => NewNaProvenance::None,
+                _ => NewNaProvenance::Possible,
+            },
+            cast_site: None,
+        }
+    }
 }
 
 /// Maximum number of distinct members in a union. Beyond this, `join`
@@ -409,6 +501,143 @@ pub struct RType {
 pub const MAX_UNION_MEMBERS: usize = 4;
 
 impl RType {
+    /// Compare type structure without allocating or comparing value evidence.
+    fn same_shape(&self, other: &Self) -> bool {
+        if self.mode != other.mode || self.length != other.length || self.class != other.class {
+            return false;
+        }
+        let columns = match (&self.columns, &other.columns) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.complete == right.complete
+                        && left.locally_constructed == right.locally_constructed
+                        && left.columns.len() == right.columns.len()
+                        && left.columns.iter().zip(&right.columns).all(
+                            |((name, ty), (other_name, other_ty))| {
+                                name == other_name && ty.same_shape(other_ty)
+                            },
+                        ))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let signature = match (&self.fn_sig, &other.fn_sig) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.params.len() == right.params.len()
+                        && left
+                            .params
+                            .iter()
+                            .zip(&right.params)
+                            .all(|(ty, other_ty)| ty.same_shape(other_ty))
+                        && left.return_type.same_shape(&right.return_type))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        let members = match (&self.members, &other.members) {
+            (Some(left), Some(right)) => {
+                Arc::ptr_eq(left, right)
+                    || (left.len() == right.len()
+                        && left
+                            .iter()
+                            .zip(right.iter())
+                            .all(|(ty, other_ty)| ty.same_shape(other_ty)))
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        columns && signature && members
+    }
+
+    fn merge_same_shape(mut self, other: &Self) -> Self {
+        if &self == other {
+            return self;
+        }
+        self.value_facts = ValueFacts {
+            numeric_bounds: (self.value_facts.numeric_bounds == other.value_facts.numeric_bounds)
+                .then_some(self.value_facts.numeric_bounds)
+                .flatten(),
+            all_values_known: self.value_facts.all_values_known
+                && other.value_facts.all_values_known
+                && self.value_facts.numeric_bounds == other.value_facts.numeric_bounds
+                && self.value_facts.prior_na == other.value_facts.prior_na
+                && self.value_facts.new_na == other.value_facts.new_na,
+            prior_na: self.value_facts.prior_na || other.value_facts.prior_na,
+            new_na: if self.value_facts.new_na == other.value_facts.new_na {
+                self.value_facts.new_na
+            } else if matches!(
+                self.value_facts.new_na,
+                NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains
+            ) && matches!(
+                other.value_facts.new_na,
+                NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains
+            ) {
+                NewNaProvenance::ProvenContains
+            } else {
+                NewNaProvenance::Possible
+            },
+            cast_site: (self.value_facts.cast_site == other.value_facts.cast_site)
+                .then_some(self.value_facts.cast_site)
+                .flatten(),
+        };
+        if let (Some(left), Some(right)) = (&self.columns, &other.columns) {
+            let mut schema = (**left).clone();
+            for ((_, ty), (_, other_ty)) in schema.columns.iter_mut().zip(&right.columns) {
+                *ty = ty.clone().merge_same_shape(other_ty);
+            }
+            self.columns = Some(Arc::new(schema));
+        }
+        if let (Some(left), Some(right)) = (&self.fn_sig, &other.fn_sig) {
+            let mut signature = (**left).clone();
+            for (ty, other_ty) in signature.params.iter_mut().zip(&right.params) {
+                *ty = ty.clone().merge_same_shape(other_ty);
+            }
+            signature.return_type = Box::new(
+                signature
+                    .return_type
+                    .clone()
+                    .merge_same_shape(&right.return_type),
+            );
+            self.fn_sig = Some(Arc::new(signature));
+        }
+        if let (Some(left), Some(right)) = (&self.members, &other.members) {
+            self.members = Some(Arc::from(
+                left.iter()
+                    .zip(right.iter())
+                    .map(|(a, b)| a.clone().merge_same_shape(b))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+        self
+    }
+
+    pub fn with_value_facts(mut self, facts: ValueFacts) -> Self {
+        self.value_facts = facts;
+        self
+    }
+
+    pub fn coercion_new_na(&self) -> NewNaProvenance {
+        if let Some(members) = &self.members {
+            let mut facts = members.iter().map(RType::coercion_new_na);
+            let Some(first) = facts.next() else {
+                return NewNaProvenance::None;
+            };
+            return facts.fold(first, |left, right| match (left, right) {
+                (NewNaProvenance::None, NewNaProvenance::None) => NewNaProvenance::None,
+                (NewNaProvenance::ProvenOnly, NewNaProvenance::ProvenOnly) => {
+                    NewNaProvenance::ProvenOnly
+                }
+                (
+                    NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains,
+                    NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains,
+                ) => NewNaProvenance::ProvenContains,
+                _ => NewNaProvenance::Possible,
+            });
+        }
+        self.value_facts.new_na
+    }
+
     /// The opaque "unknown" type: opaque mode, unknown length, no class
     /// or schema. Used whenever inference gives up.
     ///
@@ -422,6 +651,7 @@ impl RType {
             columns: None,
             fn_sig: None,
             members: None,
+            value_facts: ValueFacts::default(),
         }
     }
 
@@ -433,6 +663,7 @@ impl RType {
             columns: None,
             fn_sig: None,
             members: None,
+            value_facts: ValueFacts::default(),
         }
     }
 
@@ -498,6 +729,7 @@ impl RType {
             columns: None,
             fn_sig: None,
             members: Some(members),
+            value_facts: ValueFacts::default(),
         }
     }
 
@@ -558,6 +790,7 @@ impl RType {
             class: ClassVector::empty(),
             columns: None,
             fn_sig: None,
+            value_facts: ValueFacts::default(),
             members: None,
         })
     }
@@ -578,6 +811,7 @@ impl RType {
             columns: None,
             fn_sig: None,
             members: None,
+            value_facts: ValueFacts::default(),
         })
     }
 
@@ -626,6 +860,9 @@ impl RType {
         if self == other {
             return self;
         }
+        if self.same_shape(&other) {
+            return self.merge_same_shape(&other);
+        }
         union_of(self, other)
     }
 
@@ -667,7 +904,26 @@ impl RType {
                 }
                 None => RType::unknown(),
             },
-            _ => RType::new(self.mode, Length::One),
+            _ => {
+                let mut element = RType::new(self.mode, Length::One);
+                element.value_facts.prior_na = self.value_facts.prior_na;
+                element.value_facts.new_na = match self.value_facts.new_na {
+                    NewNaProvenance::ProvenOnly => NewNaProvenance::ProvenOnly,
+                    NewNaProvenance::ProvenContains | NewNaProvenance::Possible => {
+                        NewNaProvenance::Possible
+                    }
+                    NewNaProvenance::None => NewNaProvenance::None,
+                };
+                if matches!(self.length, Length::One | Length::Known(1))
+                    && self.value_facts.all_values_known
+                    && let Some((low, high)) = self.value_facts.numeric_bounds
+                    && low == high
+                {
+                    element.value_facts.numeric_bounds = Some((low, high));
+                    element.value_facts.all_values_known = true;
+                }
+                element
+            }
         }
     }
 
@@ -1283,6 +1539,7 @@ mod tests {
             columns: None,
             fn_sig: None,
             members: None,
+            value_facts: ValueFacts::default(),
         };
         assert!(!malformed.invalid_condition());
         // And it renders as `opaque`, not the misleading `union[]`.

@@ -67,11 +67,33 @@ struct OpenSource {
     shadow: Option<(String, i32)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CollisionChangeResult {
-    NotCollision,
-    Applied,
-    Rejected,
+/// RY117 for a display-keyed source whose native identity cannot be
+/// established, so no typehint contract is attached to it.
+fn ambiguous_typehint_identity(path: &str) -> ry_checker::Diagnostic {
+    ry_checker::Diagnostic::new(
+        ry_checker::Severity::Warning,
+        ry_core::Span::new(0, 1, 0, 0),
+        path,
+        "RY117",
+        "Native source identity is ambiguous; typehint attachment was skipped.",
+    )
+}
+
+/// The original URIs open at a display path, in a stable order. A path
+/// without open buffers publishes at its display URI.
+fn source_uris(
+    open_source_paths: &HashMap<String, HashMap<Url, OpenSource>>,
+    path: &str,
+) -> Vec<Url> {
+    let mut uris: Vec<Url> = open_source_paths
+        .get(path)
+        .map(|open| open.keys().cloned().collect())
+        .unwrap_or_default();
+    if uris.is_empty() {
+        return vec![path_to_uri(path)];
+    }
+    uris.sort();
+    uris
 }
 
 #[derive(Default)]
@@ -104,15 +126,12 @@ pub(super) struct State {
     /// drains the whole set, so a burst of scheduled URIs publishes
     /// together instead of all but the last aborting as stale (#489).
     pending_diag_paths: HashSet<String>,
-    /// Paths whose last publication carried diagnostics. Each publish
-    /// pass reconciles this set — a URI that stopped receiving
-    /// publications (its folder was disabled, discovery now excludes
+    /// Actual URIs whose last publication carried diagnostics, keyed by
+    /// display path. Each publish pass reconciles this map — a URI
+    /// that stopped receiving publications (its folder was disabled, discovery now excludes
     /// it, or a rescan dropped the closed file from the index) is
     /// cleared with an empty publication so stale squiggles cannot
     /// linger in the editor (#489).
-    published_paths: HashSet<String>,
-    /// Actual URI used for the last non-empty publication at a display
-    /// path. It can differ from a URI rebuilt from lossy path text.
     published_uris: HashMap<String, HashSet<Url>>,
     /// Index generation stamp, bumped each time `spawn_background_index`
     /// starts so results from a prior folder set are discarded. The
@@ -160,6 +179,7 @@ pub(super) struct State {
     /// A document outside every folder root must be filtered by root-level
     /// config.
     root_filter: ry_checker::SeverityFilter,
+    root_scoped_policy: ry_checker::ScopedRulePolicy,
     root_min_confidence: Option<ry_checker::Confidence>,
     root_excludes: ry_config::Excludes,
     /// Editor-supplied per-folder settings, received via
@@ -189,6 +209,10 @@ pub(super) struct State {
     /// per-package project caches (see
     /// [`FolderAnalysisContext::package_caches`]).
     folder_contexts: Vec<FolderAnalysisContext>,
+    /// Notices already sent for the currently installed serialized scopes.
+    /// A repaired scope leaves this set on the next context install, so a
+    /// later failure can be reported again without repeating unchanged ones.
+    notified_degraded_scopes: std::collections::BTreeSet<(PathBuf, ry_workspace::InventoryFailure)>,
     /// On-disk `.R`/`.r` files discovered by the background indexer,
     /// keyed by absolute path. Open documents shadow these.
     disk_files: HashMap<String, Arc<SourceFile>>,
@@ -235,6 +259,8 @@ pub(super) struct FolderAnalysisContext {
     pub baseline: Option<ry_config::Baseline>,
     /// Severity filter compiled once during context construction.
     pub filter: ry_checker::SeverityFilter,
+    /// Compiled per-file rule severities for this config and editor settings.
+    pub scoped_policy: ry_checker::ScopedRulePolicy,
     /// Precomputed minimum confidence threshold.
     pub min_confidence: Option<ry_checker::Confidence>,
     /// Precompiled exclude glob patterns.
@@ -249,6 +275,88 @@ pub(super) struct FolderAnalysisContext {
     /// map is carried across context rebuilds so incremental check state
     /// survives a config reload.
     pub package_caches: HashMap<Option<PathBuf>, Arc<Mutex<ProjectCache>>>,
+}
+
+/// Publication settings of one workspace folder, or the root-level
+/// settings for files no folder owns.
+#[derive(Clone)]
+struct PublishPolicy {
+    filter: ry_checker::SeverityFilter,
+    scoped_policy: ry_checker::ScopedRulePolicy,
+    min_confidence: Option<ry_checker::Confidence>,
+    excludes: ry_config::Excludes,
+    baseline: Option<ry_config::Baseline>,
+    /// Config-relative exclude patterns and baseline keys anchor at the
+    /// originating `ry.toml`'s directory — the same `repo_root` `ry check`
+    /// derives from its discovered config (#493) — not at the folder root.
+    anchor: Option<PathBuf>,
+}
+
+impl PublishPolicy {
+    fn for_folder(ctx: &FolderAnalysisContext) -> Self {
+        PublishPolicy {
+            filter: ctx.filter.clone(),
+            scoped_policy: ctx.scoped_policy.clone(),
+            min_confidence: ctx.min_confidence,
+            excludes: ctx.excludes.clone(),
+            baseline: ctx.baseline.clone(),
+            anchor: ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
+        }
+    }
+
+    fn excludes(&self, path: &str) -> bool {
+        !self.excludes.is_empty()
+            && self
+                .excludes
+                .matches(&ry_config::diagnostic_path(path, self.anchor.as_deref()))
+    }
+
+    /// Post-process through the shared pipeline (`ry_checker::post_process`)
+    /// so the editor sees exactly what `ry check` reports: inline suppression
+    /// comments, then the severity filter, then path-based confidence
+    /// demotion, then baseline subtraction, then the min-confidence
+    /// threshold. Subtracting the baseline before the suppression filter let
+    /// a suppressed occurrence consume the count for its unsuppressed twin
+    /// (#491); skipping the demotion stage kept support-tree findings above
+    /// the threshold in the editor after `ry check` had dropped them (#492).
+    /// Scoped rule severities match `policy_path`; without one, the base
+    /// filter applies.
+    fn publish(
+        &self,
+        diagnostics: Vec<ry_checker::Diagnostic>,
+        path: &str,
+        policy_path: Option<&Path>,
+        file: Option<&SourceFile>,
+        origin: Option<serde_json::Value>,
+    ) -> Vec<LspDiagnostic> {
+        let filter = policy_path.map(|native| self.scoped_policy.filter_for(native, &self.filter));
+        let post = ry_checker::PostProcess {
+            filter: filter.as_deref().unwrap_or(&self.filter),
+            baseline: self.baseline.as_ref(),
+            min_confidence: self.min_confidence.unwrap_or(ry_checker::Confidence::Low),
+            repo_root: self.anchor.as_deref(),
+        };
+        let mut diagnostics = post.pre_demotion(
+            diagnostics,
+            file.map_or(&[], |file| file.comments.as_slice()),
+            file.map_or("", |file| file.source.as_str()),
+            path,
+            file,
+        );
+        post.demote_non_source_paths(&mut diagnostics);
+        post.post_demotion(&mut diagnostics);
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| {
+                let mut diagnostic = match file {
+                    Some(file) => diagnostic_to_lsp_with_source(&diagnostic, &file.source),
+                    None => diagnostic_to_lsp(diagnostic),
+                };
+                diagnostic.data = origin.clone();
+                diagnostic
+            })
+            .collect()
+    }
 }
 
 /// Compile the filter, min_confidence, and excludes for a folder from its
@@ -294,6 +402,22 @@ fn compute_folder_filter(
     (filter, min_confidence, excludes)
 }
 
+fn scoped_rule_policy(
+    config: &ry_config::Config,
+    config_root: Option<&Path>,
+    settings: &FolderSettings,
+) -> ry_checker::ScopedRulePolicy {
+    let lint = &settings.lint;
+    let protected = lint
+        .error
+        .iter()
+        .chain(&lint.warn)
+        .chain(&lint.ignore)
+        .flat_map(|tokens| tokens.iter().cloned())
+        .collect::<Vec<_>>();
+    ry_checker::ScopedRulePolicy::new(config, config_root, &protected)
+}
+
 /// Recompute the cached filter / min_confidence / excludes for every
 /// folder context and the root-level fallback from their installed
 /// `folder_settings`. Never called from `publish_diagnostics`, which
@@ -303,12 +427,22 @@ fn refresh_cached_folder_filters(state: &mut State) {
         let (filter, min_confidence, excludes) =
             compute_folder_filter(&ctx.config, &ctx.folder_settings);
         ctx.filter = filter;
+        ctx.scoped_policy = scoped_rule_policy(
+            &ctx.config,
+            ctx.config_root.as_deref(),
+            &ctx.folder_settings,
+        );
         ctx.min_confidence = min_confidence;
         ctx.excludes = excludes;
     }
     let (root_filter, root_min_confidence, root_excludes) =
         compute_folder_filter(&state.file_config, &state.folder_settings);
     state.root_filter = root_filter;
+    state.root_scoped_policy = scoped_rule_policy(
+        &state.file_config,
+        state.root_config_dir.as_deref(),
+        &state.folder_settings,
+    );
     state.root_min_confidence = root_min_confidence;
     state.root_excludes = root_excludes;
 }
@@ -351,20 +485,11 @@ impl ProjectCache {
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-        self.check_with_workspace(files, user_stubs, None)
+        self.check_with_workspace(files, user_stubs, None, Vec::new())
             .diagnostics
     }
 
     pub(super) fn check_with_workspace(
-        &mut self,
-        files: Vec<(String, i32, Arc<SourceFile>)>,
-        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-        workspace: Option<&ry_workspace::WorkspaceContext>,
-    ) -> ProjectCheckResult {
-        self.check_with_workspace_and_records(files, user_stubs, workspace, Vec::new())
-    }
-
-    pub(super) fn check_with_workspace_and_records(
         &mut self,
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -433,148 +558,122 @@ impl ProjectCache {
     }
 }
 
+fn serialized_inventory_notice(path: &Path, reason: ry_workspace::InventoryFailure) -> String {
+    let hint = if reason == ry_workspace::InventoryFailure::DecodedByteLimit {
+        " Raise max-serialized-bytes in ry.toml to enumerate it."
+    } else {
+        ""
+    };
+    format!(
+        "ry: {}: degraded scope ({}); serialized inventory unavailable.{hint}",
+        path.display(),
+        reason.description()
+    )
+}
+
 impl State {
-    /// Classify the original URI and commit its complete edit batch under
-    /// one lock. `didOpen`/`didClose` cannot change display-key ownership
-    /// between classification and a ranged splice or tree-cache update.
+    /// Replace the display-keyed source and invalidate its cached parse
+    /// and hints; the next read repopulates them.
+    fn update_doc(&mut self, path: &str, text: String, version: i32) {
+        self.docs.insert(path.to_string(), text);
+        self.versions.insert(path.to_string(), version);
+        self.parsed.remove(path);
+        self.hints.remove(path);
+    }
+
+    /// Apply a whole `didChange` batch for one original URI under one lock,
+    /// so `didOpen`/`didClose` cannot change display-key ownership midway.
+    /// Returns whether any change was applied.
     fn apply_document_changes(
         &mut self,
         path: &str,
         uri: &Url,
-        changes: &mut Vec<TextDocumentContentChangeEvent>,
+        changes: Vec<TextDocumentContentChangeEvent>,
         version: i32,
-    ) -> CollisionChangeResult {
-        let Some(open) = self.open_source_paths.get(path) else {
+    ) -> bool {
+        let Some(open) = self
+            .open_source_paths
+            .get(path)
+            .filter(|open| open.contains_key(uri))
+        else {
             tracing::warn!(%uri, "ignoring change for a closed URI");
-            return CollisionChangeResult::Rejected;
+            return false;
         };
-        if open.len() > 1 {
-            return self.apply_colliding_changes(path, uri, changes, version);
-        }
-        if !open.contains_key(uri) {
-            tracing::warn!(%uri, "ignoring change for a closed URI");
-            return CollisionChangeResult::Rejected;
-        }
+        // A colliding URI edits its own snapshot: the display-keyed text and
+        // incremental tree may describe another native source.
+        let colliding = open.len() > 1;
+        let (mut text, mut tree) = if colliding {
+            let Some((text, _)) = open[uri].shadow.clone() else {
+                tracing::warn!(%uri, "missing colliding URI buffer snapshot");
+                return false;
+            };
+            (Some(text), None)
+        } else {
+            (self.docs.get(path).cloned(), self.tree_for(path))
+        };
 
         // An invalid UTF-16 range stops the batch. Prior valid edits remain
-        // committed, as before; later ranges refer to text we could not
-        // produce and must not be applied independently.
+        // committed; later ranges refer to text we could not produce.
         let mut applied = false;
-        for change in changes.drain(..) {
-            if let Some(range) = change.range
-                && let Some(old_text) = self.docs.get(path).cloned()
-            {
-                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
-                    tracing::error!(
-                        ?range,
-                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
-                    );
-                    tracing::error!(
-                        "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
-                    );
-                    break;
-                };
-                let mut new_text = String::with_capacity(old_text.len() + change.text.len());
-                new_text.push_str(&old_text[..start_byte]);
-                new_text.push_str(&change.text);
-                new_text.push_str(&old_text[end_byte..]);
-                let edit =
-                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
-                let mut tree = self.tree_for(path);
-                self.docs.insert(path.to_string(), new_text);
-                self.versions.insert(path.to_string(), version);
-                self.parsed.remove(path);
-                self.hints.remove(path);
-                if let Some(ref mut tree) = tree {
-                    tree.edit(&edit);
+        for change in changes {
+            match (change.range, text.as_mut()) {
+                (Some(range), Some(current)) => {
+                    let Some((start, end)) = range_byte_span(current, range) else {
+                        tracing::error!(
+                            ?range,
+                            "invalid UTF-16 range in document change; aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
+                        );
+                        break;
+                    };
+                    if let Some(tree) = &mut tree {
+                        tree.edit(&build_input_edit_from_span(
+                            current,
+                            start,
+                            end,
+                            &change.text,
+                        ));
+                    }
+                    current.replace_range(start..end, &change.text);
                 }
-                if let Some(tree) = tree {
-                    self.store_tree(path, version, tree);
-                } else {
-                    self.trees.remove(path);
+                // Full replacement, or a ranged edit without old text: the
+                // protocol's fallback replaces the whole document.
+                _ => {
+                    text = Some(change.text);
+                    tree = None;
                 }
-                applied = true;
-            } else {
-                // Full replacement, or a ranged edit without old text:
-                // the protocol's fallback replaces the whole document.
-                self.docs.insert(path.to_string(), change.text);
-                self.versions.insert(path.to_string(), version);
-                self.parsed.remove(path);
-                self.hints.remove(path);
-                self.trees.remove(path);
-                applied = true;
             }
-        }
-        if applied {
-            CollisionChangeResult::Applied
-        } else {
-            CollisionChangeResult::Rejected
-        }
-    }
-
-    /// Apply a whole `didChange` batch to one original URI while holding the
-    /// state lock. Reading its shadow, splicing UTF-16 ranges, and replacing
-    /// the active display-keyed source form one transaction. A second URI's
-    /// notification can acquire the lock before or after it, never midway.
-    fn apply_colliding_changes(
-        &mut self,
-        path: &str,
-        uri: &Url,
-        changes: &mut Vec<TextDocumentContentChangeEvent>,
-        version: i32,
-    ) -> CollisionChangeResult {
-        let Some(open) = self.open_source_paths.get(path) else {
-            return CollisionChangeResult::NotCollision;
-        };
-        if !open.contains_key(uri) {
-            tracing::warn!(%uri, "ignoring change for a closed colliding URI");
-            return CollisionChangeResult::Rejected;
-        }
-        if open.len() == 1 {
-            return CollisionChangeResult::NotCollision;
-        }
-        let Some((mut text, mut installed_version)) =
-            open.get(uri).and_then(|source| source.shadow.clone())
-        else {
-            tracing::warn!(%uri, "missing colliding URI buffer snapshot");
-            return CollisionChangeResult::Rejected;
-        };
-        let mut applied = false;
-        for change in changes.drain(..) {
-            if let Some(range) = change.range {
-                let Some((start, end)) = range_byte_span(&text, range) else {
-                    tracing::error!(
-                        ?range,
-                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
-                    );
-                    break;
-                };
-                text.replace_range(start..end, &change.text);
-            } else {
-                text = change.text;
-            }
-            installed_version = version;
             applied = true;
         }
-        if !applied {
-            // Neither an empty notification nor a batch rejected at its
-            // first range transfers ownership from the active URI.
-            return CollisionChangeResult::Rejected;
+        // An empty or immediately rejected batch changes nothing, including
+        // which colliding URI is active.
+        let Some(text) = text.filter(|_| applied) else {
+            return false;
+        };
+        if colliding {
+            self.active_collision_uri
+                .insert(path.to_string(), uri.clone());
+            if let Some(source) = self
+                .open_source_paths
+                .get_mut(path)
+                .and_then(|open| open.get_mut(uri))
+            {
+                source.shadow = Some((text.clone(), version));
+            }
         }
-        // The one-key incremental tree may describe another native source.
-        self.docs.insert(path.to_string(), text.clone());
-        self.versions.insert(path.to_string(), installed_version);
-        self.parsed.remove(path);
-        self.hints.remove(path);
-        self.trees.remove(path);
-        self.active_collision_uri
-            .insert(path.to_string(), uri.clone());
+        self.update_doc(path, text, version);
+        match tree {
+            Some(tree) => self.store_tree(path, version, tree),
+            None => {
+                self.trees.remove(path);
+            }
+        }
+        true
+    }
+
+    fn has_collision(&self, path: &str) -> bool {
         self.open_source_paths
-            .get_mut(path)
-            .and_then(|open| open.get_mut(uri))
-            .expect("colliding source still open under lock")
-            .shadow = Some((text, installed_version));
-        CollisionChangeResult::Applied
+            .get(path)
+            .is_some_and(|open| open.len() > 1)
     }
 
     /// Remove one original URI from a display-keyed document. If another
@@ -602,13 +701,25 @@ impl State {
                 .insert(path.to_string(), survivor.clone());
         }
         if closing_active && let Some((text, version)) = shadow {
-            self.docs.insert(path.to_string(), text);
-            self.versions.insert(path.to_string(), version);
-            self.parsed.remove(path);
-            self.hints.remove(path);
+            self.update_doc(path, text, version);
             self.trees.remove(path);
         }
         Some(survivor)
+    }
+
+    fn newly_degraded_scopes(&mut self) -> Vec<(PathBuf, ry_workspace::InventoryFailure)> {
+        let current: std::collections::BTreeSet<_> = self
+            .folder_contexts
+            .iter()
+            .flat_map(|folder| folder.workspace_contexts.values())
+            .flat_map(|context| context.degraded_scopes.iter().cloned())
+            .collect();
+        let new = current
+            .difference(&self.notified_degraded_scopes)
+            .cloned()
+            .collect();
+        self.notified_degraded_scopes = current;
+        new
     }
 
     /// Return the cached parse for `path` when its version matches the
@@ -672,7 +783,7 @@ impl State {
     }
 
     /// Drop the cached parse and hints for `path`, mirroring the
-    /// cache-invalidation half of `Backend::update_doc`. Test-only;
+    /// cache-invalidation half of `State::update_doc`. Test-only;
     /// lets the cache acceptance test simulate a `did_change` on a bare
     /// `State` without a `tower_lsp::Client`.
     #[cfg(test)]
@@ -865,11 +976,8 @@ mod colliding_change_tests {
             range_length: None,
             text: text.to_string(),
         };
-        let mut changes = vec![edit(0, 5, 7, "\"😀\""), edit(1, 5, 7, "3L")];
-        assert_eq!(
-            state.apply_document_changes(&path, &uri, &mut changes, 2),
-            CollisionChangeResult::Applied
-        );
+        let changes = vec![edit(0, 5, 7, "\"😀\""), edit(1, 5, 7, "3L")];
+        assert!(state.apply_document_changes(&path, &uri, changes, 2));
         let expected = "x <- \"😀\"\ny <- 3L\n";
         assert_eq!(state.docs[&path], expected);
         assert_eq!(state.versions[&path], 2);
@@ -889,7 +997,7 @@ mod colliding_change_tests {
 
         // UTF-16 column 7 lands inside the astral character. The following
         // full replacement must not run after this malformed ranged edit.
-        let mut invalid = vec![
+        let invalid = vec![
             edit(0, 7, 7, "bad"),
             TextDocumentContentChangeEvent {
                 range: None,
@@ -897,10 +1005,7 @@ mod colliding_change_tests {
                 text: "stale <- TRUE\n".to_string(),
             },
         ];
-        assert_eq!(
-            state.apply_document_changes(&path, &uri, &mut invalid, 3),
-            CollisionChangeResult::Rejected
-        );
+        assert!(!state.apply_document_changes(&path, &uri, invalid, 3));
         assert_eq!(state.docs[&path], expected);
         assert_eq!(state.versions[&path], 2);
         assert!(state.tree_for(&path).is_some());
@@ -947,7 +1052,7 @@ mod colliding_change_tests {
             let path = path.clone();
             tokio::spawn(async move {
                 barrier.wait().await;
-                let mut changes = vec![TextDocumentContentChangeEvent {
+                let changes = vec![TextDocumentContentChangeEvent {
                     range: Some(Range {
                         start: Position::new(0, 0),
                         end: Position::new(0, end),
@@ -955,12 +1060,11 @@ mod colliding_change_tests {
                     range_length: None,
                     text: replacement.to_string(),
                 }];
-                let result =
-                    shared
-                        .lock()
-                        .await
-                        .apply_colliding_changes(&path, &uri, &mut changes, 7);
-                assert_eq!(result, CollisionChangeResult::Applied);
+                let applied = shared
+                    .lock()
+                    .await
+                    .apply_document_changes(&path, &uri, changes, 7);
+                assert!(applied);
             })
         };
         let (a, b) = tokio::join!(
@@ -1040,6 +1144,7 @@ impl Backend {
             state.user_stubs = ctx.stubs.clone();
             state.root_baseline = ctx.baseline.clone();
             state.root_filter = ctx.filter.clone();
+            state.root_scoped_policy = ctx.scoped_policy.clone();
             state.root_min_confidence = ctx.min_confidence;
             state.root_excludes = ctx.excludes.clone();
         }
@@ -1394,15 +1499,7 @@ impl Backend {
                     .collect::<HashMap<String, HashMap<Url, (String, i32)>>>(),
             )
         };
-        let publication_uris = |path: &str| {
-            let mut uris = open_source_paths
-                .get(path)
-                .map(|open| open.keys().cloned().collect::<Vec<_>>())
-                .filter(|uris| !uris.is_empty())
-                .unwrap_or_else(|| vec![path_to_uri(path)]);
-            uris.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-            uris
-        };
+        let publication_uris = |path: &str| source_uris(&open_source_paths, path);
         if !requested_ineligible.is_empty() {
             let uris_to_clear = {
                 let mut state = self.state.lock().await;
@@ -1410,7 +1507,6 @@ impl Backend {
                 for path in &requested_ineligible {
                     uris_to_clear.extend(publication_uris(path));
                     uris_to_clear.extend(state.published_uris.remove(path).unwrap_or_default());
-                    state.published_paths.remove(path);
                 }
                 uris_to_clear
             };
@@ -1471,25 +1567,18 @@ impl Backend {
         // ProjectCache, stubs, and workspace context. The root-level
         // filter, confidence, exclude, baseline, and root state rides
         // along for the files no folder owns.
-        let (
-            folder_contexts,
-            root_filter,
-            root_min_confidence,
-            root_excludes,
-            root_baseline,
-            root,
-            root_config_dir,
-            root_config,
-        ) = {
+        let (folder_contexts, root_policy, root_config) = {
             let state = self.state.lock().await;
             (
                 state.folder_contexts.clone(),
-                state.root_filter.clone(),
-                state.root_min_confidence,
-                state.root_excludes.clone(),
-                state.root_baseline.clone(),
-                state.root.clone(),
-                state.root_config_dir.clone(),
+                PublishPolicy {
+                    filter: state.root_filter.clone(),
+                    scoped_policy: state.root_scoped_policy.clone(),
+                    min_confidence: state.root_min_confidence,
+                    excludes: state.root_excludes.clone(),
+                    baseline: state.root_baseline.clone(),
+                    anchor: state.root_config_dir.clone().or(state.root.clone()),
+                },
                 state.file_config.clone(),
             )
         };
@@ -1506,25 +1595,8 @@ impl Backend {
                 .find(|ctx| Path::new(&path).starts_with(&ctx.root));
             let config = ctx.map_or(&root_config, |ctx| &ctx.config);
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
-                let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx {
-                    Some(ctx) => (
-                        &ctx.filter,
-                        ctx.min_confidence,
-                        &ctx.excludes,
-                        ctx.baseline.as_ref(),
-                        ctx.config_root.as_deref().or(Some(ctx.root.as_path())),
-                    ),
-                    None => (
-                        &root_filter,
-                        root_min_confidence,
-                        &root_excludes,
-                        root_baseline.as_ref(),
-                        root_config_dir.as_deref().or(root.as_deref()),
-                    ),
-                };
-                let excluded = !excludes.is_empty()
-                    && excludes.matches(&ry_config::diagnostic_path(&path, config_anchor));
-                if !excluded {
+                let policy = ctx.map_or_else(|| root_policy.clone(), PublishPolicy::for_folder);
+                if !policy.excludes(&path) {
                     for (uri, (text, version)) in sources {
                         if !text.contains("#|") {
                             continue;
@@ -1548,35 +1620,15 @@ impl Backend {
                         if ry_checker::typehint::read_records(&file, &scope).is_empty() {
                             continue;
                         }
-                        let post = ry_checker::PostProcess {
-                            filter,
-                            baseline,
-                            min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
-                            repo_root: config_anchor,
-                        };
-                        let warning = ry_checker::Diagnostic::new(
-                            ry_checker::Severity::Warning,
-                            ry_core::Span::new(0, 1, 0, 0),
+                        let native = uri.to_file_path().ok();
+                        let warnings = policy.publish(
+                            vec![ambiguous_typehint_identity(&path)],
                             &path,
-                            "RY117",
-                            "Native source identity is ambiguous; typehint attachment was skipped.",
+                            native.as_deref(),
+                            Some(&file),
+                            supports_diagnostic_data
+                                .then(|| diagnostic_origin(&path, version, generation)),
                         );
-                        let mut warnings =
-                            post.pre_demotion(vec![warning], &file.comments, &file.source);
-                        post.demote_non_source_paths(&mut warnings);
-                        post.post_demotion(&mut warnings);
-                        let warnings = warnings
-                            .iter()
-                            .map(|warning| {
-                                let mut diagnostic =
-                                    diagnostic_to_lsp_with_source(warning, &file.source);
-                                if supports_diagnostic_data {
-                                    diagnostic.data =
-                                        Some(diagnostic_origin(&path, version, generation));
-                                }
-                                diagnostic
-                            })
-                            .collect();
                         by_uri.insert(uri, warnings);
                     }
                 }
@@ -1718,21 +1770,15 @@ impl Backend {
             let mut declined = Vec::new();
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
                 for (path, _, file) in &job.files {
-                    if open_source_paths
-                        .get(path)
-                        .is_some_and(|open| open.len() > 1)
-                    {
+                    let native = match open_source_paths.get(path) {
                         // Colliding snapshots are handled by the per-URI
                         // annotation pass above. No contract may be adopted
                         // from a display-keyed source here.
-                        continue;
-                    }
-                    let native = match open_source_paths.get(path) {
-                        Some(open) if open.len() == 1 => open
+                        Some(open) if open.len() > 1 => continue,
+                        Some(open) => open
                             .values()
                             .next()
                             .and_then(|source| source.native.clone()),
-                        Some(_) => None,
                         None if open_document_paths.contains(path.as_str()) => None,
                         None => {
                             let candidate = PathBuf::from(path);
@@ -1745,27 +1791,13 @@ impl Backend {
                     {
                         records.extend(ry_checker::typehint::read_records_at(file, native, &scope));
                     } else if !ry_checker::typehint::read_records(file, &scope).is_empty() {
-                        declined.push(ry_checker::Diagnostic::new(
-                            ry_checker::Severity::Warning,
-                            ry_core::Span::new(0, 1, 0, 0),
-                            path,
-                            "RY117",
-                            "Native source identity is ambiguous; typehint attachment was skipped.",
-                        ));
+                        declined.push(ambiguous_typehint_identity(path));
                     }
                 }
             }
             let mut project = job.cache.lock().await;
-            let mut result = if records.is_empty() {
-                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref())
-            } else {
-                project.check_with_workspace_and_records(
-                    job.files,
-                    job.stubs,
-                    job.workspace.as_ref(),
-                    records,
-                )
-            };
+            let mut result =
+                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref(), records);
             for diagnostic in declined {
                 if let Some((_, diagnostics)) = result
                     .diagnostics
@@ -1802,76 +1834,23 @@ impl Backend {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
-            let (filter, min_confidence, excludes, baseline, config_anchor) = match ctx.as_ref() {
-                Some(ctx) => (
-                    ctx.filter.clone(),
-                    ctx.min_confidence,
-                    ctx.excludes.clone(),
-                    ctx.baseline.clone(),
-                    // Config-relative exclude patterns and baseline keys
-                    // anchor at the originating `ry.toml`'s directory —
-                    // the same `repo_root` `ry check` derives from its
-                    // discovered config (#493) — not at the folder root.
-                    ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
-                ),
-                None => (
-                    root_filter.clone(),
-                    root_min_confidence,
-                    root_excludes.clone(),
-                    root_baseline.clone(),
-                    root_config_dir.clone().or(root.clone()),
-                ),
-            };
+            let policy = ctx
+                .as_ref()
+                .map_or_else(|| root_policy.clone(), PublishPolicy::for_folder);
             for (diagnostic_path, diagnostics) in per_file {
-                if !excludes.is_empty() {
-                    let rel =
-                        ry_config::diagnostic_path(&diagnostic_path, config_anchor.as_deref());
-                    if excludes.matches(&rel) {
-                        continue;
-                    }
+                if policy.excludes(&diagnostic_path) {
+                    continue;
                 }
-
-                // Post-processing runs through the shared pipeline
-                // (`ry_checker::post_process`) so the editor sees exactly
-                // what `ry check` reports: inline suppression comments,
-                // then the severity filter, then path-based confidence
-                // demotion, then baseline subtraction, then the
-                // min-confidence threshold. Subtracting the baseline
-                // before the suppression filter let a suppressed
-                // occurrence consume the count for its unsuppressed twin
-                // (#491); skipping the demotion stage kept support-tree
-                // findings above the threshold in the editor after
-                // `ry check` had dropped them (#492).
-                let checked_file = checked_files.get(&diagnostic_path);
-                let source_text = checked_file.map(|file| file.source.as_str());
-                let comments: &[ry_core::ast::Comment] =
-                    checked_file.map_or(&[], |file| file.comments.as_slice());
-                let post = ry_checker::PostProcess {
-                    filter: &filter,
-                    baseline: baseline.as_ref(),
-                    min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
-                    repo_root: config_anchor.as_deref(),
-                };
-                let mut diagnostics =
-                    post.pre_demotion(diagnostics, comments, source_text.unwrap_or(""));
-                post.demote_non_source_paths(&mut diagnostics);
-                post.post_demotion(&mut diagnostics);
-                let diagnostics: Vec<LspDiagnostic> = diagnostics
-                    .into_iter()
-                    .map(|diagnostic| {
-                        let mut diagnostic = match source_text {
-                            Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),
-                            None => diagnostic_to_lsp(diagnostic),
-                        };
-                        if supports_diagnostic_data
-                            && let Some(version) = diagnostic_versions.get(&diagnostic_path)
-                        {
-                            diagnostic.data =
-                                Some(diagnostic_origin(&diagnostic_path, *version, generation));
-                        }
-                        diagnostic
-                    })
-                    .collect();
+                let diagnostics = policy.publish(
+                    diagnostics,
+                    &diagnostic_path,
+                    Some(Path::new(&diagnostic_path)),
+                    checked_files.get(&diagnostic_path).map(AsRef::as_ref),
+                    diagnostic_versions
+                        .get(&diagnostic_path)
+                        .filter(|_| supports_diagnostic_data)
+                        .map(|version| diagnostic_origin(&diagnostic_path, *version, generation)),
+                );
                 let uris = publication_uris(&diagnostic_path);
                 if uris.len() == 1 {
                     let uri = uris[0].clone();
@@ -1881,7 +1860,11 @@ impl Backend {
                         HashSet::from([uri.clone()])
                     };
                     self.client
-                        .publish_diagnostics(uri, diagnostics, None)
+                        .publish_diagnostics(
+                            uri,
+                            diagnostics,
+                            diagnostic_versions.get(&diagnostic_path).copied(),
+                        )
                         .await;
                     published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
                     continue;
@@ -1904,7 +1887,13 @@ impl Backend {
                         non_empty.insert(uri.clone());
                     }
                     self.client
-                        .publish_diagnostics(uri.clone(), for_uri, None)
+                        .publish_diagnostics(
+                            uri.clone(),
+                            for_uri,
+                            (active_collision_uris.get(&diagnostic_path) == Some(uri))
+                                .then(|| diagnostic_versions.get(&diagnostic_path).copied())
+                                .flatten(),
+                        )
                         .await;
                 }
                 published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
@@ -1943,10 +1932,7 @@ impl Backend {
                 let previous = state.published_uris.remove(&path).unwrap_or_default();
                 previous_uris.extend(previous.difference(&destinations).cloned());
                 if !non_empty.is_empty() {
-                    state.published_paths.insert(path.clone());
                     state.published_uris.insert(path, non_empty);
-                } else {
-                    state.published_paths.remove(&path);
                 }
             }
             previous_uris
@@ -1970,8 +1956,8 @@ impl Backend {
         let dropped: Vec<Url> = {
             let mut state = self.state.lock().await;
             let dropped: Vec<String> = state
-                .published_paths
-                .iter()
+                .published_uris
+                .keys()
                 .filter(|path| {
                     !state.any_open_source_eligible(path.as_str())
                         || (!state.docs.contains_key(path.as_str())
@@ -1979,17 +1965,9 @@ impl Backend {
                 })
                 .cloned()
                 .collect();
-            for path in &dropped {
-                state.published_paths.remove(path);
-            }
             dropped
                 .iter()
-                .flat_map(|path| {
-                    state
-                        .published_uris
-                        .remove(path)
-                        .unwrap_or_else(|| HashSet::from([path_to_uri(path)]))
-                })
+                .flat_map(|path| state.published_uris.remove(path).unwrap_or_default())
                 .collect()
         };
         for uri in dropped {
@@ -2179,16 +2157,15 @@ impl Backend {
                     }
                 }
                 state.initial_index_pending = false;
+                let newly_degraded = state.newly_degraded_scopes();
                 drop(state);
-                for (_, group) in &contexts {
-                    for context in group.values() {
-                        for (path, reason) in &context.degraded_scopes {
-                            self.client.log_message(
-                                tower_lsp::lsp_types::MessageType::WARNING,
-                                format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
-                            ).await;
-                        }
-                    }
+                for (path, reason) in &newly_degraded {
+                    self.client
+                        .log_message(
+                            tower_lsp::lsp_types::MessageType::WARNING,
+                            serialized_inventory_notice(path, *reason),
+                        )
+                        .await;
                 }
                 if cap_hit {
                     let _ = self
@@ -3119,12 +3096,7 @@ impl Backend {
             // the exact window the generation guard below exists for.
             #[cfg(feature = "test-util")]
             crate::test_seam::maybe_pause_context_install().await;
-            // Installed: degraded-scope warnings keep scan parity (the
-            // scan logs one line per scope per generation). Cloned before
-            // the insert moves the context; never re-read — a concurrent
-            // replacement's scopes are that writer's duty to log.
-            let degraded = context.degraded_scopes.clone();
-            {
+            let newly_degraded = {
                 let mut state = self.state.lock().await;
                 if state.index_generation != snapshot.generation {
                     // A newer writer landed during the blocking resolve;
@@ -3146,12 +3118,13 @@ impl Backend {
                     // cleared and republished.
                     return true;
                 }
-            }
-            for (path, reason) in &degraded {
+                state.newly_degraded_scopes()
+            };
+            for (path, reason) in &newly_degraded {
                 self.client
                     .log_message(
                         tower_lsp::lsp_types::MessageType::WARNING,
-                        format!("ry: {}: {reason}; using a file-stem binding. Raise max-serialized-bytes in ry.toml to enumerate it.", path.display()),
+                        serialized_inventory_notice(path, *reason),
                     )
                     .await;
             }
@@ -3478,6 +3451,7 @@ pub(super) fn build_folder_contexts(
         let stubs = load_stubs_from_config(&config).unwrap_or_default();
 
         let (filter, min_confidence, excludes) = compute_folder_filter(&config, &folder_settings);
+        let scoped_policy = scoped_rule_policy(&config, config_root.as_deref(), &folder_settings);
         contexts.push(FolderAnalysisContext {
             root: folder_root.clone(),
             config_root,
@@ -3487,6 +3461,7 @@ pub(super) fn build_folder_contexts(
             workspace_contexts: HashMap::new(),
             baseline,
             filter,
+            scoped_policy,
             min_confidence,
             excludes,
             package_caches: HashMap::new(),
@@ -3569,6 +3544,7 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
         }
     };
     let (filter, min_confidence, excludes) = compute_folder_filter(&config, &old.folder_settings);
+    let scoped_policy = scoped_rule_policy(&config, config_root.as_deref(), &old.folder_settings);
     FolderAnalysisContext {
         root: old.root.clone(),
         config_root,
@@ -3578,6 +3554,7 @@ pub(super) fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnaly
         workspace_contexts: old.workspace_contexts.clone(),
         baseline,
         filter,
+        scoped_policy,
         min_confidence,
         excludes,
         package_caches: old.package_caches.clone(),
@@ -3666,5 +3643,57 @@ fn byte_offset_to_point_relative(start_position: ry_core::Point, new_text: &str)
             row: start_position.row + newlines,
             column: new_text.len() - last_newline - 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod degraded_notice_tests {
+    use super::*;
+
+    #[test]
+    fn byte_limit_notice_keeps_its_remediation_hint() {
+        let path = Path::new("/project/R/sysdata.rda");
+        let byte_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::DecodedByteLimit);
+        assert!(byte_limit.contains("R/sysdata.rda"));
+        assert!(byte_limit.contains("max-serialized-bytes in ry.toml"));
+        let parser_limit =
+            serialized_inventory_notice(path, ry_workspace::InventoryFailure::ParserResourceLimit);
+        assert!(parser_limit.contains("serialized parser resource limit exceeded"));
+        assert!(!parser_limit.contains("Raise max-serialized-bytes"));
+    }
+
+    #[test]
+    fn unchanged_scope_does_not_repeat_and_repaired_scope_can_fail_again() {
+        let path = PathBuf::from("/project/R/sysdata.rda");
+        let failed = ry_workspace::WorkspaceContext {
+            degraded_scopes: vec![(
+                path.clone(),
+                ry_workspace::InventoryFailure::ParserResourceLimit,
+            )],
+            ..Default::default()
+        };
+        let mut folder = FolderAnalysisContext::default();
+        folder.workspace_contexts.insert(None, failed);
+        let mut state = State {
+            folder_contexts: vec![folder],
+            ..Default::default()
+        };
+        assert_eq!(state.newly_degraded_scopes().len(), 1);
+        assert!(state.newly_degraded_scopes().is_empty());
+
+        state.folder_contexts[0]
+            .workspace_contexts
+            .insert(None, ry_workspace::WorkspaceContext::default());
+        assert!(state.newly_degraded_scopes().is_empty());
+
+        state.folder_contexts[0].workspace_contexts.insert(
+            None,
+            ry_workspace::WorkspaceContext {
+                degraded_scopes: vec![(path, ry_workspace::InventoryFailure::ParserResourceLimit)],
+                ..Default::default()
+            },
+        );
+        assert_eq!(state.newly_degraded_scopes().len(), 1);
     }
 }

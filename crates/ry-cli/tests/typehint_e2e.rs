@@ -25,6 +25,25 @@ fn check_codes(root: &Path) -> Vec<String> {
         .collect()
 }
 
+fn count(root: &Path, code: &str) -> usize {
+    check_codes(root)
+        .iter()
+        .filter(|found| *found == code)
+        .count()
+}
+
+const ADOPT: &str = "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n";
+
+/// A temporary project with an `R/` directory and an optional `ry.toml`.
+fn project(config: Option<&str>) -> tempfile::TempDir {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    if let Some(config) = config {
+        fs::write(temp.path().join("ry.toml"), config).unwrap();
+    }
+    temp
+}
+
 fn dump(root: &Path, flags: &[&str]) -> Value {
     let mut args = vec!["dump-facts", "R/main.R"];
     args.extend(flags);
@@ -35,27 +54,16 @@ fn dump(root: &Path, flags: &[&str]) -> Value {
 
 #[test]
 fn adopted_contract_checks_and_exports_the_same_source_record() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
+    let temp = project(None);
     fs::write(
         temp.path().join("R/main.R"),
         "f <- function(x) {\n  #| x integer\n  x\n}\nf(1L)\nf(\"bad\")\n",
     )
     .unwrap();
-    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY114"));
+    assert_eq!(count(temp.path(), "RY114"), 0);
 
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
-    assert_eq!(
-        check_codes(temp.path())
-            .into_iter()
-            .filter(|code| code == "RY114")
-            .count(),
-        1
-    );
+    fs::write(temp.path().join("ry.toml"), ADOPT).unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 1);
 
     assert_eq!(dump(temp.path(), &[])["schema_version"], 1);
     assert_eq!(dump(temp.path(), &["--references"])["schema_version"], 2);
@@ -75,14 +83,138 @@ fn adopted_contract_checks_and_exports_the_same_source_record() {
 }
 
 #[test]
-fn nested_headers_and_inline_comments_cannot_create_an_outer_contract() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
+fn class_guards_do_not_establish_or_erase_an_explicit_class() {
+    let temp = project(Some(ADOPT));
     fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+        temp.path().join("R/main.R"),
+        include_str!("../../ry-checker/testdata/oracle/typehint_class_guards.R"),
     )
     .unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 0);
+
+    for (value, guard, class, mismatches) in [
+        ("new.env()", "TRUE", "'foo'", 0),
+        ("new.env()", "TRUE", "'bar'", 1),
+        ("new.env()", "is.environment(x)", "'foo'", 0),
+        ("new.env()", "is.environment(x)", "'bar'", 1),
+        ("1L", "is.integer(x)", "'foo'", 0),
+        ("1L", "is.integer(x)", "'bar'", 1),
+        ("1L", "is.object(x)", "'foo'", 0),
+        ("1L", "is.object(x)", "'bar'", 1),
+        ("matrix(1L)", "is.matrix(x)", "'foo'", 0),
+        ("matrix(1L)", "is.matrix(x)", "'bar'", 1),
+        ("list()", "inherits(x, 'foo')", "c('foo', 'bar')", 1),
+    ] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "g <- function() {{\n x <- structure({value}, class = {class})\n if ({guard}) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f(x)\n }}\n}}\ng()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            count(temp.path(), "RY114"),
+            mismatches,
+            "value: {value}, guard: {guard}, class: {class}"
+        );
+    }
+
+    // A rejecting `||` continuation keeps the known class vector too.
+    fs::write(
+        temp.path().join("R/main.R"),
+        "g <- function() {\n x <- structure(1L, class = c('foo', 'bar'))\n if (!inherits(x, 'foo') || length(x) != 1) stop('bad')\n f <- function(y) {\n  #| y foo\n  y\n }\n f(x)\n}\ng()\n",
+    )
+    .unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 1);
+}
+
+#[test]
+fn methods_selected_from_class_tests_do_not_return_exact_classes() {
+    let temp = project(Some(ADOPT));
+    let fixture = include_str!("../../ry-checker/testdata/oracle/typehint_guarded_dispatch.R");
+    fs::write(temp.path().join("R/main.R"), fixture).unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 0);
+
+    // An exact receiver class still selects a method with a known result.
+    for call in ["test(x)", "x + 1L"] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "{fixture}known <- function() {{\n x <- structure(1L, class = 'foo')\n if (TRUE) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f({call})\n }}\n}}\nknown()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(count(temp.path(), "RY114"), 1, "{call}");
+    }
+}
+
+const GUARD_STUBS: &str = r#"{
+  "schema_version": "2",
+  "package": "guards",
+  "version": "test",
+  "functions": {
+    "is_bar": {
+      "params": [{"name": "x", "required": true}],
+      "return": {"mode": "logical", "length": "1", "na": false},
+      "predicate": {"subject_param": "x", "target": {"mode": "union", "members": ["integer", "double"], "class": ["bar"], "length": "1"}}
+    },
+    "has_a": {
+      "params": [{"name": "x", "required": true}],
+      "return": {"mode": "logical", "length": "1", "na": false},
+      "predicate": {"subject_param": "x", "target": {"mode": "list", "length": "unknown", "columns": {"a": {"mode": "integer", "length": "1", "class": ["bar"]}}}}
+    },
+    "check_bar": {
+      "params": ["x", "arg", "call"],
+      "return": {"mode": "null", "length": "0", "na": false},
+      "assertion": {
+        "subject_param": "x",
+        "target": {"mode": "union", "members": ["integer", "double"], "class": ["bar"], "length": "1"},
+        "provenance": {"kind": "standalone_types_check", "fingerprint_params": ["arg", "call"]}
+      }
+    }
+  }
+}"#;
+
+#[test]
+fn stub_class_tests_mark_union_member_and_column_classes() {
+    let temp = project(Some(&format!("typeshed = ['stubs']\n{ADOPT}")));
+    fs::create_dir(temp.path().join("stubs")).unwrap();
+    fs::write(temp.path().join("stubs/guards.json"), GUARD_STUBS).unwrap();
+    for (setup, guard, actual, mismatches) in [
+        ("", "if (guards::is_bar(x))", "x", 0),
+        (
+            "x <- structure(1L, class = 'bar')",
+            "if (guards::is_bar(x))",
+            "x",
+            1,
+        ),
+        ("", "if (guards::has_a(x))", "x$a", 0),
+        (
+            "x <- list(a = structure(1L, class = 'bar'))",
+            "if (guards::has_a(x))",
+            "x$a",
+            1,
+        ),
+        ("guards::check_bar(x)", "if (TRUE)", "x", 0),
+    ] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "g <- function(x) {{\n {setup}\n {guard} {{\n  f <- function(y) {{\n   #| y baz\n   y\n  }}\n  f({actual})\n }}\n}}\ng()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            count(temp.path(), "RY114"),
+            mismatches,
+            "setup: {setup}, guard: {guard}"
+        );
+    }
+}
+
+#[test]
+fn nested_headers_and_inline_comments_cannot_create_an_outer_contract() {
+    let temp = project(Some(ADOPT));
     for body in [
         "g <- function(\n #| x integer\n y) { y }\n x",
         "g <- function(y = {\n #| x integer\n 1L\n }) { y }\n x",
@@ -113,36 +245,23 @@ fn native_filename_collision_cannot_attach_another_files_contract() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = project(Some(&ADOPT.replace("R/**", "R/bad�.R")));
     let r = temp.path().join("R");
-    fs::create_dir(&r).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/bad�.R']\n",
-    )
-    .unwrap();
     let raw = r.join(OsString::from_vec(b"bad\xff.R".to_vec()));
     let unicode = r.join("bad�.R");
     let source = "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\n";
     fs::write(&raw, source).unwrap();
-    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY114"));
+    assert_eq!(count(temp.path(), "RY114"), 0);
 
     fs::write(&unicode, source).unwrap();
     // Both parser paths display as bad�.R with identical definition spans.
     // Neither is safe to attach while the source identities collide.
-    let codes = check_codes(temp.path());
-    assert!(!codes.iter().any(|code| code == "RY114"));
-    assert_eq!(codes.iter().filter(|code| *code == "RY117").count(), 1);
+    assert_eq!(count(temp.path(), "RY114"), 0);
+    assert_eq!(count(temp.path(), "RY117"), 1);
 
     fs::remove_file(&raw).unwrap();
-    assert_eq!(
-        check_codes(temp.path())
-            .into_iter()
-            .filter(|code| code == "RY114")
-            .count(),
-        1
-    );
-    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY117"));
+    assert_eq!(count(temp.path(), "RY114"), 1);
+    assert_eq!(count(temp.path(), "RY117"), 0);
 }
 
 #[cfg(unix)]
@@ -151,14 +270,8 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = project(Some(ADOPT));
     let r = temp.path().join("R");
-    fs::create_dir(&r).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
     let unicode = r.join("bad�.R");
     let raw = r.join(OsString::from_vec(b"bad\xff.R".to_vec()));
     fs::write(
@@ -203,7 +316,7 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
 
     fs::write(
         temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = false\nversion = '0.1.0'\npaths = ['R/**']\n",
+        ADOPT.replace("adopt = true", "adopt = false"),
     )
     .unwrap();
     let disabled = invoke(temp.path(), &["dump-facts", "R/bad�.R", "--annotations"]);
@@ -215,11 +328,7 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
             .unwrap()
             .is_empty()
     );
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
+    fs::write(temp.path().join("ry.toml"), ADOPT).unwrap();
 
     let directory = invoke(temp.path(), &["dump-facts", "R", "--annotations"]);
     assert!(!directory.status.success(), "{directory:?}");
@@ -249,54 +358,33 @@ fn effective_class_checks_use_class_facts_and_keep_uncertain_values_quiet() {
         ("structure(1L, class = c(\"a\", \"b\"))", 1),
         ("unknown_value", 0),
     ] {
-        let temp = tempfile::tempdir().unwrap();
-        fs::create_dir(temp.path().join("R")).unwrap();
-        fs::write(
-            temp.path().join("ry.toml"),
-            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-        )
-        .unwrap();
+        let temp = project(Some(ADOPT));
         fs::write(
             temp.path().join("R/main.R"),
             format!("f <- function(x) {{\n #| x integer\n x\n}}\nf({actual})\n"),
         )
         .unwrap();
-        let count = check_codes(temp.path())
-            .iter()
-            .filter(|code| *code == "RY114")
-            .count();
+        let count = count(temp.path(), "RY114");
         assert_eq!(count, expected, "actual {actual}");
     }
 }
 
 #[test]
 fn omitted_default_is_not_checked_but_explicit_actual_is() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
+    let temp = project(Some(ADOPT));
     let file = temp.path().join("R/main.R");
     fs::write(
         &file,
         "f <- function(x = \"wrong\") {\n #| x integer\n x\n}\nf()\n",
     )
     .unwrap();
-    assert!(!check_codes(temp.path()).iter().any(|code| code == "RY114"));
+    assert_eq!(count(temp.path(), "RY114"), 0);
     fs::write(
         &file,
         "f <- function(x = \"wrong\") {\n #| x integer\n x\n}\nf()\nf(x = \"wrong\")\n",
     )
     .unwrap();
-    assert_eq!(
-        check_codes(temp.path())
-            .iter()
-            .filter(|code| *code == "RY114")
-            .count(),
-        1
-    );
+    assert_eq!(count(temp.path(), "RY114"), 1);
     let annotation = &dump(temp.path(), &["--annotations"])["files"][0]["annotations"][0];
     assert_eq!(
         annotation["translation"]["supported"]["parameters"][0]["supplied"],
@@ -306,13 +394,7 @@ fn omitted_default_is_not_checked_but_explicit_actual_is() {
 
 #[test]
 fn partial_unsupported_and_invalid_source_records_keep_their_status() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
+    let temp = project(Some(ADOPT));
     fs::write(
         temp.path().join("R/main.R"),
         concat!(
@@ -347,13 +429,7 @@ fn partial_unsupported_and_invalid_source_records_keep_their_status() {
 
 #[test]
 fn schema_three_residuals_use_structural_token_offsets_and_unicode_columns() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
+    let temp = project(Some(ADOPT));
     for (source, raw, expected_start) in [
         (
             "f <- function(x) {\n #| x integer x\n x\n}\n",
@@ -383,16 +459,10 @@ fn schema_three_residuals_use_structural_token_offsets_and_unicode_columns() {
 
 #[test]
 fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
+    let temp = project(Some(&ADOPT.replace("R/**", "R/contracts.R")));
     fs::write(
         temp.path().join("DESCRIPTION"),
         "Package: typedemo\nTitle: Typehint Adoption Fixture\nVersion: 0.0.1\nDescription: Static declarations across package files.\nLicense: MIT\n",
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/contracts.R']\n",
     )
     .unwrap();
     fs::write(
@@ -405,13 +475,7 @@ fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
         "accepted(1L)\naccepted(\"wrong\")\n",
     )
     .unwrap();
-    assert_eq!(
-        check_codes(temp.path())
-            .iter()
-            .filter(|code| *code == "RY114")
-            .count(),
-        1
-    );
+    assert_eq!(count(temp.path(), "RY114"), 1);
     let output = invoke(temp.path(), &["dump-facts", "R", "--annotations"]);
     assert!(output.status.success(), "{output:?}");
     let facts: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -428,13 +492,7 @@ fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
 
 #[test]
 fn conflicting_source_comments_emit_ry116_and_export_each_claim() {
-    let temp = tempfile::tempdir().unwrap();
-    fs::create_dir(temp.path().join("R")).unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
-    )
-    .unwrap();
+    let temp = project(Some(ADOPT));
     fs::write(
         temp.path().join("R/main.R"),
         "f <- function(x) {\n #| x integer\n #| x character\n x\n}\nf(\"bad\")\n",

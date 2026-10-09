@@ -1,4 +1,5 @@
 use super::*;
+use crate::collect::{MAX_DEFAULT_HELPER_CALLS, closed_literal_value};
 use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
@@ -11,7 +12,7 @@ impl Checker {
         scope: &mut Scope,
         span: Span,
     ) -> RType {
-        let checking_declarations = !self.discarding && !self.declarations.records().is_empty();
+        let checking_declarations = !self.discarding && self.declarations.has_contracts();
         let mut direct_writes = FxSet::default();
         if checking_declarations {
             crate::collect::collect_callable_binding_write(func, args, &mut direct_writes);
@@ -56,9 +57,7 @@ impl Checker {
             None
         };
         if checking_declarations
-            && args
-                .iter()
-                .any(|arg| !declaration_closed_literal(&arg.value))
+            && args.iter().any(|arg| !closed_literal_value(&arg.value))
             && callee_name(func).is_some_and(|name| {
                 let name = semantic_argument_name(&name);
                 scope.lexical_definition(name).is_some()
@@ -108,10 +107,10 @@ impl Checker {
     }
 
     /// Discard declaration-only exact identities after evaluating an
-    /// expression whose binding effects cannot be excluded. Ordinary type
-    /// inference still runs only when declarations were explicitly adopted.
+    /// expression whose binding effects cannot be excluded. This extra
+    /// invalidation runs only when an adopted contract is selected.
     pub(crate) fn invalidate_declaration_identities(&self, scope: &mut Scope) {
-        if self.discarding || self.declarations.records().is_empty() {
+        if self.discarding || !self.declarations.has_contracts() {
             return;
         }
         let mut names = scope
@@ -137,7 +136,7 @@ impl Checker {
 
     fn declaration_known_call_writes(&self, name: &str, scope: &Scope) -> FxSet<String> {
         let mut writes = FxSet::default();
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         let mut visiting = FxSet::default();
         let mut alias_path = FxSet::default();
         self.declaration_named_helper_writes(
@@ -159,7 +158,7 @@ impl Checker {
         body: &[Stmt],
         scope: &Scope,
     ) -> FxSet<String> {
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         let possible = crate::collect::potential_helper_calls(params, body, &mut remaining);
         let mut writes = FxSet::default();
         let mut visiting = FxSet::default();
@@ -264,8 +263,8 @@ impl Checker {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn declaration_named_helper_writes(
-        &self,
+    fn declaration_named_helper_writes<'a>(
+        &'a self,
         name: &str,
         owner_path: &str,
         possible: Option<&crate::collect::PotentialHelperCalls>,
@@ -282,16 +281,16 @@ impl Checker {
         // A long chain of local or scope aliases must spend the same bound
         // as function and immediate-closure descent before recursing.
         *remaining -= 1;
-        let mut candidates = Vec::<UserFn>::new();
+        let mut candidates = Vec::<&UserFn>::new();
         let mut candidate_keys = FxSet::default();
-        let mut add = |function: &UserFn| {
+        let mut add = |function: &'a UserFn| {
             let key = (
                 function.source_path.clone(),
                 function.definition_span.start,
                 function.definition_span.end,
             );
             if candidate_keys.insert(key) {
-                candidates.push(function.clone());
+                candidates.push(function);
             }
         };
         if let Some(possible) = possible {
@@ -382,7 +381,7 @@ impl Checker {
         }
         let found = !candidates.is_empty();
         for function in candidates {
-            self.declaration_function_helper_writes(&function, scope, remaining, visiting, writes);
+            self.declaration_function_helper_writes(function, scope, remaining, visiting, writes);
         }
         if !found
             && possible.is_some_and(|possible| {
@@ -431,7 +430,7 @@ impl Checker {
                 param
                     .default
                     .as_ref()
-                    .is_some_and(|default| !declaration_closed_literal(default))
+                    .is_some_and(|default| !closed_literal_value(default))
             })
         }) {
             // An omitted default is also a promise. Without call-specific
@@ -459,10 +458,37 @@ impl Checker {
                 .iter()
                 .map(|param| semantic_argument_name(&param.name).to_string()),
         );
+        // Keep negative current-binding evidence, but only a collected
+        // global literal can transfer a positive proof into another helper's
+        // environment. A nested helper's captured frame remains unproved.
+        let mut captured_scope = Scope::default();
+        for name in scope.bindings.keys() {
+            let global_literal = scope.lexical_definition(name).is_some_and(|span| {
+                self.fn_table
+                    .capture_literal_bindings
+                    .get(name)
+                    .is_some_and(|definitions| {
+                        definitions.contains(&(self.path.clone(), span.start, span.end))
+                    })
+            });
+            if !global_literal {
+                captured_scope.insert(name.clone(), RType::unknown());
+            }
+        }
+        if !self
+            .fn_table
+            .capture_literal_bindings
+            .values()
+            .any(|definitions| definitions.contains(&key))
+        {
+            for name in self.fn_table.capture_literal_bindings.keys() {
+                captured_scope.insert(name.clone(), RType::unknown());
+            }
+        }
         self.declaration_possible_helper_writes(
             &possible,
             &function.source_path,
-            scope,
+            &captured_scope,
             remaining,
             visiting,
             writes,
@@ -836,6 +862,82 @@ impl Checker {
                 span,
             )
         {
+            return result;
+        }
+
+        // A base integer cast can create an NA even from a finite double.
+        // Keep that fact separate from the integer return mode, and decline
+        // to model classed inputs whose S3 method may change the result.
+        if lookup_name == "as.integer"
+            && matches!(
+                self.special_call_provenance(
+                    &name,
+                    func,
+                    &semantic_name,
+                    &lookup_name,
+                    "base",
+                    scope,
+                ),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
+            && let Some(input) = call.arg_types.first()
+        {
+            use ry_core::types::NewNaProvenance;
+            let mut result = RType::new(Mode::Integer, input.length);
+            result.value_facts.prior_na = input.value_facts.prior_na;
+            result.value_facts.all_values_known = input.value_facts.all_values_known;
+            let plain_numeric = matches!(input.mode, Mode::Double | Mode::Integer)
+                && !input.class.is_unknown()
+                && !input.class.has_known_class();
+            let mut introduced_here = false;
+            result.value_facts.new_na =
+                match input.value_facts.numeric_bounds.filter(|_| plain_numeric) {
+                    Some((low, high)) => {
+                        let low = f64::from_bits(low);
+                        let high = f64::from_bits(high);
+                        if low <= -2_147_483_648.0 || high >= 2_147_483_648.0 {
+                            introduced_here = true;
+                            if (low >= 2_147_483_648.0 || high <= -2_147_483_648.0)
+                                && !input.value_facts.prior_na
+                            {
+                                NewNaProvenance::ProvenOnly
+                            } else {
+                                NewNaProvenance::ProvenContains
+                            }
+                        } else {
+                            result.value_facts.numeric_bounds =
+                                Some((low.trunc().to_bits(), high.trunc().to_bits()));
+                            input.value_facts.new_na
+                        }
+                    }
+                    None if matches!(
+                        input.value_facts.new_na,
+                        NewNaProvenance::ProvenContains | NewNaProvenance::ProvenOnly
+                    ) =>
+                    {
+                        input.value_facts.new_na
+                    }
+                    None if plain_numeric && input.value_facts.all_values_known => {
+                        NewNaProvenance::None
+                    }
+                    None if plain_numeric && input.mode == Mode::Integer => {
+                        input.value_facts.new_na
+                    }
+                    None if input.mode == Mode::Null
+                        || matches!(input.length, Length::Zero | Length::Known(0)) =>
+                    {
+                        NewNaProvenance::None
+                    }
+                    None => NewNaProvenance::Possible,
+                };
+            if introduced_here {
+                self.emit(
+                    Severity::Warning,
+                    span,
+                    "RY119",
+                    "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
+                );
+            }
             return result;
         }
 
@@ -2126,7 +2228,7 @@ impl Checker {
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
-            let mut target = json_rtype_to_rtype(&assertion.target);
+            let mut target = guard_target(json_rtype_to_rtype(&assertion.target));
             // Non-literal opt-ins are conservatively treated like TRUE.
             for (param, null_target) in [
                 (
@@ -2371,12 +2473,16 @@ impl Checker {
     }
 
     pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
-        let class = arg_types.first()?.class.first()?;
+        let receiver = &arg_types.first()?.class;
+        let class = receiver.first()?;
         let slot = self
             .fn_table
             .s4_methods
             .get(&(generic.to_string(), class.to_string()))?;
-        Some(self.read_return_slot(*slot))
+        Some(dispatch_result(
+            receiver.guarded,
+            self.read_return_slot(*slot),
+        ))
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an
@@ -2735,18 +2841,6 @@ fn assertion_is_provenanced(signature: &FunctionSig, assertion: &AssertionSpec) 
             })
 }
 
-fn declaration_closed_literal(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Logical(..)
-            | Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::String(..)
-            | Expr::Null(..)
-            | Expr::Na(..)
-    )
-}
-
 #[cfg(test)]
 mod declaration_effect_budget_tests {
     use super::*;
@@ -2776,7 +2870,7 @@ mod declaration_effect_budget_tests {
             "a spent budget must not inspect even a direct nested write"
         );
 
-        let mut remaining = 64;
+        let mut remaining = MAX_DEFAULT_HELPER_CALLS;
         writes.clear();
         checker.declaration_function_helper_writes(
             function,

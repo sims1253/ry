@@ -62,8 +62,7 @@ impl RParser {
             })?;
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
-        let (comments, special_operators) = collect_comments(root, src)?;
-        let function_bodies = collect_function_bodies(root);
+        let (comments, special_operators, function_bodies) = collect_lexical(root, src)?;
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -956,6 +955,9 @@ fn process_r_escapes(s: &str) -> String {
 // Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
 const MAX_SYNTAX_DEPTH: usize = 128;
 
+/// Comments, special-operator spans, and function ranges from one CST walk.
+type LexicalNodes = (Vec<crate::ast::Comment>, Vec<Span>, Vec<FunctionBody>);
+
 /// Collect every `comment` node in the tree, returning `(line, body)`
 /// pairs in source order. The body is the text AFTER the leading `#`
 /// (untrimmed). These are the ONLY lexically-real comments -- a `#`
@@ -968,13 +970,14 @@ const MAX_SYNTAX_DEPTH: usize = 128;
 /// special-operator bodies as raw bytes without multibyte validation,
 /// so the checker's invalid-UTF-8 tolerance treats both the same way
 /// (#376). Special spans are returned sorted by start offset.
+/// It also collects every function's lexical span and any braced body span,
+/// sorted by function span, so annotation readers can identify the innermost
+/// owning function.
 /// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
-fn collect_comments(
-    root: tree_sitter::Node,
-    src: &str,
-) -> Result<(Vec<crate::ast::Comment>, Vec<Span>), ParseError> {
+fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, ParseError> {
     let mut out = Vec::new();
     let mut special = Vec::new();
+    let mut bodies = Vec::new();
     let mut stack = vec![(root, 0_usize)];
     while let Some((node, depth)) = stack.pop() {
         if depth > MAX_SYNTAX_DEPTH {
@@ -997,6 +1000,14 @@ fn collect_comments(
             }
         } else if node.kind() == "special" {
             special.push(self_span(node));
+        } else if node.kind() == "function_definition" {
+            bodies.push(FunctionBody {
+                function: self_span(node),
+                body: node
+                    .child_by_field_name("body")
+                    .filter(|body| body.kind() == "braced_expression")
+                    .map(self_span),
+            });
         }
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
@@ -1005,7 +1016,8 @@ fn collect_comments(
     }
     out.sort_by_key(|c| c.line);
     special.sort_by_key(|span| span.start);
-    Ok((out, special))
+    bodies.sort_by_key(|body| (body.function.start, body.function.end));
+    Ok((out, special, bodies))
 }
 
 /// A node's span without a `&self` receiver (the free-function twin of
@@ -1018,37 +1030,6 @@ fn self_span(node: tree_sitter::Node) -> Span {
         position.row,
         position.column,
     )
-}
-
-/// Collect every function's lexical span and any braced body span so
-/// annotation readers can identify the innermost owning function.
-fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
-    let mut bodies = Vec::new();
-    let mut stack = vec![root];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "function_definition" {
-            let function_position = node.start_position();
-            let body = node
-                .child_by_field_name("body")
-                .filter(|body| body.kind() == "braced_expression")
-                .map(self_span);
-            bodies.push(FunctionBody {
-                function: Span::new(
-                    node.start_byte(),
-                    node.end_byte(),
-                    function_position.row,
-                    function_position.column,
-                ),
-                body,
-            });
-        }
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            stack.push(child);
-        }
-    }
-    bodies.sort_by_key(|body| (body.function.start, body.function.end));
-    bodies
 }
 
 /// Walk the parse tree and collect spans of `ERROR` and `MISSING` nodes.

@@ -531,8 +531,9 @@ pub(crate) fn run_dump_types(
         // the same precision loss without polluting the JSON on stdout.
         for (path, reason) in &group.degraded_scopes {
             eprintln!(
-                "ry: {}: degraded scope ({reason}); serialized data file(s) over the byte cap fell back to file stems",
-                path.display()
+                "ry: {}: degraded scope ({}); serialized inventory unavailable",
+                path.display(),
+                reason.description()
             );
         }
         for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {

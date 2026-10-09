@@ -112,7 +112,9 @@ pub fn is_file_eligible_with_limits(
 ///
 /// What stays out: the `index.max-files` count is not a path property (the
 /// walk enforces it first-come-first-served per root), so callers apply it
-/// at commit time against their own entry accounting (#525).
+/// at commit time against their own entry accounting (#525). The
+/// `reports.enabled` opt-in is a config property, not a path one: callers
+/// gate reports before asking (the language server's eligibility check).
 ///
 /// Point-in-time verdict: the checks above read the filesystem entry by
 /// entry, so concurrent edits can make them disagree with each other and
@@ -380,26 +382,37 @@ impl BuildIgnoredIncludes {
     }
 }
 
-/// Whether `path` carries an R source extension (the same set the
-/// directory walk treats as R source: conventional `.R`/`.r` plus the
-/// historical S-dialect `.S`/`.s`/`.q` spellings). Single-file
-/// eligibility checks that cannot afford a full walk (watched-file
-/// events, close-time refresh) classify through this.
+/// Whether `path` carries an extension the directory walk admits:
+/// conventional `.R`/`.r`, the historical S-dialect `.S`/`.s`/`.q`
+/// spellings, and report extensions in any case. Single-file eligibility
+/// checks that cannot afford a full walk (watched-file events, close-time
+/// refresh) classify through this; callers apply `reports.enabled`.
 pub fn is_r_source_path(path: &Path) -> bool {
     is_source_path(path)
 }
 
-/// Every extension discovery admits: R, the S-dialect spellings, and reports.
-pub fn source_extensions() -> impl Iterator<Item = &'static str> {
-    ["R", "r", "S", "s", "q"]
+const R_EXTENSIONS: [&str; 5] = ["R", "r", "S", "s", "q"];
+
+/// Glob alternatives for every extension discovery admits: R, the
+/// S-dialect spellings, and reports as case-insensitive character classes.
+pub fn source_extension_globs() -> impl Iterator<Item = String> {
+    R_EXTENSIONS
         .into_iter()
-        .chain(crate::reports::REPORT_EXTENSIONS.iter().copied())
+        .map(str::to_owned)
+        .chain(crate::reports::REPORT_EXTENSIONS.iter().map(|extension| {
+            extension
+                .chars()
+                .map(|letter| format!("[{}{letter}]", letter.to_ascii_uppercase()))
+                .collect()
+        }))
 }
 
 fn is_source_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| source_extensions().any(|source| source == ext))
+    crate::reports::is_report_path(path)
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| R_EXTENSIONS.contains(&ext))
 }
 
 /// Result of a bounded directory discovery.
@@ -689,6 +702,7 @@ fn discover_recursive(
             );
         } else if is_source_path(&path) {
             if crate::reports::is_report_path(&path) && !reports_enabled {
+                skipped.record(&path, false, "reports.enabled = false", limits.max_files);
                 continue;
             }
             if !check_test_fixtures && is_test_fixture(&path) {
@@ -1257,6 +1271,37 @@ mod shared_tests {
             .collect::<Vec<_>>();
         expected.sort();
         assert_eq!(paths, expected);
+    }
+
+    #[test]
+    fn report_extensions_ignore_case_and_disabled_reports_are_explained() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let names = ["a.Rmd", "b.RMD", "c.qmd", "d.QMD", "e.Qmd"];
+        for name in names {
+            std::fs::write(root.join(name), "```{r}\nx <- 1L\n```\n").unwrap();
+        }
+        let expected: Vec<_> = names.map(|name| root.join(name)).into();
+
+        let disabled = discover_r_files(root, None, &ry_config::Config::default(), false);
+        assert!(disabled.files.is_empty());
+        let skipped: Vec<_> = disabled
+            .skipped
+            .entries
+            .iter()
+            .map(|(path, reason)| {
+                assert_eq!(*reason, "reports.enabled = false");
+                path.clone()
+            })
+            .collect();
+        assert_eq!(skipped, expected);
+
+        let mut config = ry_config::Config::default();
+        config.reports.enabled = true;
+        assert_eq!(discover_r_files(root, None, &config, false).files, expected);
+
+        let globs: Vec<_> = source_extension_globs().collect();
+        assert!(globs.contains(&"[Rr][Mm][Dd]".to_owned()), "{globs:?}");
     }
 
     #[test]

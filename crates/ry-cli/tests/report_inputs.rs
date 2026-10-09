@@ -76,6 +76,8 @@ fn chunk_execution_options_are_truthful_end_to_end() {
             0,
         ),
         (body("knitr::`opts_chunk`$set(eval=FALSE)"), 0, 1),
+        (body("knitr:::opts_chunk$set(eval=FALSE)"), 0, 1),
+        (body("r'(knitr)'::opts_chunk$set(eval=FALSE)"), 0, 1),
         (body("`knitr`::opts_chunk$set(eval=FALSE)"), 0, 1),
         (body(r"knitr::`opts_\x63hunk`$set(eval=FALSE)"), 0, 1),
         (body(r#"knitr::"opts_\x63hunk"$set(eval=FALSE)"#), 0, 1),
@@ -94,6 +96,7 @@ fn chunk_execution_options_are_truthful_end_to_end() {
         // Header metadata is R, but quoted commas stay inside one field.
         (header("{r, fig.cap={\"caption\"}}"), 1, 0),
         (header("{r, fig.cap=\"caption, eval=FALSE\"}"), 1, 0),
+        (header(r#"{r, fig.cap=r"(a " caption, eval=FALSE)"}"#), 1, 0),
         (
             header("{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}"),
             0,
@@ -126,6 +129,10 @@ fn chunk_execution_options_are_truthful_end_to_end() {
         ),
         // Quoted keys are recognized; option names are case-sensitive.
         (single("{r, eval=FALSE}"), 0, 0),
+        // knitr lowercases the engine and runs backtick fences only.
+        (single("{R}"), 1, 0),
+        (format!("~~~{{r}}\nx <- 'a'\n~~~\n{later}"), 1, 0),
+        (format!("````md\n```{{r}}\nNULL\n```\n````\n{later}"), 0, 1),
         (single("{r}\n#| eval: false"), 0, 0),
         (single("{r, \"eval\"=FALSE}"), 0, 0),
         (single("{r}\n#| \"eval\": false"), 0, 0),
@@ -234,6 +241,19 @@ fn report_input_is_disabled_by_default_and_r_files_remain_checked() {
         stderr.contains("a.qmd (reports.enabled = false)"),
         "{stderr}"
     );
+}
+
+#[test]
+fn report_extensions_ignore_case_for_direct_and_directory_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let path = root.path().join("memo.QMD");
+    fs::write(&path, "Some prose.\n```{r}\n\"a\" + 1L\n```\n").unwrap();
+    for input in [root.path(), path.as_path()] {
+        let diagnostics = check(input);
+        assert_eq!(code(&diagnostics, "RY040").len(), 1, "{diagnostics:?}");
+        assert!(code(&diagnostics, "RY000").is_empty(), "{diagnostics:?}");
+    }
 }
 
 #[test]

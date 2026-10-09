@@ -130,7 +130,7 @@ fn watcher_registration_includes_r_sources() {
         assert!(
             globs
                 .iter()
-                .any(|glob| *glob == json!("**/*.{R,r,S,s,q,Rmd,rmd,qmd}")),
+                .any(|glob| *glob == json!("**/*.{R,r,S,s,q,[Rr][Mm][Dd],[Qq][Mm][Dd]}")),
             "registration must watch R source files, got: {globs:?}"
         );
         join_session(session, server).await;

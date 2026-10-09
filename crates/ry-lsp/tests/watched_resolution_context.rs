@@ -203,3 +203,54 @@ fn watched_edit_moves_load_bindings_to_the_new_line() {
         join_session(session, server).await;
     });
 }
+
+/// A report is its own resolution group, keyed by its path. A watched
+/// report creation re-resolves that group, which must contain the report
+/// itself, or the report checks against an empty context: its configured
+/// global goes unresolved until a rescan.
+#[test]
+fn watched_report_resolves_configured_globals_without_a_rescan() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture
+            .write_file(
+                "ry.toml",
+                "globals = [\"my_global\"]\n[reports]\nenabled = true\n",
+            )
+            .unwrap();
+        fixture.write_file("main.R", "w <- 1L\n").unwrap();
+        let main_uri = file_uri(&fixture.path("main.R"));
+        let (mut session, server) =
+            spawn_session(&[fixture.root()], watching_capabilities(), None).await;
+        answer_watcher_registration(&mut session).await;
+        sync_barrier(&mut session, &main_uri).await;
+        settle_then_close(&mut session, &main_uri).await;
+
+        fixture
+            .write_file("memo.qmd", "```{r}\nx <- my_global\n```\n")
+            .unwrap();
+        let memo_uri = file_uri(&fixture.path("memo.qmd"));
+        let create_mark = session.publication_mark();
+        session
+            .notify(
+                "workspace/didChangeWatchedFiles",
+                json!({"changes": [{"uri": memo_uri, "type": 1}]}),
+            )
+            .await
+            .unwrap();
+        let created = session
+            .published_diagnostics_after(&memo_uri, create_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry010_for(&created, "my_global"),
+            "the watched report must resolve the configured global without a rescan: {created}"
+        );
+
+        join_session(session, server).await;
+    });
+}

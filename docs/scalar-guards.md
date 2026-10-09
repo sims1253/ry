@@ -18,70 +18,10 @@ that every caller, or a later assignment from an option, supplies a scalar.
 | Pattern | What ry can miss or overstate |
 | --- | --- |
 | `length(x) == 1L && x == 1L` in a package | The guard is honored when `length` resolves to base modulo the package search path, unless the parameter is provably classed or the project registers, defines, or imports any `length.*` method. A `length` method on the search path for a class ry cannot name can still make the guard lie. |
-| `stopifnot(is.null(x) || length(x) == 1L)` before a later use | A successful base `stopifnot` now carries a scalar-or-NULL fact to the later RY032 check. A final named assertion in `...` has the same effect; `local`, `exprs`, and `exprObject` are controls and establish no predicate fact. The pinned purrr `stopifnot(is.null(before) || (before > 0 && before <= n))` has the same accepted-path result because `&&` checks the comparison's length and `before = NULL` cannot rebind itself when forced. A nonliteral default may return a scalar while replacing its own formal with a vector, so that assertion cannot establish a fact about the later binding. Reassignment kills the fact; an effectful or unknown RHS, an unforced formal or delayed binding read, shadowed operators or parentheses, and locally known S3 dispatch risks cannot establish it. |
-| The same assertion after `library(stats)` or `attach(list())` | A preceding call that leaves the search path, data mask, or effects uncertain can prevent the checker from proving that the assertion used the expected base operations and kept the same binding. RY032 may therefore remain where the otherwise identical isolated guard is quiet. An unmodeled `load()` or `detach()` has the same certainty boundary. |
-| A helper called before the assertion installs or might install a binding | A called helper, forced default, callable alias, or computed call may replace the subject even if its old value was a literal default. An invoked formal can receive an installing callback even when its default is harmless; an unused or proven inert callback leaves the subject stable. A callback wrapped by another expression is still uncertain if that value reaches a possible invocation; merely storing it with `base::invisible()` does not invoke it. Top-level aliases also carry callable values through qualified `base::identity()` and similar value wrappers, including simple assignments inside a returned block. A string used as a `do.call()` target can name an installer, and an invoked callback can carry that effect across a package-local helper hop. A `[[` extraction stays uncertain because that operator can be masked. The checker retains RY032 when it cannot rule out a replacement. A non-base qualified helper given a possibly caller-owned frame is uncertain without package identity; it is not equated with an unrelated local function of the same bare name. An unqualified `new.env()` or `invisible()` can be masked outside the helper, so it cannot certify a local-only installer frame or an unforced default. Qualified `base::new.env()`, `base::environment()`, and `base::invisible()` preserve those quiet controls when the remaining effect path is known. Simply backticked aliases use their ordinary binding names. An escaped alias that enters the bounded binding graph can make more project helpers uncertain because its target cannot be identified. |
-| A helper invokes a computed function head such as `ops$run(NULL)` | The current caller-binding summary cannot prove a computed call harmless, even if `ops <- list(run = base::identity)` makes this example succeed in R. It conservatively retains RY032 after the helper; a direct `base::identity(NULL)` control stays quiet. |
-| A function value is called after a scalar assertion | ry selects a named or computed callable before evaluating its arguments. A later argument that rebinds the head cannot change which function this call invokes. The bounded source check follows qualified `base::identity()` and `base::invisible()`, a returned block or function, and a list extraction. If the selected value can be `assign()`, `delayedAssign()`, or `makeActiveBinding()` in the current frame, the earlier scalar fact is withdrawn. A literal inert function, a later pure overwrite, and a proven `base::new.env()` target keep it. A dynamic head or maskable `[[` extraction cannot certify a harmless callable, so RY032 may remain for a runtime-safe call. An alias of `base::do.call()` is selected before its arguments run, but its `what` target is resolved after they run. Merely constructing or copying a function value does not invoke it. |
-| A local helper is called after a scalar assertion | ry follows the local function value at its binding, including a direct call or a `do.call()` target. A helper that can use `assign()` on the supplied current environment withdraws the assertion; a helper proven pure, or an exact qualified installer into a proven fresh `base::new.env()`, keeps it. Copying the helper preserves its old value after the original name is overwritten. `is.function(p)` refines the type of the existing callable; it does not erase an installer alternative from a loop or branch. These are bounded effect proofs: an unresolved helper body or actual environment remains uncertain. |
-| `length(x) > 1L || !x %in% modes` returned to `if` | ry checks `&&`/`||` outside conditions. For empty `x`, this particular expression returns `NA` rather than throwing at `||`; the later caller's `if` rejects that `NA`. Propagating this return alternative to the consumer remains part of the local-call and proven-NA work (#568, #354). |
+| `stopifnot(is.null(x) || length(x) == 1L)` before a later use | A successful base `stopifnot` carries a scalar-or-NULL fact to the later RY032 check, within the proof boundary below. Outside it, RY032 stays as before. |
+| `length(x) > 1L || !x %in% modes` returned to `if` | ry can miss the missing-value result for an empty input. |
 | `is.numeric(x) \|\| all(is.na(x))` before a stub-declared mode demand | RY110 covers this guard side of the empty-input blind spot when the accepted path and the demand are in the same function (#462), including guards returned by a single-formal helper in the same file (`is_numeric_or_na <- function(x) ...`) and applied by the demanding function itself -- directly, via `stopifnot()`, or elementwise through a `map`-family call reduced with `all()` (#479). A guard validated in one function but demanded in another (a validator-summary hop), or applied from another file, keeps its demand invisible: the former flow belongs to the #351 flow-sensitivity cycle, the latter cannot attribute the helper's span to the consuming file. A bare `all(is.na(x))` guard (skip logic, no predicate operand) stays quiet by design, as does a positive guard's continuation (the demand there also runs when the guard is FALSE). |
-| A value copied to a local and then reassigned in a loop | A proven unclassed length-greater-than-one input now survives the alias and loop join as a possible vector path for RY032, including another plain alias inside or after the loop. Numeric comparisons recognize a positive or negative literal on either side when the comparison and unary minus retain base identity. A custom `&&` or `||` operator does not have base R's scalar requirement. An unknown-length parameter such as tibble's `.rows` remains quiet without a proven vector call path; unknown length alone is not evidence of a vector error. |
-
-For helper-local `do.call()`, ry follows a callable copied into a local at the
-assignment where that copy occurs. Rebinding the old name later does not
-change the copy. A repeated `for`, `while`, or `repeat` body can carry a new
-callable back to an earlier `do.call()` on its next iteration; ry keeps the
-effect uncertain when that path may install a caller binding. The same bounded
-check covers a direct or aliased local call inside the repeated body, including
-`base::do.call(p, ...)` when `p` changes on a later iteration. An explicit
-base `list()` in a `for` header can supply different callable values to the
-loop variable, so an installer selected from that list also withdraws the
-earlier scalar fact. A `<<-` in a function writes to an enclosing frame; it
-does not replace a same-named local callable. A callable proven inert both
-before a loop and on every exit path remains inert for a computed call after
-the loop. An explicit
-`base::new.env()` target and a pure overwrite remain quiet. Loop exits with
-`break` or `next` retain bounded installer alternatives even when another
-exit leaves an inert function; a call after the loop checks each alternative
-against its actual target frame. A literal
-single-element `for` sequence has no next iteration. The spelling `1:1`
-does not certify one iteration because R permits a masked `:` operator.
-The repeated-body check also protects assertions first established inside the
-body, and accounts for a callable selected on the first iteration before a
-later pure overwrite. It marks only the relevant carried callable uncertain.
-When every possible installer value is an immediate `base::assign`, a
-successful assertion after that call may establish a new scalar fact; a
-delayed, active, or unknown installer keeps the binding uncertain.
-Copying an outer project helper name before its value is established locally
-also stays uncertain, even when that helper is harmless at runtime. Calls
-through a known `delayedAssign` alias, to a helper that uses `assign()` on
-its caller's frame, or to `assign()` with an explicit current-frame target can
-invalidate a successful earlier scalar assertion. A qualified fresh local
-environment remains a quiet control. In a direct call,
-`base::environment()` names the current frame; `base::new.env()` creates a
-distinct frame. The effect check follows simple copied, wrapped, returned,
-and branch-joined callable values. A merely assigned callable is harmless
-until invoked; a conditional alias remains uncertain if one reachable value
-can install a binding. A `do.call()` target and a function-valued formal may
-invoke an installer too, while a proven pure target or a later pure overwrite
-keeps the guarded binding stable.
-
-Direct calls, computed calls, and `do.call()` use the same helper argument
-proof. Numeric, logical, NULL, and NA actuals cannot select an installer.
-Omitted callbacks use the helper's default effect summary; `...` and `..n`
-select unmatched actuals. A stored closure contributes effects only when
-called. Unresolved string callback targets remain uncertain because
-`do.call()` can resolve them by name. Statement and expression assignments
-carry the same callable provenance.
-
-A branch that stops contributes no scalar-binding state to the continuation.
-An entered loop keeps the callable value on its reachable exits; an all-path
-pure overwrite removes an earlier installer. Possibly empty loops retain the
-entry value. Literal `:` endpoints prove entry only while the sequence
-operator retains base identity. Fresh installer targets include `assign`'s
-`pos` argument and helper formals forwarded through a simple default alias. A base-resolved
-`list()` supplies the same `do.call()` evidence as `base::list()`.
+| A value copied to a local and then reassigned in a loop | A proven unclassed vector of length two or more survives plain aliases and loop joins as a possible first-iteration or empty-loop path. Unknown length alone stays quiet. |
 
 Other return expressions are covered. For example, the first function above
 receives RY032 even though the expression is outside an `if` condition.
@@ -104,7 +44,26 @@ equality guard is honored only when the guarded parameter is provably
 unclassed, or of unknown class while no `length.*` method is registered,
 defined, or imported by the project — and the operand is not reassigned
 inside the guarded expression ([#372](https://github.com/sims1253/ry/issues/372)).
-The same dispatch boundary applies to assertions that rely on `length()`.
-Loop-carried vector evidence is retained only for a known unclassed vector
-alternative. A later exact-length guard removes that alternative from its
-true path; changing the binding also invalidates the prior assertion.
+
+## Scalar facts from `stopifnot`
+
+A successful base `stopifnot(is.null(x) || length(x) == 1L)`, or
+`stopifnot(is.null(x) || (x > 0 && x <= n))` as in purrr's `prepend()`,
+proves that `x` is NULL or scalar ([#351](https://github.com/sims1253/ry/issues/351)).
+The proof needs base identity for `stopifnot`, `is.null`, `length`, the
+comparison, `&&`, `||`, and `(`; no project comparison or `length` method;
+a final predicate argument (not `local`, `exprs`, or `exprObject`); a known
+search path and data mask; and a subject whose first read cannot rebind it (a
+local, a formal without a default, or a formal with a literal default). The
+rest of an `&&` assertion may use only literals, the subject, other local
+values, and base comparisons.
+
+The fact ends when `x` is reassigned, after unknown effects, and after any
+call that might install a binding in the frame: `assign`, `delayedAssign`,
+`makeActiveBinding`, `do.call`, `eval`, `rm`, and similar base calls; a
+computed call head; a formal, local, or project binding called directly; or
+a closure passed as an argument unless its body is a single literal. After
+such a call, later assertions in the same frame prove nothing, and in a
+loop a possible installer anywhere in the body applies to the whole body.
+These rules are deliberately coarse: a harmless helper loses the fact too,
+which leaves the RY032 warning ry gave before this proof existed.

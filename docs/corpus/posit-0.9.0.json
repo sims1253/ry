@@ -4323,10 +4323,8 @@
     "type-narrowing": 44,
     "manual-audit": 142,
     "data-masking-nse": 1,
-    "ry001-null-union": 3,
     "local-closure-forward-ref": 19,
     "test-fixture": 74,
-    "ry109-self-defaults": 25,
     "s3-method-dispatch": 3,
     "delayed-assign": 15,
     "function-shadowing": 3,
@@ -4334,7 +4332,9 @@
     "ifelse-mode": 3,
     "numeric-if-idiom": 3,
     "namespace-on-load": 46,
-    "ry111-constant-shadowing": 17
+    "ry109-self-defaults": 25,
+    "ry111-constant-shadowing": 17,
+    "ry001-null-union": 3
   },
   "notes": [
     "testthat block scoping (#368) makes sibling blocks reachable after a mid-test `return()`, surfacing two reviewed rlang RY040 false positives previously hidden by the flattened-scope unreachability: tests/testthat/test-cnd-message.R:481:8 quotes its operand through `enexpr()` and never forces the promise, and tests/testthat/test-trace.R:587:28 is a deliberate caught-error fixture (`identity(1 + \"\")` on the error path under `catch_cnd`). Both are test-fixture false positives; all 37 true positives are retained.",

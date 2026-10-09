@@ -1006,22 +1006,22 @@
     "unowned": 22
   },
   "audit_group_counts": {
-    "ifelse-mode": 2,
-    "ry109-self-defaults": 10,
-    "pr195-nse-stubs": 6,
-    "P7b": 3,
+    "upstream-ggplot2": 4,
+    "P7a": 2,
     "P4b": 1,
     "P4a": 3,
     "P4c": 1,
     "P2": 26,
     "P8": 3,
-    "plan-32-33": 22,
-    "upstream-ggplot2": 4,
-    "P7a": 2,
+    "P7b": 3,
     "upstream-glue": 1,
+    "plan-32-33": 22,
+    "pr195-nse-stubs": 6,
+    "ifelse-mode": 2,
+    "ry109-self-defaults": 10,
     "seq-defaulted": 1,
-    "ry001-null-union": 1,
-    "ry111-constant-shadowing": 11
+    "ry111-constant-shadowing": 11,
+    "ry001-null-union": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",

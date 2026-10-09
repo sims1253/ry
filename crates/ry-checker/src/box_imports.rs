@@ -11,29 +11,23 @@ use std::path::{Path, PathBuf};
 
 const MAX_MODULE_BYTES: u64 = 1_048_576;
 const MAX_MODULE_DEPTH: u8 = 4;
+/// Function-alias prefix of a callable imported from a package.
+const IMPORT_ALIAS: &str = "__ry_box_import::";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum BoxObject {
     Package(String),
     Module(Arc<BoxInventory>),
     ModuleFunction(Arc<BoxFunction>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BoxParam {
-    pub(crate) name: String,
-    pub(crate) required: bool,
-    quoting: bool,
-    defused: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BoxFunction {
-    params: Vec<BoxParam>,
+    params: Vec<UserParam>,
     return_type: RType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct BoxInventory {
     pub(crate) exports: BTreeMap<String, RType>,
     pub(crate) functions: BTreeMap<String, Arc<BoxFunction>>,
@@ -85,14 +79,9 @@ fn static_name(expr: &Expr) -> Option<String> {
 
 fn path_segments(expr: &Expr, segments: &mut Vec<String>) -> bool {
     match expr {
-        Expr::Ident { name, .. } => {
-            if let Some(name) = binding_name_token(name) {
-                segments.push(name);
-                true
-            } else {
-                false
-            }
-        }
+        Expr::Ident { name, .. } => binding_name_token(name)
+            .map(|name| segments.push(name))
+            .is_some(),
         Expr::BinOp {
             op: BinOpKind::Div,
             lhs,
@@ -103,95 +92,66 @@ fn path_segments(expr: &Expr, segments: &mut Vec<String>) -> bool {
     }
 }
 
+/// Collect an import's path and return its `[...]` selection, if any. The
+/// parser attaches an index to the final path component (`./a/b[x]` is
+/// `./a/(b[x])`); other index kinds there select nothing.
+fn import_path<'a>(expr: &'a Expr, segments: &mut Vec<String>) -> Option<Option<&'a [Arg]>> {
+    match expr {
+        Expr::Index {
+            base, kind, args, ..
+        } => path_segments(base, segments)
+            .then_some((*kind == IndexKind::Single).then_some(args.as_slice())),
+        Expr::BinOp {
+            op: BinOpKind::Div,
+            lhs,
+            rhs,
+            ..
+        } if matches!(rhs.as_ref(), Expr::Index { .. }) => {
+            if path_segments(lhs, segments) {
+                import_path(rhs, segments)
+            } else {
+                None
+            }
+        }
+        _ => path_segments(expr, segments).then_some(None),
+    }
+}
+
 fn parse_import(argument: &Arg) -> Option<Import> {
-    let mut selections = None;
+    let mut segments = Vec::new();
+    let selected = import_path(&argument.value, &mut segments)?;
     let mut wildcard = false;
     let mut selection_unknown = false;
-    // The parser puts `[...]` on the final path component, not on the
-    // entire `/` expression: `./a/b[x]` is `./a/(b[x])` in the AST.
-    fn strip_selection<'a>(
-        expr: &'a Expr,
-        selections: &mut Option<Vec<Selection>>,
-        wildcard: &mut bool,
-        unknown: &mut bool,
-    ) -> Option<&'a Expr> {
-        match expr {
-            Expr::Index {
-                base,
-                kind: IndexKind::Single,
-                args,
-                ..
-            } => {
-                if selections.is_some() {
-                    return None;
-                }
-                let mut picked = Vec::new();
-                for arg in args {
-                    match static_name(&arg.value) {
-                        Some(original) if original == "..." && arg.name.is_none() => {
-                            *wildcard = true;
-                        }
-                        Some(original) if original != "..." => {
-                            if let Some(bound) = arg
-                                .name
-                                .as_deref()
-                                .map(binding_name_token)
-                                .unwrap_or_else(|| Some(original.clone()))
-                            {
-                                picked.push(Selection {
-                                    original,
-                                    bound,
-                                    span: arg.span,
-                                });
-                            } else {
-                                *unknown = true;
-                            }
-                        }
-                        _ => *unknown = true,
-                    }
-                }
-                *selections = Some(picked);
-                Some(base)
+    let selection = selected.map(|args| {
+        let mut picked = Vec::new();
+        for arg in args {
+            let original = static_name(&arg.value);
+            if original.as_deref() == Some("...") && arg.name.is_none() {
+                wildcard = true;
+                continue;
             }
-            Expr::BinOp {
-                op: BinOpKind::Div,
-                rhs,
-                ..
-            } if matches!(rhs.as_ref(), Expr::Index { .. }) => {
-                strip_selection(rhs, selections, wildcard, unknown)?;
-                Some(expr)
-            }
-            _ => Some(expr),
-        }
-    }
-    let core = strip_selection(
-        &argument.value,
-        &mut selections,
-        &mut wildcard,
-        &mut selection_unknown,
-    )?;
-    let mut segments = Vec::new();
-    if !path_segments(core, &mut segments) {
-        // In a `/` chain with a selected final component, strip that final
-        // index while retaining every preceding literal path component.
-        fn selected_segments(expr: &Expr, segments: &mut Vec<String>) -> bool {
-            match expr {
-                Expr::BinOp {
-                    op: BinOpKind::Div,
-                    lhs,
-                    rhs,
-                    ..
-                } => path_segments(lhs, segments) && selected_segments(rhs, segments),
-                Expr::Index { base, .. } => path_segments(base, segments),
-                _ => path_segments(expr, segments),
+            let bound = match &arg.name {
+                Some(alias) => binding_name_token(alias),
+                None => original.clone(),
+            };
+            match (original, bound) {
+                (Some(original), Some(bound)) if original != "..." => picked.push(Selection {
+                    original,
+                    bound,
+                    span: arg.span,
+                }),
+                _ => selection_unknown = true,
             }
         }
-        segments.clear();
-        if !selected_segments(core, &mut segments) {
-            return None;
-        }
-    }
-    let basename = segments.last()?.clone();
+        picked
+    });
+    // A selective import binds only the selected names unless the import
+    // explicitly names the module/package object.
+    let object_name = match &argument.name {
+        Some(alias) => Some(binding_name_token(alias)?),
+        None if selection.is_none() => segments.last().cloned(),
+        None => None,
+    };
     let target = match segments.as_slice() {
         [package] if package != "." && package != ".." => Target::Package(package.clone()),
         [first, ..] if first == "." || first == ".." => Target::Module(segments),
@@ -200,23 +160,10 @@ fn parse_import(argument: &Arg) -> Option<Import> {
         // bind opaque values through the ordinary import path.
         _ => Target::UnresolvedModule,
     };
-    // A selective import binds only the selected names unless the import
-    // explicitly names the module/package object.
-    let object_name = if selections.is_none() || argument.name.is_some() {
-        Some(
-            argument
-                .name
-                .as_deref()
-                .map(binding_name_token)
-                .unwrap_or_else(|| Some(basename))?,
-        )
-    } else {
-        None
-    };
     Some(Import {
         target,
         object_name,
-        selection: selections,
+        selection,
         wildcard,
         selection_unknown,
     })
@@ -287,50 +234,50 @@ fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]>
 /// not execute them, so a missing syntactic assignment is not proof that a
 /// name is absent. Function bodies are inert until called; box's quoted
 /// imports also change the lexical environment used by exported functions.
+/// Returns `(uncertain, imports)`.
 fn module_load_effects(file: &SourceFile) -> (bool, bool) {
     let mut uncertain = false;
     let mut imports = false;
-    let _ = walk_stmts(
-        &file.stmts,
-        Walk {
-            fn_bodies: false,
-            ..Walk::ALL
-        },
-        |node, _| {
-            match node {
-                AstNode::Expr(Expr::Function { .. }) => {
-                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
-                }
-                AstNode::Expr(Expr::Call { func, args, .. })
-                    if ident_name(func) == Some("box::use") =>
-                {
-                    imports = true;
-                    uncertain |= args.iter().any(|argument| parse_import(argument).is_none());
-                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
-                }
-                AstNode::Expr(Expr::Call { func, args, .. })
-                    if ident_name(func) == Some("box::export")
-                        && args
-                            .iter()
-                            .all(|argument| static_name(&argument.value).is_some()) =>
-                {
-                    return ControlFlow::<(), Descend>::Continue(Descend::Skip);
-                }
-                // `%<>%` is dispatched through an operator; its target and
-                // effects cannot certify an absent module binding.
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::PipeAssign,
-                    ..
-                }) => uncertain = true,
-                AstNode::Expr(Expr::Call { .. }) => uncertain = true,
-                // Executed braced and conditional expressions can write
-                // module bindings without producing a top-level Stmt::Assign.
-                AstNode::Expr(Expr::Block { .. } | Expr::If { .. }) => uncertain = true,
-                _ => {}
+    let walk = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    let _ = walk_stmts(&file.stmts, walk, |node, _| {
+        let AstNode::Expr(expr) = node else {
+            return ControlFlow::<(), Descend>::Continue(Descend::Into);
+        };
+        let descend = match expr {
+            Expr::Function { .. } => Descend::Skip,
+            Expr::Call { func, args, .. } if ident_name(func) == Some("box::use") => {
+                imports = true;
+                uncertain |= args.iter().any(|argument| parse_import(argument).is_none());
+                Descend::Skip
             }
-            ControlFlow::<(), Descend>::Continue(Descend::Into)
-        },
-    );
+            Expr::Call { func, args, .. }
+                if ident_name(func) == Some("box::export")
+                    && args
+                        .iter()
+                        .all(|argument| static_name(&argument.value).is_some()) =>
+            {
+                Descend::Skip
+            }
+            // `%<>%` is dispatched through an operator, and executed braced
+            // or conditional expressions can write bindings without a
+            // top-level Stmt::Assign.
+            Expr::Call { .. }
+            | Expr::BinOp {
+                op: BinOpKind::PipeAssign,
+                ..
+            }
+            | Expr::Block { .. }
+            | Expr::If { .. } => {
+                uncertain = true;
+                Descend::Into
+            }
+            _ => Descend::Into,
+        };
+        ControlFlow::Continue(descend)
+    });
     (uncertain, imports)
 }
 
@@ -348,70 +295,62 @@ fn stable_direct_function_bindings(
     if unmodeled_load_effects {
         return HashSet::new();
     }
-    let mut direct_literals = HashSet::new();
-    for statement in &file.stmts {
-        if let Stmt::Assign {
-            target,
-            value: Expr::Function { .. },
-            ..
-        } = statement
-            && let Some(name) = binding_name(target)
-        {
-            direct_literals.insert(infer::semantic_argument_name(name).to_string());
-        }
-    }
-    direct_literals.retain(|name| writes.counts.get(name) == Some(&1));
-    direct_literals
+    file.stmts
+        .iter()
+        .filter_map(|statement| match statement {
+            Stmt::Assign {
+                target,
+                value: Expr::Function { .. },
+                ..
+            } => binding_name(target),
+            _ => None,
+        })
+        .map(|name| infer::semantic_argument_name(name).to_string())
+        .filter(|name| writes.counts.get(name) == Some(&1))
+        .collect()
 }
 
+/// Module-load assignments outside function bodies, by semantic name.
 #[derive(Default)]
 struct ModuleWrites {
     counts: HashMap<String, usize>,
-    names: HashSet<String>,
+    /// Targets of assignment expressions, which also cover `<<-`/`%<>%`.
     expression_names: HashSet<String>,
+    /// Targets of `<-`/`=` expressions, which bind in the module itself.
     own_expression_names: HashSet<String>,
 }
 
 fn module_writes(file: &SourceFile) -> ModuleWrites {
     let mut writes = ModuleWrites::default();
-    let _ = walk_stmts(
-        &file.stmts,
-        Walk {
-            fn_bodies: false,
-            ..Walk::ALL
-        },
-        |node, _| {
-            let binding = match node {
-                AstNode::Stmt(Stmt::Assign { target, .. }) => binding_name(target),
-                AstNode::Expr(Expr::BinOp { op, lhs, .. })
-                    if matches!(
-                        op,
-                        BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
-                    ) =>
-                {
-                    let name = binding_name(lhs);
-                    if let Some(name) = name {
-                        if *op == BinOpKind::Assign {
-                            writes
-                                .own_expression_names
-                                .insert(infer::semantic_argument_name(name).to_string());
-                        }
-                        writes
-                            .expression_names
-                            .insert(infer::semantic_argument_name(name).to_string());
-                    }
-                    name
-                }
-                _ => None,
-            };
-            if let Some(name) = binding {
-                let name = infer::semantic_argument_name(name).to_string();
-                *writes.counts.entry(name.clone()).or_default() += 1;
-                writes.names.insert(name);
+    let walk = Walk {
+        fn_bodies: false,
+        ..Walk::ALL
+    };
+    let _ = walk_stmts(&file.stmts, walk, |node, _| {
+        let (target, operator) = match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => (target, None),
+            AstNode::Expr(Expr::BinOp { op, lhs, .. })
+                if matches!(
+                    op,
+                    BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
+                ) =>
+            {
+                (lhs.as_ref(), Some(*op))
             }
-            ControlFlow::<(), Descend>::Continue(Descend::Into)
-        },
-    );
+            _ => return ControlFlow::<(), Descend>::Continue(Descend::Into),
+        };
+        if let Some(name) = binding_name(target) {
+            let name = infer::semantic_argument_name(name).to_string();
+            if let Some(op) = operator {
+                if op == BinOpKind::Assign {
+                    writes.own_expression_names.insert(name.clone());
+                }
+                writes.expression_names.insert(name.clone());
+            }
+            *writes.counts.entry(name).or_default() += 1;
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
     writes
 }
 
@@ -425,13 +364,13 @@ fn has_export_tag(lines: &[&str]) -> bool {
     for line in lines {
         let text = line.trim_start_matches([' ', '\t']);
         if text.starts_with('#') {
+            // box 1.2.3's scanner requires the tag to end the line; even
+            // trailing spaces make it an ordinary comment.
             if text
                 .trim_start_matches('#')
                 .strip_prefix('\'')
                 .is_some_and(|tag| tag.trim_start_matches([' ', '\t']) == "@export")
             {
-                // box 1.2.3's scanner requires the tag to end the line;
-                // even trailing spaces make it an ordinary comment.
                 return true;
             }
         } else if !text.is_empty() {
@@ -470,19 +409,23 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
                     roxygen.complete &= !tagged;
                     continue;
                 };
+                // Plain and explicitly aliased imports bind in the module
+                // namespace. A tag also exports that object and the
+                // attached aliases; a wildcard may add unenumerated names.
                 if let Some(name) = import.object_name {
-                    // Plain and explicitly aliased imports bind in the
-                    // module namespace. A tag also exports that object.
                     if tagged {
                         roxygen.names.insert(name.clone());
                     }
                     assigned.insert(name);
                 }
                 if tagged {
-                    for selection in import.selection.into_iter().flatten() {
-                        roxygen.names.insert(selection.bound);
-                    }
-                    // A wildcard can introduce names we have not enumerated.
+                    roxygen.names.extend(
+                        import
+                            .selection
+                            .into_iter()
+                            .flatten()
+                            .map(|selection| selection.bound),
+                    );
                     roxygen.complete &= !import.wildcard && !import.selection_unknown;
                 }
             }
@@ -500,54 +443,44 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
         // The parser wraps a direct `foo <<- value` or `value ->> foo`
         // statement in Stmt::Assign with a SuperAssign expression spanning
         // the whole statement. It writes through the module environment,
-        // not to an own binding. An ordinary `foo <- (bar <<- value)` has a
-        // smaller inner span and still creates its outer own binding.
-        if matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
-            if marker == span && binding_name(lhs) == binding_name(target))
-        {
-            if tagged {
-                // box rejects a tag on a missing own binding at load time.
-                // Its inventory cannot prove any requested name absent.
-                roxygen.tagged = true;
-                roxygen.complete = false;
-            }
-            continue;
-        }
-        let Some(name) = binding_name(target) else {
+        // not to an own binding, and box rejects a tag on it at load time.
+        // An ordinary `foo <- (bar <<- value)` has a smaller inner span.
+        let direct_superassignment = matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
+            if marker == span && binding_name(lhs) == binding_name(target));
+        let name = binding_name(target).filter(|_| !direct_superassignment);
+        let Some(name) = name else {
             roxygen.complete &= !tagged;
             continue;
         };
         let name = infer::semantic_argument_name(name).to_string();
-        assigned.insert(name.clone());
         if tagged {
-            roxygen.tagged = true;
-            roxygen.names.insert(name);
+            roxygen.names.insert(name.clone());
         }
+        assigned.insert(name);
     }
     (assigned, roxygen)
 }
 
 fn declared_exports(
     file: &SourceFile,
-    assigned: &HashSet<String>,
+    mut assigned: HashSet<String>,
     roxygen: RoxygenExports,
     unmodeled_load_effects: bool,
 ) -> (HashSet<String>, bool) {
-    let mut explicit = false;
-    let mut complete = true;
     let mut names = HashSet::new();
-    let mut direct = HashSet::new();
+    let mut complete = !unmodeled_load_effects;
+    let mut direct_calls = 0;
     for statement in &file.stmts {
-        if let Stmt::Expr(Expr::Call { func, args, span }) = statement
+        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
             && ident_name(func) == Some("box::export")
         {
-            explicit = true;
-            direct.insert(span.start);
+            direct_calls += 1;
             for argument in args {
-                if let Some(name) = static_name(&argument.value) {
-                    names.insert(name.to_string());
-                } else {
-                    complete = false;
+                match static_name(&argument.value) {
+                    Some(name) => {
+                        names.insert(name);
+                    }
+                    None => complete = false,
                 }
             }
         }
@@ -555,42 +488,32 @@ fn declared_exports(
     // A braced, conditional, or otherwise nested export call may add names
     // at runtime. It also prevents legacy fallback, even when it declares
     // no statically readable name.
+    let mut all_calls = 0;
     let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| {
-        if let AstNode::Expr(Expr::Call { func, span, .. }) = node
+        if let AstNode::Expr(Expr::Call { func, .. }) = node
             && ident_name(func) == Some("box::export")
-            && !direct.contains(&span.start)
         {
-            explicit = true;
-            complete = false;
+            all_calls += 1;
         }
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
-    if explicit {
-        return (names, complete && !unmodeled_load_effects);
+    if all_calls > 0 {
+        return (names, complete && all_calls == direct_calls);
     }
     if roxygen.tagged {
         // An aliased or computed box::export() can extend a tagged module's
         // inventory during load. Only an effect-free body proves absence.
-        return (
-            roxygen.names,
-            complete && roxygen.complete && !unmodeled_load_effects,
-        );
+        return (roxygen.names, complete && roxygen.complete);
     }
     // Legacy modules export their own non-dot bindings. Imported names live
     // in an attachment environment and are not implicitly re-exported.
     // Dynamic writes or control flow make absence uncertain.
-    complete &= !unmodeled_load_effects && !file.stmts.iter().any(|statement| {
+    complete &= !file.stmts.iter().any(|statement| {
         matches!(statement, Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. })
             || matches!(statement, Stmt::Expr(Expr::Call { func, .. }) if matches!(ident_name(func), Some("assign" | "delayedAssign" | "makeActiveBinding")))
     });
-    (
-        assigned
-            .iter()
-            .filter(|name| !name.starts_with('.'))
-            .cloned()
-            .collect(),
-        complete,
-    )
+    assigned.retain(|name| !name.starts_with('.'));
+    (assigned, complete)
 }
 
 fn bind_export(
@@ -608,18 +531,68 @@ fn bind_export(
                 scope.set_box_object(bound, BoxObject::ModuleFunction(Arc::clone(function)));
             }
             if let Some(target) = module.package_functions.get(original) {
-                scope.set_function_alias(bound, format!("__ry_box_import::{target}"));
+                scope.set_function_alias(bound, format!("{IMPORT_ALIAS}{target}"));
             }
         }
         Some(BoxObject::Package(package)) if is_function => {
-            scope.set_function_alias(bound, format!("__ry_box_import::{package}::{original}"));
+            scope.set_function_alias(bound, format!("{IMPORT_ALIAS}{package}::{original}"));
         }
         _ => {}
     }
 }
 
+/// `object$member` on a box object, with the member's decoded name.
+pub(crate) fn box_member<'a>(
+    expr: &'a Expr,
+    scope: &Scope,
+) -> Option<(&'a Expr, BoxObject, String)> {
+    let Expr::Index {
+        base,
+        kind: IndexKind::Dollar,
+        args,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let object = scope.box_objects.get(ident_name(base)?)?.clone();
+    let member = binding_name_token(args.first()?.name.as_deref()?)?;
+    Some((base, object, member))
+}
+
+/// Read and parse an existing module file. The read is bounded as well as
+/// the metadata precheck: the file can grow between those operations.
+fn read_module(path: &Path) -> Option<SourceFile> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_MODULE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let decoded = ry_workspace::decode_r_source(&bytes);
+    let mut file = ry_core::RParser::new()
+        .ok()?
+        .parse(&path.to_string_lossy(), &decoded.text)
+        .ok()?;
+    decoded.attach_boundary_findings(&mut file);
+    file.native_path = Some(path.to_path_buf());
+    // Source that R's parser rejects (#376, #474) cannot provide a
+    // trustworthy inventory.
+    (!file.leading_bom && file.invalid_utf8.is_empty()).then_some(file)
+}
+
 impl Checker {
-    pub(crate) fn box_package_inventory(&self, package: &str) -> BoxInventory {
+    fn box_caller(&self) -> &Path {
+        self.native_path.as_deref().unwrap_or(Path::new(&self.path))
+    }
+
+    /// Literal NAMESPACE readers do not interpret exportPattern, S3
+    /// registrations, or loader hooks, so package absence is never proof.
+    fn box_package_inventory(&self, package: &str) -> Arc<BoxInventory> {
         let mut exports = BTreeMap::new();
         if let Some(typeshed) = self.package_typeshed(package) {
             for name in typeshed.functions.keys() {
@@ -629,179 +602,47 @@ impl Checker {
                 exports.insert(name.clone(), infer::json_rtype_to_rtype(value));
             }
         }
-        if let Some(installed) = ry_workspace::installed_exports_for_file(
-            package,
-            self.native_path.as_deref().unwrap_or(Path::new(&self.path)),
-        ) {
+        if let Some(installed) =
+            ry_workspace::installed_exports_for_file(package, self.box_caller())
+        {
             exports.retain(|name, _| installed.contains(name));
             for name in installed {
                 exports.entry(name).or_insert_with(RType::unknown);
             }
         }
-        // Literal NAMESPACE readers do not interpret exportPattern, S3
-        // registrations, or loader hooks. Package absence is never proof.
-        BoxInventory {
+        Arc::new(BoxInventory {
             exports,
-            functions: BTreeMap::new(),
-            package_functions: BTreeMap::new(),
-            complete: false,
-        }
+            ..BoxInventory::default()
+        })
     }
 
     fn box_module_inventory(&mut self, segments: &[String]) -> Option<Arc<BoxInventory>> {
         if self.box_depth >= MAX_MODULE_DEPTH {
             return None;
         }
-        let caller = self.native_path.as_deref().unwrap_or(Path::new(&self.path));
-        for candidate in module_candidates(caller, segments)? {
+        for candidate in module_candidates(self.box_caller(), segments)? {
             let identity = path_identity(&candidate)?;
             if let Some(inventory) = self.box_module_cache.get(&identity) {
                 return Some(Arc::clone(inventory));
             }
-            let file = if let Some(source) = self.box_sources.get(&identity) {
-                if source.source.len() as u64 > MAX_MODULE_BYTES {
-                    return None;
-                }
-                Arc::clone(source)
-            } else {
-                // Only an absent candidate permits the next spelling.
-                // Existing but unreadable/unsupported preferred `.r` is the
-                // module box selects; consulting `.R` would invent facts
-                // about a different module.
-                match std::fs::symlink_metadata(&candidate) {
-                    Ok(_) => {}
+            let file = match self.box_sources.get(&identity) {
+                Some(source) => Arc::clone(source),
+                // Only an absent candidate permits the next spelling. An
+                // existing but unsupported preferred `.r` is the module box
+                // selects; `.R` would describe a different module.
+                None => match std::fs::symlink_metadata(&candidate) {
+                    Ok(_) => Arc::new(read_module(&candidate)?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(_) => return None,
-                }
-                let metadata = std::fs::metadata(&candidate).ok()?;
-                if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
-                    return None;
-                }
-                // Bound the actual read as well as the metadata precheck:
-                // the file can grow or be replaced between those operations.
-                let mut bytes = Vec::new();
-                std::fs::File::open(&candidate)
-                    .ok()?
-                    .take(MAX_MODULE_BYTES + 1)
-                    .read_to_end(&mut bytes)
-                    .ok()?;
-                if bytes.len() as u64 > MAX_MODULE_BYTES || bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
-                    return None;
-                }
-                // Invalid UTF-8 is an R parser boundary finding in the
-                // frontends. An imported module with such bytes cannot
-                // provide a trustworthy export inventory.
-                let source = String::from_utf8(bytes).ok()?;
-                let mut parser = ry_core::RParser::new().ok()?;
-                let mut parsed = parser.parse(&candidate.to_string_lossy(), &source).ok()?;
-                parsed.native_path = Some(candidate.clone());
-                Arc::new(parsed)
+                },
             };
-            if !file.parse_errors.is_empty() || !file.syntax_violations.is_empty() {
+            if file.source.len() as u64 > MAX_MODULE_BYTES
+                || !file.parse_errors.is_empty()
+                || !file.syntax_violations.is_empty()
+            {
                 return None;
             }
-            let (assigned, roxygen) = top_level_bindings(&file);
-            let (unmodeled_load_effects, module_imports) = module_load_effects(&file);
-            let writes = module_writes(&file);
-            // Legacy box modules export bindings made by executed assignment
-            // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
-            // Roxygen/explicit inventories still use their declared names.
-            let mut assigned = assigned;
-            assigned.extend(writes.own_expression_names.iter().cloned());
-            let stable_functions =
-                stable_direct_function_bindings(&file, unmodeled_load_effects, &writes);
-            let (exported, complete) =
-                declared_exports(&file, &assigned, roxygen, unmodeled_load_effects);
-            let mut nested = Checker::new(&file.path);
-            nested.box_depth = self.box_depth + 1;
-            nested.box_sources = Arc::clone(&self.box_sources);
-            nested.set_user_stubs(Arc::clone(&self.user_stubs));
-            let (_, scope) = nested.check_with_scope(&file);
-            let complete = complete && exported.iter().all(|name| scope.get(name).is_some());
-            let package_functions = exported
-                .iter()
-                .filter_map(|name| {
-                    if unmodeled_load_effects || writes.names.contains(name) {
-                        return None;
-                    }
-                    scope
-                        .function_alias(name)?
-                        .strip_prefix("__ry_box_import::")
-                        .map(|target| (name.clone(), target.to_string()))
-                })
-                .collect();
-            let functions = exported
-                .iter()
-                .filter_map(|name| {
-                    if !unmodeled_load_effects
-                        && !writes.names.contains(name)
-                        && let Some(BoxObject::ModuleFunction(function)) =
-                            scope.box_objects.get(name)
-                    {
-                        return Some((name.clone(), Arc::clone(function)));
-                    }
-                    if scope.function_alias(name).is_some() {
-                        return None;
-                    }
-                    if !stable_functions.contains(name) {
-                        return None;
-                    }
-                    let function = nested.fn_table.fns.get(name)?;
-                    if scope.get(name)?.mode != Mode::Function {
-                        return None;
-                    }
-                    // Refinement starts from formals, without the module's
-                    // lexical imports. It can borrow a base signature for a
-                    // replaced name, so retain formals with an unknown return.
-                    let return_type = if module_imports {
-                        RType::unknown()
-                    } else {
-                        nested.return_slots.0.get(function.return_slot)?.clone()
-                    };
-                    let params = function
-                        .params
-                        .iter()
-                        .map(|parameter| BoxParam {
-                            name: parameter.name.clone(),
-                            required: parameter.required,
-                            quoting: parameter.quoting,
-                            defused: parameter.defused,
-                        })
-                        .collect();
-                    Some((
-                        name.clone(),
-                        Arc::new(BoxFunction {
-                            params,
-                            return_type,
-                        }),
-                    ))
-                })
-                .collect();
-            let exports = exported
-                .into_iter()
-                .map(|name| {
-                    let stale_callable = scope.get(&name).is_some_and(|value| {
-                        value.mode == Mode::Function
-                            && writes.names.contains(&name)
-                            && !stable_functions.contains(&name)
-                    });
-                    let value = if unmodeled_load_effects
-                        || writes.expression_names.contains(&name)
-                        || stale_callable
-                    {
-                        RType::unknown()
-                    } else {
-                        scope.get(&name).cloned().unwrap_or_else(RType::unknown)
-                    };
-                    (name, value)
-                })
-                .collect();
-            let inventory = Arc::new(BoxInventory {
-                exports,
-                functions,
-                package_functions,
-                complete,
-            });
+            let inventory = Arc::new(self.analyze_box_module(&file));
             self.box_module_cache
                 .insert(identity, Arc::clone(&inventory));
             return Some(inventory);
@@ -809,7 +650,82 @@ impl Checker {
         None
     }
 
-    pub(crate) fn infer_box_use(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
+    fn analyze_box_module(&self, file: &SourceFile) -> BoxInventory {
+        let (mut assigned, roxygen) = top_level_bindings(file);
+        let (unmodeled_load_effects, module_imports) = module_load_effects(file);
+        let writes = module_writes(file);
+        // Legacy box modules export bindings made by executed assignment
+        // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
+        // Roxygen/explicit inventories still use their declared names.
+        assigned.extend(writes.own_expression_names.iter().cloned());
+        let stable_functions =
+            stable_direct_function_bindings(file, unmodeled_load_effects, &writes);
+        let (exported, complete) =
+            declared_exports(file, assigned, roxygen, unmodeled_load_effects);
+        let mut nested = Checker::new(&file.path);
+        nested.box_depth = self.box_depth + 1;
+        nested.box_sources = Arc::clone(&self.box_sources);
+        nested.set_user_stubs(Arc::clone(&self.user_stubs));
+        let (_, scope) = nested.check_with_scope(file);
+        let mut inventory = BoxInventory {
+            complete: complete && exported.iter().all(|name| scope.get(name).is_some()),
+            ..BoxInventory::default()
+        };
+        for name in exported {
+            let value = scope.get(&name);
+            let written = writes.counts.contains_key(&name);
+            // An imported callable keeps its provenance only when nothing
+            // at module load may replace it.
+            let imported = !unmodeled_load_effects && !written;
+            let alias = scope.function_alias(&name);
+            if imported
+                && let Some(target) = alias.and_then(|alias| alias.strip_prefix(IMPORT_ALIAS))
+            {
+                inventory
+                    .package_functions
+                    .insert(name.clone(), target.to_string());
+            }
+            if imported
+                && let Some(BoxObject::ModuleFunction(function)) = scope.box_objects.get(&name)
+            {
+                inventory
+                    .functions
+                    .insert(name.clone(), Arc::clone(function));
+            } else if alias.is_none()
+                && stable_functions.contains(&name)
+                && value.is_some_and(|value| value.mode == Mode::Function)
+                && let Some(function) = nested.fn_table.fns.get(&name)
+            {
+                // Refinement starts from formals, without the module's
+                // lexical imports. It can borrow a base signature for a
+                // replaced name, so retain formals with an unknown return.
+                let function = BoxFunction {
+                    params: function.params.clone(),
+                    return_type: if module_imports {
+                        RType::unknown()
+                    } else {
+                        nested.return_slots.get(function.return_slot)
+                    },
+                };
+                inventory.functions.insert(name.clone(), Arc::new(function));
+            }
+            let stale_callable = value.is_some_and(|value| value.mode == Mode::Function)
+                && written
+                && !stable_functions.contains(&name);
+            let value = if unmodeled_load_effects
+                || writes.expression_names.contains(&name)
+                || stale_callable
+            {
+                RType::unknown()
+            } else {
+                value.cloned().unwrap_or_else(RType::unknown)
+            };
+            inventory.exports.insert(name, value);
+        }
+        inventory
+    }
+
+    fn infer_box_use(&mut self, args: &[Arg], scope: &mut Scope) -> RType {
         for argument in args {
             let Some(import) = parse_import(argument) else {
                 // A computed argument is outside the static model. box
@@ -820,15 +736,13 @@ impl Checker {
                 continue;
             };
             let (inventory, object) = match import.target {
-                Target::Package(package) => {
-                    let inventory = Arc::new(self.box_package_inventory(&package));
-                    (Some(inventory), Some(BoxObject::Package(package)))
-                }
+                Target::Package(package) => (
+                    Some(self.box_package_inventory(&package)),
+                    Some(BoxObject::Package(package)),
+                ),
                 Target::Module(segments) => {
                     let inventory = self.box_module_inventory(&segments);
-                    let object = inventory
-                        .as_ref()
-                        .map(|inventory| BoxObject::Module(Arc::clone(inventory)));
+                    let object = inventory.clone().map(BoxObject::Module);
                     (inventory, object)
                 }
                 Target::UnresolvedModule => (None, None),
@@ -842,60 +756,46 @@ impl Checker {
                     scope.set_box_object(object_name, object.clone());
                 }
             }
-            if let Some(selections) = import.selection {
-                let renamed: HashSet<String> = selections
-                    .iter()
-                    .filter(|selection| selection.original != selection.bound)
-                    .map(|selection| selection.original.clone())
-                    .collect();
-                for selection in selections {
-                    let missing = inventory.as_ref().is_some_and(|inventory| {
-                        inventory.complete && !inventory.exports.contains_key(&selection.original)
-                    });
-                    if missing {
-                        self.emit(
-                            Severity::Warning,
-                            selection.span,
-                            "RY118",
-                            format!("box module does not export `{}`", selection.original),
-                        );
-                    }
-                    let value = if missing {
-                        RType::unknown()
-                    } else {
-                        inventory
-                            .as_ref()
-                            .and_then(|inventory| inventory.exports.get(&selection.original))
-                            .cloned()
-                            .unwrap_or_else(RType::unknown)
-                    };
-                    bind_export(
-                        scope,
-                        &selection.bound,
-                        &selection.original,
-                        object.as_ref(),
-                        value,
+            let selections = import.selection.unwrap_or_default();
+            for selection in &selections {
+                let value = inventory
+                    .as_ref()
+                    .and_then(|inventory| inventory.exports.get(&selection.original));
+                if value.is_none()
+                    && inventory
+                        .as_ref()
+                        .is_some_and(|inventory| inventory.complete)
+                {
+                    self.emit(
+                        Severity::Warning,
+                        selection.span,
+                        "RY118",
+                        format!("box module does not export `{}`", selection.original),
                     );
                 }
-                if import.wildcard {
-                    if let Some(inventory) = &inventory {
-                        for (name, value) in &inventory.exports {
-                            if renamed.contains(name.as_str()) {
-                                continue;
-                            }
+                let value = value.cloned().unwrap_or_else(RType::unknown);
+                bind_export(
+                    scope,
+                    &selection.bound,
+                    &selection.original,
+                    object.as_ref(),
+                    value,
+                );
+            }
+            if import.wildcard {
+                if let Some(inventory) = &inventory {
+                    // Renaming an export removes its original spelling.
+                    for (name, value) in &inventory.exports {
+                        if !selections.iter().any(|selection| {
+                            selection.original == *name && selection.bound != *name
+                        }) {
                             bind_export(scope, name, name, object.as_ref(), value.clone());
                         }
-                        if !inventory.complete {
-                            scope.search_path_unknown = true;
-                        }
-                    } else {
-                        scope.search_path_unknown = true;
                     }
                 }
-                if import.selection_unknown {
-                    scope.search_path_unknown = true;
-                }
+                scope.search_path_unknown |= !inventory.is_some_and(|inventory| inventory.complete);
             }
+            scope.search_path_unknown |= import.selection_unknown;
         }
         RType::new(Mode::Null, Length::Zero)
     }
@@ -908,35 +808,93 @@ impl Checker {
         member: &str,
         span: Span,
     ) -> RType {
-        match object {
-            BoxObject::Package(package) => {
-                let inventory = self.box_package_inventory(package);
-                inventory
-                    .exports
-                    .get(member)
-                    .cloned()
-                    .unwrap_or_else(RType::unknown)
-            }
-            BoxObject::Module(inventory) => {
-                if let Some(value) = inventory.exports.get(member) {
-                    value.clone()
-                } else {
-                    if inventory.complete {
-                        self.emit(
-                            Severity::Warning,
-                            span,
-                            "RY118",
-                            format!("box module does not export `{member}`"),
+        let inventory = match object {
+            BoxObject::Package(package) => self.box_package_inventory(package),
+            BoxObject::Module(inventory) => Arc::clone(inventory),
+            BoxObject::ModuleFunction(_) => return RType::unknown(),
+        };
+        if let Some(value) = inventory.exports.get(member) {
+            return value.clone();
+        }
+        if inventory.complete {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY118",
+                format!("box module does not export `{member}`"),
+            );
+        }
+        RType::unknown()
+    }
+
+    /// Calls through box objects, imported functions, and `box::` itself.
+    /// `None` leaves the call to the ordinary resolution path.
+    pub(crate) fn infer_box_call(
+        &mut self,
+        func: &Expr,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+        environment_known_before_call: bool,
+    ) -> Option<RType> {
+        let qualified_call = |checker: &mut Self, scope: &mut Scope, name: String| {
+            let callee = Expr::Ident { name, span };
+            checker.infer_call_inner(&callee, args, scope, span, environment_known_before_call)
+        };
+        if let Some((base, object, member)) = box_member(func, scope) {
+            match object {
+                BoxObject::Package(package) => {
+                    self.infer(base, scope);
+                    if self
+                        .box_package_inventory(&package)
+                        .exports
+                        .contains_key(&member)
+                    {
+                        return Some(qualified_call(self, scope, format!("{package}::{member}")));
+                    }
+                    self.infer_args_for_diagnostics(args, scope);
+                    return Some(RType::unknown());
+                }
+                BoxObject::Module(inventory) => {
+                    // Infer the member itself for its RY118.
+                    let member_type = self.infer(func, scope);
+                    if let Some(function) = inventory.functions.get(&member) {
+                        return Some(
+                            self.infer_box_function_call(&member, function, args, scope, span),
                         );
                     }
-                    RType::unknown()
+                    if let Some(target) = inventory.package_functions.get(&member) {
+                        return Some(qualified_call(self, scope, target.clone()));
+                    }
+                    self.infer_args_for_diagnostics(args, scope);
+                    return Some(
+                        member_type
+                            .fn_sig
+                            .map(|signature| (*signature.return_type).clone())
+                            .unwrap_or_else(RType::unknown),
+                    );
                 }
+                BoxObject::ModuleFunction(_) => {}
             }
-            BoxObject::ModuleFunction(_) => RType::unknown(),
+        }
+        let name = binding_name(func)?;
+        if let Some(BoxObject::ModuleFunction(function)) = scope.box_objects.get(name).cloned() {
+            return Some(self.infer_box_function_call(name, &function, args, scope, span));
+        }
+        match name {
+            "box::use" => Some(self.infer_box_use(args, scope)),
+            "box::export" => Some(RType::new(Mode::Null, Length::Zero)),
+            _ => {
+                let target = scope
+                    .function_alias(name)?
+                    .strip_prefix(IMPORT_ALIAS)?
+                    .to_string();
+                Some(qualified_call(self, scope, target))
+            }
         }
     }
 
-    pub(crate) fn infer_box_function_call(
+    fn infer_box_function_call(
         &mut self,
         name: &str,
         function: &BoxFunction,

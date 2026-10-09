@@ -690,7 +690,7 @@ fn must_flag_only_fixtures_emit_exactly_ry000() {
                 continue;
             }
         }
-        let diagnostics = checker_diagnostics(std::path::Path::new(name), decoded, false);
+        let diagnostics = checker_diagnostics(&dir.join(name), decoded, false);
         let codes: Vec<&str> = diagnostics.iter().map(|(c, _)| c.as_str()).collect();
         // The same predicate the harness arm uses, so the pin cannot
         // drift from the real `must-flag-only` semantics.

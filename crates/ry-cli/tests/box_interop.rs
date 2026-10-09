@@ -20,6 +20,20 @@ fn fixture() -> FixtureProject {
     files
 }
 
+fn ry_check() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
+    command
+        .args(["check", "--output-format", "json"])
+        .env("RY_NO_INSTALLED_LIBRARIES", "1");
+    command
+}
+
+fn json_diagnostics(command: &mut Command, status: i32) -> Vec<Value> {
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(status), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| panic!("{error}: {output:?}"))
+}
+
 fn codes(diagnostics: &[Value]) -> Vec<String> {
     diagnostics
         .iter()
@@ -30,14 +44,7 @@ fn codes(diagnostics: &[Value]) -> Vec<String> {
 #[test]
 fn package_local_module_and_dplyr_import_reach_cli_pipeline() {
     let files = fixture();
-    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-        .args(["check", "--output-format", "json"])
-        .arg(files.root())
-        .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = json_diagnostics(ry_check().arg(files.root()), 1);
     let codes = codes(&diagnostics);
     assert!(codes.contains(&"RY118".to_string()), "{diagnostics:#?}");
     assert!(codes.contains(&"RY040".to_string()), "{diagnostics:#?}");
@@ -53,14 +60,7 @@ fn search_path_module_imports_reach_cli_as_opaque_bindings() {
             "box::use(mod/hello[answer])\nvalue <- answer\nbefore <- unbound\nbox::use(\"m\" = mod/hello)\nobject <- m\nbox::use(mod/hello[...])\nafter <- unenumerated\n",
         )
         .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-        .args(["check", "--output-format", "json", "--exit-zero"])
-        .arg(files.path("run.R"))
-        .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").arg(files.path("run.R")), 0);
     assert_eq!(codes(&diagnostics), ["RY010"], "{diagnostics:#?}");
     assert!(
         diagnostics[0]["message"]
@@ -87,14 +87,8 @@ fn quoted_members_reach_cli_with_types_and_proven_absence() {
         files
             .write_file("run.R", format!("box::use(m = ./mod)\n{source}"))
             .unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-            .args(["check", "--output-format", "json", "--exit-zero"])
-            .arg(files.path("run.R"))
-            .env("RY_NO_INSTALLED_LIBRARIES", "1")
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let diagnostics =
+            json_diagnostics(ry_check().arg("--exit-zero").arg(files.path("run.R")), 0);
         assert_eq!(codes(&diagnostics), expected, "{source}: {diagnostics:#?}");
         if expected == ["RY118"] {
             assert_eq!(
@@ -119,18 +113,15 @@ fn installed_namespace_gates_package_stub_import_without_loading_r() {
         .unwrap();
     let namespace = files.path("lib/dplyr/NAMESPACE");
     let run = || {
-        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-            .args(["check", "--output-format", "json", "--exit-zero"])
+        let mut command = ry_check();
+        command
+            .arg("--exit-zero")
             .arg(files.path("run.R"))
             .env_remove("RY_NO_INSTALLED_LIBRARIES")
             .env("R_LIBS", files.path("lib"))
             .env("R_LIBS_USER", files.path("missing-user-lib"))
-            .env("R_LIBS_SITE", files.path("missing-site-lib"))
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-        codes(&diagnostics)
+            .env("R_LIBS_SITE", files.path("missing-site-lib"));
+        codes(&json_diagnostics(&mut command, 0))
     };
     files
         .write_file("lib/dplyr/NAMESPACE", "export(select)\n")
@@ -225,14 +216,7 @@ fn native_module_path_survives_lossy_display_collision_in_cli() {
     )
     .unwrap();
     let check = |paths: &[&std::path::Path]| {
-        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-            .args(["check", "--output-format", "json", "--exit-zero"])
-            .args(paths)
-            .env("RY_NO_INSTALLED_LIBRARIES", "1")
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").args(paths), 0);
         assert!(
             diagnostics.iter().all(|diagnostic| {
                 diagnostic["path"] != caller.to_string_lossy().as_ref()
@@ -265,14 +249,7 @@ fn native_caller_directory_drives_relative_module_lookup_in_cli() {
     std::fs::write(raw_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
     std::fs::write(unicode_dir.join("mod.r"), "foo <- function() 'wrong'\n").unwrap();
     let check = |paths: &[&std::path::Path], expect_type_error: bool| {
-        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-            .args(["check", "--output-format", "json", "--exit-zero"])
-            .args(paths)
-            .env("RY_NO_INSTALLED_LIBRARIES", "1")
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(0), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").args(paths), 0);
         assert_eq!(
             diagnostics
                 .iter()

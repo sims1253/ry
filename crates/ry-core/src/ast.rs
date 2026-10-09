@@ -11,10 +11,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default)]
 pub struct SourceFile {
     pub path: String,
-    /// Native on-disk path when the reader has one. `path` is a display and
-    /// diagnostic string; converting a non-UTF-8 filename into it can collide
-    /// with a real filename containing U+FFFD. Editor buffers have no native
-    /// path and retain their logical `path` for overlay matching.
+    /// Native on-disk path, if read from disk. The lossy display `path` of
+    /// a non-UTF-8 filename can collide with a real U+FFFD filename.
     pub native_path: Option<PathBuf>,
     /// Original UTF-8 text. The checker slices this string by AST spans
     /// rather than scraping diagnostic prose.

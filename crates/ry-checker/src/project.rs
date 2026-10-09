@@ -353,14 +353,9 @@ impl Project {
         } else {
             self.files.push((path, file));
         }
-        // A module can supply exports to unchanged importers. The ordinary
-        // function-name dependency graph does not describe quoted box paths,
-        // so recheck the project when any file may consume such a module.
-        if self
-            .files
-            .iter()
-            .any(|(_, source)| crate::box_imports::has_box_use(source))
-        {
+        // A module can supply exports to unchanged importers, which the
+        // function-name dependency graph does not describe.
+        if self.has_box_imports() {
             self.mark_all_dirty();
         }
     }
@@ -480,6 +475,12 @@ impl Project {
         if set_if_changed(&mut self.bare_loaded, loaded) {
             self.mark_all_dirty();
         }
+    }
+
+    fn has_box_imports(&self) -> bool {
+        self.files
+            .iter()
+            .any(|(_, file)| crate::box_imports::has_box_use(file))
     }
 
     /// Mark every file dirty so the next incremental check re-emits all.
@@ -961,32 +962,19 @@ impl Project {
         &mut self,
         mut trace: Option<TraceRecorder>,
     ) -> Vec<(String, Vec<Diagnostic>)> {
-        // Avoid filesystem identity calls on projects with no parsed box
-        // imports. This also covers the spaced `box :: use` spelling.
-        let box_sources = Arc::new(
-            if self
-                .files
-                .iter()
-                .any(|(_, source)| crate::box_imports::has_box_use(source))
-            {
-                self.files
-                    .iter()
-                    .filter_map(|(path, file)| {
-                        // The logical diagnostic path may be lossy for a
-                        // non-UTF-8 disk filename. Keep native identity for
-                        // box overlays so it cannot collide with a distinct
-                        // genuine Unicode module. Unsaved buffers still use
-                        // their logical source path.
-                        crate::box_imports::path_identity(
-                            file.native_path.as_deref().unwrap_or(Path::new(path)),
-                        )
-                        .map(|identity| (identity, Arc::clone(file)))
-                    })
-                    .collect()
-            } else {
-                HashMap::new()
-            },
-        );
+        // Box overlays are keyed by physical identity. A native path keeps
+        // a lossy display path from colliding with a distinct Unicode module;
+        // unsaved buffers use their logical path.
+        let mut box_sources = HashMap::new();
+        if self.has_box_imports() {
+            for (path, file) in &self.files {
+                let path = file.native_path.as_deref().unwrap_or(Path::new(path));
+                if let Some(identity) = crate::box_imports::path_identity(path) {
+                    box_sources.insert(identity, Arc::clone(file));
+                }
+            }
+        }
+        let box_sources = Arc::new(box_sources);
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.

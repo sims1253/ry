@@ -3131,14 +3131,7 @@ impl Checker {
                 args,
                 span,
             } => {
-                if *kind == IndexKind::Dollar
-                    && let Some(object_name) = ident_name(base)
-                    && let Some(object) = scope.box_objects.get(object_name).cloned()
-                    && let Some(member) = args
-                        .first()
-                        .and_then(|argument| argument.name.as_deref())
-                        .and_then(box_imports::binding_name_token)
-                {
+                if let Some((base, object, member)) = box_imports::box_member(e, scope) {
                     self.infer(base, scope);
                     return self.infer_box_member(&object, &member, *span);
                 }

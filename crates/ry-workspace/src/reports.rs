@@ -145,7 +145,13 @@ fn simple_key(key: &str) -> Result<&str, ()> {
 }
 
 fn execution_option(key: &str, value: &str, r_header: bool) -> Result<Option<bool>, ()> {
+    // knitr reads a dashed YAML option name as the dotted R name.
     let key = simple_key(key)?;
+    let key = if r_header {
+        key.to_owned()
+    } else {
+        key.replace('-', ".")
+    };
     // R headers need the uppercase literals; YAML booleans ignore case.
     let value = value.trim();
     let literal = |truth: &str| {
@@ -162,8 +168,8 @@ fn execution_option(key: &str, value: &str, r_header: bool) -> Result<Option<boo
     } else {
         Err(())
     };
-    match key {
-        "child" | "ref.label" | "engine" | "file" | "code" | "dependson" => Err(()),
+    match key.as_str() {
+        "child" | "ref.label" | "opts.label" | "engine" | "file" | "code" | "dependson" => Err(()),
         "eval" => boolean.map(Some),
         "include" | "echo" => boolean.map(|_| None),
         _ => Ok(None),
@@ -205,6 +211,25 @@ fn complex_format_value(value: &str) -> bool {
     value
         .trim_start()
         .starts_with(['{', '[', '*', '&', '!', '|', '>'])
+}
+
+/// Whether `value` starts a scalar that continues on deeper lines: a block
+/// scalar (`|`, `>-`, `|2`) or a quoted scalar left open on this line.
+fn multiline_scalar(value: &str) -> bool {
+    let value = value.trim();
+    let mut chars = value.chars();
+    match chars.next() {
+        Some('|' | '>') => chars
+            .as_str()
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .all(|indicator| matches!(indicator, '+' | '-' | '1'..='9')),
+        Some(quote @ ('"' | '\'')) => value.len() == 1 || !value.ends_with(quote),
+        _ => false,
+    }
 }
 
 /// Whether this bounded reader can name `key`: it is non-empty and not an
@@ -552,6 +577,7 @@ impl Report<'_> {
         };
         let mut root_key = None;
         let mut root_indent = None;
+        let mut scalar_indent = None;
         for (row, line) in self.rows.iter().enumerate().take(close).skip(open + 1) {
             let raw = line.text.trim_end_matches(['\r', '\n']);
             let content = raw.trim_start_matches(' ');
@@ -559,6 +585,11 @@ impl Report<'_> {
                 continue;
             }
             let indent = raw.len() - content.len();
+            // Lines deeper than a multi-line scalar's key are its text.
+            if scalar_indent.is_some_and(|key| indent > key) {
+                continue;
+            }
+            scalar_indent = None;
             let root = *root_indent.get_or_insert(indent);
             if indent < root || content.starts_with('\t') {
                 return Err(unclassified(row, "report YAML indentation"));
@@ -570,15 +601,22 @@ impl Report<'_> {
                 }
                 return Err(unclassified(row, "root flow YAML execution settings"));
             }
-            // Explicit (`?`) and empty keys are refused at any depth.
+            // Explicit, empty, tagged, anchored, and alias keys are refused at
+            // any depth; below the root a key may follow a sequence dash.
             let (key, value) = match yaml_key_value(raw) {
                 _ if content.starts_with('?') => {
                     return Err(unclassified(row, "report YAML key"));
                 }
-                Ok(Some(("", _))) | Err(()) => return Err(unclassified(row, "report YAML key")),
-                Ok(Some(entry)) if !at_root || plain_key(entry.0) => entry,
-                Ok(_) if at_root => return Err(unclassified(row, "report YAML root syntax")),
-                Ok(_) => continue,
+                Ok(Some((key, _))) if at_root && !plain_key(key) => {
+                    return Err(unclassified(row, "report YAML root syntax"));
+                }
+                Ok(Some((key, _))) if !plain_key(key.trim_start_matches(['-', ' '])) => {
+                    return Err(unclassified(row, "report YAML key"));
+                }
+                Ok(Some(entry)) => entry,
+                Err(()) => return Err(unclassified(row, "report YAML key")),
+                Ok(None) if at_root => return Err(unclassified(row, "report YAML root syntax")),
+                Ok(None) => continue,
             };
             if at_root {
                 root_key = Some(key);
@@ -592,6 +630,9 @@ impl Report<'_> {
                     "RY121",
                     "report-level execution options need a report engine; no chunks are assumed executable",
                 ));
+            }
+            if multiline_scalar(value) {
+                scalar_indent = Some(indent);
             }
         }
         Ok(())
@@ -885,6 +926,22 @@ mod tests {
                 0,
                 None,
             ),
+            // Inherited and referenced options; knitr reads `ref-label` as `ref.label`.
+            (
+                "```{r disabled, eval=FALSE}\nNULL\n```\n```{r run, opts.label=\"disabled\"}\nx <- 'a'\n```\n```{r}\nx + 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            (
+                "```{r}\n#| opts-label: disabled\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            (
+                "```{r}\n#| ref-label: original\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
         ] {
             assert_report(source, stmts, code);
         }
@@ -997,6 +1054,8 @@ mod tests {
             "format:\n  html:\n    ? execute\n    : {eval: false}",
             "format:\n  html:\n    \"\": x",
             "title: x\n: y",
+            "format:\n  html:\n    !!str execute:\n      !!str eval: false",
+            "params:\n  &anchor alpha: 1",
         ] {
             assert_report(
                 &format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n"),
@@ -1012,6 +1071,10 @@ mod tests {
             "{title: \"test\", metadata: {execute: {eval: false}}}",
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nmetadata:\n  default: *fmt",
             "format:\n  html:\n    toc: true",
+            // Multi-line scalar text is not read as keys.
+            "abstract: |\n  Why these results?\n  ? A rhetorical question\n  : a colon line",
+            "description: >-\n  ? q\nauthor:\n  - name: X\n    affiliation: Y",
+            "title: \"foo\n  ? bar\"",
         ] {
             assert_report(
                 &format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n"),

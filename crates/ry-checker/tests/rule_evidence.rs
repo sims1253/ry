@@ -202,7 +202,7 @@ const R7_CASES: &[R7Case] = &[
 const R7_NA_RULES: &[&str] = &[
     "RY000", "RY010", "RY041", "RY042", "RY050", "RY051", "RY060", "RY070", "RY080", "RY090",
     "RY091", "RY092", "RY094", "RY096", "RY097", "RY098", "RY101", "RY102", "RY108", "RY109",
-    "RY111", "RY112", "RY113", "RY114", "RY115", "RY116", "RY117",
+    "RY111", "RY112", "RY113", "RY114", "RY115", "RY116", "RY117", "RY120", "RY121",
 ];
 
 /// Run R7 over all applicable rule families and report the classification.
@@ -723,6 +723,14 @@ const VERDICTS: &[Verdict] = &[
     },
     Verdict {
         code: "RY117",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY120",
+        verdict: "keep",
+    },
+    Verdict {
+        code: "RY121",
         verdict: "keep",
     },
 ];

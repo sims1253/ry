@@ -114,8 +114,8 @@ fn assert_converges(live: &Value, fresh: &Value, context: &str) {
     );
 }
 
-/// The server must actually watch R sources: the registration has to
-/// carry an R source glob, not just handler behavior for faked events.
+/// The server must actually watch R sources and reports: the registration
+/// has to carry the source glob, not just handler behavior for faked events.
 #[test]
 fn watcher_registration_includes_r_sources() {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -128,7 +128,9 @@ fn watcher_registration_includes_r_sources() {
             spawn_session(&[fixture.root()], watching_capabilities(), None).await;
         let globs = take_watcher_globs(&mut session).await;
         assert!(
-            globs.iter().any(|glob| *glob == json!("**/*.{R,r,S,s,q}")),
+            globs
+                .iter()
+                .any(|glob| *glob == json!("**/*.{R,r,S,s,q,Rmd,rmd,qmd}")),
             "registration must watch R source files, got: {globs:?}"
         );
         join_session(session, server).await;

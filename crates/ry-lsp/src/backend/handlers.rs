@@ -690,13 +690,14 @@ impl LanguageServer for Backend {
         // intentionally disabled ry there), but a file over
         // `max-file-bytes` or below a pruned `max-depth` still gets its
         // own hints while staying out of every other file's resolution
-        // (#488). Only the enable switch gates here.
+        // (#488). The explicit report opt-in also gates report hints: its
+        // masked parser must not add features to a disabled report.
         {
             let state = self.state.lock().await;
             let folder = state.folder_context_for_path(&path);
             let disabled = folder.is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
                 || (folder.is_none() && state.folder_settings.enable == Some(false));
-            if disabled {
+            if disabled || state.report_disabled(&path) {
                 return Ok(None);
             }
         }
@@ -740,6 +741,10 @@ impl LanguageServer for Backend {
         }
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
+        if ry_workspace::reports::is_report_path(std::path::Path::new(&path)) {
+            // Masked prose and cell metadata are not editable R source.
+            return Ok(None);
+        }
 
         {
             let state = self.state.lock().await;

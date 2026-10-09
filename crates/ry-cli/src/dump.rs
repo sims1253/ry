@@ -498,6 +498,16 @@ pub(crate) fn run_dump_types(
             return Ok(ExitCode::FAILURE);
         }
     };
+    if let Some(file) = parsed.iter().find(|file| {
+        ry_workspace::reports::is_report_path(std::path::Path::new(&file.path))
+            && (!file.input_issues.is_empty() || !file.parse_errors.is_empty())
+    }) {
+        eprintln!(
+            "ry: {}: dump-types cannot export a report after an uncertain input or R chunk syntax error",
+            file.path
+        );
+        return Ok(ExitCode::FAILURE);
+    }
 
     let user_stubs = load_user_stubs(&cfg.typeshed);
 

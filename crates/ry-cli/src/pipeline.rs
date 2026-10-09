@@ -324,8 +324,7 @@ fn parse_one(
                 Err(error) => return Err(error.to_string()),
             },
         };
-        parser
-            .parse(&path_str, &decoded.text)
+        ry_workspace::reports::parse_source(parser, &path_str, &decoded.text)
             .map_err(|message| message.to_string())
     });
     file.map(|mut file| {
@@ -373,18 +372,16 @@ pub(crate) fn resolve_groups(
 ) -> miette::Result<Vec<ResolvedGroup>> {
     let groups = ry_workspace::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
     let mut resolved = Vec::with_capacity(groups.len());
+    let fallback = fallback_roots
+        .iter()
+        .flatten()
+        .copied()
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     for (group_root, indices) in &groups {
-        let resolution_root = group_root
-            .clone()
-            .or_else(|| {
-                fallback_roots
-                    .iter()
-                    .flatten()
-                    .copied()
-                    .next()
-                    .map(PathBuf::from)
-            })
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let resolution_root =
+            ry_workspace::resolution_root_for_group(group_root.as_deref(), &fallback);
         // A relative file such as R/main.R can find DESCRIPTION at the
         // empty ancestor path. That ancestor is the working directory.
         let resolution_root = if resolution_root.as_os_str().is_empty() {

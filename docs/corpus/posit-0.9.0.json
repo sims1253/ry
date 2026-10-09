@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "6356286da5299df2a7ab8286e6bf47ccaa2630c0310c825d4c0372abb5558718",
-  "ry_commit": "ce6d0b1604c21016beb4971598d9cbc6cfc4d7fa",
+  "source_sha256": "11303cd750d24c9480fa796ba9efeab9afbe1441b78cbfd2ecbea5618a1eb83c",
+  "ry_commit": "6914b151f6c2e05709790974ac517998fdab6175",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -68,7 +68,7 @@
       "repo": "tidyverse/purrr",
       "stars": 1401,
       "commit": "481e829f297fd4315b386518215157f361475ad0",
-      "diagnostics": 4
+      "diagnostics": 3
     },
     {
       "name": "tensorflow",
@@ -2506,15 +2506,6 @@
     },
     {
       "package": "purrr",
-      "code": "RY032",
-      "path": "R/deprec-prepend.R",
-      "line": 34,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "manual-audit"
-    },
-    {
-      "package": "purrr",
       "code": "RY109",
       "path": "R/progress-bars.R",
       "line": 56,
@@ -4324,13 +4315,13 @@
     }
   ],
   "classification": {
-    "false_positive": 346,
+    "false_positive": 345,
     "true_positive": 85
   },
   "audit_group_counts": {
     "reassign-scope": 4,
     "type-narrowing": 44,
-    "manual-audit": 143,
+    "manual-audit": 142,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 19,
     "test-fixture": 74,
@@ -4377,6 +4368,7 @@
     "Superassignment modeling (#374) removes 11 false positives, all traced to bindings mutated only through `<<-` in nested closures. pak R/json.R loses all ten RY001s on `token` (4 reassign-scope: lines 81, 83, 98, 135 are the `if (token == ...)`/`while (token != ...)` conditions of parse_value/parse_object/parse_array around `token <- NULL` + `token <<- tokens[ptr]`/`'EOF'` in read_token; 6 type-narrowing: lines 100, 108, 118, 120, 141, 143 are the sibling token conditions in the same walkers) -- the vendored r-json-parser shape whose loops run correctly at the pin (cdbd4ce, verified in R). flexdashboard R/flex_dashboard.R:381 is `!file.exists(source_file)` where `source_file <- NULL` is overwritten by `source_file <<- input` in pre_knit: the stale NULL made file.exists logical(0); the five reassign-scope removals (four pak, one flexdashboard) take that audit group from 9 to 4. Every removal is the conservative unknown-typed update applied at the <<-writing definition; no new identity appeared. The sibling write-side shapes stay: dplyr summarise.R:342 / blogdown serve.R / reticulate wrapper.R bind through plain `<-` in call-argument closures or textConnection dynamic bindings (#350 family), not `<<-`.",
     "NULL union members now propagate into RY001 condition analysis (#362), adding exactly three reviewed true-positive identities under the new ry001-null-union group (true_positive 65 -> 68): bslib R/navs-legacy.R:241:27, lubridate R/accessors-day.r:98:7, and torch tools/torchgen/R/cpp.R:747:9. get_color_contrast's tryCatch error handler returns NULL, so a Sass failure makes `bg_contrast == \"#FFFFFF\"` the zero-length comparison crash; as_week_start's unmatched day name skips every pmatch/match guard and its fall-through NULL reaches `if (start != 7)`; and cpp_type falls through to NULL for an unmatched dynamic_type, crashing `if (ret_type == \"void\")`. All three are runtime-verified crashes (R: \"argument is of length zero\"). No other identity changes. Retention counts cited in earlier notes (\"all 37/43 true positives\") describe the total at the time of each change; the classification block in this file is the current total.",
     "RY111 (constant-argument-shadowing, issue #361) adds 20 reviewed findings: 17 true positives and 3 false positives. The true positives are the dbplyr sql_render.*_query family (own `subquery` formal never read while the generic forwards the caller's flag into the method), reticulate's r_to_py.POSIXt (the method POSIXct/POSIXlt dispatch to) and r_convert_dataframe_column (their `convert` contract parameter is never read; every internal import/r_to_py_impl call is pinned `convert = FALSE`), shiny's observeEvent (`autoDestroy = TRUE` pinned while label/suspended/priority/domain are all forwarded), and torch's nnf_rrelu_ (`training = TRUE` forced against the method's own `training = FALSE` default). The false positives are deliberate compat surfaces: gt's testthat helpers expose `all = TRUE` signatures that mirror expect_match while always matching all fragments, and sparklyr's stream_read_socket exposes the stream_read_* family's `columns` argument that the socket source cannot use. The dead-formal gate silences the deliberate idioms the ungated name-match would flag (forwarded `subquery`/`quiet`, guarded `ignore_case`/`recursive`, read `inherit`).",
-    "Dplyr schema effects (#353) remove the two reviewed RY060 false positives at pinned dplyr d5e94e7 tests/testthat/test-group-by.R:26:16 and :40:16: group_by(big = <expression>) creates big before out$big is read. Literal verb effects and conservative unknown/custom S3 fallbacks were checked against the full pinned hermetic corpus; no identity was added and all reviewed true positives remain."
+    "Dplyr schema effects (#353) remove the two reviewed RY060 false positives at pinned dplyr d5e94e7 tests/testthat/test-group-by.R:26:16 and :40:16: group_by(big = <expression>) creates big before out$big is read. Literal verb effects and conservative unknown/custom S3 fallbacks were checked against the full pinned hermetic corpus; no identity was added and all reviewed true positives remain.",
+    "RY032 scalar-flow correction (#351, PR #605): the sole Posit identity removed is purrr@481e829 R/deprec-prepend.R:34:7 (reviewed false_positive, historical manual-audit group). Its earlier base stopifnot rejects vector before values before the later || can run. The exact source and R witnesses justify this one-row removal; all 85 reviewed true positives and every other identity remain. The 62 hermetic Posit root reports were hashed in filename order after removing this line from posit.purrr.root.txt; the matching message-ledger entry is removed."
   ]
 }

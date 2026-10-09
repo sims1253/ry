@@ -387,6 +387,9 @@ pub struct Scope {
     /// An unmodeled call may force promises that mutate this frame or install
     /// active bindings. Later expression inference cannot reuse caller facts.
     pub(crate) effects_unknown: bool,
+    /// A call may have replaced a binding with an active binding or promise.
+    /// A later read need not return the value an assertion just checked.
+    pub(crate) dynamic_bindings_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
     pub(crate) literal_values_unknown: bool,
@@ -401,6 +404,14 @@ pub struct Scope {
     /// Bindings that still refer directly to function parameters. Assigning
     /// to the name clears this marker; flow narrowing preserves it.
     pub parameter_bindings: FxSet<String>,
+    /// Current bindings whose successful assertion established that the value
+    /// is NULL or has length one. This is narrower than changing RType's
+    /// length: the NULL alternative must remain visible to other rules.
+    pub(crate) scalar_asserted_bindings: FxSet<String>,
+    /// A path into the current loop carries an unclassed vector of proven
+    /// length greater than one. This existential fact survives type joins
+    /// that collapse a vector/scalar alternative to unknown length.
+    pub(crate) loop_vector_bindings: FxSet<String>,
     /// Bindings derived from list-valued expressions even when later subset
     /// inference loses the concrete mode. Used by container-shape rules.
     pub list_origin_bindings: FxSet<String>,
@@ -439,6 +450,7 @@ impl Clone for Scope {
             has_escaped_slot_names: self.has_escaped_slot_names,
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             literal_functions: self.literal_functions.clone(),
             known_strings: self.known_strings.clone(),
@@ -448,6 +460,8 @@ impl Clone for Scope {
             bindings: self.bindings.clone(),
             narrowed_bindings: self.narrowed_bindings.clone(),
             parameter_bindings: self.parameter_bindings.clone(),
+            scalar_asserted_bindings: self.scalar_asserted_bindings.clone(),
+            loop_vector_bindings: self.loop_vector_bindings.clone(),
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
@@ -471,6 +485,11 @@ impl Scope {
     pub(crate) fn independent_execution_scope(&self) -> Self {
         let mut scope = self.clone();
         scope.loop_frame = None;
+        // Code here may run after the caller's binding changes, so it gets
+        // no scalar facts; it may prove its own.
+        scope.dynamic_bindings_unknown = false;
+        scope.scalar_asserted_bindings.clear();
+        scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
         scope.unreachable = false;
         // The new frame's code is never the syntactic operand of the
@@ -546,6 +565,8 @@ impl Scope {
                 .keys()
                 .chain(self.narrowed_bindings.iter())
                 .chain(self.parameter_bindings.iter())
+                .chain(self.scalar_asserted_bindings.iter())
+                .chain(self.loop_vector_bindings.iter())
                 .chain(self.default_parameter_bindings.iter())
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
@@ -564,6 +585,8 @@ impl Scope {
         }
         self.narrowed_bindings.clear();
         self.parameter_bindings.clear();
+        self.scalar_asserted_bindings.clear();
+        self.loop_vector_bindings.clear();
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
@@ -633,6 +656,12 @@ impl Scope {
         if !self.parameter_bindings.is_empty() {
             self.parameter_bindings.remove(&name);
         }
+        if !self.scalar_asserted_bindings.is_empty() {
+            self.scalar_asserted_bindings.remove(&name);
+        }
+        if !self.loop_vector_bindings.is_empty() {
+            self.loop_vector_bindings.remove(&name);
+        }
         if !self.default_parameter_bindings.is_empty() {
             self.default_parameter_bindings.remove(&name);
         }
@@ -646,6 +675,8 @@ impl Scope {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
+        let excludes_unclassed_vector =
+            t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
         }
@@ -657,6 +688,9 @@ impl Scope {
         self.function_aliases.remove(&name);
         self.replace_box_call_after_write(&name, &t);
         self.lexical_functions.remove(&name);
+        if excludes_unclassed_vector {
+            self.loop_vector_bindings.remove(&name);
+        }
         self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
@@ -685,6 +719,8 @@ impl Scope {
         self.function_aliases.remove(&name);
         self.replace_box_call_after_write(&name, &t);
         self.narrowed_bindings.remove(&name);
+        self.scalar_asserted_bindings.remove(&name);
+        self.loop_vector_bindings.remove(&name);
         // A parameter default may install a different function value even
         // when the lexical-callable marker is deliberately retained.
         self.lexical_definitions.remove(&name);
@@ -706,6 +742,68 @@ impl Scope {
 
     pub(crate) fn is_parameter(&self, name: &str) -> bool {
         self.parameter_bindings.contains(name)
+    }
+
+    pub(crate) fn mark_scalar_asserted(&mut self, name: &str) {
+        if !self.scalar_asserted_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
+            self.scalar_asserted_bindings.insert(name.to_string());
+        }
+    }
+
+    /// A scalar fact counts only while no call may have swapped bindings.
+    pub(crate) fn is_scalar_asserted(&self, name: &str) -> bool {
+        !self.dynamic_bindings_unknown && self.scalar_asserted_bindings.contains(name)
+    }
+
+    pub(crate) fn clear_scalar_asserted(&mut self, name: &str) {
+        if self.scalar_asserted_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
+            self.scalar_asserted_bindings.remove(name);
+        }
+    }
+
+    /// A call may have swapped a binding for an active binding or promise.
+    /// Drop current scalar facts, and refuse new ones in this frame: a later
+    /// assertion could read a value that the next read no longer returns.
+    pub(crate) fn invalidate_scalar_assertions(&mut self) {
+        self.dynamic_bindings_unknown = true;
+        self.clear_scalar_assertions();
+    }
+
+    /// Drop current scalar facts while still allowing later assertions.
+    pub(crate) fn clear_scalar_assertions(&mut self) {
+        self.retain_scalar_assertions(|_| false);
+    }
+
+    /// Keep only the scalar facts `keep` accepts, journaling each removal.
+    pub(crate) fn retain_scalar_assertions(&mut self, keep: impl Fn(&str) -> bool) {
+        if self.scalar_asserted_bindings.is_empty() {
+            return;
+        }
+        let lost: Vec<_> = self
+            .scalar_asserted_bindings
+            .iter()
+            .filter(|name| !keep(name))
+            .cloned()
+            .collect();
+        for binding in lost {
+            self.clear_scalar_asserted(&binding);
+        }
+    }
+
+    pub(crate) fn mark_loop_vector(&mut self, name: &str) {
+        if !self.loop_vector_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::LoopVector);
+            self.loop_vector_bindings.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn clear_loop_vector(&mut self, name: &str) {
+        if self.loop_vector_bindings.contains(name) {
+            self.journal_marker(name, scope_journal::MarkerKind::LoopVector);
+            self.loop_vector_bindings.remove(name);
+        }
     }
 
     pub(crate) fn is_default_parameter(&self, name: &str) -> bool {
@@ -1131,6 +1229,9 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 pub(crate) struct EnclosingFormals {
     pub(crate) names: FxSet<String>,
     pub(crate) has_dots: bool,
+    /// Every formal has no default or a literal one, so forcing a formal
+    /// cannot run code that rebinds another name in this frame.
+    pub(crate) literal_defaults_only: bool,
     /// A forced default may install one of these names in this frame at
     /// runtime; a same-named outward declaration is then not certain.
     pub(crate) possible_default_writes: FxSet<String>,
@@ -1218,6 +1319,9 @@ pub struct Checker {
     pub(crate) native_registration: bool,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
+    /// Method screens derived from the collected and imported tables. They
+    /// cannot change during inference; collection and the setters reset it.
+    method_screens: std::sync::OnceLock<infer::binop::MethodScreens>,
     load_bindings: HashMap<usize, HashSet<String>>,
     // Names assigned anywhere in enclosing function bodies. They are added
     // only when checking a nested closure, matching R's deferred lexical
@@ -1441,6 +1545,7 @@ impl Checker {
             native_registration: false,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
+            method_screens: std::sync::OnceLock::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
@@ -1874,6 +1979,7 @@ impl Checker {
         self.native_registration =
             bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
+        self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();
     }
 
@@ -1887,11 +1993,13 @@ impl Checker {
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, String>) {
         self.imported_from = imports;
+        self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {
         self.external_s3_methods = methods;
+        self.method_screens = std::sync::OnceLock::new();
     }
 
     pub fn set_load_bindings(&mut self, bindings: HashMap<usize, HashSet<String>>) {

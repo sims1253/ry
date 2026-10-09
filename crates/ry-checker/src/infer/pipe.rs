@@ -339,13 +339,30 @@ impl Checker {
                 ty,
                 child.ops_environment_unknown,
                 child.effects_unknown,
+                child.dynamic_bindings_unknown,
                 child.unreachable,
                 child.literal_values_unknown,
+                (!child.unreachable).then_some(child.scalar_asserted_bindings),
             )
         };
-        let (then_t, then_ops, then_effects, then_unreachable, then_literals) =
-            infer_arm(then, NarrowingBranch::Then);
-        let (else_t, else_ops, else_effects, else_unreachable, else_literals) = match else_ {
+        let (
+            then_t,
+            then_ops,
+            then_effects,
+            then_dynamic,
+            then_unreachable,
+            then_literals,
+            then_facts,
+        ) = infer_arm(then, NarrowingBranch::Then);
+        let (
+            else_t,
+            else_ops,
+            else_effects,
+            else_dynamic,
+            else_unreachable,
+            else_literals,
+            else_facts,
+        ) = match else_ {
             Some(e) => infer_arm(e, NarrowingBranch::Else),
             None => (
                 RType::new(Mode::Null, Length::Zero),
@@ -353,12 +370,20 @@ impl Checker {
                 false,
                 false,
                 false,
+                false,
+                None,
             ),
         };
+        // A reachable arm that lost a fact, for example through a call
+        // allowed before an assertion, loses it for the continuation too.
+        for facts in [then_facts, else_facts].into_iter().flatten() {
+            scope.retain_scalar_assertions(|name| facts.contains(name));
+        }
         scope.clear_ops_facts();
         scope.clear_known_strings();
         scope.ops_environment_unknown |= then_ops || else_ops;
         scope.effects_unknown |= then_effects || else_effects;
+        scope.dynamic_bindings_unknown |= then_dynamic || else_dynamic;
         scope.literal_values_unknown |= then_literals || else_literals;
         scope.unreachable |= then_unreachable && else_unreachable;
         match (then_unreachable, else_unreachable) {

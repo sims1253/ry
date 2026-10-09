@@ -31,6 +31,12 @@ All notable changes to ry are documented in this file.
 - Validate selective `ry: ignore[...]` comments and report malformed or
   unknown rule lists as RY112. Invalid native lists and foreign-only `noqa`
   lists no longer suppress ry findings; bare ignores still do.
+- Carry scalar-or-NULL facts from successful `stopifnot()` assertions into
+  later RY032 checks, removing the guarded purrr `prepend()` false positive.
+  Only a small set of non-dispatching base calls keeps the fact; any other
+  call or replacement assignment, before or after the assertion, drops it.
+  Preserve a proven vector alternative through simple aliases and loop joins
+  so RY032 reports a reachable first-iteration or empty-iterator error.
 
 ### Fixed
 

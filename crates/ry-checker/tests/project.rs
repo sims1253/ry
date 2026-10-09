@@ -1596,3 +1596,40 @@ fn cross_file_helper_application_stays_silent() {
         "cross-file helper application must stay silent: {all:?}"
     );
 }
+
+/// A project method for a generic the scalar proof relies on blocks the
+/// proof. Defining or removing it in another file must update RY032
+/// identically in warm and cold checks.
+#[test]
+fn scalar_fact_follows_project_method_edits_warm_and_cold() {
+    let consumer = "f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }\n";
+    let consumer_warns = |diagnostics: &[(String, Vec<ry_checker::Diagnostic>)]| {
+        diagnostics.iter().any(|(path, diagnostics)| {
+            path == "consumer.R" && diagnostics.iter().any(|d| d.code == "RY032")
+        })
+    };
+    let unrelated = "unrelated <- function(x) 1L\n";
+    for (route, defined) in [
+        ("S3 length", "length.foo <- function(x) 1L\n"),
+        ("S4 length", "setMethod('length', 'foo', function(x) 1L)\n"),
+        ("S3 comparison", "`==.foo` <- function(e1, e2) TRUE\n"),
+    ] {
+        for (before, after) in [(defined, unrelated), (unrelated, defined)] {
+            let mut warm = callback_project(&[("helper.R", before), ("consumer.R", consumer)]);
+            assert_eq!(
+                consumer_warns(&warm.check_incremental()),
+                before == defined,
+                "{route}: {before}"
+            );
+            warm.update_file("helper.R".into(), Arc::new(parse("helper.R", after)));
+            let edited = warm.check_incremental();
+            let cold = callback_project(&[("helper.R", after), ("consumer.R", consumer)]).check();
+            assert_eq!(edited, cold, "{route}: warm and cold checks differ");
+            assert_eq!(
+                consumer_warns(&edited),
+                after == defined,
+                "{route}: {after}"
+            );
+        }
+    }
+}

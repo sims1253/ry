@@ -42,6 +42,38 @@ pub(crate) enum Narrowing {
     /// proves that `x` has length one. A negated type predicate over the same
     /// variable (for example `!is.numeric(x)`) may additionally prove mode.
     ScalarElse { var: String, target: Option<RType> },
+    /// A true guard proves that the loop-carried vector alternative cannot
+    /// reach its body. This does not rewrite the binding's general RType.
+    ScalarThen { var: String },
+}
+
+impl Narrowing {
+    /// Whether any fact in this narrowing is about one of `names`.
+    pub(crate) fn mentions_any(&self, names: &HashSet<String>) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+        match self {
+            Narrowing::Compound {
+                base,
+                on_true,
+                on_false,
+            } => {
+                base.mentions_any(names)
+                    || on_true
+                        .iter()
+                        .chain(on_false)
+                        .any(|narrowing| narrowing.mentions_any(names))
+            }
+            Narrowing::None => false,
+            Narrowing::Positive { var, .. }
+            | Narrowing::Negative { var, .. }
+            | Narrowing::Else { var, .. }
+            | Narrowing::NonNullElse { var }
+            | Narrowing::ScalarElse { var, .. }
+            | Narrowing::ScalarThen { var } => names.contains(var),
+        }
+    }
 }
 
 /// Extract a type narrowing from an `if` condition expression.
@@ -637,6 +669,9 @@ fn apply_single_narrowing_branch<'a>(
                 }
             }
         }
+        (Narrowing::ScalarThen { var }, NarrowingBranch::Then) => {
+            scope.clear_loop_vector(var);
+        }
         _ => {}
     }
     None
@@ -727,6 +762,15 @@ impl Checker {
     /// only when ordinary typeshed resolution establishes their provenance.
     pub(crate) fn extract_type_narrowing(&self, cond: &Expr, scope: &Scope) -> Narrowing {
         let built_in = extract_builtin_type_narrowing(cond);
+        if !scope.loop_vector_bindings.is_empty()
+            && let Some(var) = self.scalar_assertion_subject(cond, scope)
+        {
+            return Narrowing::Compound {
+                base: Box::new(built_in),
+                on_true: vec![Narrowing::ScalarThen { var }],
+                on_false: Vec::new(),
+            };
+        }
         let mut compound = cond;
         while let Expr::UnaryOp {
             op: UnaryOpKind::Not,

@@ -7,6 +7,8 @@ pub(crate) struct BindingState {
     pub ty: Option<RType>,
     pub narrowed: bool,
     pub parameter: bool,
+    pub scalar_asserted: bool,
+    pub loop_vector: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
@@ -37,6 +39,8 @@ impl BindingState {
             ty: None,
             narrowed: scope.narrowed_bindings.contains(name),
             parameter: scope.parameter_bindings.contains(name),
+            scalar_asserted: scope.scalar_asserted_bindings.contains(name),
+            loop_vector: scope.loop_vector_bindings.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
@@ -59,6 +63,12 @@ impl BindingState {
         }
         marker(&mut scope.narrowed_bindings, &name, self.narrowed);
         marker(&mut scope.parameter_bindings, &name, self.parameter);
+        marker(
+            &mut scope.scalar_asserted_bindings,
+            &name,
+            self.scalar_asserted,
+        );
+        marker(&mut scope.loop_vector_bindings, &name, self.loop_vector);
         marker(&mut scope.list_origin_bindings, &name, self.list_origin);
         marker(
             &mut scope.default_parameter_bindings,
@@ -113,6 +123,8 @@ impl AssignmentUndo {
         let sets = [
             &mut scope.narrowed_bindings,
             &mut scope.parameter_bindings,
+            &mut scope.scalar_asserted_bindings,
+            &mut scope.loop_vector_bindings,
             &mut scope.list_origin_bindings,
             &mut scope.default_parameter_bindings,
             &mut scope.lexical_functions,
@@ -154,6 +166,8 @@ pub(crate) enum MarkerKind {
     ListOrigin,
     Lexical,
     Parameter,
+    ScalarAsserted,
+    LoopVector,
 }
 
 #[derive(Debug)]
@@ -188,6 +202,7 @@ pub(crate) struct Mark {
     provenance: Option<(Span, bool, Option<ReferenceBlocker>)>,
     loop_frame: Option<usize>,
     effects_unknown: bool,
+    dynamic_bindings_unknown: bool,
     ops_environment_unknown: bool,
     has_escaped_slot_names: bool,
 }
@@ -200,6 +215,7 @@ pub(crate) struct BranchDelta {
     pub changed: BranchChanges,
     pub unreachable: bool,
     pub effects_unknown: bool,
+    pub dynamic_bindings_unknown: bool,
     pub ops_environment_unknown: bool,
     pub has_escaped_slot_names: bool,
 }
@@ -315,6 +331,8 @@ impl Scope {
         let sets = [
             &mut self.narrowed_bindings,
             &mut self.parameter_bindings,
+            &mut self.scalar_asserted_bindings,
+            &mut self.loop_vector_bindings,
             &mut self.list_origin_bindings,
             &mut self.default_parameter_bindings,
             &mut self.lexical_functions,
@@ -408,6 +426,8 @@ impl Scope {
                 MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
                 MarkerKind::Lexical => self.lexical_functions.contains(name),
                 MarkerKind::Parameter => self.parameter_bindings.contains(name),
+                MarkerKind::ScalarAsserted => self.scalar_asserted_bindings.contains(name),
+                MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
@@ -461,6 +481,7 @@ impl Scope {
             len: self.undo.len(),
             loop_frame: self.loop_frame,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             has_escaped_slot_names: self.has_escaped_slot_names,
             data_mask_unknown: self.data_mask_unknown,
@@ -525,6 +546,7 @@ impl Scope {
         let delta = BranchDelta {
             literal_values_unknown: self.literal_values_unknown,
             effects_unknown: self.effects_unknown,
+            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
             ops_environment_unknown: self.ops_environment_unknown,
             has_escaped_slot_names: self.has_escaped_slot_names,
             unreachable: self.unreachable,
@@ -547,6 +569,8 @@ impl Scope {
                         MarkerKind::ListOrigin => &mut self.list_origin_bindings,
                         MarkerKind::Lexical => &mut self.lexical_functions,
                         MarkerKind::Parameter => &mut self.parameter_bindings,
+                        MarkerKind::ScalarAsserted => &mut self.scalar_asserted_bindings,
+                        MarkerKind::LoopVector => &mut self.loop_vector_bindings,
                     };
                     if present {
                         set.insert(name);
@@ -600,6 +624,7 @@ impl Scope {
         }
         self.loop_frame = mark.loop_frame;
         self.effects_unknown = mark.effects_unknown;
+        self.dynamic_bindings_unknown = mark.dynamic_bindings_unknown;
         self.ops_environment_unknown = mark.ops_environment_unknown;
         self.has_escaped_slot_names = mark.has_escaped_slot_names;
         self.literal_values_unknown = mark.literal_values_unknown;
@@ -736,6 +761,8 @@ mod tests {
         scope.mark_list_origin("x");
         scope.mark_lexical_function("x", Span::default());
         scope.set_function_alias("x", "original".into());
+        scope.mark_scalar_asserted("x");
+        scope.mark_loop_vector("x");
         scope.reference_provenance = Some(Box::new(ScopeProvenance {
             owner: Span {
                 start: 0,
@@ -778,6 +805,11 @@ mod tests {
         assert_eq!(left.narrowed_bindings, right.narrowed_bindings);
         assert_eq!(left.parameter_bindings, right.parameter_bindings);
         assert_eq!(
+            left.scalar_asserted_bindings,
+            right.scalar_asserted_bindings
+        );
+        assert_eq!(left.loop_vector_bindings, right.loop_vector_bindings);
+        assert_eq!(
             left.default_parameter_bindings,
             right.default_parameter_bindings
         );
@@ -799,6 +831,10 @@ mod tests {
         assert_eq!(left.loop_frame, right.loop_frame);
         assert_eq!(left.unreachable, right.unreachable);
         assert_eq!(left.effects_unknown, right.effects_unknown);
+        assert_eq!(
+            left.dynamic_bindings_unknown,
+            right.dynamic_bindings_unknown
+        );
         assert_eq!(left.ops_environment_unknown, right.ops_environment_unknown);
         assert_eq!(left.has_escaped_slot_names, right.has_escaped_slot_names);
         assert_eq!(left.search_path_unknown, right.search_path_unknown);
@@ -859,6 +895,7 @@ mod tests {
         let inner = scope.begin_snapshot();
         scope.insert("`x`", RType::scalar(Mode::Logical));
         scope.invalidate_unknown_effects();
+        scope.dynamic_bindings_unknown = true;
         scope.insert("x", RType::scalar(Mode::Integer));
         scope.loop_frame = None;
         scope.unreachable = true;
@@ -868,7 +905,12 @@ mod tests {
         assert_eq!(independent.loop_frame, None);
         assert!(!independent.unreachable);
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
-        assert!(delta.effects_unknown && delta.ops_environment_unknown && delta.unreachable);
+        assert!(
+            delta.effects_unknown
+                && delta.dynamic_bindings_unknown
+                && delta.ops_environment_unknown
+                && delta.unreachable
+        );
         assert_same_scope(&scope, &before_inner);
         scope.clear_ops_facts();
         scope.finish_snapshot(outer, BranchChanges::default());

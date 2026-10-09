@@ -735,6 +735,8 @@ fn collect_default_writes_bounded(
 
 impl Checker {
     pub(crate) fn collect_fns(&mut self, stmts: &[Stmt]) {
+        // Collection adds methods; recompute the screens on next use.
+        self.method_screens = std::sync::OnceLock::new();
         // Project refinement has no single source file; carry escaped local
         // names and formals through the collected table as well as emission.
         if custom_operator::has_escaped_names(stmts) {

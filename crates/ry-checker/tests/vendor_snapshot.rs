@@ -152,8 +152,10 @@ fn purrr_vendor_snapshot() {
     // `useDynLib(purrr, .registration = TRUE)`.
     //
     // Whole-package imports resolve rlang/vctrs functions and constants.
-    // The remaining RY032 reports a scalar requirement for `before` in
-    // prepend(); its earlier stopifnot check rejects invalid lengths at runtime.
+    // The former RY032 on prepend()'s `before` is gone: its earlier
+    // stopifnot checks the comparison's scalar length and rejects vector
+    // inputs before the later `||`. The exact pinned source and R witness
+    // are retained with the #351 scalar-flow tests.
     //
     // progress-bars.R:56:16 RY109 — TRUE POSITIVE, latent. The default
     // `caller_env = caller_env()` in as_progress() references the formal

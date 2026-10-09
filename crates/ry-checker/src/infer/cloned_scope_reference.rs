@@ -6,11 +6,13 @@ impl Checker {
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        literal_cond: Option<bool>,
         then: &[Stmt],
         else_: Option<&[Stmt]>,
         mut returns: Option<&mut Vec<RType>>,
     ) {
         let has_else = else_.is_some();
+        let base_loop_vectors = scope.loop_vector_bindings.clone();
         let (mut then_scope, mut else_scope, narrowed) = apply_narrowing(scope, narrowing);
         // Pre-`if` views of the guard-narrowed names, captured before the
         // merge below replaces them: the union-guard refinement compares
@@ -48,6 +50,27 @@ impl Checker {
             || self.block_diverges_for_continuation(then);
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        // Mirror the journal join: a continuing arm keeps a scalar fact only
+        // if it still holds it, and passes on its binding uncertainty.
+        scope.scalar_asserted_bindings.retain(|name| {
+            (then_diverges || then_scope.scalar_asserted_bindings.contains(name))
+                && (!has_else
+                    || else_diverges
+                    || else_scope.scalar_asserted_bindings.contains(name))
+        });
+        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
+            || (!else_diverges && else_scope.dynamic_bindings_unknown);
+        let mut loop_vectors_after = FxSet::default();
+        if !then_diverges && literal_cond != Some(false) {
+            loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
+        }
+        if !else_diverges && literal_cond != Some(true) {
+            loop_vectors_after.extend(if has_else {
+                else_scope.loop_vector_bindings.iter().cloned()
+            } else {
+                base_loop_vectors.iter().cloned()
+            });
+        }
         let continuation = match (then_diverges, else_, else_diverges) {
             (true, Some(_), false) | (true, None, _) => Some(&else_scope),
             (false, Some(_), true) => Some(&then_scope),
@@ -105,6 +128,7 @@ impl Checker {
             };
             scope.insert_narrowed(name, refined);
         }
+        scope.loop_vector_bindings = loop_vectors_after;
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {

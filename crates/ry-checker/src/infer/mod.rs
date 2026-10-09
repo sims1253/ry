@@ -37,6 +37,18 @@ pub(crate) fn join_all(mut types: impl Iterator<Item = RType>) -> RType {
     types.fold(first, RType::join)
 }
 
+/// Only these exact names bind controls after `...` in base `stopifnot`.
+/// Other named arguments are assertions; R reports their names on failure.
+pub(crate) fn stopifnot_predicate_arg(arg: &Arg) -> bool {
+    !matches!(arg.name.as_deref(), Some("local" | "exprs" | "exprObject"))
+}
+
+/// `exprs` and `exprObject` make base `stopifnot` evaluate quoted code.
+pub(crate) fn stopifnot_evaluates_quoted(args: &[Arg]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.name.as_deref(), Some("exprs" | "exprObject")))
+}
+
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -583,6 +595,7 @@ impl Checker {
                 value,
                 span: assignment_span,
             } => {
+                self.drop_scalar_facts_for_complex_assignment(target, value, scope);
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -611,13 +624,16 @@ impl Checker {
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let known_string = condition_string_literal(value, scope)
                     .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
-                    .filter(|_| {
-                        ops_chooser::ordinary_assignment(self, target, value)
-                            && !ops_chooser::operator_rebound(self, "<-", scope)
-                            && !ops_chooser::operator_rebound(self, "=", scope)
-                    })
+                    .filter(|_| ops_chooser::base_assignment(self, target, value, scope))
                     .map(Arc::<str>::from);
                 let function_alias = self.function_alias_target(value, scope);
+                // A plain identifier assignment copies the current value,
+                // including a proven vector alternative retained after a
+                // loop join. Capture this before assigning the target:
+                // Scope::insert correctly clears the target's old facts.
+                let loop_vector_alias = matches!(value, Expr::Ident { name, .. }
+                    if scope.loop_vector_bindings.contains(name))
+                    && ops_chooser::base_assignment(self, target, value, scope);
                 let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
                     let span = scope.lexical_definition(alias)?;
                     self.fn_table.definition(&self.path, span).map(|_| span)
@@ -667,6 +683,9 @@ impl Checker {
                     }
                     if value_has_list_origin {
                         scope.mark_list_origin(name.to_string());
+                    }
+                    if loop_vector_alias {
+                        scope.mark_loop_vector(name);
                     }
                     if let Expr::Function { span, .. } = value {
                         if self.enclosing_formals.is_empty() {
@@ -789,12 +808,30 @@ impl Checker {
                     scope,
                 );
                 let narrowing = self.extract_type_narrowing(cond, scope);
+                let literal_cond = match cond {
+                    Expr::Logical(value, _) => Some(*value),
+                    _ => None,
+                };
                 #[cfg(test)]
                 if !self.journal_branches {
-                    self.walk_cloned_if(scope, &narrowing, then, else_.as_deref(), returns);
+                    self.walk_cloned_if(
+                        scope,
+                        &narrowing,
+                        literal_cond,
+                        then,
+                        else_.as_deref(),
+                        returns,
+                    );
                     return;
                 }
-                self.walk_journal_if(scope, &narrowing, then, else_.as_deref(), returns);
+                self.walk_journal_if(
+                    scope,
+                    &narrowing,
+                    literal_cond,
+                    then,
+                    else_.as_deref(),
+                    returns,
+                );
             }
             Stmt::For {
                 name, iter, body, ..
@@ -1323,25 +1360,56 @@ impl Checker {
         }
     }
 
+    /// A replacement or subassignment (`x[i] <-`, `length(x) <-`, any
+    /// `f(x) <-`), a superassignment, or a masked `<-`/`=` runs R code that
+    /// may rebind any name, so it drops scalar facts like an unsafe call.
+    fn drop_scalar_facts_for_complex_assignment(
+        &self,
+        target: &Expr,
+        value: &Expr,
+        scope: &mut Scope,
+    ) {
+        if !scope.dynamic_bindings_unknown
+            && (binding_name(target).is_none()
+                || !ops_chooser::base_assignment(self, target, value, scope))
+        {
+            scope.invalidate_scalar_assertions();
+        }
+    }
+
     /// Bind names assigned by a loop body before walking it. A binding may
     /// have been established by a previous iteration, even when its first
     /// assignment is textually later than its use in the body.
     fn insert_loop_carried_bindings(&self, body: &[Stmt], scope: &mut Scope) {
         for name in self.reachable_loop_assignments(body, scope) {
+            let vector_path = !scope.is_scalar_asserted(&name)
+                && (scope.loop_vector_bindings.contains(&name)
+                    || scope.get(&name).is_some_and(loops::known_unclassed_vector));
             // The pre-loop value need not survive a later iteration.
             // Widening is not an executed assignment at the current source
             // position. A previous/current iteration may still hold a
             // lexical function here, so preserve possible shadowing while
             // dropping its exact declaration identity.
             scope.insert(name.clone(), RType::unknown());
+            if vector_path {
+                scope.mark_loop_vector(&name);
+            }
             scope.mark_lexical_callable(name);
+        }
+        // A call late in the body runs before an earlier assertion on the
+        // next iteration, so such a call taints the whole repeated body.
+        if !scope.dynamic_bindings_unknown && self.body_may_replace_bindings(body, scope) {
+            scope.invalidate_scalar_assertions();
         }
     }
 
+    /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
+    /// the arm it never takes contributes no loop-vector alternative.
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        literal_cond: Option<bool>,
         then: &[Stmt],
         else_: Option<&[Stmt]>,
         mut returns: Option<&mut Vec<RType>>,
@@ -1404,6 +1472,63 @@ impl Checker {
         let then_diverges = then_diverges_in_loop || self.block_diverges_for_continuation(then);
         let else_diverges = else_diverges_in_loop
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        // Assertions before this `if` remain valid only if no continuing arm
+        // can replace their binding. A same-typed assignment still invalidates
+        // the proof, even though ordinary type merging would see no change.
+        let lost_scalar_assertions: Vec<_> = scope
+            .scalar_asserted_bindings
+            .iter()
+            .filter(|name| {
+                !then_diverges
+                    && !then_delta
+                        .changed
+                        .get(*name)
+                        .is_none_or(|state| state.scalar_asserted)
+                    || (has_else
+                        && !else_diverges
+                        && !else_delta
+                            .changed
+                            .get(*name)
+                            .is_none_or(|state| state.scalar_asserted))
+            })
+            .cloned()
+            .collect();
+        for name in lost_scalar_assertions {
+            scope.clear_scalar_asserted(&name);
+        }
+        // A proven vector alternative survives the join when any continuing
+        // arm still carries it.
+        let mut vector_candidates: HashSet<String> =
+            scope.loop_vector_bindings.iter().cloned().collect();
+        for delta in [&then_delta, &else_delta] {
+            vector_candidates.extend(
+                delta
+                    .changed
+                    .iter()
+                    .filter(|(_, state)| state.loop_vector)
+                    .map(|(name, _)| name.clone()),
+            );
+        }
+        let loop_vectors_after: HashSet<String> = vector_candidates
+            .into_iter()
+            .filter(|name| {
+                let original = scope.loop_vector_bindings.contains(name);
+                let then = then_delta
+                    .changed
+                    .get(name)
+                    .map_or(original, |state| state.loop_vector);
+                let else_path = if has_else {
+                    else_delta
+                        .changed
+                        .get(name)
+                        .map_or(original, |state| state.loop_vector)
+                } else {
+                    original
+                };
+                (!then_diverges && literal_cond != Some(false) && then)
+                    || (!else_diverges && literal_cond != Some(true) && else_path)
+            })
+            .collect();
         let continuation = match (then_diverges, has_else, else_diverges) {
             (true, true, false) | (true, false, _) => Some(&else_delta),
             (false, true, true) => Some(&then_delta),
@@ -1504,6 +1629,8 @@ impl Checker {
         scope.ops_environment_unknown |=
             then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
         scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
+        scope.dynamic_bindings_unknown |= (!then_diverges && then_delta.dynamic_bindings_unknown)
+            || (!else_diverges && else_delta.dynamic_bindings_unknown);
         scope.literal_values_unknown |=
             then_delta.literal_values_unknown || else_delta.literal_values_unknown;
         scope.has_escaped_slot_names |=
@@ -1634,6 +1761,15 @@ impl Checker {
         }
         for (name, refined) in union_guard_facts {
             scope.insert_narrowed(name, refined);
+        }
+        let old_loop_vectors: Vec<_> = scope.loop_vector_bindings.iter().cloned().collect();
+        for name in old_loop_vectors {
+            if !loop_vectors_after.contains(&name) {
+                scope.clear_loop_vector(&name);
+            }
+        }
+        for name in loop_vectors_after {
+            scope.mark_loop_vector(&name);
         }
         scope.apply_box_provenance(box_provenance);
         if has_else && then_delta.unreachable && else_delta.unreachable {
@@ -2846,17 +2982,7 @@ impl Checker {
         // A skipped custom call may install active bindings, so even a later
         // assignment cannot make identifier reads trustworthy again. This is
         // expression uncertainty, not a model of rebound control syntax.
-        if scope.effects_unknown
-            && !matches!(
-                e,
-                Expr::Logical(..)
-                    | Expr::Integer(..)
-                    | Expr::Double(..)
-                    | Expr::String(..)
-                    | Expr::Null(..)
-                    | Expr::Na(..)
-            )
-        {
+        if scope.effects_unknown && !is_scalar_literal(e) {
             return RType::unknown();
         }
 
@@ -2943,6 +3069,7 @@ impl Checker {
                 // return the RHS type. R's `<-` returns the assigned
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    self.drop_scalar_facts_for_complex_assignment(lhs, rhs, scope);
                     if !scope.ops_environment_unknown
                         && !ops_chooser::ordinary_assignment(self, lhs, rhs)
                     {
@@ -3253,6 +3380,9 @@ impl Checker {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
             has_dots: params.iter().any(|parameter| parameter.name == "..."),
+            literal_defaults_only: params
+                .iter()
+                .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
             function_span,
         });

@@ -252,6 +252,19 @@ pub(crate) fn ordinary_assignment(checker: &Checker, target: &Expr, value: &Expr
     )
 }
 
+/// A `<-` or `=` statement whose operators keep their base meaning, so the
+/// target receives exactly the value.
+pub(crate) fn base_assignment(
+    checker: &Checker,
+    target: &Expr,
+    value: &Expr,
+    scope: &Scope,
+) -> bool {
+    ordinary_assignment(checker, target, value)
+        && !operator_rebound(checker, "<-", scope)
+        && !operator_rebound(checker, "=", scope)
+}
+
 pub(crate) fn operator_rebound(checker: &Checker, symbol: &str, scope: &Scope) -> bool {
     checker.literal_bindings_may_be_shadowed(
         [symbol, &format!("`{symbol}`")],

@@ -251,9 +251,39 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "while",
 ];
 
+/// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
+/// its evaluated arguments: it takes no callback, quoted expression, or
+/// environment, and never dispatches to project code (fact creation refuses
+/// projects that define a method for any of these names). Every other call
+/// may install an active or delayed binding in the caller's frame.
+pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
+    "stopifnot",
+    "length",
+    "is.null",
+    "is.na",
+    "nchar",
+    "identical",
+    "is.character",
+    "is.numeric",
+    "is.logical",
+    "is.integer",
+    "is.double",
+    "is.function",
+    "is.list",
+    "inherits",
+    "missing",
+    "stop",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "SCALAR_FACT_SAFE_CALLS",
+            items: SCALAR_FACT_SAFE_CALLS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base calls that read their arguments without callbacks, environments, or project dispatch",
+        },
         SemanticList {
             name: "PLAIN_NEW_CLASSES",
             items: PLAIN_NEW_CLASSES,

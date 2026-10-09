@@ -417,9 +417,11 @@ impl Checker {
         // than recursing from the enclosing `if`) reports each site exactly
         // once no matter how the operators nest.
         self.check_class_equality_operand(lhs, scope);
+        let lhs_loop_vector = self.loop_vector_operand(lhs, scope);
         let lt = self.infer_boolean_operand(lhs, scope);
         let narrowing = self.extract_type_narrowing(lhs, scope);
         let rhs_parameter_vector = self.short_circuit_parameter_vector(op, lhs, rhs, scope);
+        let mut rhs_loop_vector = false;
         let rt = match op {
             BinOpKind::AndAnd | BinOpKind::OrOr => {
                 let branch = if matches!(op, BinOpKind::AndAnd) {
@@ -430,6 +432,13 @@ impl Checker {
                 let mut rhs_scope = scope.clone();
                 apply_narrowing_branch(&mut rhs_scope, &narrowing, branch);
                 self.check_class_equality_operand(rhs, &rhs_scope);
+                // A literal FALSE `&&` or TRUE `||` never evaluates its RHS.
+                let rhs_unreachable = matches!(
+                    (op, lhs),
+                    (BinOpKind::AndAnd, Expr::Logical(false, _))
+                        | (BinOpKind::OrOr, Expr::Logical(true, _))
+                );
+                rhs_loop_vector = !rhs_unreachable && self.loop_vector_operand(rhs, &rhs_scope);
                 let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
@@ -465,7 +474,58 @@ impl Checker {
             );
             self.emit(Severity::Warning, span, "RY032", message);
         }
+        if (lhs_loop_vector || rhs_loop_vector)
+            && !ops_chooser::operator_rebound(self, op_symbol(op), scope)
+            && !self.diagnostics[before..]
+                .iter()
+                .any(|diagnostic| diagnostic.code == "RY032")
+        {
+            self.emit(
+                Severity::Warning,
+                span,
+                "RY032",
+                format!(
+                    "`{}` may receive an unclassed vector retained across a loop; R requires a single logical value",
+                    op_symbol(op)
+                ),
+            );
+        }
         result
+    }
+
+    fn loop_vector_operand(&self, expr: &Expr, scope: &Scope) -> bool {
+        if scope.loop_vector_bindings.is_empty() {
+            return false;
+        }
+        let subject = match expr {
+            Expr::Ident { name, .. } => Some(name.as_str()),
+            Expr::BinOp { op, lhs, rhs, .. }
+                if is_comparison(*op)
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    && !self.project_defines_comparison_method() =>
+            {
+                let numeric = |expr: &Expr| match expr {
+                    Expr::UnaryOp {
+                        op: UnaryOpKind::Neg,
+                        expr: value,
+                        ..
+                    } => {
+                        is_numeric_literal(value)
+                            && !ops_chooser::operator_rebound(self, "-", scope)
+                    }
+                    expr => is_numeric_literal(expr),
+                };
+                match (lhs.as_ref(), rhs.as_ref()) {
+                    (Expr::Ident { name, .. }, rhs) if numeric(rhs) => Some(name.as_str()),
+                    (lhs, Expr::Ident { name, .. }) if numeric(lhs) => Some(name.as_str()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        subject.is_some_and(|name| {
+            scope.loop_vector_bindings.contains(name) && !scope.is_scalar_asserted(name)
+        })
     }
 
     /// Infer one direct `&&`/`||` operand while retaining its exact syntax
@@ -617,7 +677,277 @@ impl Checker {
         // return it, making the separate `is_parameter` check redundant.
         guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
+            .filter(|parameter| !scope.is_scalar_asserted(parameter))
             .is_some()
+    }
+
+    /// A successful `stopifnot` may establish a scalar-length fact that a
+    /// later short-circuit guard can reuse. Keep it separate from RType:
+    /// `is.null(x) || ...` also admits NULL, which other rules must still see.
+    pub(crate) fn mark_scalar_assertions(&self, args: &[Arg], scope: &mut Scope) {
+        // An earlier call outside the safe set may already have replaced the
+        // subject with an active binding or a promise.
+        if scope.dynamic_bindings_unknown
+            || stopifnot_evaluates_quoted(args)
+            || !self.resolves_to_base_lenient("stopifnot", scope)
+            || self.project_defines_scalar_proof_method()
+        {
+            return;
+        }
+        // Arguments run from left to right. A later argument can replace a
+        // binding validated by an earlier one, including through `assign()`
+        // or an arbitrary call that static assignment collection cannot see.
+        // The final predicate is the only one whose fact cannot be spoiled
+        // by another assertion argument after it.
+        // `local` is a control, not a predicate; skip a trailing one. Other
+        // named arguments are assertions just like positional ones.
+        if let Some(index) = args.iter().rposition(stopifnot_predicate_arg) {
+            let last = &args[index];
+            let mut assigned = HashSet::new();
+            for arg in &args[index..] {
+                collect_condition_assignment_names(&arg.value, &mut assigned);
+            }
+            if let Some(name) = self.scalar_assertion_subject(&last.value, scope)
+                && !assigned.contains(name.as_str())
+            {
+                scope.mark_scalar_asserted(&name);
+            }
+        }
+    }
+
+    pub(crate) fn scalar_assertion_subject(&self, expr: &Expr, scope: &Scope) -> Option<String> {
+        // Parentheses are calls in R. A local `(` can return TRUE without
+        // evaluating the enclosed guard, whether this fact is consumed by
+        // stopifnot or by a branch's ScalarThen narrowing.
+        if self.literal_bindings_may_be_shadowed(["(", "`(`"], &HashSet::new(), scope) {
+            return None;
+        }
+        match expr {
+            Expr::BinOp {
+                op: BinOpKind::OrOr,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "||", scope) {
+                    return None;
+                }
+                let Expr::Call { func, args, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                let name = ident_name(func)?;
+                if crate::semantic_lists::bare_name(name) != "is.null"
+                    || !self.resolves_to_base_lenient(name, scope)
+                    || args.len() != 1
+                {
+                    return None;
+                }
+                let Expr::Ident { name: subject, .. } = &args[0].value else {
+                    return None;
+                };
+                (self.scalar_assertion_subject(rhs, scope).as_deref() == Some(subject.as_str()))
+                    .then(|| subject.clone())
+            }
+            Expr::BinOp {
+                op: BinOpKind::AndAnd,
+                lhs,
+                rhs: assertion_rhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "&&", scope) {
+                    return None;
+                }
+                // R 4.3+ errors on a non-scalar LHS of `&&`. For
+                // an unclassed value, a base comparison with a scalar
+                // literal has that same length as its subject.
+                let Expr::BinOp {
+                    op,
+                    lhs,
+                    rhs: comparison_rhs,
+                    ..
+                } = lhs.as_ref()
+                else {
+                    return None;
+                };
+                if !matches!(
+                    op,
+                    BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
+                ) || !is_numeric_literal(comparison_rhs)
+                    || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    || self.project_defines_comparison_method()
+                {
+                    return None;
+                }
+                let Expr::Ident { name, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                (self.scalar_assertion_subject_stable_on_force(scope)
+                    && self.scalar_assertion_class_safe(name, scope)
+                    && self.scalar_assertion_pure_rhs(assertion_rhs, name, scope))
+                .then(|| name.clone())
+            }
+            Expr::BinOp {
+                op: BinOpKind::Eq,
+                lhs,
+                rhs,
+                ..
+            } => {
+                if ops_chooser::operator_rebound(self, "==", scope) {
+                    return None;
+                }
+                let (length_call, literal) =
+                    if matches!(rhs.as_ref(), Expr::Integer(1, _) | Expr::Double(1.0, _)) {
+                        (lhs.as_ref(), rhs.as_ref())
+                    } else {
+                        (rhs.as_ref(), lhs.as_ref())
+                    };
+                if !matches!(literal, Expr::Integer(1, _) | Expr::Double(1.0, _)) {
+                    return None;
+                }
+                let Expr::Call { func, args, .. } = length_call else {
+                    return None;
+                };
+                let callee = ident_name(func)?;
+                if crate::semantic_lists::bare_name(callee) != "length"
+                    || !self.resolves_to_base_lenient(callee, scope)
+                    || args.len() != 1
+                {
+                    return None;
+                }
+                let Expr::Ident { name, .. } = &args[0].value else {
+                    return None;
+                };
+                (self.scalar_assertion_subject_stable_on_force(scope)
+                    && self.equality_length_guard_proves_scalar(name, expr, scope))
+                .then(|| name.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// A default is a lazy promise. Forcing it, by any later read, may
+    /// replace the subject, as in `n = { x <- c(1L, 2L); 3L }`. Only when
+    /// every enclosing formal has no default or a literal one can no forced
+    /// default rebind the subject.
+    fn scalar_assertion_subject_stable_on_force(&self, scope: &Scope) -> bool {
+        !scope.effects_unknown
+            && !scope.search_path_unknown
+            && !scope.data_mask_unknown
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|formals| formals.literal_defaults_only)
+    }
+
+    /// The first operand of `&&` proves its subject scalar only if evaluating
+    /// the rest of that assertion cannot replace it. Admit ordinary literal
+    /// and comparison expressions; a call, assignment, block, or overloaded
+    /// comparison can run arbitrary R code before `stopifnot` returns.
+    fn scalar_assertion_pure_rhs(&self, expr: &Expr, subject: &str, scope: &Scope) -> bool {
+        match expr {
+            Expr::Ident { name, .. } => {
+                // The preceding predicate or comparison evaluated the
+                // subject. Another formal can still hold an unevaluated default
+                // whose first read reassigns the subject. A local value is
+                // safe only while no unknown binding effect can replace it
+                // with a delayed or active binding.
+                name == subject
+                    || (scope.get(name).is_some()
+                        && !scope.is_parameter(name)
+                        && !scope.search_path_unknown
+                        && !scope.data_mask_unknown
+                        && !scope.effects_unknown)
+            }
+            expr if is_scalar_literal(expr) => true,
+            Expr::BinOp { op, lhs, rhs, .. }
+                if is_comparison(*op)
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    && !self.project_defines_comparison_method() =>
+            {
+                self.scalar_assertion_pure_rhs(lhs, subject, scope)
+                    && self.scalar_assertion_pure_rhs(rhs, subject, scope)
+            }
+            _ => false,
+        }
+    }
+
+    fn scalar_assertion_class_safe(&self, name: &str, scope: &Scope) -> bool {
+        match scope.get(name).map(|ty| (ty.class.known, ty.class.len)) {
+            Some((true, n)) if n > 0 => false,
+            Some((true, 0)) if !scope.is_default_parameter(name) => true,
+            _ => !self.project_defines_comparison_method(),
+        }
+    }
+
+    fn method_screens(&self) -> MethodScreens {
+        *self.method_screens.get_or_init(|| MethodScreens {
+            comparison: self.project_defines_method(|generic| {
+                matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
+            }),
+            scalar_proof: self.scan_scalar_proof_methods(),
+            length_s3: self.project_defines_s3_method(|generic| generic == "length"),
+        })
+    }
+
+    fn project_defines_comparison_method(&self) -> bool {
+        self.method_screens().comparison
+    }
+
+    /// A scalar fact relies on base `length`, comparisons, indexing, and the
+    /// safe calls that may run before its use. A project or imported S3/S4
+    /// method for any of them could lie about the length or run arbitrary
+    /// code, so such a project gets no scalar facts at all.
+    fn project_defines_scalar_proof_method(&self) -> bool {
+        self.method_screens().scalar_proof
+    }
+
+    fn scan_scalar_proof_methods(&self) -> bool {
+        self.project_defines_method(|generic| {
+            crate::semantic_lists::SCALAR_FACT_SAFE_CALLS.contains(&generic)
+                || crate::semantic_lists::OPERATORS.contains(&generic)
+                || matches!(
+                    generic,
+                    "Ops"
+                        | "Arith"
+                        | "Compare"
+                        | "Logic"
+                        | "!"
+                        | "&"
+                        | "|"
+                        | "length"
+                        | "["
+                        | "[["
+                        | "$"
+                )
+        })
+    }
+
+    fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+        self.fn_table
+            .s4_methods
+            .keys()
+            .any(|(name, _)| generic(name))
+            || self.project_defines_s3_method(generic)
+    }
+
+    fn project_defines_s3_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+        // A method name is a known generic, a dot, and a non-empty class that
+        // may itself contain dots (`length.foo.bar`, `is.na.foo`).
+        let named = |name: &str| {
+            name.match_indices('.')
+                .any(|(dot, _)| dot + 1 < name.len() && generic(&name[..dot]))
+        };
+        self.fn_table
+            .s3_methods
+            .keys()
+            .any(|(name, _)| generic(name))
+            || self
+                .external_s3_methods
+                .iter()
+                .any(|(name, _)| generic(name))
+            || self.fn_table.fns.keys().any(|name| named(name))
+            || self.imported_from.keys().any(|name| named(name))
+            || self.external_bindings.iter().any(|name| named(name))
     }
 
     /// Whether the `length(x) == 1` guard on `parameter` proves the value
@@ -667,34 +997,20 @@ impl Checker {
 
     /// Whether any `length.<class>` S3 method is registered, defined, or
     /// imported by the project, so a value of unknown class could
-    /// dispatch `length` away from base semantics.
+    /// dispatch `length` away from base semantics. S4 methods only gate the
+    /// stricter `stopifnot` scalar facts, keeping this guard as on main.
     fn project_defines_length_method(&self) -> bool {
-        fn named_length_method(name: &str) -> bool {
-            name.strip_prefix("length.")
-                .is_some_and(|class| !class.is_empty())
-        }
-        self.fn_table
-            .s3_methods
-            .keys()
-            .any(|(generic, _)| generic == "length")
-            || self
-                .external_s3_methods
-                .iter()
-                .any(|(generic, _)| generic == "length")
-            || self
-                .fn_table
-                .fns
-                .keys()
-                .any(|name| named_length_method(name))
-            || self
-                .imported_from
-                .keys()
-                .any(|name| named_length_method(name))
-            || self
-                .external_bindings
-                .iter()
-                .any(|name| named_length_method(name))
+        self.method_screens().length_s3
     }
+}
+
+/// Whether the project or its imports define methods that the scalar
+/// proofs depend on. Computed once per collected table.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MethodScreens {
+    comparison: bool,
+    scalar_proof: bool,
+    length_s3: bool,
 }
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.
@@ -763,6 +1079,11 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
         scope.invalidate_literal_values();
     }
     scope.effects_unknown |= evaluated.effects_unknown;
+    if evaluated.dynamic_bindings_unknown && !scope.dynamic_bindings_unknown {
+        scope.invalidate_scalar_assertions();
+    }
+    // A call allowed before an assertion drops facts without the flag.
+    scope.retain_scalar_assertions(|name| evaluated.scalar_asserted_bindings.contains(name));
     let mut names = HashSet::new();
     collect_condition_assignment_names(expr, &mut names);
     for name in names {
@@ -790,7 +1111,7 @@ fn insert_bound_name(expr: &Expr, names: &mut HashSet<String>) {
 /// and the remaining statement forms (if, while, for, function
 /// definitions, return), which cannot bind a name in the current
 /// environment from inside a condition value.
-fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
+pub(super) fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
     let _ = walk_expr(
         expr,
         Walk {

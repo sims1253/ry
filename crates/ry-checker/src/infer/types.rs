@@ -121,6 +121,25 @@ pub(crate) fn op_symbol(op: BinOpKind) -> &'static str {
     }
 }
 
+/// Whether `expr` is a scalar literal constant: R evaluates it without
+/// running code or reading a binding.
+pub(crate) fn is_scalar_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..)
+    )
+}
+
+/// Whether `expr` is an integer or double literal.
+pub(crate) fn is_numeric_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Integer(..) | Expr::Double(..))
+}
+
 /// Whether `op` is one of R's six comparison operators.
 pub(crate) fn is_comparison(op: BinOpKind) -> bool {
     matches!(

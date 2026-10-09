@@ -1102,3 +1102,29 @@ fn non_function_writes_keep_attached_calls_opaque() {
     let source = format!("{import}paste0 <- function(...) 'x'\npaste0('x') + 1L\n");
     assert!(has(&codes_for(root.path(), &source), "RY040"), "{source}");
 }
+
+#[test]
+fn box_calls_drop_scalar_assertion_facts() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("mod")).unwrap();
+    write(
+        root.path(),
+        "mod/tools.r",
+        "#' @export\ntouch <- function(env) NULL\n",
+    );
+    let guarded = |call: &str| {
+        format!(
+            "f <- function(x = 1L) {{ stopifnot(x > 0 && TRUE); {call}; if (is.null(x) || x == 1L) TRUE else FALSE }}\n"
+        )
+    };
+    let control = codes_for(root.path(), &guarded("length(x)"));
+    assert!(!has(&control, "RY032"), "{control:?}");
+    for (header, call) in [
+        ("box::use(./mod/tools[touch])\n", "touch(environment())"),
+        ("box::use(./mod/tools)\n", "tools$touch(environment())"),
+    ] {
+        let source = format!("{header}{}", guarded(call));
+        let found = codes_for(root.path(), &source);
+        assert!(has(&found, "RY032"), "{call}: {found:?}");
+    }
+}

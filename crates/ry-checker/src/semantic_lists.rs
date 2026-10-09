@@ -251,33 +251,38 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "while",
 ];
 
-/// Base functions that can bind, remove, or evaluate code in their caller's
-/// frame. A call to any of them may swap a binding for an active or delayed
-/// binding, so no earlier scalar assertion about it survives the call.
-pub const BINDING_INSTALLERS: &[&str] = &[
-    "assign",
-    "delayedAssign",
-    "makeActiveBinding",
-    "do.call",
-    "eval",
-    "evalq",
-    "rm",
-    "remove",
-    "list2env",
-    "sys.source",
-    "source",
-    "attach",
-    "Recall",
+/// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
+/// its evaluated arguments: it takes no callback, quoted expression, or
+/// environment, and never dispatches to project code (fact creation refuses
+/// projects that define a method for any of these names). Every other call
+/// may install an active or delayed binding in the caller's frame.
+pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
+    "stopifnot",
+    "length",
+    "is.null",
+    "is.na",
+    "nchar",
+    "identical",
+    "is.character",
+    "is.numeric",
+    "is.logical",
+    "is.integer",
+    "is.double",
+    "is.function",
+    "is.list",
+    "inherits",
+    "missing",
+    "stop",
 ];
 
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
         SemanticList {
-            name: "BINDING_INSTALLERS",
-            items: BINDING_INSTALLERS,
+            name: "SCALAR_FACT_SAFE_CALLS",
+            items: SCALAR_FACT_SAFE_CALLS,
             check: CheckKind::TypeshedAgreement,
-            claim: "base functions that can bind, remove, or evaluate code in the caller's frame",
+            claim: "base calls that read their arguments without callbacks, environments, or project dispatch",
         },
         SemanticList {
             name: "PLAIN_NEW_CLASSES",

@@ -4,15 +4,6 @@ use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
 
-/// A closure whose body is at most one literal cannot touch any binding.
-fn trivially_inert_body(body: &[Stmt]) -> bool {
-    match body {
-        [] => true,
-        [Stmt::Expr(value)] => is_scalar_literal(value),
-        _ => false,
-    }
-}
-
 impl Checker {
     pub(crate) fn infer_call(
         &mut self,
@@ -95,10 +86,14 @@ impl Checker {
         }
         // R selects the callee before its arguments run; classify it first.
         let may_replace_bindings =
-            !scope.dynamic_bindings_unknown && self.call_may_replace_bindings(func, args, scope);
+            !scope.dynamic_bindings_unknown && !self.call_keeps_scalar_facts(func, args, scope);
+        let blocks_later_facts =
+            may_replace_bindings && !self.call_allowed_before_assertion(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
-        if may_replace_bindings {
+        if blocks_later_facts {
             scope.invalidate_scalar_assertions();
+        } else if may_replace_bindings {
+            scope.clear_scalar_assertions();
         }
         if checking_declarations {
             let mut writes = direct_writes;
@@ -121,40 +116,56 @@ impl Checker {
         result
     }
 
-    /// Whether this call may install a binding in the current frame. Rather
-    /// than prove a callee harmless, treat every binding installer, computed
-    /// head (including a box module member), formal, local binding, box
-    /// attachment, and project binding (called directly, or a closure passed
-    /// as a callback) as a possible installer. Being
-    /// over-cautious only loses a scalar fact, which restores the plain
-    /// RY032 behaviour.
-    pub(super) fn call_may_replace_bindings(
-        &self,
-        func: &Expr,
-        args: &[Arg],
-        scope: &Scope,
-    ) -> bool {
+    /// Whether scalar facts survive this call. Only a base call from
+    /// `SCALAR_FACT_SAFE_CALLS` keeps them; any other call, including a
+    /// generic, closure, formal, or computed head, may install a binding.
+    pub(super) fn call_keeps_scalar_facts(&self, func: &Expr, args: &[Arg], scope: &Scope) -> bool {
         let Some(name) = callee_name(func) else {
-            return true;
+            return false;
         };
-        let project_closure = |name: &str| match scope.get(name) {
-            Some(ty) => ty.mode == Mode::Function,
-            None => self.fn_table.fns.contains_key(name),
+        let bare = crate::semantic_lists::bare_name(&name);
+        crate::semantic_lists::SCALAR_FACT_SAFE_CALLS.contains(&bare)
+            && self.resolves_to_base_lenient(&name, scope)
+            // `exprs`/`exprObject` evaluate quoted code the walk never sees.
+            && (bare != "stopifnot" || args.iter().all(stopifnot_predicate_arg))
+    }
+
+    /// Calls that end current scalar facts but still let a later assertion
+    /// prove one: base `I()`, and a call into another package's namespace.
+    /// This trades soundness for the common deprecation or validation call
+    /// at the top of a function: an external package that deliberately
+    /// installs an active binding for its caller's variable is not modelled.
+    fn call_allowed_before_assertion(&self, func: &Expr, args: &[Arg], scope: &Scope) -> bool {
+        let Some(name) = callee_name(func) else {
+            return false;
         };
-        crate::semantic_lists::BINDING_INSTALLERS.contains(&crate::semantic_lists::bare_name(&name))
-            || scope.get(&name).is_some()
-            || scope.box_objects.contains_key(&name)
-            || self.fn_table.fns.contains_key(&name)
-            || self.known_vars.contains(&name)
-            || args.iter().any(|arg| match &arg.value {
-                Expr::Function { body, .. } => !trivially_inert_body(body),
-                Expr::Ident { name, .. } => project_closure(name),
-                _ => false,
+        let callee = if crate::semantic_lists::bare_name(&name) == "I" {
+            self.resolves_to_base_lenient(&name, scope)
+        } else if let Some((package, member)) = name.rsplit_once("::") {
+            !matches!(
+                package.trim_end_matches(':'),
+                "base" | "methods" | "utils" | "stats"
+            ) && !self.fn_table.fns.contains_key(member)
+                && !self.known_vars.contains(member)
+                && !ops_chooser::operator_rebound(self, "::", scope)
+        } else {
+            false
+        };
+        // Nested calls classify themselves; a closure argument may run later.
+        callee
+            && args.iter().all(|arg| match &arg.value {
+                Expr::Function { .. } => false,
+                Expr::Ident { name, .. } => {
+                    !scope.get(name).is_some_and(|ty| ty.mode == Mode::Function)
+                        && !self.fn_table.fns.contains_key(name)
+                }
+                _ => true,
             })
     }
 
-    /// Whether any call in `body` (outside nested function bodies) may
-    /// replace a binding, judged against the loop's entry scope.
+    /// Whether any call or replacement assignment in `body` (outside nested
+    /// function bodies) may replace a binding, judged against the loop's
+    /// entry scope.
     pub(super) fn body_may_replace_bindings(&self, body: &[Stmt], scope: &Scope) -> bool {
         let policy = Walk {
             fn_bodies: false,
@@ -162,10 +173,18 @@ impl Checker {
         };
         walk_stmts(body, policy, |node, _| match node {
             AstNode::Expr(Expr::Call { func, args, .. })
-                if self.call_may_replace_bindings(func, args, scope) =>
+                if !self.call_keeps_scalar_facts(func, args, scope) =>
             {
                 ControlFlow::Break(())
             }
+            AstNode::Stmt(Stmt::Assign { target, .. }) if binding_name(target).is_none() => {
+                ControlFlow::Break(())
+            }
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) if binding_name(lhs).is_none() => ControlFlow::Break(()),
             _ => ControlFlow::Continue(Descend::Into),
         })
         .is_break()

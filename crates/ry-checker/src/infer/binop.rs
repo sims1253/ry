@@ -432,7 +432,13 @@ impl Checker {
                 let mut rhs_scope = scope.clone();
                 apply_narrowing_branch(&mut rhs_scope, &narrowing, branch);
                 self.check_class_equality_operand(rhs, &rhs_scope);
-                rhs_loop_vector = self.loop_vector_operand(rhs, &rhs_scope);
+                // A literal FALSE `&&` or TRUE `||` never evaluates its RHS.
+                let rhs_unreachable = matches!(
+                    (op, lhs),
+                    (BinOpKind::AndAnd, Expr::Logical(false, _))
+                        | (BinOpKind::OrOr, Expr::Logical(true, _))
+                );
+                rhs_loop_vector = !rhs_unreachable && self.loop_vector_operand(rhs, &rhs_scope);
                 let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
                 rt
@@ -675,7 +681,12 @@ impl Checker {
     /// later short-circuit guard can reuse. Keep it separate from RType:
     /// `is.null(x) || ...` also admits NULL, which other rules must still see.
     pub(crate) fn mark_scalar_assertions(&self, args: &[Arg], scope: &mut Scope) {
-        if !self.resolves_to_base_lenient("stopifnot", scope) {
+        // An earlier call outside the safe set may already have replaced the
+        // subject with an active binding or a promise.
+        if scope.dynamic_bindings_unknown
+            || !self.resolves_to_base_lenient("stopifnot", scope)
+            || self.project_defines_scalar_proof_method()
+        {
             return;
         }
         // Arguments run from left to right. A later argument can replace a
@@ -762,7 +773,7 @@ impl Checker {
                 let Expr::Ident { name, .. } = lhs.as_ref() else {
                     return None;
                 };
-                (self.scalar_assertion_subject_stable_on_force(name, scope)
+                (self.scalar_assertion_subject_stable_on_force(scope)
                     && self.scalar_assertion_class_safe(name, scope)
                     && self.scalar_assertion_pure_rhs(assertion_rhs, name, scope))
                 .then(|| name.clone())
@@ -798,7 +809,7 @@ impl Checker {
                 let Expr::Ident { name, .. } = &args[0].value else {
                     return None;
                 };
-                (self.scalar_assertion_subject_stable_on_force(name, scope)
+                (self.scalar_assertion_subject_stable_on_force(scope)
                     && self.equality_length_guard_proves_scalar(name, expr, scope))
                 .then(|| name.clone())
             }
@@ -806,23 +817,18 @@ impl Checker {
         }
     }
 
-    /// A default is a lazy promise. Its first read may return a scalar while
-    /// replacing the formal itself with a vector, as in
-    /// `x = { x <- c(1L, 2L); 1L }`. The comparison/length test sees the
-    /// scalar result, but a later read sees the vector. Only a literal
-    /// default is known to leave its own binding alone on first force,
-    /// provided no earlier unknown effect could replace that binding with an
-    /// active binding or a different promise.
-    fn scalar_assertion_subject_stable_on_force(&self, name: &str, scope: &Scope) -> bool {
+    /// A default is a lazy promise. Forcing it, by any later read, may
+    /// replace the subject, as in `n = { x <- c(1L, 2L); 3L }`. Only when
+    /// every enclosing formal has no default or a literal one can no forced
+    /// default rebind the subject.
+    fn scalar_assertion_subject_stable_on_force(&self, scope: &Scope) -> bool {
         !scope.effects_unknown
             && !scope.search_path_unknown
             && !scope.data_mask_unknown
-            && !scope.dynamic_bindings_unknown
-            && (!scope.is_default_parameter(name)
-                || self
-                    .enclosing_formals
-                    .last()
-                    .is_some_and(|formals| formals.literal_defaults.contains(name)))
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|formals| formals.literal_defaults_only)
     }
 
     /// The first operand of `&&` proves its subject scalar only if evaluating
@@ -866,20 +872,54 @@ impl Checker {
     }
 
     fn project_defines_comparison_method(&self) -> bool {
-        let comparison =
-            |generic: &str| matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=");
+        self.project_defines_method(|generic| {
+            matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
+        })
+    }
+
+    /// A scalar fact relies on base `length`, comparisons, indexing, and the
+    /// safe calls that may run before its use. A project or imported S3/S4
+    /// method for any of them could lie about the length or run arbitrary
+    /// code, so such a project gets no scalar facts at all.
+    fn project_defines_scalar_proof_method(&self) -> bool {
+        self.project_defines_method(|generic| {
+            crate::semantic_lists::SCALAR_FACT_SAFE_CALLS.contains(&generic)
+                || crate::semantic_lists::OPERATORS.contains(&generic)
+                || matches!(
+                    generic,
+                    "Ops"
+                        | "Arith"
+                        | "Compare"
+                        | "Logic"
+                        | "!"
+                        | "&"
+                        | "|"
+                        | "length"
+                        | "["
+                        | "[["
+                        | "$"
+                )
+        })
+    }
+
+    fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
         let named = |name: &str| {
             name.rsplit_once('.')
-                .is_some_and(|(generic, class)| !class.is_empty() && comparison(generic))
+                .is_some_and(|(prefix, class)| !class.is_empty() && generic(prefix))
         };
         self.fn_table
             .s3_methods
             .keys()
-            .any(|(generic, _)| comparison(generic))
+            .any(|(name, _)| generic(name))
+            || self
+                .fn_table
+                .s4_methods
+                .keys()
+                .any(|(name, _)| generic(name))
             || self
                 .external_s3_methods
                 .iter()
-                .any(|(generic, _)| comparison(generic))
+                .any(|(name, _)| generic(name))
             || self.fn_table.fns.keys().any(|name| named(name))
             || self.imported_from.keys().any(|name| named(name))
             || self.external_bindings.iter().any(|name| named(name))

@@ -767,6 +767,11 @@ impl Scope {
     /// assertion could read a value that the next read no longer returns.
     pub(crate) fn invalidate_scalar_assertions(&mut self) {
         self.dynamic_bindings_unknown = true;
+        self.clear_scalar_assertions();
+    }
+
+    /// Drop current scalar facts while still allowing later assertions.
+    pub(crate) fn clear_scalar_assertions(&mut self) {
         for binding in self.scalar_asserted_bindings.clone() {
             self.clear_scalar_asserted(&binding);
         }
@@ -1209,11 +1214,9 @@ pub(crate) const MAX_CLOSURE_DEPTH: usize = 3;
 pub(crate) struct EnclosingFormals {
     pub(crate) names: FxSet<String>,
     pub(crate) has_dots: bool,
-    /// Defaults whose first force cannot execute user code or rebind their
-    /// own formal. Other defaults may return a scalar while changing the
-    /// formal's binding, so a scalar check of the returned value says
-    /// nothing about the binding read by a later expression.
-    pub(crate) literal_defaults: FxSet<String>,
+    /// Every formal has no default or a literal one, so forcing a formal
+    /// cannot run code that rebinds another name in this frame.
+    pub(crate) literal_defaults_only: bool,
     /// A forced default may install one of these names in this frame at
     /// runtime; a same-named outward declaration is then not certain.
     pub(crate) possible_default_writes: FxSet<String>,

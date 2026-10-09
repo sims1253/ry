@@ -33,8 +33,8 @@ All notable changes to ry are documented in this file.
   lists no longer suppress ry findings; bare ignores still do.
 - Carry scalar-or-NULL facts from successful `stopifnot()` assertions into
   later RY032 checks, removing the guarded purrr `prepend()` false positive.
-  Any later call that might install a binding (base installers, `do.call`,
-  computed heads, formals, and local or project functions) drops the fact.
+  Only a small set of non-dispatching base calls keeps the fact; any other
+  call or replacement assignment, before or after the assertion, drops it.
   Preserve a proven vector alternative through simple aliases and loop joins
   so RY032 reports a reachable first-iteration or empty-iterator error.
 

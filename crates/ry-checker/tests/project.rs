@@ -1597,21 +1597,22 @@ fn cross_file_helper_application_stays_silent() {
     );
 }
 
-/// A scalar fact survives a call only when the callee is not a project
-/// binding. Defining or removing that binding in another file must update
-/// RY032 identically in warm and cold checks.
+/// A project method for a generic the scalar proof relies on blocks the
+/// proof. Defining or removing it in another file must update RY032
+/// identically in warm and cold checks.
 #[test]
-fn scalar_fact_follows_project_binding_edits_warm_and_cold() {
-    let consumer = "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); install(environment()); if (is.null(x) || x == 1L) TRUE else FALSE }\n";
+fn scalar_fact_follows_project_method_edits_warm_and_cold() {
+    let consumer = "f <- function(x) { stopifnot(is.null(x) || length(x) == 1L); if (is.null(x) || x == 1L) TRUE else FALSE }\n";
     let consumer_warns = |diagnostics: &[(String, Vec<ry_checker::Diagnostic>)]| {
         diagnostics.iter().any(|(path, diagnostics)| {
             path == "consumer.R" && diagnostics.iter().any(|d| d.code == "RY032")
         })
     };
-    let unrelated = "unrelated <- function(env) NULL\n";
+    let unrelated = "unrelated <- function(x) 1L\n";
     for (route, defined) in [
-        ("helper", "install <- function(env) NULL\n"),
-        ("installer alias", "install <- base::delayedAssign\n"),
+        ("S3 length", "length.foo <- function(x) 1L\n"),
+        ("S4 length", "setMethod('length', 'foo', function(x) 1L)\n"),
+        ("S3 comparison", "`==.foo` <- function(e1, e2) TRUE\n"),
     ] {
         for (before, after) in [(defined, unrelated), (unrelated, defined)] {
             let mut warm = callback_project(&[("helper.R", before), ("consumer.R", consumer)]);

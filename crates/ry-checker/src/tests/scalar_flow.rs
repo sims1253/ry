@@ -50,8 +50,28 @@ fn scalar_flow_fixtures_match_their_oracle_tags() {
                 Some("# oracle: must-pass") => false,
                 other => return Some(format!("{name}: unexpected tag {other:?}")),
             };
-            (warns_ry032(&source) != expected)
-                .then(|| format!("{name}: expected RY032 = {expected}"))
+            // A must-warn fixture with several `is.null(x) || x == 1L`
+            // consumers needs RY032 on each of them, not just one.
+            let lines: Vec<_> = check(&source)
+                .into_iter()
+                .filter(|d| d.code == "RY032")
+                .map(|d| d.span.line)
+                .collect();
+            let consumers: Vec<_> = source
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| line.contains("is.null(x) || x == 1L"))
+                .map(|(index, _)| index)
+                .collect();
+            let satisfied = if !expected {
+                lines.is_empty()
+            } else if consumers.is_empty() {
+                !lines.is_empty()
+            } else {
+                consumers.iter().all(|line| lines.contains(line))
+            };
+            (!satisfied)
+                .then(|| format!("{name}: expected RY032 = {expected}, got lines {lines:?}"))
         })
         .collect();
     assert!(failures.is_empty(), "{failures:#?}");
@@ -91,6 +111,12 @@ fn stopifnot_scalar_guard_carries_to_a_later_short_circuit() {
 }
 
 #[test]
+fn pinned_purrr_prepend_keeps_its_scalar_fact() {
+    let source = "prepend <- function(x, values, before = NULL) {\n  lifecycle::deprecate_warn(\"1.0.0\", \"prepend()\", I(\"append(after = 0)\"))\n\n  n <- length(x)\n  stopifnot(is.null(before) || (before > 0 && before <= n))\n\n  if (is.null(before) || before == 1) {\n    c(values, x)\n  } else {\n    c(x[1:(before - 1)], values, x[before:n])\n  }\n}\n";
+    assert!(!warns_ry032(source));
+}
+
+#[test]
 fn scalar_fact_needs_a_known_search_path_and_predicate_arguments() {
     let body = "f <- function(x = NULL) { stopifnot(is.null(x) || (x > 0 && x <= 2L)); if (is.null(x) || x == 1L) TRUE else FALSE }; f()";
     assert!(!warns_ry032(body));
@@ -111,48 +137,69 @@ fn scalar_fact_needs_a_known_search_path_and_predicate_arguments() {
 }
 
 #[test]
-fn possible_binding_installers_drop_the_scalar_fact() {
-    // Calls that cannot install a binding keep the fact.
+fn only_safe_base_calls_keep_the_scalar_fact() {
     for between in [
         "length(x)",
-        "message('checked')",
-        "tryCatch(1L, error = function(e) NULL)",
+        "is.na(x)",
+        "identical(x, 1L)",
         "g <- function() assign('x', c(1L, 2L), envir = parent.frame())",
     ] {
         assert!(!warns_ry032(&asserted_then(between)), "{between}");
     }
-    // Everything that may run an installer drops it, even when harmless.
+    // Every other call may install a binding, even when it is harmless.
     for between in [
         "assign('x', c(1L, 2L))",
-        "base::delayedAssign('y', 1L)",
+        "message('checked')",
+        "print(x)",
+        "as.character(x)",
         "do.call(identity, list(1L))",
         "(base::identity(base::identity))(1L)",
         "g <- function() NULL; g()",
-        "lapply(1L, function(i) i)",
-        "rm('y')",
+        "tryCatch(1L, error = function(e) NULL)",
+        "local(NULL)",
+        "length <- function(x) 1L; length(x)",
+        "x[2L] <- 2L",
     ] {
         assert!(warns_ry032(&asserted_then(between)), "{between}");
     }
-    // Formals, project helpers, and project helpers passed as callbacks.
-    assert!(warns_ry032(
-        "f <- function(g, x = 1L) { stopifnot(x > 0 && TRUE); g(); if (is.null(x) || x == 1L) TRUE else FALSE }"
-    ));
     let helper = "helper <- function(...) NULL\n";
     assert!(warns_ry032(&format!(
         "{helper}{}",
         asserted_then("helper()")
     )));
-    assert!(warns_ry032(&format!(
-        "{helper}{}",
-        asserted_then("lapply(1L, helper)")
-    )));
-    // An installer before the assertion keeps later assertions unproven.
     assert!(warns_ry032(
-        "f <- function(x = 1L) { delayedAssign('x', 1L); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }"
+        "f <- function(g, x = 1L) { stopifnot(x > 0 && TRUE); g(); if (is.null(x) || x == 1L) TRUE else FALSE }"
     ));
-    // A possible installer inside an `&&` operand reaches the continuation.
+    // An unsafe call before the assertion keeps it from proving anything,
+    // unless it is base `I()` or a call into another package's namespace.
+    let guard = "stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }";
+    for before in [
+        "message('start')",
+        "helper()",
+        "own::helper()",
+        "pkg::run(function() NULL)",
+        "base::message('start')",
+    ] {
+        let source = format!("{helper}f <- function(x = 1L) {{ {before}; {guard}");
+        assert!(warns_ry032(&source), "{before}");
+    }
+    for before in [
+        "I('a')",
+        "lifecycle::deprecate_warn('1.0.0', 'f()', I('g()'))",
+    ] {
+        let source = format!("{helper}f <- function(x = 1L) {{ {before}; {guard}");
+        assert!(!warns_ry032(&source), "{before}");
+    }
+    // After the assertion, even those calls end the fact.
+    assert!(warns_ry032(&asserted_then("pkg::run()")));
+    assert!(warns_ry032(&asserted_then("I(x)")));
+    // An unsafe call inside an `&&` operand reaches the continuation.
     assert!(warns_ry032(
         "f <- function(g, x = 1L) { stopifnot(x > 0 && TRUE); if (TRUE && g()) NULL; if (is.null(x) || x == 1L) TRUE else FALSE }"
+    ));
+    // A non-literal default on any formal blocks the fact.
+    assert!(warns_ry032(
+        "f <- function(x = 1L, n = 2L + 1L) { stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }"
     ));
 }
 

@@ -589,6 +589,7 @@ impl Checker {
                 value,
                 span: assignment_span,
             } => {
+                self.drop_scalar_facts_for_complex_assignment(target, value, scope);
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -1332,6 +1333,22 @@ impl Checker {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// A replacement or subassignment (`x[i] <-`, `length(x) <-`, any
+    /// `f(x) <-`), a superassignment, or a masked `<-`/`=` runs R code that
+    /// may rebind any name, so it drops scalar facts like an unsafe call.
+    fn drop_scalar_facts_for_complex_assignment(
+        &self,
+        target: &Expr,
+        value: &Expr,
+        scope: &mut Scope,
+    ) {
+        if binding_name(target).is_none()
+            || !ops_chooser::base_assignment(self, target, value, scope)
+        {
+            scope.invalidate_scalar_assertions();
         }
     }
 
@@ -3023,6 +3040,7 @@ impl Checker {
                 // return the RHS type. R's `<-` returns the assigned
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
+                    self.drop_scalar_facts_for_complex_assignment(lhs, rhs, scope);
                     if !scope.ops_environment_unknown
                         && !ops_chooser::ordinary_assignment(self, lhs, rhs)
                     {
@@ -3333,11 +3351,9 @@ impl Checker {
                 .map(|parameter| parameter.name.clone())
                 .collect(),
             has_dots: params.iter().any(|parameter| parameter.name == "..."),
-            literal_defaults: params
+            literal_defaults_only: params
                 .iter()
-                .filter(|parameter| parameter.default.as_ref().is_some_and(is_scalar_literal))
-                .map(|parameter| parameter.name.clone())
-                .collect(),
+                .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
             function_span,
         });

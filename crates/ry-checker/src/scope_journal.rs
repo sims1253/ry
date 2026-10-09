@@ -761,6 +761,8 @@ mod tests {
         scope.mark_list_origin("x");
         scope.mark_lexical_function("x", Span::default());
         scope.set_function_alias("x", "original".into());
+        scope.mark_scalar_asserted("x");
+        scope.mark_loop_vector("x");
         scope.reference_provenance = Some(Box::new(ScopeProvenance {
             owner: Span {
                 start: 0,
@@ -802,6 +804,11 @@ mod tests {
         assert_eq!(left.bindings, right.bindings);
         assert_eq!(left.narrowed_bindings, right.narrowed_bindings);
         assert_eq!(left.parameter_bindings, right.parameter_bindings);
+        assert_eq!(
+            left.scalar_asserted_bindings,
+            right.scalar_asserted_bindings
+        );
+        assert_eq!(left.loop_vector_bindings, right.loop_vector_bindings);
         assert_eq!(
             left.default_parameter_bindings,
             right.default_parameter_bindings

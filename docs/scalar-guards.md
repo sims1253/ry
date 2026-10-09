@@ -48,22 +48,23 @@ inside the guarded expression ([#372](https://github.com/sims1253/ry/issues/372)
 ## Scalar facts from `stopifnot`
 
 A successful base `stopifnot(is.null(x) || length(x) == 1L)`, or
-`stopifnot(is.null(x) || (x > 0 && x <= n))` as in purrr's `prepend()`,
-proves that `x` is NULL or scalar ([#351](https://github.com/sims1253/ry/issues/351)).
-The proof needs base identity for `stopifnot`, `is.null`, `length`, the
-comparison, `&&`, `||`, and `(`; no project comparison or `length` method;
-a final predicate argument (not `local`, `exprs`, or `exprObject`); a known
-search path and data mask; and a subject whose first read cannot rebind it (a
-local, a formal without a default, or a formal with a literal default). The
-rest of an `&&` assertion may use only literals, the subject, other local
-values, and base comparisons.
+`stopifnot(is.null(x) || (x > 0 && x <= n))`, proves that `x` is NULL or
+scalar ([#351](https://github.com/sims1253/ry/issues/351)). The proof needs
+base identity for `stopifnot`, `is.null`, `length`, the comparison, `&&`,
+`||`, and `(`; a final predicate argument (not `local`, `exprs`, or
+`exprObject`); a known search path and data mask; enclosing formals that
+have no default or a literal one; and no project or imported S3/S4 method
+for `length`, `[`, `[[`, `$`, an operator, or a safe call below. The rest
+of an `&&` assertion may use only literals, the subject, other local values,
+and base comparisons.
 
-The fact ends when `x` is reassigned, after unknown effects, and after any
-call that might install a binding in the frame: `assign`, `delayedAssign`,
-`makeActiveBinding`, `do.call`, `eval`, `rm`, and similar base calls; a
-computed call head; a formal, local, or project binding called directly; or
-a closure passed as an argument unless its body is a single literal. After
-such a call, later assertions in the same frame prove nothing, and in a
-loop a possible installer anywhere in the body applies to the whole body.
-These rules are deliberately coarse: a harmless helper loses the fact too,
-which leaves the RY032 warning ry gave before this proof existed.
+Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
+`is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, and the
+`is.character`-style type predicates. Any other call, including a generic,
+closure, formal, box call, or callback-taking function, ends it, and so does
+a replacement or subassignment. Such a call before the assertion also keeps
+it from proving anything in that frame, and in a loop it taints the whole
+repeated body. Before the assertion only, base `I()` and a `pkg::fn` call
+into another package are exempt: an external package deliberately
+installing an active binding for its caller's variable is not modelled. A harmless call therefore leaves the RY032 warning ry gave
+before this proof existed.

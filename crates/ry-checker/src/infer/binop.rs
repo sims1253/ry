@@ -263,6 +263,7 @@ impl Checker {
         if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
             return Some(RType::unknown());
         }
+        let guarded = operands.iter().any(|operand| operand.class.guarded);
         for class in operand
             .class
             .names
@@ -277,7 +278,8 @@ impl Checker {
                 match self.s3_lookup_method(generic, class) {
                     Some(S3MethodSource::Registered) => return Some(RType::unknown()),
                     Some(S3MethodSource::Project(slot)) => {
-                        return Some(self.s3_specific_or_group_return(generic == symbol, slot));
+                        let result = self.s3_specific_or_group_return(generic == symbol, slot);
+                        return Some(dispatch_result(guarded, result));
                     }
                     Some(S3MethodSource::Stub(sig)) => {
                         let arg_types = operands
@@ -288,7 +290,7 @@ impl Checker {
                         // A specific stub, or a group stub declaring a
                         // usable shape, is this operator's method.
                         if generic == symbol || !matches!(result.mode, Mode::Opaque) {
-                            return Some(result);
+                            return Some(dispatch_result(guarded, result));
                         }
                         // Only embedded base group methods have storage-mode
                         // models below. An opaque custom stub still wins over

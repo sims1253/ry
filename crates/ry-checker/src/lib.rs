@@ -35,7 +35,9 @@ mod scoped_policy;
 pub use scoped_policy::ScopedRulePolicy;
 pub mod semantic_lists;
 pub mod trace;
+pub mod typehint;
 
+pub use declaration_check::append_diagnostics as append_declaration_diagnostics;
 pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
 pub use trace::{

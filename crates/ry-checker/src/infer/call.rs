@@ -2228,7 +2228,7 @@ impl Checker {
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
-            let mut target = json_rtype_to_rtype(&assertion.target);
+            let mut target = guard_target(json_rtype_to_rtype(&assertion.target));
             // Non-literal opt-ins are conservatively treated like TRUE.
             for (param, null_target) in [
                 (
@@ -2473,12 +2473,16 @@ impl Checker {
     }
 
     pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
-        let class = arg_types.first()?.class.first()?;
+        let receiver = &arg_types.first()?.class;
+        let class = receiver.first()?;
         let slot = self
             .fn_table
             .s4_methods
             .get(&(generic.to_string(), class.to_string()))?;
-        Some(self.read_return_slot(*slot))
+        Some(dispatch_result(
+            receiver.guarded,
+            self.read_return_slot(*slot),
+        ))
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an

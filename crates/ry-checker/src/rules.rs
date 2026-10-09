@@ -282,6 +282,30 @@ pub const RULES: &[Rule] = &[
         summary: "Opt-in audit: a valid ry-owned selective line or standalone ignore names an enabled rule whose local syntax was checked in diagnostic mode and produced no matching finding before baseline or confidence filtering. The initial supported codes are RY034 and RY102. Invalid, bare, noqa, and file directives are outside this audit; parser errors, anonymous function bodies, and other unavailable analysis are left unaudited. Enable with `--warn RY113` or a severity override.",
     },
     Rule {
+        code: "RY114",
+        name: "declaration-mismatch",
+        default_severity: Severity::Warning,
+        summary: "An independently known argument, default, or return value contradicts an explicitly adopted source declaration. For typehint's simple class clauses this compares effective R class(), not storage typeof(); unknown or incomplete facts remain silent.",
+    },
+    Rule {
+        code: "RY115",
+        name: "declaration-incomplete",
+        default_severity: Severity::Info,
+        summary: "An adopted declaration has an unsupported residual or a predicate that body inference cannot represent. The source expression is retained without claiming complete checking.",
+    },
+    Rule {
+        code: "RY116",
+        name: "declaration-conflict",
+        default_severity: Severity::Warning,
+        summary: "Multiple adopted records for one lexical function cannot be selected as one complete contract; none is used for checking.",
+    },
+    Rule {
+        code: "RY117",
+        name: "declaration-invalid",
+        default_severity: Severity::Warning,
+        summary: "An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking.",
+    },
+    Rule {
         code: "RY119",
         name: "integer-coercion-range-loss",
         default_severity: Severity::Warning,

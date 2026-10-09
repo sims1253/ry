@@ -85,6 +85,27 @@ pub struct EnvironmentConfig {
     pub root: Option<PathBuf>,
 }
 
+/// Static readers for existing annotation conventions. Each reader is
+/// disabled unless a project explicitly adopts it for named source paths.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AnnotationsConfig {
+    pub typehint: TypehintConfig,
+}
+
+/// The audited `typehint` 0.1.0 comment convention. Path patterns use the
+/// same config-root-relative spelling as `exclude`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypehintConfig {
+    pub adopt: bool,
+    pub version: Option<String>,
+    pub paths: Vec<String>,
+    /// Directory containing the configuration, assigned when loaded.
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
+}
+
 /// One ordered per-file rule policy. Later matching tables replace earlier
 /// choices for codes they mention; unmatched rules retain the global policy.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,6 +168,86 @@ impl ScopedPaths {
     }
 }
 
+/// Whether a native path can safely identify a source named by `display`.
+/// A replacement character in an otherwise valid Unicode filename may be
+/// genuine, so inspect only those path components for another native entry
+/// with the same lossy spelling. An unsaved file is allowed when no existing
+/// entry could be confused with it.
+pub fn unambiguous_native_display_path(native: &Path, display: &str) -> bool {
+    if native.to_str() != Some(display) {
+        return false;
+    }
+    let Ok(absolute) = std::path::absolute(native) else {
+        return false;
+    };
+    for prefix in absolute.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let Some(name) = prefix.file_name() else {
+            continue;
+        };
+        let Some(name_text) = name.to_str() else {
+            return false;
+        };
+        if !name_text.contains('\u{fffd}') {
+            continue;
+        }
+        let Some(parent) = prefix.parent() else {
+            return false;
+        };
+        let entries = match std::fs::read_dir(parent) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => return false,
+        };
+        let mut exact = false;
+        let mut matching = 0;
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return false;
+            };
+            let entry_name = entry.file_name();
+            if entry_name.to_string_lossy() == name_text {
+                matching += 1;
+                exact |= entry_name == name;
+                if matching > 1 {
+                    return false;
+                }
+            }
+        }
+        if matching != 0 && !exact {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(all(test, unix))]
+mod native_display_tests {
+    use super::unambiguous_native_display_path;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn genuine_unicode_replacement_is_allowed_until_native_collision() {
+        let root = tempfile::tempdir().unwrap();
+        let unicode = root.path().join("bad\u{fffd}.R");
+        std::fs::write(&unicode, "x <- 1L").unwrap();
+        let display = unicode.to_str().unwrap();
+        assert!(unambiguous_native_display_path(&unicode, display));
+
+        let raw = root
+            .path()
+            .join(std::ffi::OsString::from_vec(b"bad\xff.R".to_vec()));
+        std::fs::write(&raw, "x <- 2L").unwrap();
+        assert!(!unambiguous_native_display_path(&unicode, display));
+        assert!(!unambiguous_native_display_path(
+            &raw,
+            &raw.to_string_lossy()
+        ));
+
+        std::fs::remove_file(&unicode).unwrap();
+        assert!(!unambiguous_native_display_path(&unicode, display));
+    }
+}
+
 fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
     let pattern = if cfg!(windows) {
         pattern.replace('\\', "/")
@@ -191,6 +292,26 @@ fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
         suffix.push(ancestor.components().next_back()?);
     }
     None
+}
+
+/// The typehint release whose `check_types()` semantics ry has audited.
+pub const AUDITED_TYPEHINT_VERSION: &str = "0.1.0";
+
+impl TypehintConfig {
+    fn adoption_is_complete(&self) -> bool {
+        self.adopt
+            && self.version.as_deref() == Some(AUDITED_TYPEHINT_VERSION)
+            && !self.paths.is_empty()
+    }
+
+    /// Compile the audited, explicitly adopted source scope once per
+    /// analysis. Programmatically built invalid configs remain disabled.
+    pub fn adopted_scope(&self) -> Option<ScopedPaths> {
+        if !self.adoption_is_complete() {
+            return None;
+        }
+        ScopedPaths::new(self.root.as_deref()?, &self.paths).ok()
+    }
 }
 
 /// Parsed contents of a `ry.toml` project config file.
@@ -257,6 +378,8 @@ pub struct Config {
     #[serde(alias = "max-serialized-bytes")]
     pub max_serialized_bytes: u64,
     pub environments: Vec<EnvironmentConfig>,
+    /// Explicit adoption of source annotation conventions.
+    pub annotations: AnnotationsConfig,
     /// Runtime typeshed directories. Relative entries are anchored at the
     /// directory containing this configuration file.
     pub typeshed: Vec<PathBuf>,
@@ -288,6 +411,7 @@ impl Default for Config {
             globals: Vec::new(),
             max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
             environments: Vec::new(),
+            annotations: AnnotationsConfig::default(),
             typeshed: Vec::new(),
             baseline: None,
             index: IndexConfig::default(),
@@ -375,6 +499,27 @@ impl Config {
                     source,
                 }
             })?;
+        }
+        cfg.annotations.typehint.root =
+            Some(
+                std::path::absolute(root).map_err(|source| ConfigError::Read {
+                    path: path.to_path_buf(),
+                    source,
+                })?,
+            );
+        for pattern in &cfg.annotations.typehint.paths {
+            compile_scoped_pattern(pattern).map_err(|source| {
+                ConfigError::InvalidAnnotationPattern {
+                    path: path.to_path_buf(),
+                    pattern: pattern.clone(),
+                    source,
+                }
+            })?;
+        }
+        if cfg.annotations.typehint.adopt && !cfg.annotations.typehint.adoption_is_complete() {
+            return Err(ConfigError::InvalidTypehintAdoption {
+                path: path.to_path_buf(),
+            });
         }
         for dir in &mut cfg.typeshed {
             if dir.is_relative() {
@@ -539,6 +684,7 @@ impl Config {
             globals: self.globals,
             max_serialized_bytes: self.max_serialized_bytes,
             environments: self.environments,
+            annotations: self.annotations,
             typeshed,
             baseline,
             index: self.index,
@@ -630,6 +776,16 @@ pub enum ConfigError {
         pattern: String,
         source: glob::PatternError,
     },
+    #[error("config file {path} has invalid typehint path pattern `{pattern}`: {source}")]
+    InvalidAnnotationPattern {
+        path: PathBuf,
+        pattern: String,
+        source: glob::PatternError,
+    },
+    #[error(
+        "config file {path} must set typehint version = '0.1.0' and nonempty paths when adopt = true"
+    )]
+    InvalidTypehintAdoption { path: PathBuf },
     #[error("config file {path} has rule-overrides table #{index} without paths")]
     EmptyRuleOverridePaths { path: PathBuf, index: usize },
     #[error(
@@ -669,6 +825,58 @@ mod tests {
             Config::load_file(&path),
             Err(ConfigError::InvalidEnvironmentPattern { .. })
         ));
+    }
+
+    #[test]
+    fn typehint_adoption_requires_an_audited_version_and_path_scope() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ry.toml");
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\npaths = ['R/**']\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidTypehintAdoption { .. })
+        ));
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['[']\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            Config::load_file(&path),
+            Err(ConfigError::InvalidAnnotationPattern { .. })
+        ));
+        fs::write(
+            &path,
+            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+        )
+        .unwrap();
+        let config = Config::load_file(&path).unwrap();
+        assert!(config.annotations.typehint.adopt);
+        assert_eq!(
+            config.annotations.typehint.version.as_deref(),
+            Some("0.1.0")
+        );
+        assert_eq!(
+            config.annotations.typehint.root.as_deref(),
+            Some(dir.path())
+        );
+        let scope = config.annotations.typehint.adopted_scope().unwrap();
+        assert!(scope.matches(&dir.path().join("R/code.R")));
+        assert!(scope.matches(&dir.path().join("R/sub/code.R")));
+        assert!(!scope.matches(&dir.path().join("tests/code.R")));
+        assert!(!scope.matches(&dir.path().join("R/../outside.R")));
+        assert!(!scope.matches(&dir.path().join("../outside/R/code.R")));
+
+        let mut disabled = config.annotations.typehint;
+        disabled.adopt = false;
+        assert!(disabled.adopted_scope().is_none());
+        disabled.adopt = true;
+        disabled.version = Some("future".into());
+        assert!(disabled.adopted_scope().is_none());
     }
 
     #[test]

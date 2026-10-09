@@ -35,6 +35,40 @@ pub struct DeclarationFinding {
     pub message: String,
 }
 
+/// Append the public diagnostic view of structured declaration findings.
+/// CLI and LSP call this after either a fresh or warm project check, so the
+/// editor's byte spans and suppression pipeline use the same records.
+pub fn append_diagnostics(
+    output: &mut [(String, Vec<crate::Diagnostic>)],
+    findings: &[(String, Vec<DeclarationFinding>)],
+) {
+    for (path, records) in findings {
+        let Some((_, diagnostics)) = output.iter_mut().find(|(file, _)| file == path) else {
+            continue;
+        };
+        for record in records {
+            let (code, severity) = match record.kind {
+                DeclarationFindingKind::Mismatch => ("RY114", crate::Severity::Warning),
+                DeclarationFindingKind::Partial | DeclarationFindingKind::Unsupported => {
+                    ("RY115", crate::Severity::Info)
+                }
+                DeclarationFindingKind::Conflict => ("RY116", crate::Severity::Warning),
+                DeclarationFindingKind::InvalidSyntax
+                | DeclarationFindingKind::AmbiguousAttachment => {
+                    ("RY117", crate::Severity::Warning)
+                }
+            };
+            diagnostics.push(crate::Diagnostic::new(
+                severity,
+                record.span,
+                &record.path,
+                code,
+                record.message.clone(),
+            ));
+        }
+    }
+}
+
 impl DeclarationFinding {
     pub(crate) fn new(
         kind: DeclarationFindingKind,
@@ -283,7 +317,10 @@ pub(crate) fn matches_formals<'a>(
                 parameter.name
             ));
         }
-        if (parameter.supplied == SupplyStatus::Defaulted && !defaulted)
+        if (matches!(
+            parameter.supplied,
+            SupplyStatus::Defaulted | SupplyStatus::DefaultedSuppliedOnly
+        ) && !defaulted)
             || (parameter.supplied == SupplyStatus::Required && defaulted)
         {
             return Err(format!(
@@ -305,32 +342,37 @@ pub(crate) enum Evidence {
 /// This is a comparison of independently inferred facts with an authored
 /// predicate. A mixed union or an unknown fact is never a proven violation.
 pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
-    if ty.mode == Mode::Opaque {
-        return Evidence::Insufficient;
-    }
     if ty.mode == Mode::Union {
         let Some(members) = &ty.members else {
             return Evidence::Insufficient;
         };
         return combine_all(members.iter().map(|member| compare(member, constraint)));
     }
+    if let TypeExpr::ExactClass(expected) = constraint {
+        // `RType::class` describes an explicit class attribute. An empty
+        // attribute does not establish effective `class(x)`: dimensions and
+        // implicit atomic classes may still determine that result. A class
+        // test proves only that the value passed it.
+        return if !ty.class.known || ty.class.guarded || ty.class.len == 0 || ty.class.len >= 4 {
+            Evidence::Insufficient
+        } else if ty.class.len == 1
+            && ty.class.names[0]
+                .as_deref()
+                .is_some_and(|name| name == expected)
+        {
+            Evidence::Compatible
+        } else {
+            Evidence::Incompatible
+        };
+    }
+    if ty.mode == Mode::Opaque {
+        return Evidence::Insufficient;
+    }
     match constraint {
         TypeExpr::Unknown => Evidence::Insufficient,
+        TypeExpr::ExactClass(_) => unreachable!("handled before mode comparison"),
         TypeExpr::Union(alternatives) => {
-            if alternatives.is_empty() {
-                return Evidence::Insufficient;
-            }
-            let results: Vec<_> = alternatives.iter().map(|part| compare(ty, part)).collect();
-            if results.contains(&Evidence::Compatible) {
-                Evidence::Compatible
-            } else if results
-                .iter()
-                .all(|result| *result == Evidence::Incompatible)
-            {
-                Evidence::Incompatible
-            } else {
-                Evidence::Insufficient
-            }
+            combine_any(alternatives.iter().map(|part| compare(ty, part)))
         }
         TypeExpr::Atomic { mode, length } => {
             if ty.mode != atomic_mode(*mode) {
@@ -353,6 +395,70 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
                 },
             }
         }
+    }
+}
+
+/// Direct literal syntax proves the default implicit class without relying
+/// on RType's empty explicit-class attribute (which may hide dimensions).
+fn direct_literal_class(expr: &ry_core::ast::Expr) -> Option<&'static str> {
+    use ry_core::ast::Expr;
+    match expr {
+        Expr::Logical(..) => Some("logical"),
+        Expr::Integer(..) => Some("integer"),
+        Expr::Double(..) => Some("numeric"),
+        Expr::String(..) => Some("character"),
+        Expr::Null(..) => Some("NULL"),
+        Expr::Na(ty, _) => match ty.mode {
+            Mode::Logical => Some("logical"),
+            Mode::Integer => Some("integer"),
+            Mode::Double => Some("numeric"),
+            Mode::Complex => Some("complex"),
+            Mode::Character => Some("character"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn compare_actual(ty: &RType, expression: &ry_core::ast::Expr, constraint: &TypeExpr) -> Evidence {
+    match constraint {
+        TypeExpr::ExactClass(expected) => match compare(ty, constraint) {
+            Evidence::Insufficient => {
+                direct_literal_class(expression).map_or(Evidence::Insufficient, |actual| {
+                    if actual == expected {
+                        Evidence::Compatible
+                    } else {
+                        Evidence::Incompatible
+                    }
+                })
+            }
+            known => known,
+        },
+        TypeExpr::Union(alternatives) => combine_any(
+            alternatives
+                .iter()
+                .map(|part| compare_actual(ty, expression, part)),
+        ),
+        _ => compare(ty, constraint),
+    }
+}
+
+/// A union constraint holds when any alternative holds, and is violated
+/// only when every alternative is (an empty union proves nothing).
+fn combine_any(results: impl Iterator<Item = Evidence>) -> Evidence {
+    let mut any = false;
+    let mut all_incompatible = true;
+    for result in results {
+        if result == Evidence::Compatible {
+            return Evidence::Compatible;
+        }
+        any = true;
+        all_incompatible &= result == Evidence::Incompatible;
+    }
+    if any && all_incompatible {
+        Evidence::Incompatible
+    } else {
+        Evidence::Insufficient
     }
 }
 
@@ -392,6 +498,7 @@ fn atomic_mode(mode: AtomicMode) -> Mode {
 pub(crate) fn body_entry_type(constraint: &TypeExpr) -> Option<RType> {
     match constraint {
         TypeExpr::Unknown => Some(RType::unknown()),
+        TypeExpr::ExactClass(_) => None,
         TypeExpr::Atomic { mode, length } => {
             let length = match length {
                 Some(DeclaredLength::Exact(0)) => Length::Zero,
@@ -462,17 +569,16 @@ impl crate::Checker {
         parameter: &ry_core::ast::Param,
         independent_default: &RType,
     ) -> Option<RType> {
-        let declared = signature?
-            .parameters
-            .iter()
-            .find(|declared| {
-                declared.name == semantic_argument_name(&parameter.name)
-                    && declared.form == ParameterForm::Ordinary
-            })?
-            .constraint
-            .as_ref()?;
-        if parameter.default.is_some()
-            && compare(independent_default, declared) == Evidence::Incompatible
+        let selected = signature?.parameters.iter().find(|declared| {
+            declared.name == semantic_argument_name(&parameter.name)
+                && declared.form == ParameterForm::Ordinary
+        })?;
+        let declared = selected.constraint.as_ref()?;
+        let supplied_only = selected.supplied == SupplyStatus::DefaultedSuppliedOnly;
+        if !supplied_only
+            && parameter.default.as_ref().is_some_and(|default| {
+                compare_actual(independent_default, default, declared) == Evidence::Incompatible
+            })
         {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Mismatch,
@@ -487,16 +593,24 @@ impl crate::Checker {
                 ),
             ));
         }
-        let entry = body_entry_type(declared);
+        let entry = if supplied_only {
+            None
+        } else {
+            body_entry_type(declared)
+        };
         if entry.is_none() {
+            let reason = if supplied_only {
+                "only explicitly supplied arguments are constrained; no unconditional body entry type is assumed"
+            } else if matches!(declared, TypeExpr::ExactClass(_)) {
+                "effective class does not establish a storage mode; no body entry type is assumed"
+            } else {
+                "constraint cannot be represented by body inference; no entry type is assumed"
+            };
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
                 parameter.span,
-                format!(
-                    "constraint for `{}` has more alternatives than body inference can represent; no entry type is assumed",
-                    parameter.name
-                ),
+                format!("constraint for `{}`: {reason}", parameter.name),
             ));
         }
         entry
@@ -617,7 +731,7 @@ impl crate::Checker {
             else {
                 continue;
             };
-            if compare(actual, constraint) == Evidence::Incompatible {
+            if compare_actual(actual, &argument.value, constraint) == Evidence::Incompatible {
                 mismatches.push((argument.span, formal.name.clone(), constraint.clone()));
             }
         }

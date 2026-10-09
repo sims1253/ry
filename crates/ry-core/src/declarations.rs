@@ -102,6 +102,9 @@ pub enum DeclaredLength {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeExpr {
     Unknown,
+    /// Equality with the single effective value returned by R's `class()`.
+    /// This does not imply a storage mode or an explicit class attribute.
+    ExactClass(String),
     Atomic {
         mode: AtomicMode,
         length: Option<DeclaredLength>,
@@ -204,6 +207,17 @@ impl TypeExpr {
     fn render(&self) -> Result<String, DeclarationError> {
         let spelling = match self {
             Self::Unknown => "unknown".to_string(),
+            Self::ExactClass(name) => {
+                if name.is_empty() || name.len() > MAX_PARAMETER_NAME_BYTES {
+                    return Err(DeclarationError::InvalidSyntax(
+                        "class name must be nonempty and at most 256 bytes".into(),
+                    ));
+                }
+                format!(
+                    "class[{}]",
+                    serde_json::to_string(name).expect("string serializes")
+                )
+            }
             Self::Atomic { mode, length } => {
                 if *mode == AtomicMode::Null
                     && length.is_some_and(|length| length != DeclaredLength::Exact(0))
@@ -362,6 +376,15 @@ impl Parser<'_> {
         if identifier == "unknown" {
             return Ok(TypeExpr::Unknown);
         }
+        if identifier == "class" {
+            self.require("[")?;
+            let name = self.json_string()?;
+            self.require("]")?;
+            if name.is_empty() {
+                return Err(DeclarationError::InvalidSyntax("empty class name".into()));
+            }
+            return Ok(TypeExpr::ExactClass(name));
+        }
         if identifier.is_empty() {
             return Err(DeclarationError::InvalidSyntax(format!(
                 "expected a type name at byte {}",
@@ -431,6 +454,9 @@ pub enum ParameterForm {
 pub enum SupplyStatus {
     Required,
     Defaulted,
+    /// The R formal has a default, but the authored predicate applies only
+    /// when a caller explicitly supplies an actual argument.
+    DefaultedSuppliedOnly,
     Unknown,
 }
 
@@ -655,6 +681,7 @@ impl SupplyStatus {
         match self {
             Self::Required => "required",
             Self::Defaulted => "defaulted",
+            Self::DefaultedSuppliedOnly => "defaulted_supplied_only",
             Self::Unknown => "unknown",
         }
     }
@@ -663,6 +690,7 @@ impl SupplyStatus {
         match name {
             "required" => Ok(Self::Required),
             "defaulted" => Ok(Self::Defaulted),
+            "defaulted_supplied_only" => Ok(Self::DefaultedSuppliedOnly),
             "unknown" => Ok(Self::Unknown),
             _ => Err(DeclarationError::InvalidSyntax(format!(
                 "unsupported supplied status `{name}`"
@@ -947,6 +975,8 @@ mod tests {
             "integer<len=1>",
             "list<len=1+>",
             "unknown",
+            "class[\"integer\"]",
+            "class[\"a \\\"quoted\\\" class\"]",
             "union[ character, integer<len=01>, character ]",
         ] {
             let canonical = TypeExpr::parse(input).unwrap().canonical().unwrap();
@@ -961,6 +991,20 @@ mod tests {
                 .canonical()
                 .unwrap(),
             "union[character, integer]"
+        );
+    }
+
+    #[test]
+    fn exact_class_predicate_is_distinct_from_storage_mode_and_bounded() {
+        let class = TypeExpr::ExactClass("integer".into());
+        assert_eq!(class.canonical().unwrap(), "class[\"integer\"]");
+        assert_ne!(class, TypeExpr::atomic(AtomicMode::Integer));
+        assert_eq!(TypeExpr::parse(&class.canonical().unwrap()).unwrap(), class);
+        assert!(TypeExpr::parse("class[\"\"]").is_err());
+        assert!(
+            TypeExpr::ExactClass("x".repeat(MAX_PARAMETER_NAME_BYTES + 1))
+                .canonical()
+                .is_err()
         );
     }
 

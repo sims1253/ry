@@ -307,10 +307,15 @@ pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
 }
 
 /// Mark a stub-declared predicate or assertion target's classes as guard
-/// evidence, like the built-in class tests. Union members and columns carry
-/// their own classes.
+/// evidence, like the built-in class tests. Union members, columns, and a
+/// closure's return type carry their own classes.
 pub(crate) fn guard_target(mut target: RType) -> RType {
     target.class.guarded = target.class.has_known_class();
+    if let Some(sig) = &target.fn_sig {
+        let mut sig = FunctionSignature::clone(sig);
+        sig.return_type = Box::new(guard_target(*sig.return_type));
+        target.fn_sig = Some(Arc::new(sig));
+    }
     if let Some(members) = &target.members {
         target.members = Some(members.iter().cloned().map(guard_target).collect());
     }

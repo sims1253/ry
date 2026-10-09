@@ -13,6 +13,18 @@ s3 <- function(x) {
     f(test(x))
   }
 }
+make <- function(x) UseMethod("make")
+make.foo <- function(x) function() structure(1L, class = "bar")
+make.bar <- function(x) function() structure(1L, class = "foo")
+closure <- function(x) {
+  if (inherits(x, "foo")) {
+    f <- function(y) {
+      #| y foo
+      y
+    }
+    f(make(x)())
+  }
+}
 `+.foo` <- function(e1, e2) structure(1L, class = "bar")
 `+.bar` <- function(e1, e2) structure(1L, class = "foo")
 ops <- function(x) {
@@ -53,6 +65,7 @@ s4 <- function(x) {
 
 both <- structure(1L, class = c("bar", "foo"))
 stopifnot(identical(class(test(both)), "foo"), identical(s3(both), test(both)))
+stopifnot(identical(class(make(both)()), "foo"), identical(closure(both), make(both)()))
 stopifnot(identical(class(both + 1L), "foo"), identical(ops(both), both + 1L))
 e <- structure(new.env(), class = "foo")
 stopifnot(is.environment(e), identical(class(probe(e)), "foo"))

@@ -64,6 +64,8 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("RY115", "requires an explicitly adopted declaration record"),
     ("RY116", "requires conflicting adopted declaration records"),
     ("RY117", "requires an invalid adopted declaration record"),
+    ("RY120", "requires a source-mapped malformed report input"),
+    ("RY121", "requires a dynamic report execution option"),
 ];
 
 /// The probe matrix. Order follows the rule registry. When you add a rule to

@@ -839,6 +839,16 @@ impl State {
             .find(|ctx| path.starts_with(&ctx.root))
     }
 
+    /// Reports are analyzed only after the owning config opts in.
+    pub(super) fn report_disabled(&self, doc_path: &str) -> bool {
+        ry_workspace::reports::is_report_path(std::path::Path::new(doc_path))
+            && !self
+                .folder_context_for_path(doc_path)
+                .map_or(self.file_config.reports.enabled, |ctx| {
+                    ctx.config.reports.enabled
+                })
+    }
+
     /// Whether an indexed `disk_files` entry consumes `budget_root`'s
     /// `index.max-files` budget: entries attribute to their INNERMOST
     /// containing root (longest-prefix, the same ownership
@@ -883,6 +893,9 @@ impl State {
 
     fn eligibility_for_path_with_len(&self, doc_path: &str, content_len: Option<u64>) -> bool {
         let path = std::path::Path::new(doc_path);
+        if self.report_disabled(doc_path) {
+            return false;
+        }
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
             if ctx.folder_settings.enable == Some(false) {
                 return false;
@@ -1185,14 +1198,16 @@ impl Backend {
             serde_json::json!({"globPattern": "**/NAMESPACE"}),
             serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
             serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
-            // R source, so an edit/create/delete of an unopened file
-            // reaches `did_change_watched_files` instead of sitting stale
-            // in the disk index until an unrelated rescan (#486). The
-            // extension set mirrors `ry_workspace` discovery (conventional
-            // `.R`/`.r` plus the historical S-dialect spellings); per-file
-            // walk rules (excludes, fixtures, caps) are applied when the
-            // event is processed, not in the glob.
-            serde_json::json!({"globPattern": "**/*.{R,r,S,s,q}"}),
+            // R source and reports, so an edit/create/delete of an unopened
+            // file reaches `did_change_watched_files` instead of sitting
+            // stale in the disk index until an unrelated rescan (#486). The
+            // extension set is `ry_workspace` discovery's; per-file walk
+            // rules (excludes, fixtures, caps, the report opt-in) are
+            // applied when the event is processed, not in the glob.
+            serde_json::json!({"globPattern": format!(
+                "**/*.{{{}}}",
+                ry_workspace::source_extensions().collect::<Vec<_>>().join(",")
+            )}),
         ];
         for path in &paths {
             let pattern = if relative {
@@ -1271,9 +1286,13 @@ impl Backend {
             #[cfg(feature = "test-util")]
             let paused_parse = crate::test_seam::maybe_pause().await;
             let mut parser = RParser::new().ok()?;
-            let (parsed, new_tree) = parser
-                .parse_with_tree(path, &text, old_tree.as_ref())
-                .ok()?;
+            let (parsed, new_tree) = ry_workspace::reports::parse_source_with_tree(
+                &mut parser,
+                path,
+                &text,
+                old_tree.as_ref(),
+            )
+            .ok()?;
             let file = Arc::new(parsed);
             let mut state = self.state.lock().await;
             // A different original URI can replace this display-keyed source
@@ -1284,7 +1303,9 @@ impl Backend {
             let stored = if state.versions.get(path).copied() == Some(version)
                 && state.docs.get(path) == Some(&text)
             {
-                state.store_tree(path, version, new_tree);
+                if let Some(tree) = new_tree {
+                    state.store_tree(path, version, tree);
+                }
                 state.record_parse(path, version, Arc::clone(&file))
             } else {
                 false
@@ -1579,10 +1600,9 @@ impl Backend {
                         if !text.contains("#|") {
                             continue;
                         }
-                        let Some(file) = RParser::new()
-                            .ok()
-                            .and_then(|mut parser| parser.parse(&path, &text).ok())
-                        else {
+                        let Some(file) = RParser::new().ok().and_then(|mut parser| {
+                            ry_workspace::reports::parse_source(&mut parser, &path, &text).ok()
+                        }) else {
                             continue;
                         };
                         if ry_checker::typehint::read_records(&file, &scope).is_empty() {
@@ -2049,7 +2069,8 @@ impl Backend {
                 let mut folder_contexts: HashMap<Option<PathBuf>, ry_workspace::WorkspaceContext> =
                     HashMap::with_capacity(groups.len());
                 for (package_root, indices) in &groups {
-                    let resolution_root = package_root.as_deref().unwrap_or(root);
+                    let resolution_root =
+                        ry_workspace::resolution_root_for_group(package_root.as_deref(), root);
                     // `paths` comes from this same map's keys, so the index
                     // cannot miss.
                     let files: Vec<&SourceFile> = indices
@@ -2057,7 +2078,7 @@ impl Backend {
                         .map(|index| outcome.files[paths[*index]].as_ref())
                         .collect();
                     match ry_workspace::resolve_workspace_context(
-                        resolution_root,
+                        &resolution_root,
                         config,
                         ry_workspace::ResolutionEnvironment {
                             files,
@@ -2625,7 +2646,9 @@ impl Backend {
                 let decoded = ry_workspace::read_r_source_decoded(&read_path).ok()?;
                 let path_string = read_path.to_string_lossy().into_owned();
                 let mut parser = RParser::new().ok()?;
-                let mut file = parser.parse(&path_string, &decoded.text).ok()?;
+                let mut file =
+                    ry_workspace::reports::parse_source(&mut parser, &path_string, &decoded.text)
+                        .ok()?;
                 file.native_path = Some(read_path);
                 decoded.attach_boundary_findings(&mut file);
                 Some((path_string, Arc::new(file)))
@@ -2916,7 +2939,7 @@ impl Backend {
                         continue;
                     }
                 };
-                let package_root = ry_workspace::enclosing_package_root(std::path::Path::new(path));
+                let package_root = ry_workspace::analysis_group_key(std::path::Path::new(path));
                 let index = match groups
                     .iter()
                     .position(|group| *group == (folder_root.clone(), package_root.clone()))
@@ -3001,9 +3024,10 @@ impl Backend {
                     candidates,
                     config: ctx.config.clone(),
                     stubs: Arc::clone(&ctx.stubs),
-                    resolution_root: package_root
-                        .clone()
-                        .unwrap_or_else(|| folder_root.to_path_buf()),
+                    resolution_root: ry_workspace::resolution_root_for_group(
+                        package_root.as_deref(),
+                        folder_root,
+                    ),
                     generation: state.index_generation,
                 }
             };

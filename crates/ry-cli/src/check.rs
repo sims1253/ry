@@ -1253,7 +1253,9 @@ fn run_check_once(
     for (native_path, parsed_file) in parsed_with_paths {
         file_count += 1;
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
-        if is_probably_not_r_source(&parsed_file) {
+        if !ry_workspace::reports::is_report_path(&native_path)
+            && is_probably_not_r_source(&parsed_file)
+        {
             synthetic_diagnostics.push((
                 native_path,
                 ry_checker::Diagnostic::new(

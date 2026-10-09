@@ -6,10 +6,12 @@
 
 mod discovery;
 mod native;
+pub mod reports;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible_with_limits, is_r_source_path, is_single_file_walk_admitted,
     is_test_fixture_path, is_within_depth, is_within_file_bytes, rbuildignore_pattern,
+    source_extensions,
 };
 use discovery::{is_r_source_name, is_testthat_code_name};
 
@@ -63,6 +65,33 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
         })
 }
 
+/// Reports have their own ordered R environment even when they share a
+/// package directory. Ordinary source files retain package grouping.
+pub fn analysis_group_key(path: &Path) -> Option<PathBuf> {
+    group_key(path, enclosing_package_root)
+}
+
+fn group_key(path: &Path, package_root: impl FnOnce(&Path) -> Option<PathBuf>) -> Option<PathBuf> {
+    if reports::is_report_path(path) {
+        Some(path.to_path_buf())
+    } else {
+        package_root(path)
+    }
+}
+
+/// The directory a group resolves against. A report's group key is its
+/// file path; it resolves against its enclosing package so package
+/// imports still apply while its bindings stay separate.
+pub fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathBuf {
+    match group {
+        Some(path) if reports::is_report_path(path) => {
+            enclosing_package_root(path).unwrap_or_else(|| fallback.to_path_buf())
+        }
+        Some(path) => path.to_path_buf(),
+        None => fallback.to_path_buf(),
+    }
+}
+
 /// Group path strings by enclosing package root, keeping each group's
 /// input indices in ascending order. Each R package is a separate
 /// library scope: pooling multiple package roots into one project lets
@@ -90,10 +119,12 @@ where
         } else {
             path.parent()
         };
-        let root = root_cache
-            .entry(key)
-            .or_insert_with(|| enclosing_package_root(path))
-            .clone();
+        let root = group_key(path, |path| {
+            root_cache
+                .entry(key)
+                .or_insert_with(|| enclosing_package_root(path))
+                .clone()
+        });
         groups.entry(root).or_default().push(index);
     }
     groups

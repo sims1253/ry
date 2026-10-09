@@ -317,6 +317,18 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "`as.integer()` converts a proven out-of-range numeric value to `NA_integer_`; handle the new NA or constrain the input before casting.",
     },
+    Rule {
+        code: "RY120",
+        name: "report-boundary",
+        default_severity: Severity::Warning,
+        summary: "An opted-in report has a malformed R fence or exceeds the bounded extraction budget; affected R chunks are not analyzed.",
+    },
+    Rule {
+        code: "RY121",
+        name: "report-execution-unknown",
+        default_severity: Severity::Warning,
+        summary: "A report execution option cannot be determined statically; analysis stops at that chunk rather than guessing which later bindings exist.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

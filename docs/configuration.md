@@ -56,6 +56,10 @@ max-serialized-bytes = 16777216 # 16 MiB (default)
 max-files      = 20000   # files discovered per root (default: 20,000)
 max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
+
+# Static report input is opt-in. It covers ordinary fenced R chunks only.
+[reports]
+enabled = false
 ```
 
 `include-build-ignored` contains glob patterns relative to `ry.toml`. It

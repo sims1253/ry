@@ -3,6 +3,7 @@
 [Getting started](../README.md) · [Configuration](configuration.md) · [Rules](rules.md)
 
 - [Checking files and CI](#checking-files-and-ci)
+- [R Markdown and Quarto inputs](#r-markdown-and-quarto-inputs)
 - [Package awareness](#package-awareness)
 - [Box imports](#box-imports)
 - [uvr project libraries](#uvr-project-libraries)
@@ -69,6 +70,41 @@ can run:
 
 For a pinned release install, a project-wide pre-commit/prek hook, and a
 complete workflow, see the [project-check example](examples/project-check/README.md).
+
+## R Markdown and Quarto inputs
+
+ry can check the R chunks of `.Rmd` and `.qmd` reports in `ry check` and the
+language server. This is opt-in:
+
+```toml
+[reports]
+enabled = true
+```
+
+ry never renders or runs a report. It checks ordinary fenced R chunks
+(`` ```{r} `` or `~~~{r}`) in document order, so a chunk can use names
+defined by earlier active chunks in the same report; each report has its own
+environment. Findings use the report's original lines and columns. Prose,
+YAML, non-R fences, and `{{r}}` examples are ignored.
+
+- **Execution options.** Literal `eval = FALSE`, `#| eval: false`, or
+  `#| eval = FALSE` disables a chunk; `include` and `echo` do not. R-style
+  options must use uppercase `TRUE`/`FALSE`; YAML `#|` options accept YAML
+  booleans. Option names are case-sensitive.
+- **RY120** marks input ry cannot extract: a malformed or unclosed R fence,
+  unclosed YAML metadata block, or a report over the static limits (2 MiB,
+  128 R chunks, or an R header over 16 KiB or 128 fields).
+- **RY121** marks execution ry cannot determine statically: computed,
+  conflicting, unsupported, or unreadable chunk options (such as `child`, or
+  a `#|` line that is neither `key: value` nor `key = value`), and real
+  references to `knitr::opts_chunk` stop analysis at that chunk. Engine
+  selectors (`engine`, `jupyter`) and `execute`/`knitr` settings in any YAML
+  metadata block, including under `format`, stop it for the whole report.
+- A syntax error inside a chunk is reported as RY000. Each chunk parses on its
+  own, so one chunk cannot complete another's expression.
+- Inline R, child documents, notebooks, knitr hooks, and project-level
+  renderer options are out of scope. Code actions that edit source are not
+  offered for reports.
 
 ## Package awareness
 

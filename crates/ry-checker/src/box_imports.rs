@@ -250,28 +250,85 @@ fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]>
     ])
 }
 
-/// Calls made while loading a legacy module may create caller-frame
-/// bindings, including through qualified writers and sourced files. We do
-/// not execute them, so a missing syntactic assignment is not proof that a
-/// name is absent. Function bodies are inert until called; box's quoted
-/// imports also change the lexical environment used by exported functions.
-/// Returns `(uncertain, imports)`.
-fn module_load_effects(file: &SourceFile) -> (bool, bool) {
-    let mut uncertain = false;
-    let mut imports = false;
+/// The collector indexes literal functions by spelling. A later wrapper
+/// assignment can leave the final value callable while the indexed literal
+/// is no longer its definition. Retain the collected signature only for a
+/// single direct literal binding with no other module-load assignment to the
+/// same name. Control-flow bindings are counted; nested function bodies have
+/// their own lexical scope and are excluded.
+fn stable_direct_function_bindings(file: &SourceFile, load: &ModuleLoad) -> HashSet<String> {
+    if load.unmodeled_effects {
+        return HashSet::new();
+    }
+    file.stmts
+        .iter()
+        .filter_map(|statement| match statement {
+            Stmt::Assign {
+                target,
+                value: Expr::Function { .. },
+                ..
+            } => binding_name(target),
+            _ => None,
+        })
+        .map(|name| infer::semantic_argument_name(name).to_string())
+        .filter(|name| load.counts.get(name) == Some(&1))
+        .collect()
+}
+
+/// What loading a module does outside function bodies, which are inert
+/// until called. Assignment targets are keyed by semantic name.
+#[derive(Default)]
+struct ModuleLoad {
+    counts: HashMap<String, usize>,
+    /// Targets of assignment expressions, which also cover `<<-`/`%<>%`.
+    expression_names: HashSet<String>,
+    /// Targets of `<-`/`=` expressions, which bind in the module itself.
+    own_expression_names: HashSet<String>,
+    /// Calls may create caller-frame bindings, including through qualified
+    /// writers and sourced files. We do not execute them, so a missing
+    /// syntactic assignment is not proof that a name is absent.
+    unmodeled_effects: bool,
+    /// box's quoted imports change the lexical environment of functions.
+    imports: bool,
+}
+
+fn module_load(file: &SourceFile) -> ModuleLoad {
+    let mut load = ModuleLoad::default();
     let walk = Walk {
         fn_bodies: false,
         ..Walk::ALL
     };
     let _ = walk_stmts(&file.stmts, walk, |node, _| {
+        let (target, operator) = match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => (Some(target), None),
+            AstNode::Expr(Expr::BinOp { op, lhs, .. })
+                if matches!(
+                    op,
+                    BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
+                ) =>
+            {
+                (Some(lhs.as_ref()), Some(*op))
+            }
+            _ => (None, None),
+        };
+        if let Some(name) = target.and_then(binding_name) {
+            let name = infer::semantic_argument_name(name).to_string();
+            if let Some(op) = operator {
+                if op == BinOpKind::Assign {
+                    load.own_expression_names.insert(name.clone());
+                }
+                load.expression_names.insert(name.clone());
+            }
+            *load.counts.entry(name).or_default() += 1;
+        }
         let AstNode::Expr(expr) = node else {
             return ControlFlow::<(), Descend>::Continue(Descend::Into);
         };
         let descend = match expr {
-            Expr::Function { .. } => Descend::Skip,
             Expr::Call { func, args, .. } if ident_name(func) == Some("box::use") => {
-                imports = true;
-                uncertain |= args.iter().any(|argument| parse_import(argument).is_none());
+                load.imports = true;
+                load.unmodeled_effects |=
+                    args.iter().any(|argument| parse_import(argument).is_none());
                 Descend::Skip
             }
             Expr::Call { func, args, .. }
@@ -292,87 +349,14 @@ fn module_load_effects(file: &SourceFile) -> (bool, bool) {
             }
             | Expr::Block { .. }
             | Expr::If { .. } => {
-                uncertain = true;
+                load.unmodeled_effects = true;
                 Descend::Into
             }
             _ => Descend::Into,
         };
         ControlFlow::Continue(descend)
     });
-    (uncertain, imports)
-}
-
-/// The collector indexes literal functions by spelling. A later wrapper
-/// assignment can leave the final value callable while the indexed literal
-/// is no longer its definition. Retain the collected signature only for a
-/// single direct literal binding with no other module-load assignment to the
-/// same name. Control-flow bindings are counted; nested function bodies have
-/// their own lexical scope and are excluded.
-fn stable_direct_function_bindings(
-    file: &SourceFile,
-    unmodeled_load_effects: bool,
-    writes: &ModuleWrites,
-) -> HashSet<String> {
-    if unmodeled_load_effects {
-        return HashSet::new();
-    }
-    file.stmts
-        .iter()
-        .filter_map(|statement| match statement {
-            Stmt::Assign {
-                target,
-                value: Expr::Function { .. },
-                ..
-            } => binding_name(target),
-            _ => None,
-        })
-        .map(|name| infer::semantic_argument_name(name).to_string())
-        .filter(|name| writes.counts.get(name) == Some(&1))
-        .collect()
-}
-
-/// Module-load assignments outside function bodies, by semantic name.
-#[derive(Default)]
-struct ModuleWrites {
-    counts: HashMap<String, usize>,
-    /// Targets of assignment expressions, which also cover `<<-`/`%<>%`.
-    expression_names: HashSet<String>,
-    /// Targets of `<-`/`=` expressions, which bind in the module itself.
-    own_expression_names: HashSet<String>,
-}
-
-fn module_writes(file: &SourceFile) -> ModuleWrites {
-    let mut writes = ModuleWrites::default();
-    let walk = Walk {
-        fn_bodies: false,
-        ..Walk::ALL
-    };
-    let _ = walk_stmts(&file.stmts, walk, |node, _| {
-        let (target, operator) = match node {
-            AstNode::Stmt(Stmt::Assign { target, .. }) => (target, None),
-            AstNode::Expr(Expr::BinOp { op, lhs, .. })
-                if matches!(
-                    op,
-                    BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
-                ) =>
-            {
-                (lhs.as_ref(), Some(*op))
-            }
-            _ => return ControlFlow::<(), Descend>::Continue(Descend::Into),
-        };
-        if let Some(name) = binding_name(target) {
-            let name = infer::semantic_argument_name(name).to_string();
-            if let Some(op) = operator {
-                if op == BinOpKind::Assign {
-                    writes.own_expression_names.insert(name.clone());
-                }
-                writes.expression_names.insert(name.clone());
-            }
-            *writes.counts.entry(name).or_default() += 1;
-        }
-        ControlFlow::Continue(Descend::Into)
-    });
-    writes
+    load
 }
 
 struct RoxygenExports {
@@ -769,16 +753,14 @@ impl Checker {
 
     fn analyze_box_module(&self, file: &SourceFile) -> BoxInventory {
         let (mut assigned, roxygen) = top_level_bindings(file);
-        let (unmodeled_load_effects, module_imports) = module_load_effects(file);
-        let writes = module_writes(file);
+        let load = module_load(file);
         // Legacy box modules export bindings made by executed assignment
         // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
         // Roxygen/explicit inventories still use their declared names.
-        assigned.extend(writes.own_expression_names.iter().cloned());
-        let stable_functions =
-            stable_direct_function_bindings(file, unmodeled_load_effects, &writes);
+        assigned.extend(load.own_expression_names.iter().cloned());
+        let stable_functions = stable_direct_function_bindings(file, &load);
         let (exported, complete) =
-            declared_exports(file, assigned, roxygen, unmodeled_load_effects);
+            declared_exports(file, assigned, roxygen, load.unmodeled_effects);
         let mut nested = Checker::new(&file.path);
         nested.box_depth = self.box_depth + 1;
         nested.box_sources = Arc::clone(&self.box_sources);
@@ -790,10 +772,10 @@ impl Checker {
         };
         for name in exported {
             let value = scope.get(&name);
-            let written = writes.counts.contains_key(&name);
+            let written = load.counts.contains_key(&name);
             // An imported callable keeps its provenance only when nothing
             // at module load may replace it.
-            let imported = !unmodeled_load_effects && !written;
+            let imported = !load.unmodeled_effects && !written;
             let alias = scope.function_alias(&name);
             let callable = match (scope.box_objects.get(&name), alias) {
                 (Some(BoxObject::Attached(callable)), _) if imported => callable.clone(),
@@ -807,7 +789,7 @@ impl Checker {
                     nested.fn_table.fns.get(&name).map(|function| {
                         BoxCallable::Function(Arc::new(BoxFunction {
                             params: function.params.clone(),
-                            return_type: if module_imports {
+                            return_type: if load.imports {
                                 RType::unknown()
                             } else {
                                 nested.return_slots.get(function.return_slot)
@@ -820,8 +802,8 @@ impl Checker {
             let stale_callable = value.is_some_and(|value| value.mode == Mode::Function)
                 && written
                 && !stable_functions.contains(&name);
-            let value = if unmodeled_load_effects
-                || writes.expression_names.contains(&name)
+            let value = if load.unmodeled_effects
+                || load.expression_names.contains(&name)
                 || stale_callable
             {
                 RType::unknown()

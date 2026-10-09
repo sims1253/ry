@@ -91,7 +91,7 @@ fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
         );
 
         // Close everything: `util.R`'s squiggle legitimately stays (project
-        // diagnostics for unopened files), tracked in `published_paths`.
+        // diagnostics for unopened files), tracked in `published_uris`.
         session
             .notify(
                 "textDocument/didClose",

@@ -184,11 +184,16 @@ impl Length {
 ///   * `known == true`, `len == 0`: we know there is no class attribute.
 ///   * `known == true`, `len > 0`: we know the class vector.
 ///   * `known == false`: we couldn't determine the class (do not warn).
+///
+/// `guarded` marks names established by a passing class test such as
+/// `inherits(x, "foo")` or `is.data.frame(x)`. Such a test proves the
+/// guard held, not the value's whole class vector.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClassVector {
     pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
+    pub guarded: bool,
 }
 
 impl ClassVector {
@@ -200,6 +205,7 @@ impl ClassVector {
             names: [None, None, None, None],
             len: 0,
             known: true,
+            guarded: false,
         }
     }
 
@@ -209,6 +215,15 @@ impl ClassVector {
             names: [Some(Arc::from(name)), None, None, None],
             len: 1,
             known: true,
+            guarded: false,
+        }
+    }
+
+    /// The class named by a passing class test, e.g. `inherits(x, "foo")`.
+    pub fn guard(name: &str) -> Self {
+        ClassVector {
+            guarded: true,
+            ..ClassVector::single(name)
         }
     }
 
@@ -221,6 +236,7 @@ impl ClassVector {
             names: [None, None, None, None],
             len: 0,
             known: false,
+            guarded: false,
         }
     }
 

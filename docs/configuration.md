@@ -103,6 +103,23 @@ includes descendants. Use forward slashes on every platform. Existing paths
 are resolved through symlinks before matching. A programmatically constructed
 configuration without a file location uses the analysis root.
 
+To adopt the audited `typehint` 0.1.0 comments only in selected source files:
+
+```toml
+[annotations.typehint]
+adopt = true
+version = "0.1.0"
+paths = ["R/**"]
+```
+
+All three settings are required when adoption is enabled. The path globs use
+the same configuration-root-relative physical path matching described above.
+The matcher refuses native filenames it cannot represent as UTF-8; a lossy
+display name cannot make an excluded file eligible. No comment is adopted by
+default. The [declaration guide](declarations.md) explains the supported class
+subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
+ordinary comments, and strings do not create typehint contracts.
+
 Explicit CLI values override scalar settings such as `output-format`.
 The `--error`, `--warn`, `--ignore`, and `--typeshed` lists append to the
 configuration lists. Rule filters apply errors first, then warnings, then

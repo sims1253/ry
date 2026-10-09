@@ -1238,23 +1238,23 @@ fn run_check_once(
     let mut srcs: HashMap<String, String> = HashMap::new();
     let mut parse_errors = 0usize;
     let mut file_count = 0usize;
-    let mut not_r_diagnostics = Vec::new();
-    // Degraded serialized scopes, deduplicated and
+    let mut synthetic_diagnostics = Vec::new();
+    // Degraded scopes (serialized data over the byte cap), deduplicated and
     // sorted for a stable summary. Keyed on the formatted `path (reason)`.
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
     let parsed_with_paths =
-        pipeline::parse_files_with_overlay(paths, overlay, report_check_parse_failure)
+        pipeline::parse_files_with_native_paths(paths, overlay, report_check_parse_failure)
             .expect("check's parse-failure policy never aborts");
     parse_errors += paths.len() - parsed_with_paths.len();
-    let mut parsed: Vec<Arc<ry_core::SourceFile>> = Vec::with_capacity(parsed_with_paths.len());
-    let mut native_paths = Vec::with_capacity(parsed_with_paths.len());
+    let mut parsed = Vec::with_capacity(parsed_with_paths.len());
+    let mut native_files = Vec::with_capacity(parsed_with_paths.len());
     for (native_path, parsed_file) in parsed_with_paths {
         file_count += 1;
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
         if is_probably_not_r_source(&parsed_file) {
-            not_r_diagnostics.push((
+            synthetic_diagnostics.push((
                 native_path,
                 ry_checker::Diagnostic::new(
                     ry_checker::Severity::Info,
@@ -1265,7 +1265,7 @@ fn run_check_once(
                 ),
             ));
         } else {
-            native_paths.push(native_path);
+            native_files.push((native_path, Arc::clone(&parsed_file)));
             parsed.push(parsed_file);
         }
     }
@@ -1280,9 +1280,30 @@ fn run_check_once(
         &[ctx.repo_root],
     )?;
 
+    let adopted = pipeline::adopted_records(&native_files, ctx.resolution_config);
+    // Declined records originate from scoped UTF-8 native paths, so these
+    // synthesized paths preserve their authored file identity.
+    synthetic_diagnostics.extend(
+        adopted
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| (PathBuf::from(&diagnostic.path), diagnostic)),
+    );
     let mut per_file_diagnostics = Vec::new();
     for group in groups {
-        let checked = check_project(group.check_input);
+        let group_paths: std::collections::HashSet<_> = group
+            .check_input
+            .files
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .collect();
+        let records = adopted
+            .records
+            .iter()
+            .filter(|record| group_paths.contains(record.source.path.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let checked = check_project(group.check_input, records);
         debug_assert_eq!(group.source_indices.len(), checked.len());
         per_file_diagnostics.extend(
             group
@@ -1309,7 +1330,7 @@ fn run_check_once(
         let file = &parsed[*index];
         let filter = ctx
             .scoped_policy
-            .filter_for(&native_paths[*index], ctx.filter);
+            .filter_for(&native_files[*index].0, ctx.filter);
         let post = ry_checker::PostProcess {
             filter: &filter,
             baseline: ctx.baseline,
@@ -1324,9 +1345,9 @@ fn run_check_once(
             Some(file.as_ref()),
         );
     }
-    // The synthesized not-R diagnostics have no suppression comments to
+    // File-level synthetic findings have no unambiguous source comment to
     // honor, so they enter the pipeline at the severity filter.
-    for (native_path, diagnostic) in not_r_diagnostics {
+    for (native_path, diagnostic) in synthetic_diagnostics {
         let filter = ctx.scoped_policy.filter_for(&native_path, ctx.filter);
         let mut diagnostics = vec![diagnostic];
         ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
@@ -2362,7 +2383,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         // A clean file should produce no diagnostics.
         let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert_eq!(total, 0, "clean file should have no diagnostics");
@@ -2377,7 +2398,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert!(total > 0, "undefined variable should produce diagnostics");
     }
@@ -2394,11 +2415,14 @@ mod tests {
         let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
             let mut parser = ry_core::RParser::new().unwrap();
             let file = parser.parse("test.R", src).unwrap();
-            let output = check_project(CheckInput {
-                files: vec![("test.R".to_string(), Arc::new(file))],
-                user_stubs: Arc::new(BTreeMap::new()),
-                workspace,
-            });
+            let output = check_project(
+                CheckInput {
+                    files: vec![("test.R".to_string(), Arc::new(file))],
+                    user_stubs: Arc::new(BTreeMap::new()),
+                    workspace,
+                },
+                Vec::new(),
+            );
             output
                 .iter()
                 .flat_map(|(_, diags)| diags.iter())
@@ -2434,7 +2458,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         // shared_fn is defined in a.R and called in b.R — should resolve.
         let b_diags: usize = output
             .iter()

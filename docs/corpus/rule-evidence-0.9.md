@@ -112,6 +112,13 @@ determines the verdict.
 | `RY111` constant-argument-shadowing | 28/3 | yes | `constant_argument_shadowing_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 28 TP / 3 FP across the corpora (11 TP tidyverse + 17 TP posit, the ledger-row sum RY109's entry uses; the ten dbplyr identities are the same sites in both manifests at the same pin). Tidyverse: haven `R/labelled.R:111`, the founding defect itself (issue #361: median.haven_labelled hardcodes `na.rm = TRUE`, so `median(labelled(c(1:4, NA)), na.rm = FALSE)` returns 2.5 where base `median` returns NA) plus the dbplyr `sql_render.*_query` family whose own `subquery` formal is never read while the generic forwards the caller's flag into the method. Posit true positives: the same dbplyr family; reticulate's `r_to_py.POSIXt` (the method POSIXct/POSIXlt dispatch to) and `r_convert_dataframe_column` dropping their `convert` contract parameter; shiny's `observeEvent` pinning `autoDestroy = TRUE` while forwarding every sibling formal; torch's `nnf_rrelu_` forcing `training = TRUE` against its own `training = FALSE` default. Posit false positives: gt's testthat helpers exposing testthat-compat `all = TRUE` signatures and sparklyr's `stream_read_socket` generic-family `columns` compat. The dead-formal gate keeps every deliberate idiom silent: dbplyr's forwarded `subquery` wrapper, stringr's guarded `ignore_case`, tibble's forwarded `quiet`, dplyr's guarded `recursive`, rvest's `env_has(inherit = inherit)` -- a body (or signature default) that reads the formal anywhere handles the caller's value, so per-site constants are chosen child semantics. |
 | `RY118` missing-box-export | 0/0 | yes | `box_missing_export.R` | n/a (structural) | - | - | keep | Added after the original 0.9 audit. The pinned box 1.2.3 fixture proves that a complete local module rejects a selected missing export; missing and dynamic inventories remain silent. The corpus row records no finding from the pinned package snapshots. |
 | `RY119` integer-coercion-range-loss | 0/0 | yes | `integer_range_loss_claim.R` | lift-reachable | - | yes | keep | Added after the original 0.9 audit. Actual R confirms that a proven out-of-range base `as.integer()` cast creates `NA_integer_` and emits the range warning; the rule and quiet controls run in the normal probe and oracle gates. An exact-pin 94-entry/77-tree differential against the reviewed #601 base found no changed package/root report. The pinned readxl and haven functions reproduce the runtime failure with `1e10`, but their original source parameters have no proven call-site value in the checker, so the original package diagnostics remain unchanged. See [the range evidence](integer-range-evidence.md). |
+
+The historical corpus above predates RY114–117. These opt-in declaration
+rules retain a `keep` verdict in the executable matrix. Their positive and
+quiet controls are in `ry-cli/tests/typehint_e2e.rs`, their R premises are in
+`ry-checker/testdata/oracle/typehint_*.R`, and RY114 warm editor behavior is
+covered in `ry-lsp/tests/typehint_adoption.rs`. They are outside the original
+literal-lift experiment because that experiment installs no authored records.
 ## Verdict execution
 
 Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
@@ -130,11 +137,12 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
 ## Completeness checks
 
-- Rows: 42, exactly one for every non-retired entry in `RULES`.
-- Probes: 41 present; RY097 has the committed CLI-level exclusion.
-- Claim fixtures: 42 present and enforced by `every_rule_has_a_claim_fixture`.
+- Historical 0.9 rows: 37. RY114–117 were added after this corpus snapshot.
+- Historical 0.9 probes: 36 present; RY097 has the CLI-level exclusion.
+- Claim fixtures: each current rule has a claim fixture, including RY114–117.
 - R7 coverage: every rule is classified (lift-reachable, param-unreachable,
   consistent, or n/a).
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values count finding records in the archived hermetic ledger.
-- Verdicts: 41 keep, 1 default-off (RY003), 0 retire (RY095 retired during the audit response).
+- Historical 0.9 verdicts: 35 keep, 1 default-off (RY003), 0 retire
+  (RY095 retired during the audit response); RY114–117 add four `keep` verdicts.

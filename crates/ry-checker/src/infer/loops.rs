@@ -27,6 +27,15 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     joined
         .list_origin_bindings
         .retain(|name| incoming.has_list_origin(name));
+    // A lexical function on either path may shadow a same-spelled flat
+    // table entry. Its exact declaration target survives only when both
+    // paths agree on the same definition span.
+    joined
+        .lexical_functions
+        .extend(incoming.lexical_functions.iter().cloned());
+    joined
+        .lexical_definitions
+        .retain(|name, definition| incoming.lexical_definition(name) == Some(*definition));
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
     joined.literal_values_unknown |= incoming.literal_values_unknown;
@@ -154,9 +163,23 @@ impl Checker {
             scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
+                let lexical = exit.lexical_functions.contains(&binding)
+                    || (!entered && scope.is_lexical_function(&binding));
+                let definition =
+                    exit.lexical_definitions
+                        .get(&binding)
+                        .copied()
+                        .filter(|definition| {
+                            entered || scope.lexical_definition(&binding) == Some(*definition)
+                        });
                 scope.insert(binding.clone(), ty);
                 if list_origin {
-                    scope.mark_list_origin(binding);
+                    scope.mark_list_origin(binding.clone());
+                }
+                if let Some(definition) = definition {
+                    scope.mark_lexical_function(binding, definition);
+                } else if lexical {
+                    scope.mark_lexical_callable(binding);
                 }
             }
         }

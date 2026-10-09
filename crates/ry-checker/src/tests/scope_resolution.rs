@@ -1250,7 +1250,7 @@ fn parameter_default_preserves_lexical_and_list_origin_markers() {
     scope.insert_narrowed("d", RType::unknown());
     // Layer every marker the name can carry in a captured scope.
     scope.set_function_alias("d", "stats::median".to_string());
-    scope.mark_lexical_function("d");
+    scope.mark_lexical_function("d", Span::default());
     scope.mark_list_origin("d");
 
     scope.insert_parameter_default("d", RType::new(Mode::Integer, Length::One));

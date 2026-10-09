@@ -57,6 +57,13 @@ const EXCLUDED: &[(&str, &str)] = &[
         "RY113",
         "opt-in post-processing audit, not emitted by Checker::check",
     ),
+    // The plain `run` helper intentionally installs no authored records.
+    // Opted-in source records exercise these codes end-to-end in
+    // ry-cli/tests/typehint_e2e.rs, including both positive and quiet cases.
+    ("RY114", "requires an explicitly adopted declaration record"),
+    ("RY115", "requires an explicitly adopted declaration record"),
+    ("RY116", "requires conflicting adopted declaration records"),
+    ("RY117", "requires an invalid adopted declaration record"),
 ];
 
 /// The probe matrix. Order follows the rule registry. When you add a rule to

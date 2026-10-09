@@ -2,7 +2,7 @@
 //! diagnostic emit helpers.
 
 use super::*;
-use crate::infer::json_rtype_to_rtype;
+use crate::infer::{dispatch_result, json_rtype_to_rtype};
 
 /// R's standard packages, which share ry's embedded base stub database:
 /// a qualified lookup in any of them resolves against `typeshed` itself.
@@ -553,7 +553,7 @@ impl Checker {
                         .map(|slot| self.read_return_slot(*slot))
                 })
             {
-                return Some(result);
+                return Some(dispatch_result(first.class.guarded, result));
             }
         }
         // A registration proves that a method exists, not that this receiver

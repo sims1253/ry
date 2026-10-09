@@ -580,9 +580,7 @@ fn read_module(path: &Path) -> Option<SourceFile> {
         .ok()?;
     decoded.attach_boundary_findings(&mut file);
     file.native_path = Some(path.to_path_buf());
-    // Source that R's parser rejects (#376, #474) cannot provide a
-    // trustworthy inventory.
-    (!file.leading_bom && file.invalid_utf8.is_empty()).then_some(file)
+    Some(file)
 }
 
 impl Checker {
@@ -592,7 +590,11 @@ impl Checker {
 
     /// Literal NAMESPACE readers do not interpret exportPattern, S3
     /// registrations, or loader hooks, so package absence is never proof.
-    fn box_package_inventory(&self, package: &str) -> Arc<BoxInventory> {
+    fn box_package_inventory(&mut self, package: &str) -> Arc<BoxInventory> {
+        let key = (self.box_caller().to_path_buf(), package.to_string());
+        if let Some(inventory) = self.box_package_cache.get(&key) {
+            return Arc::clone(inventory);
+        }
         let mut exports = BTreeMap::new();
         if let Some(typeshed) = self.package_typeshed(package) {
             for name in typeshed.functions.keys() {
@@ -602,18 +604,18 @@ impl Checker {
                 exports.insert(name.clone(), infer::json_rtype_to_rtype(value));
             }
         }
-        if let Some(installed) =
-            ry_workspace::installed_exports_for_file(package, self.box_caller())
-        {
+        if let Some(installed) = ry_workspace::installed_exports_for_file(package, &key.0) {
             exports.retain(|name, _| installed.contains(name));
             for name in installed {
                 exports.entry(name).or_insert_with(RType::unknown);
             }
         }
-        Arc::new(BoxInventory {
+        let inventory = Arc::new(BoxInventory {
             exports,
             ..BoxInventory::default()
-        })
+        });
+        self.box_package_cache.insert(key, Arc::clone(&inventory));
+        inventory
     }
 
     fn box_module_inventory(&mut self, segments: &[String]) -> Option<Arc<BoxInventory>> {
@@ -636,7 +638,11 @@ impl Checker {
                     Err(_) => return None,
                 },
             };
+            // Source that R's parser rejects (#376, #474) cannot provide a
+            // trustworthy inventory, whether read from disk or a buffer.
             if file.source.len() as u64 > MAX_MODULE_BYTES
+                || file.leading_bom
+                || !file.invalid_utf8.is_empty()
                 || !file.parse_errors.is_empty()
                 || !file.syntax_violations.is_empty()
             {

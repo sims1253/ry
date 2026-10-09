@@ -1140,6 +1140,7 @@ pub struct Checker {
     /// relative box module. Keys use the existing ancestor's identity.
     box_sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>,
     box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
+    box_package_cache: HashMap<(PathBuf, String), Arc<box_imports::BoxInventory>>,
     box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Explicitly adopted structured records. Empty unless a caller opts in.
@@ -1334,6 +1335,7 @@ impl Checker {
         self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
         self.box_module_cache.clear();
+        self.box_package_cache.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1403,6 +1405,7 @@ impl Checker {
             user_stubs: Arc::new(BTreeMap::new()),
             box_sources: Arc::new(HashMap::new()),
             box_module_cache: HashMap::new(),
+            box_package_cache: HashMap::new(),
             box_depth: 0,
             diagnostics: Vec::new(),
             declarations: Arc::new(declaration_check::DeclarationSet::default()),
@@ -1810,6 +1813,7 @@ impl Checker {
     pub(crate) fn set_box_sources(&mut self, sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>) {
         self.box_sources = sources;
         self.box_module_cache.clear();
+        self.box_package_cache.clear();
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {

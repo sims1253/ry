@@ -188,6 +188,34 @@ fn project_module_overlay_replaces_disk_inventory_on_incremental_check() {
 }
 
 #[test]
+fn project_module_overlay_rejects_sources_r_cannot_parse() {
+    let root = tempfile::tempdir().unwrap();
+    let module = root.path().join("mod.r");
+    let caller = root.path().join("run.R");
+    for boundary in ["bom", "invalid_utf8"] {
+        let mut file = parse(&module, "foo <- 1L\n");
+        if boundary == "bom" {
+            file.leading_bom = true;
+        } else {
+            file.invalid_utf8 = vec![ry_core::Span::default()];
+        }
+        let mut project = Project::new();
+        project.add_file(module.to_string_lossy().into_owned(), file);
+        add(
+            &mut project,
+            &caller,
+            "box::use(./mod[foo, missing])\nfoo\n",
+        );
+        let result = project.check();
+        assert!(
+            result[1].1.iter().all(|d| d.code != "RY118"),
+            "{boundary}: {:#?}",
+            result[1].1
+        );
+    }
+}
+
+#[test]
 fn ordinary_box_text_does_not_invalidate_unrelated_project_files() {
     let root = tempfile::tempdir().unwrap();
     let a = root.path().join("a.R");

@@ -129,6 +129,9 @@ fn installed_namespace_gates_package_stub_import_without_loading_r() {
     assert!(run().contains(&"RY010".to_string()));
     std::fs::write(&namespace, "export(filter)\n").unwrap();
     assert!(!run().contains(&"RY010".to_string()));
+    // A pattern may export any stubbed name; literal exports cannot gate it.
+    std::fs::write(&namespace, "export(select)\nexportPattern(\"^[^.]\")\n").unwrap();
+    assert!(!run().contains(&"RY010".to_string()));
 }
 
 #[test]

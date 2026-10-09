@@ -57,6 +57,7 @@ pub mod test_seam {
         did_change_waiting: AtomicBool,
         arrived: Notify,
         release: Notify,
+        parse_landed: Notify,
         did_change_fired: Notify,
     }
 
@@ -67,6 +68,7 @@ pub mod test_seam {
                 did_change_waiting: AtomicBool::new(false),
                 arrived: Notify::new(),
                 release: Notify::new(),
+                parse_landed: Notify::new(),
                 did_change_fired: Notify::new(),
             }
         }
@@ -158,15 +160,26 @@ pub mod test_seam {
         barrier().release.notify_one();
     }
 
+    /// Wait until the paused parse has decided whether to cache its result.
+    pub async fn wait_parse_landed() {
+        barrier().parse_landed.notified().await;
+    }
+
+    pub(crate) fn note_parse_landed() {
+        barrier().parse_landed.notify_one();
+    }
+
     /// Called by `parsed_file` (production code). If armed, atomically
     /// disarms and pauses: signals arrival, then waits for the test to
     /// release. When not armed, this is a no-op (single relaxed load).
-    pub(crate) async fn maybe_pause() {
+    pub(crate) async fn maybe_pause() -> bool {
         let b = barrier();
         if b.armed.swap(false, Ordering::AcqRel) {
             b.arrived.notify_one();
             b.release.notified().await;
+            return true;
         }
+        false
     }
 
     /// Called by `did_change` after the document is updated and diagnostics
@@ -232,6 +245,7 @@ pub mod test_seam {
         static REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
         static SCAN_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
         static POST_REFRESH_COMMIT_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
+        static CHANGE_TRANSITION_GATE: Arc<CommitGate> = Arc::new(CommitGate::new());
     }
 
     fn refresh_gate() -> Arc<CommitGate> {
@@ -244,6 +258,39 @@ pub mod test_seam {
 
     fn post_refresh_gate() -> Arc<CommitGate> {
         POST_REFRESH_COMMIT_GATE.with(Arc::clone)
+    }
+
+    fn change_transition_gate() -> Arc<CommitGate> {
+        CHANGE_TRANSITION_GATE.with(Arc::clone)
+    }
+
+    /// Park a `didChange` immediately before its atomic source transaction.
+    /// A test can open a second native URI at the same display key while the
+    /// edit is parked, then prove the resumed edit targets its original URI.
+    pub fn arm_change_transition() {
+        change_transition_gate()
+            .armed
+            .store(true, Ordering::Release);
+    }
+
+    pub async fn wait_change_transition() {
+        change_transition_gate().arrived.notified().await;
+    }
+
+    pub fn release_change_transition() {
+        change_transition_gate().release.notify_one();
+    }
+
+    pub async fn wait_change_transition_landed() {
+        change_transition_gate().landed.notified().await;
+    }
+
+    pub(crate) async fn maybe_pause_change_transition() -> bool {
+        change_transition_gate().maybe_pause().await
+    }
+
+    pub(crate) fn note_change_transition_landed() {
+        change_transition_gate().note_landed();
     }
 
     /// Arm the per-file refresh gate: the next `refresh_disk_entry`

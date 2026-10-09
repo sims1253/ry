@@ -99,7 +99,7 @@ fn predicate_call_target(name: &str, args: &[Arg]) -> Option<RType> {
     if name == "inherits" {
         args.get(1).and_then(|arg| match &arg.value {
             Expr::String(class, _) if !class.is_empty() => {
-                Some(RType::unknown().with_class(ClassVector::single(class)))
+                Some(RType::unknown().with_class(ClassVector::guard(class)))
             }
             _ => None,
         })
@@ -320,13 +320,10 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
         "is.complex" => Some(RType::scalar(Mode::Complex)),
         "is.list" => Some(RType::scalar(Mode::List)),
         "is.function" => Some(RType::scalar(Mode::Function)),
-        // Data frames are list-backed in the current type lattice. There is
-        // no distinct environment mode yet, so retain its opaque storage
-        // mode while recording the class evidence from the guard.
+        // Data frames are list-backed in the current type lattice.
         "is.data.frame" => {
-            Some(RType::scalar(Mode::List).with_class(ClassVector::single("data.frame")))
+            Some(RType::scalar(Mode::List).with_class(ClassVector::guard("data.frame")))
         }
-        "is.environment" => Some(RType::unknown().with_class(ClassVector::single("environment"))),
         "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
         "is.raw" => Some(RType::scalar(Mode::Raw)),
         _ => None,
@@ -338,7 +335,58 @@ pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
     if class.is_empty() {
         return None;
     }
-    Some(RType::unknown().with_class(ClassVector::single(class)))
+    Some(RType::unknown().with_class(ClassVector::guard(class)))
+}
+
+/// Mark a stub-declared predicate or assertion target's classes as guard
+/// evidence, like the built-in class tests. Union members, columns, and a
+/// closure's return type carry their own classes.
+pub(crate) fn guard_target(mut target: RType) -> RType {
+    target.class.guarded = target.class.has_known_class();
+    if let Some(sig) = &target.fn_sig {
+        let mut sig = FunctionSignature::clone(sig);
+        sig.return_type = Box::new(guard_target(*sig.return_type));
+        target.fn_sig = Some(Arc::new(sig));
+    }
+    if let Some(members) = &target.members {
+        target.members = Some(members.iter().cloned().map(guard_target).collect());
+    }
+    if let Some(schema) = &target.columns {
+        let mut schema = ColumnSchema::clone(schema);
+        for (_, column) in &mut schema.columns {
+            *column = guard_target(column.clone());
+        }
+        target.columns = Some(Arc::new(schema));
+    }
+    target
+}
+
+/// A method selected from guard evidence need not be the one R dispatches
+/// to, so the classes of its result are guard evidence as well.
+pub(crate) fn dispatch_result(guarded_receiver: bool, result: RType) -> RType {
+    if guarded_receiver {
+        guard_target(result)
+    } else {
+        result
+    }
+}
+
+/// The type a passing guard installs. A guard filters paths without
+/// changing the value, so an exact known class outlives the guard's class
+/// evidence. A default parameter's type describes only the omitted call.
+fn guarded_type(scope: &Scope, var: &str, existing: &RType, target: &RType) -> RType {
+    let mut narrowed = RType {
+        mode: target.mode,
+        length: existing.length,
+        ..target.clone()
+    };
+    if existing.class.has_known_class()
+        && !existing.class.guarded
+        && !scope.is_default_parameter(var)
+    {
+        narrowed.class = existing.class.clone();
+    }
+    narrowed
 }
 
 /// Narrowing targets for `assert_*_scalar` calls. This map and the
@@ -539,14 +587,8 @@ fn apply_single_narrowing_branch<'a>(
                         || class_narrowing
                         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
-                    scope.insert_narrowed(
-                        var.clone(),
-                        RType {
-                            mode: target.mode,
-                            length: existing.length,
-                            ..target.clone()
-                        },
-                    );
+                    let narrowed = guarded_type(scope, var, &existing, target);
+                    scope.insert_narrowed(var.clone(), narrowed);
                     return Some(var.as_str());
                 }
             }
@@ -564,7 +606,7 @@ fn apply_single_narrowing_branch<'a>(
             // describe it here; degrade to unknown in this branch only.
             // Mode predicates carry a concrete or union mode and no class
             // claim. `Mode::Opaque` targets are class predicates
-            // (`inherits`, `is.environment`, `is.<class>`), and a concrete
+            // (`inherits`, `is.<class>`), and a concrete
             // mode target can still carry an explicit class
             // (`is.data.frame` is list + "data.frame"; stub-declared
             // predicates can express the same shape) — a false path there
@@ -617,7 +659,7 @@ fn apply_single_narrowing_branch<'a>(
                     scope.unreachable = true;
                 } else {
                     let mut scalar = match target {
-                        Some(target) => target.clone(),
+                        Some(target) => guarded_type(scope, var, &existing, target),
                         None if existing.mode == Mode::Null => RType::unknown(),
                         None => existing,
                     };
@@ -646,14 +688,8 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
         || class_narrowing
         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union);
     if should_install {
-        scope.insert_narrowed(
-            var.to_string(),
-            RType {
-                mode: target.mode,
-                length: existing.length,
-                ..target.clone()
-            },
-        );
+        let narrowed = guarded_type(scope, var, &existing, target);
+        scope.insert_narrowed(var.to_string(), narrowed);
         return true;
     }
     false
@@ -803,7 +839,7 @@ impl Checker {
         };
         Narrowing::Positive {
             var: var.clone(),
-            target: json_rtype_to_rtype(&predicate.target),
+            target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
     }
 }
@@ -904,10 +940,10 @@ mod selected_branch_tests {
         scope.insert_parameter_default("x", RType::scalar(Mode::Null));
         scope.mark_list_origin("x");
         scope.set_function_alias("x", "base::identity".into());
-        scope.mark_lexical_function("x");
+        scope.mark_lexical_function("x", Span::default());
         scope.insert_parameter("untouched", RType::scalar(Mode::Integer));
         scope.set_function_alias("untouched", "other".into());
-        scope.mark_lexical_function("untouched");
+        scope.mark_lexical_function("untouched", Span::default());
         scope.tidy_injection = Some(InjectionMode::Full);
         apply_single_narrowing_branch(
             &mut scope,

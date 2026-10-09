@@ -516,6 +516,31 @@ fn discarded_value_expression(expression: &Expr) -> bool {
     }
 }
 
+/// Only a live formal binding proves that a value read cannot be an active or
+/// delayed external binding. The AST preserves backticks in identifier names,
+/// while R treats `q` and q as the same binding. Keep this equivalence local to
+/// the declaration proof: ordinary scope lookup continues to use raw keys.
+fn proven_parameter_read(scope: &Scope, raw_name: &str) -> bool {
+    if scope.parameter_bindings.is_empty() {
+        return false;
+    }
+    let semantic_name = semantic_argument_name(raw_name);
+    if !scope
+        .parameter_bindings
+        .iter()
+        .any(|name| semantic_argument_name(name) == semantic_name)
+    {
+        return false;
+    }
+    // A differently spelled assignment can replace that same R binding.
+    // Raw-key scope inference cannot order the two spellings, so decline the
+    // proof when any equivalent current binding has lost its formal marker.
+    !scope
+        .bindings
+        .keys()
+        .any(|name| semantic_argument_name(name) == semantic_name && !scope.is_parameter(name))
+}
+
 impl Checker {
     /// The unified statement walker. Handles both diagnostic emission
     /// (gated by `self.discarding`) and return-type collection (when
@@ -559,7 +584,11 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                span: assignment_span,
+            } => {
                 if !scope.ops_environment_unknown
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
@@ -569,7 +598,18 @@ impl Checker {
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let class_write = self.prepare_class_attribute(target, value, scope);
-                let vt = self.infer(value, scope);
+                let mut vt = self.infer(value, scope);
+                vt.value_facts.cast_site = None;
+                if matches!(
+                    vt.coercion_new_na(),
+                    ry_core::types::NewNaProvenance::ProvenContains
+                        | ry_core::types::NewNaProvenance::ProvenOnly
+                ) && matches!(value, Expr::Call { func, .. }
+                    if call::callee_name(func).as_deref().is_some_and(|name|
+                        name == "as.integer" || name == "base::as.integer"))
+                {
+                    vt.value_facts.cast_site = Some((span_of(value), assignment_span.end));
+                }
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
                 // declarations, since a user-defined list-returning
@@ -587,6 +627,10 @@ impl Checker {
                 let loop_vector_alias = matches!(value, Expr::Ident { name, .. }
                     if scope.loop_vector_bindings.contains(name))
                     && ops_chooser::base_assignment(self, target, value, scope);
+                let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
+                    let span = scope.lexical_definition(alias)?;
+                    self.fn_table.definition(&self.path, span).map(|_| span)
+                });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
                 // A rebound name no longer carries any armed
@@ -607,6 +651,18 @@ impl Checker {
                 if self.try_assign_value(target, vt, class_write, scope)
                     && let Some(name) = binding_name(target)
                 {
+                    // Preserve ordinary raw-key scope inference. Only the
+                    // opt-in declaration identity uses the decoded spelling
+                    // of an unescaped backtick identifier.
+                    let binding = if !self.discarding
+                        && self.declarations.has_contracts()
+                        && matches!(target, Expr::Ident { .. })
+                        && !name.contains('\\')
+                    {
+                        semantic_argument_name(name)
+                    } else {
+                        name
+                    };
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
                     }
@@ -624,9 +680,18 @@ impl Checker {
                     if loop_vector_alias {
                         scope.mark_loop_vector(name);
                     }
-                    if matches!(value, Expr::Function { .. }) && !self.enclosing_formals.is_empty()
-                    {
-                        scope.mark_lexical_function(name.to_string());
+                    if let Expr::Function { span, .. } = value {
+                        if self.enclosing_formals.is_empty() {
+                            scope.mark_bound_function_definition(binding.to_string(), *span);
+                        } else {
+                            scope.mark_lexical_function(binding.to_string(), *span);
+                        }
+                    } else if binding != name {
+                        // A quoted write to a former literal erases its
+                        // exact identity, even though the ordinary scope
+                        // still retains its parser spelling.
+                        scope.forget_lexical_definition(binding);
+                        scope.mark_lexical_callable(binding.to_string());
                     }
                     if plain_vector {
                         scope.mark_plain_ops_vector(semantic_argument_name(name).to_string());
@@ -639,7 +704,18 @@ impl Checker {
                     }
                     if let Some(alias) = function_alias {
                         scope.set_function_alias(name.to_string(), alias);
+                        if let Some(definition) = declaration_alias_definition {
+                            scope.mark_bound_function_definition(binding.to_string(), definition);
+                        }
                     }
+                }
+                if matches!(target, Expr::Ident { name, .. } if name.contains('\\')) {
+                    // The parser retains the escaped spelling. Capture
+                    // inventory already treats its decoded target as
+                    // unknown, so an eager write must also decline exact
+                    // declaration identities instead of keeping a stale
+                    // decoded `f` definition under another scope key.
+                    self.invalidate_declaration_identities(scope);
                 }
                 // Named function bodies (`f <- function(...) body`) must
                 // be walked for diagnostics. The function-value inference
@@ -737,7 +813,17 @@ impl Checker {
             } => {
                 let iter_t = self.infer(iter, scope);
                 let mut inner = scope.clone();
-                inner.insert(name.clone(), iter_t.element());
+                let element = iter_t.element();
+                // The loop variable is a real assignment, not the
+                // loop-carried widening below. Its exact old identity is
+                // gone, but an uncertain/function value can shadow a flat
+                // same-spelled function table entry at a call site.
+                let may_be_function =
+                    matches!(element.mode, Mode::Function | Mode::Opaque | Mode::Union);
+                inner.insert(name.clone(), element);
+                if may_be_function {
+                    inner.mark_lexical_callable(name.clone());
+                }
                 // The loop variable rebinds `name` for the whole body and
                 // holds the final iterated value afterwards, so an armed
                 // vacuous-all guard over the same name no longer
@@ -820,7 +906,32 @@ impl Checker {
         body: &[Stmt],
         scope: &mut Scope,
     ) {
-        index::superassignment_writes(params, body).apply(scope);
+        let writes = index::superassignment_writes(params, body);
+        // The existing value analysis widens an outward binding as soon as a
+        // closure that *could later* write it is constructed. That does not
+        // mean the closure has run. Preserve an adopted literal's source
+        // identity for eager calls until an actual call performs the write;
+        // keep the widened value type and all unannotated behavior intact.
+        let declaration_identities =
+            if !self.discarding && self.declarations.has_contracts() && !writes.opaque {
+                writes
+                    .names
+                    .iter()
+                    .filter_map(|name| {
+                        let span = scope.lexical_definition(name)?;
+                        self.declarations
+                            .target(&self.path, span)
+                            .is_some_and(|decision| decision.signature.is_some())
+                            .then(|| (name.clone(), span))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+        writes.apply(scope);
+        for (name, span) in declaration_identities {
+            scope.mark_bound_function_definition(name, span);
+        }
     }
 
     /// Enter a function literal's body and walk it for diagnostics.
@@ -852,6 +963,7 @@ impl Checker {
         scope: &Scope,
     ) {
         let diagnostic_start = self.diagnostics.len();
+        let declaration = self.declaration_for_body(span, params);
         // RY110's `map`-family provenance (issue #479) resolves by bare
         // local name, so each body walks a working copy of the incoming
         // table: a nested closure inherits the enclosing function's
@@ -910,7 +1022,24 @@ impl Checker {
                 }
                 None => RType::unknown(),
             };
-            if p.default.is_some() {
+            // The authored default is independent evidence. The call-site
+            // refined `t` can become unknown when every observed call
+            // supplies the formal, but that does not erase a literal
+            // contradiction in the function definition itself.
+            let authored_default = p
+                .default
+                .as_ref()
+                .map(infer_literal_default)
+                .unwrap_or_else(RType::unknown);
+            if let Some(entry) =
+                self.declared_body_parameter(declaration.as_ref(), p, &authored_default)
+            {
+                if p.default.is_some() {
+                    fn_scope.insert_parameter_default(p.name.clone(), entry);
+                } else {
+                    fn_scope.insert_parameter(p.name.clone(), entry);
+                }
+            } else if p.default.is_some() {
                 fn_scope.insert_parameter_default(p.name.clone(), t);
             } else {
                 fn_scope.insert_parameter(p.name.clone(), t);
@@ -931,6 +1060,7 @@ impl Checker {
         for s in body {
             self.walk_stmt(s, &mut fn_scope, None);
         }
+        self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
         self.deferred_captures.pop();
@@ -1214,7 +1344,12 @@ impl Checker {
                 && (scope.loop_vector_bindings.contains(&name)
                     || scope.get(&name).is_some_and(loops::known_unclassed_vector));
             // The pre-loop value need not survive a later iteration.
+            // Widening is not an executed assignment at the current source
+            // position. A previous/current iteration may still hold a
+            // lexical function here, so preserve possible shadowing while
+            // dropping its exact declaration identity.
             scope.insert(name.clone(), RType::unknown());
+            scope.mark_lexical_callable(name.clone());
             if vector_path {
                 scope.mark_loop_vector(&name);
             }
@@ -1258,6 +1393,31 @@ impl Checker {
         let has_else = else_.is_some();
         let then_reaches = !then_delta.unreachable;
         let else_reaches = has_else && !else_delta.unreachable;
+        // Equal inferred function types do not prove equal lexical targets.
+        // Drop an adopted declaration identity if any reaching branch may
+        // bind the name to a different definition, even when its RType is
+        // unchanged and the ordinary type merge skips that binding.
+        let lexical_names: Vec<_> = scope.lexical_definitions.keys().cloned().collect();
+        for name in lexical_names {
+            let original = scope.lexical_definition(&name);
+            let then_agrees =
+                !then_reaches || then_delta.lexical_definition(scope, &name) == original;
+            let else_agrees =
+                !else_reaches || else_delta.lexical_definition(scope, &name) == original;
+            if !then_agrees || !else_agrees {
+                scope.forget_lexical_definition(&name);
+            }
+        }
+        let mut box_paths = Vec::new();
+        if then_reaches {
+            box_paths.push(Some(&then_delta));
+        }
+        if !has_else {
+            box_paths.push(None);
+        } else if else_reaches {
+            box_paths.push(Some(&else_delta));
+        }
+        let box_provenance = box_imports::join_box_provenance(scope, &box_paths);
         let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
         let else_diverges_in_loop = scope.loop_frame.is_some() && else_delta.unreachable;
         // Continuation lookups may fall back to the original scope. Capture
@@ -1565,6 +1725,7 @@ impl Checker {
         for name in loop_vectors_after {
             scope.mark_loop_vector(&name);
         }
+        scope.apply_box_provenance(box_provenance);
         if has_else && then_delta.unreachable && else_delta.unreachable {
             scope.unreachable = true;
         }
@@ -1985,6 +2146,12 @@ impl Checker {
         class_write: Option<ClassLiteral>,
         scope: &mut Scope,
     ) -> bool {
+        if !matches!(target, Expr::Ident { .. }) {
+            // Replacement targets evaluate their receiver/subscript and can
+            // dispatch through active bindings or user methods. The ordinary
+            // assignment model does not prove those effects absent.
+            self.invalidate_declaration_identities(scope);
+        }
         if binding_name(target).is_none() {
             // Replacement functions may install bindings in the caller.
             scope.invalidate_literal_values();
@@ -2331,6 +2498,93 @@ impl Checker {
                 scope.insert(base_name.clone(), updated);
                 return true;
             }
+        }
+        if matches!(kind, IndexKind::Single | IndexKind::Double)
+            && matches!(base_t.mode, Mode::Integer | Mode::Double)
+            && base_t.columns.is_none()
+        {
+            for argument in args {
+                self.infer(&argument.value, scope);
+            }
+            let only_missing = matches!(kind, IndexKind::Single)
+                && args.len() == 1
+                && !base_t.class.is_unknown()
+                && !base_t.class.has_known_class()
+                && self.resolves_to_base("[<-", scope)
+                && !ops_chooser::operator_rebound(self, "[<-", scope)
+                && matches!(&args[0].value,
+                    Expr::Call { func, args: check_args, .. }
+                        if check_args.len() == 1
+                            && check_args[0].name.as_deref().is_none_or(|name| name == "x")
+                            && matches!(&check_args[0].value, Expr::Ident { name, .. } if name == base_name)
+                            && call::callee_name(func).as_deref() == Some("is.na")
+                            && matches!(self.special_call_provenance(
+                                "is.na", func, "is.na", "is.na", "base", scope,
+                            ), crate::resolve::SpecialCallProvenance::Proven)
+                );
+            let mut updated = base_t;
+            let numeric_replacement = matches!(vt.mode, Mode::Integer | Mode::Double)
+                && !vt.class.is_unknown()
+                && !vt.class.has_known_class();
+            let no_selection = only_missing
+                && numeric_replacement
+                && (matches!(updated.length, Length::Zero | Length::Known(0))
+                    || (updated.value_facts.all_values_known
+                        && !updated.value_facts.prior_na
+                        && updated.value_facts.new_na == ry_core::types::NewNaProvenance::None));
+            if only_missing && numeric_replacement {
+                updated.mode = updated.mode.combine_result(vt.mode);
+            }
+            if only_missing
+                && numeric_replacement
+                && vt.value_facts.all_values_known
+                && !vt.value_facts.prior_na
+                && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
+                && !vt.length.may_be_empty()
+            {
+                let site = updated.value_facts.cast_site;
+                if !no_selection {
+                    // A scalar is recycled to every selected NA. A vector's
+                    // extrema need not occur among the values actually used.
+                    // Mixed cast results may also lack the surviving bounds.
+                    if updated.value_facts.all_values_known
+                        && (updated.value_facts.prior_na
+                            || matches!(
+                                updated.value_facts.new_na,
+                                ry_core::types::NewNaProvenance::ProvenContains
+                                    | ry_core::types::NewNaProvenance::ProvenOnly
+                            ))
+                        && matches!(vt.length, Length::One | Length::Known(1))
+                        && (updated.value_facts.numeric_bounds.is_some()
+                            || updated.value_facts.new_na
+                                != ry_core::types::NewNaProvenance::ProvenContains)
+                    {
+                        updated.value_facts.prior_na = false;
+                        updated.value_facts.new_na = ry_core::types::NewNaProvenance::None;
+                        updated.value_facts = updated.value_facts.merge_vector(vt.value_facts);
+                    } else {
+                        updated.value_facts = ry_core::types::ValueFacts::default();
+                    }
+                }
+                if let Some((site, assignment_end)) = site
+                    && self
+                        .source
+                        .get(assignment_end..span.start)
+                        .is_some_and(|gap| {
+                            gap.lines().all(|line| {
+                                line.trim().is_empty() || line.trim_start().starts_with('#')
+                            })
+                        })
+                {
+                    self.diagnostics
+                        .retain(|diagnostic| diagnostic.code != "RY119" || diagnostic.span != site);
+                }
+                updated.value_facts.cast_site = None;
+            } else if !no_selection {
+                updated.value_facts = ry_core::types::ValueFacts::default();
+            }
+            scope.insert(base_name.clone(), updated);
+            return true;
         }
         let Some(col) = assigned_column_name(kind, args) else {
             // A dynamic `$`/`[[` write proves that the record may contain
@@ -2693,13 +2947,27 @@ impl Checker {
             return t.clone();
         }
         match e {
-            Expr::Logical(_, _) => RType::scalar(Mode::Logical),
-            Expr::Integer(_, _) => RType::scalar(Mode::Integer),
-            Expr::Double(_, _) => RType::scalar(Mode::Double),
-            Expr::String(_, _) => RType::scalar(Mode::Character),
-            Expr::Null(_) => RType::new(Mode::Null, Length::Zero),
-            Expr::Na(t, _) => t.clone(),
-            Expr::Ident { name, span } => self.infer_identifier(name, span, scope),
+            Expr::Logical(..)
+            | Expr::Integer(..)
+            | Expr::Double(..)
+            | Expr::String(..)
+            | Expr::Null(..)
+            | Expr::Na(..) => infer_literal_default(e),
+            Expr::Ident { name, span } => {
+                let result = self.infer_identifier(name, span, scope);
+                let semantic_name = semantic_argument_name(name);
+                if self.declarations.has_contracts()
+                    && !proven_parameter_read(scope, name)
+                    && scope.lexical_definition(semantic_name).is_none()
+                    && scope.function_alias(semantic_name).is_none()
+                {
+                    // A bare external read may force a delayed or active
+                    // binding. Keep the inferred value, then drop any stale
+                    // exact declaration identity for later expressions.
+                    self.invalidate_declaration_identities(scope);
+                }
+                result
+            }
             Expr::BinOp { op, lhs, rhs, span } => {
                 if !scope.literal_values_unknown {
                     let symbol = op_symbol(*op);
@@ -2776,6 +3044,9 @@ impl Checker {
                     {
                         scope.set_known_string(name, value);
                     }
+                    if matches!(lhs.as_ref(), Expr::Ident { name, .. } if name.contains('\\')) {
+                        self.invalidate_declaration_identities(scope);
+                    }
                     return rt;
                 }
                 // `:` sequence operator: when both operands are
@@ -2829,6 +3100,17 @@ impl Checker {
                 )
             }
             Expr::UnaryOp { op, expr, span } => {
+                let symbol = match op {
+                    UnaryOpKind::Neg => "-",
+                    UnaryOpKind::Not => "!",
+                };
+                if !self.resolves_to_base(symbol, scope)
+                    || self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope)
+                {
+                    // Unary lookup is executable too. A masked operator may
+                    // replace a declared callable before forcing its operand.
+                    self.invalidate_declaration_identities(scope);
+                }
                 scope.invalidate_ops_environment();
                 // Injection is syntax only in arguments whose signatures opt in.
                 if scope.tidy_injection.is_some()
@@ -2891,7 +3173,16 @@ impl Checker {
                                 Mode::Logical | Mode::Null => Mode::Integer,
                                 other => other,
                             };
-                            RType::new(mode, t.length)
+                            let mut result = RType::new(mode, t.length);
+                            result.value_facts = t.value_facts;
+                            result.value_facts.numeric_bounds =
+                                t.value_facts.numeric_bounds.map(|(lo, hi)| {
+                                    (
+                                        (-f64::from_bits(hi)).to_bits(),
+                                        (-f64::from_bits(lo)).to_bits(),
+                                    )
+                                });
+                            result
                         }
                     }
                     UnaryOpKind::Not => {
@@ -2931,9 +3222,14 @@ impl Checker {
                 args,
                 span,
             } => {
+                if let Some((base, object, member)) = box_imports::box_member(e, scope) {
+                    self.infer(base, scope);
+                    return self.infer_box_member(&object, &member, *span);
+                }
                 if *kind == IndexKind::Slot
                     && let Some(result) = self.infer_custom_slot_operator(false, scope)
                 {
+                    self.invalidate_declaration_identities(scope);
                     return result;
                 }
                 let receiver_name = ident_name(base);
@@ -2951,7 +3247,9 @@ impl Checker {
                     if let Some(name) = name {
                         let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
                         if let Some(ty) = scope.get(&key) {
-                            return ty.clone();
+                            let result = ty.clone();
+                            self.invalidate_declaration_identities(scope);
+                            return result;
                         }
                         self.emit(
                             Severity::Warning,
@@ -2959,6 +3257,7 @@ impl Checker {
                             "RY010",
                             format!("variable `{name}` is not bound in this scope"),
                         );
+                        self.invalidate_declaration_identities(scope);
                         return RType::unknown();
                     }
                 }
@@ -2971,7 +3270,9 @@ impl Checker {
                 scope.invalidate_ops_environment();
                 let bt = self.infer(base, scope);
                 scope.invalidate_literal_values_for_dispatch(&bt);
-                self.infer_index(bt, *kind, args, *span, default_null_receiver, scope)
+                let result = self.infer_index(bt, *kind, args, *span, default_null_receiver, scope);
+                self.invalidate_declaration_identities(scope);
+                result
             }
             Expr::Function { params, body, .. } => {
                 // Pass 3: build a `Mode::Function` value with an
@@ -3020,6 +3321,11 @@ impl Checker {
     }
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
+        let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
+            FxSet::default()
+        } else {
+            crate::collect::collect_default_writes(params).0
+        };
         self.enclosing_formals.push(EnclosingFormals {
             names: params
                 .iter()
@@ -3032,6 +3338,7 @@ impl Checker {
                 .filter(|parameter| parameter.default.as_ref().is_some_and(is_scalar_literal))
                 .map(|parameter| parameter.name.clone())
                 .collect(),
+            possible_default_writes,
             function_span,
         });
     }
@@ -3053,8 +3360,12 @@ impl Checker {
             target = next;
         }
 
-        self.is_aliasable_function(target)
-            .then(|| target.to_string())
+        (self.is_aliasable_function(target)
+            || (!self.discarding
+                && self.declarations.has_contracts()
+                && (scope.lexical_definition(target).is_some()
+                    || self.fn_table.fns.contains_key(target))))
+        .then(|| target.to_string())
     }
 
     fn is_aliasable_function(&self, name: &str) -> bool {

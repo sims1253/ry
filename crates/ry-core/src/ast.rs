@@ -5,11 +5,15 @@
 
 use crate::span::Span;
 use crate::types::RType;
+use std::path::PathBuf;
 
 /// A top-level R source file is a sequence of statements.
 #[derive(Debug, Clone, Default)]
 pub struct SourceFile {
     pub path: String,
+    /// Native on-disk path, if read from disk. The lossy display `path` of
+    /// a non-UTF-8 filename can collide with a real U+FFFD filename.
+    pub native_path: Option<PathBuf>,
     /// Original UTF-8 text. The checker slices this string by AST spans
     /// rather than scraping diagnostic prose.
     pub source: String,
@@ -19,6 +23,9 @@ pub struct SourceFile {
     /// The checker surfaces these as `RY000` (syntax-error) diagnostics so
     /// that malformed input no longer checks "clean".
     pub parse_errors: Vec<Span>,
+    /// Report-input boundaries produced before R parsing. Their spans use
+    /// original document bytes, just like the R AST spans.
+    pub input_issues: Vec<InputIssue>,
     /// Maximal byte spans of invalid UTF-8 sequences found while decoding
     /// this file from disk, located in `source` (which for such files is
     /// a Latin-1 transcoding; see `ry_workspace::read_r_source`). Empty
@@ -59,6 +66,23 @@ pub struct SourceFile {
     /// uses these for lexical suppression parsing, so a `#` that
     /// appears INSIDE a string literal is NOT mistaken for a comment.
     pub comments: Vec<Comment>,
+    /// Exact CST function ranges and any braced body ranges. Annotation
+    /// readers first establish the innermost lexical function, including
+    /// unbraced functions, before deciding whether a comment is in its body.
+    pub function_bodies: Vec<FunctionBody>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputIssue {
+    pub span: Span,
+    pub code: &'static str,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionBody {
+    pub function: Span,
+    pub body: Option<Span>,
 }
 
 /// A source comment, collected lexically by the parser. `body` excludes

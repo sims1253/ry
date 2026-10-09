@@ -30,11 +30,12 @@ struct Probe {
 /// rule, and a recovered tree is exactly how the checker sees broken input.
 fn run(src: &str) -> Vec<(&'static str, Severity)> {
     let mut parser = RParser::new().expect("parser init");
+    let path = format!("{}/testdata/oracle/probe.R", env!("CARGO_MANIFEST_DIR"));
     // tree-sitter recovers from broken syntax, so `parse` succeeds and
     // records the errors on the file; only a catastrophic init failure
     // (out of memory) would fail here.
-    let file = parser.parse("probe.R", src).expect("parse probe");
-    let mut checker = Checker::new("probe.R");
+    let file = parser.parse(&path, src).expect("parse probe");
+    let mut checker = Checker::new(&path);
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -56,6 +57,15 @@ const EXCLUDED: &[(&str, &str)] = &[
         "RY113",
         "opt-in post-processing audit, not emitted by Checker::check",
     ),
+    // The plain `run` helper intentionally installs no authored records.
+    // Opted-in source records exercise these codes end-to-end in
+    // ry-cli/tests/typehint_e2e.rs, including both positive and quiet cases.
+    ("RY114", "requires an explicitly adopted declaration record"),
+    ("RY115", "requires an explicitly adopted declaration record"),
+    ("RY116", "requires conflicting adopted declaration records"),
+    ("RY117", "requires an invalid adopted declaration record"),
+    ("RY120", "requires a source-mapped malformed report input"),
+    ("RY121", "requires a dynamic report execution option"),
 ];
 
 /// The probe matrix. Order follows the rule registry. When you add a rule to
@@ -310,6 +320,18 @@ static PROBES: &[Probe] = &[
         note: "unknown native ignore code is rejected at its comment",
         positive: "x <- 1L # ry: ignore[RX040]\n",
         negative: "x <- 1L # noqa: E501\n",
+    },
+    Probe {
+        code: "RY118",
+        note: "a complete local box module proves a selected export is absent",
+        positive: "box::use(./box_module/hello[missing])\n",
+        negative: "box::use(./box_module/hello[foo])\n",
+    },
+    Probe {
+        code: "RY119",
+        note: "a proven out-of-range numeric cast creates a new integer NA",
+        positive: "x <- c(0, 1e10)\ny <- as.integer(x)\n",
+        negative: "x <- c(0, 2147483647.9)\ny <- as.integer(x)\n",
     },
 ];
 

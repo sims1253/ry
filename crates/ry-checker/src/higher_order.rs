@@ -726,10 +726,12 @@ impl Checker {
                 match self.s3_lookup_method(candidate, class) {
                     Some(S3MethodSource::Registered) => return Some(RType::unknown()),
                     Some(S3MethodSource::Project(slot)) => {
-                        return Some(self.s3_specific_or_group_return(*candidate == generic, slot));
+                        let result = self.s3_specific_or_group_return(*candidate == generic, slot);
+                        return Some(dispatch_result(cv.guarded, result));
                     }
                     Some(S3MethodSource::Stub(sig)) => {
-                        return Some(self.apply_sig(&sig, arg_types, &[]));
+                        let result = self.apply_sig(&sig, arg_types, &[]);
+                        return Some(dispatch_result(cv.guarded, result));
                     }
                     None => {}
                 }

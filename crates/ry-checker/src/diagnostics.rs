@@ -549,12 +549,14 @@ pub struct SeverityFilter {
     expanded_ignores: Vec<&'static str>,
     selected: Option<Vec<&'static str>>,
     extended_selection: Vec<&'static str>,
+    scoped: std::collections::HashMap<&'static str, Option<Severity>>,
+    protected: std::collections::HashSet<&'static str>,
 }
 
 impl SeverityFilter {
     /// Resolve a user-provided token (rule code, rule name, or "all")
     /// into the list of matching codes.
-    fn expand(token: &str) -> Vec<&'static str> {
+    pub(crate) fn expand(token: &str) -> Vec<&'static str> {
         if token == "all" {
             return rules::all_codes();
         }
@@ -592,11 +594,25 @@ impl SeverityFilter {
         self.extended_selection.extend(Self::expand(token));
     }
 
+    pub(crate) fn protect(&mut self, token: &str) {
+        self.protected.extend(Self::expand(token));
+    }
+
+    pub(crate) fn set_scoped(&mut self, code: &'static str, severity: Option<Severity>) {
+        self.scoped.insert(code, severity);
+    }
+
     /// Returns the effective severity for a code, or None to suppress it.
-    /// Precedence (highest to lowest): ignore > error > warn > default.
+    /// Precedence (highest to lowest): global ignore, protected explicit
+    /// choice, path-scoped choice, global error, global warn, default.
     pub fn effective(&self, code: &str, default: Severity) -> Option<Severity> {
         if self.expanded_ignores.contains(&code) {
             return None;
+        }
+        if !self.protected.contains(code) {
+            if let Some(severity) = self.scoped.get(code) {
+                return *severity;
+            }
         }
         if self.expanded_errors.contains(&code) {
             return Some(Severity::Error);

@@ -37,6 +37,15 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     joined
         .loop_vector_bindings
         .extend(incoming.loop_vector_bindings.iter().cloned());
+    // A lexical function on either path may shadow a same-spelled flat
+    // table entry. Its exact declaration target survives only when both
+    // paths agree on the same definition span.
+    joined
+        .lexical_functions
+        .extend(incoming.lexical_functions.iter().cloned());
+    joined
+        .lexical_definitions
+        .retain(|name, definition| incoming.lexical_definition(name) == Some(*definition));
     joined.ops_environment_unknown |= incoming.ops_environment_unknown;
     joined.effects_unknown |= incoming.effects_unknown;
     joined.dynamic_bindings_unknown |= incoming.dynamic_bindings_unknown;
@@ -176,6 +185,15 @@ impl Checker {
                     || (!entered
                         && (vector_before.contains(&binding)
                             || scope.get(&binding).is_some_and(known_unclassed_vector)));
+                let lexical = exit.lexical_functions.contains(&binding)
+                    || (!entered && scope.is_lexical_function(&binding));
+                let definition =
+                    exit.lexical_definitions
+                        .get(&binding)
+                        .copied()
+                        .filter(|definition| {
+                            entered || scope.lexical_definition(&binding) == Some(*definition)
+                        });
                 scope.insert(binding.clone(), ty);
                 if list_origin {
                     scope.mark_list_origin(binding.clone());
@@ -185,6 +203,11 @@ impl Checker {
                 }
                 if loop_vector {
                     scope.mark_loop_vector(&binding);
+                }
+                if let Some(definition) = definition {
+                    scope.mark_lexical_function(binding, definition);
+                } else if lexical {
+                    scope.mark_lexical_callable(binding);
                 }
             }
         }

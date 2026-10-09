@@ -12,7 +12,9 @@ pub(crate) struct BindingState {
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
+    lexical_definition: Option<Span>,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -42,7 +44,9 @@ impl BindingState {
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
+            lexical_definition: scope.lexical_definition(name),
             alias: scope.function_aliases.get(name).cloned(),
+            box_object: scope.box_objects.get(name).cloned(),
             provenance: scope
                 .reference_provenance
                 .as_ref()
@@ -72,10 +76,20 @@ impl BindingState {
             self.default_parameter,
         );
         marker(&mut scope.lexical_functions, &name, self.lexical);
+        if let Some(span) = self.lexical_definition {
+            scope.lexical_definitions.insert(name.clone(), span);
+        } else {
+            scope.lexical_definitions.remove(&name);
+        }
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
         } else {
             scope.function_aliases.remove(&name);
+        }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
+        } else {
+            scope.box_objects.remove(&name);
         }
         if let Some(p) = scope.reference_provenance.as_mut() {
             if let Some(value) = self.provenance {
@@ -98,7 +112,9 @@ impl BindingState {
 pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
     removed_markers: u8,
+    lexical_definition: Option<Span>,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -119,9 +135,17 @@ impl AssignmentUndo {
                 set.insert(name.clone());
             }
         }
+        if let Some(span) = self.lexical_definition {
+            scope.lexical_definitions.insert(name.clone(), span);
+        } else {
+            scope.lexical_definitions.remove(&name);
+        }
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
+        }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
         }
         if let Some(provenance) = self.provenance
             && let Some(table) = scope.reference_provenance.as_mut()
@@ -153,6 +177,7 @@ pub(crate) enum Undo {
     Assignment(String, AssignmentUndo),
     Binding(String, BindingState),
     Marker(MarkerKind, String, bool),
+    LexicalDefinition(String, Option<Span>),
     Alias(String, Option<String>),
     Reference(String, Option<BindingProvenance>),
     Provenance(HashMap<String, BindingProvenance>),
@@ -203,6 +228,31 @@ pub(crate) struct BindingView<'a> {
 }
 
 impl BranchDelta {
+    pub(crate) fn lexical_definition(&self, base: &Scope, name: &str) -> Option<Span> {
+        self.changed.get(name).map_or_else(
+            || base.lexical_definition(name),
+            |state| state.lexical_definition,
+        )
+    }
+
+    pub(crate) fn box_object<'a>(
+        &'a self,
+        base: &'a Scope,
+        name: &str,
+    ) -> Option<&'a box_imports::BoxObject> {
+        self.changed.get(name).map_or_else(
+            || base.box_objects.get(name),
+            |state| state.box_object.as_ref(),
+        )
+    }
+
+    pub(crate) fn box_object_names(&self) -> impl Iterator<Item = &str> {
+        self.changed
+            .iter()
+            .filter(|(_, state)| state.box_object.is_some())
+            .map(|(name, _)| name.as_str())
+    }
+
     pub fn binding<'a>(
         &'a self,
         base: &'a Scope,
@@ -300,6 +350,12 @@ impl Scope {
         } else {
             self.function_aliases.remove(&name)
         };
+        let lexical_definition = self.lexical_definitions.remove(&name);
+        let box_object = if self.box_objects.is_empty() {
+            None
+        } else {
+            self.box_objects.remove(&name)
+        };
         let provenance = self.reference_provenance.as_mut().and_then(|table| {
             if table.bindings.is_empty() {
                 None
@@ -308,7 +364,13 @@ impl Scope {
             }
         });
         let previous = if let Some(current) = self.bindings.get_mut(&name) {
-            if current == &ty && removed_markers == 0 && alias.is_none() && provenance.is_none() {
+            if current == &ty
+                && removed_markers == 0
+                && lexical_definition.is_none()
+                && alias.is_none()
+                && box_object.is_none()
+                && provenance.is_none()
+            {
                 return;
             }
             Some(std::mem::replace(current, ty))
@@ -321,7 +383,9 @@ impl Scope {
             AssignmentUndo {
                 ty: previous,
                 removed_markers,
+                lexical_definition,
                 alias,
+                box_object,
                 provenance,
             },
         ));
@@ -367,6 +431,15 @@ impl Scope {
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
+        }
+    }
+
+    pub(crate) fn journal_lexical_definition(&mut self, name: &str) {
+        if self.snapshot_depth > 0 {
+            self.undo.push(Undo::LexicalDefinition(
+                name.to_string(),
+                self.lexical_definition(name),
+            ));
         }
     }
 
@@ -456,6 +529,7 @@ impl Scope {
                 }
                 Undo::Binding(name, _)
                 | Undo::Marker(_, name, _)
+                | Undo::LexicalDefinition(name, _)
                 | Undo::Alias(name, _)
                 | Undo::Reference(name, _) => {
                     changed
@@ -502,6 +576,13 @@ impl Scope {
                         set.insert(name);
                     } else {
                         set.remove(&name);
+                    }
+                }
+                Undo::LexicalDefinition(name, previous) => {
+                    if let Some(span) = previous {
+                        self.lexical_definitions.insert(name, span);
+                    } else {
+                        self.lexical_definitions.remove(&name);
                     }
                 }
                 Undo::Alias(name, previous) => {
@@ -600,7 +681,7 @@ mod tests {
         assert_eq!(scope.undo.len(), before_assignment + 1);
         scope.set_function_alias("x", "callee".into());
         scope.insert("x", RType::new(Mode::Character, Length::One));
-        scope.mark_lexical_function("x");
+        scope.mark_lexical_function("x", Span::default());
         let logical = RType::new(Mode::Logical, Length::One);
         scope.insert_narrowed("x", logical.clone());
         let delta = scope.finish_snapshot(mark, BranchChanges::default());
@@ -645,7 +726,7 @@ mod tests {
         let character = RType::new(Mode::Character, Length::One);
         scope.insert_parameter_default("cleared", integer);
         scope.mark_list_origin("cleared");
-        scope.mark_lexical_function("cleared");
+        scope.mark_lexical_function("cleared", Span::default());
         scope.set_function_alias("cleared", "original".into());
         let initial = BindingState::capture(&scope, "cleared");
         let mark = scope.begin_snapshot();
@@ -678,7 +759,7 @@ mod tests {
         let mut scope = Scope::default();
         scope.insert_parameter_default("x", RType::new(Mode::Integer, Length::One));
         scope.mark_list_origin("x");
-        scope.mark_lexical_function("x");
+        scope.mark_lexical_function("x", Span::default());
         scope.set_function_alias("x", "original".into());
         scope.reference_provenance = Some(Box::new(ScopeProvenance {
             owner: Span {
@@ -727,7 +808,9 @@ mod tests {
         );
         assert_eq!(left.list_origin_bindings, right.list_origin_bindings);
         assert_eq!(left.lexical_functions, right.lexical_functions);
+        assert_eq!(left.lexical_definitions, right.lexical_definitions);
         assert_eq!(left.function_aliases, right.function_aliases);
+        assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(left.literal_values_unknown, right.literal_values_unknown);

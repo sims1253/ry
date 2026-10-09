@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use ry_config as config;
+use ry_core::declarations::DeclarationRecord;
 
 /// Input for a unified diagnostics check.
 pub(crate) struct CheckInput {
@@ -19,8 +20,9 @@ pub(crate) struct CheckInput {
 }
 
 impl CheckInput {
-    fn into_project(self) -> ry_checker::Project {
+    fn into_project(self, records: Vec<DeclarationRecord>) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
+        project.set_declaration_records(records);
         let workspace = self.workspace;
         project.set_loaded(workspace.attached_packages);
         project.set_bare_loaded(workspace.bare_bindings);
@@ -36,16 +38,70 @@ impl CheckInput {
     }
 }
 
-/// Run a one-shot project check with workspace metadata.
-pub(crate) fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    input.into_project().check()
+pub(crate) fn adopted_records(
+    files: &[(PathBuf, Arc<ry_core::SourceFile>)],
+    cfg: &config::Config,
+) -> AdoptedRecords {
+    let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
+        return AdoptedRecords::default();
+    };
+    let mut display_counts = std::collections::HashMap::new();
+    for (_, file) in files {
+        *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
+    }
+    let mut result = AdoptedRecords::default();
+    let mut ambiguous = std::collections::BTreeSet::new();
+    for (native, file) in files {
+        let records = ry_checker::typehint::read_records_at(file, native, &scope);
+        if display_counts[file.path.as_str()] == 1
+            && config::unambiguous_native_display_path(native, &file.path)
+        {
+            result.records.extend(records);
+        } else if !records.is_empty() {
+            // Project attachment still uses the display path. Decline all
+            // contracts at that path and report the loss once; otherwise a
+            // scoped UTF-8 neighbor could attach to an excluded raw filename.
+            ambiguous.insert(file.path.clone());
+        }
+    }
+    result.diagnostics = ambiguous
+        .into_iter()
+        .map(|path| {
+            ry_checker::Diagnostic::new(
+                ry_checker::Severity::Warning,
+                ry_core::Span::new(0, 1, 0, 0),
+                &path,
+                "RY117",
+                "Native source paths share one display name; typehint attachment is ambiguous and was skipped.",
+            )
+        })
+        .collect();
+    result
+}
+
+#[derive(Default)]
+pub(crate) struct AdoptedRecords {
+    pub records: Vec<DeclarationRecord>,
+    pub diagnostics: Vec<ry_checker::Diagnostic>,
+}
+
+/// Run a one-shot project check with workspace metadata and adopted
+/// declaration records.
+pub(crate) fn check_project(
+    input: CheckInput,
+    records: Vec<DeclarationRecord>,
+) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
+    let mut project = input.into_project(records);
+    let mut diagnostics = project.check();
+    ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
+    diagnostics
 }
 
 /// Capture each file's lexical scopes in input order. Diagnostics are discarded.
 pub(crate) fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    check_project_with_facts_capture(input, false).scopes
+    check_project_with_facts_capture(input, false, Vec::new()).scopes
 }
 
 pub(crate) struct CapturedFacts {
@@ -57,8 +113,9 @@ pub(crate) struct CapturedFacts {
 pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
+    records: Vec<DeclarationRecord>,
 ) -> CapturedFacts {
-    let mut project = input.into_project();
+    let mut project = input.into_project(records);
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();
@@ -197,7 +254,8 @@ pub(crate) fn parse_files(
     paths: &[PathBuf],
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
 ) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
-    parse_files_with_overlay(paths, None, on_failure)
+    parse_files_with_native_paths(paths, None, on_failure)
+        .map(|files| files.into_iter().map(|(_, file)| file).collect())
 }
 
 /// One in-memory source substituted at its logical path. The same parser,
@@ -207,17 +265,19 @@ pub(crate) struct SourceOverlay {
     pub bytes: Vec<u8>,
 }
 
-pub(crate) fn parse_files_with_overlay(
+/// Keep the native path alongside the parser's display path. These can differ
+/// for non-UTF-8 filenames, and source adoption must use native identity.
+pub(crate) fn parse_files_with_native_paths(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
-) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
+) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path, overlay) {
-            Ok(file) => Some(Ok(file)),
+            Ok(file) => Some(Ok((path.clone(), file))),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
                 FailureAction::Abort => Some(Err(failure)),
@@ -264,11 +324,11 @@ fn parse_one(
                 Err(error) => return Err(error.to_string()),
             },
         };
-        parser
-            .parse(&path_str, &decoded.text)
+        ry_workspace::reports::parse_source(parser, &path_str, &decoded.text)
             .map_err(|message| message.to_string())
     });
     file.map(|mut file| {
+        file.native_path = Some(path.to_path_buf());
         // Record where the on-disk bytes were not valid UTF-8, and
         // whether they started with a BOM, so the checker can flag files
         // R's parser rejects (#376, #474).
@@ -286,6 +346,8 @@ fn parse_one(
 /// notes the command reports in its own voice.
 pub(crate) struct ResolvedGroup {
     pub resolution_root: PathBuf,
+    /// Indices into the parsed input, in the same order as check output.
+    pub source_indices: Vec<usize>,
     pub check_input: CheckInput,
     pub degraded_scopes: Vec<(PathBuf, ry_workspace::InventoryFailure)>,
 }
@@ -311,18 +373,16 @@ pub(crate) fn resolve_groups(
 ) -> miette::Result<Vec<ResolvedGroup>> {
     let groups = ry_workspace::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
     let mut resolved = Vec::with_capacity(groups.len());
+    let fallback = fallback_roots
+        .iter()
+        .flatten()
+        .copied()
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     for (group_root, indices) in &groups {
-        let resolution_root = group_root
-            .clone()
-            .or_else(|| {
-                fallback_roots
-                    .iter()
-                    .flatten()
-                    .copied()
-                    .next()
-                    .map(PathBuf::from)
-            })
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let resolution_root =
+            ry_workspace::resolution_root_for_group(group_root.as_deref(), &fallback);
         // A relative file such as R/main.R can find DESCRIPTION at the
         // empty ancestor path. That ancestor is the working directory.
         let resolution_root = if resolution_root.as_os_str().is_empty() {
@@ -352,6 +412,7 @@ pub(crate) fn resolve_groups(
         let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
         resolved.push(ResolvedGroup {
             resolution_root,
+            source_indices: indices.clone(),
             check_input: CheckInput {
                 files: analysis_files,
                 user_stubs: Arc::clone(user_stubs),

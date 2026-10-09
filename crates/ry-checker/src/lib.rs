@@ -12,7 +12,9 @@
 // higher_order.rs, and collect.rs.
 #![allow(clippy::collapsible_if)]
 
+mod box_imports;
 mod collect;
+mod declaration_check;
 pub mod diagnostics;
 mod fixpoint;
 pub mod format;
@@ -30,9 +32,14 @@ pub use reference_facts::{
     ReferenceRecord, ReferenceResolution,
 };
 pub mod rules;
+mod scoped_policy;
+pub use scoped_policy::ScopedRulePolicy;
 pub mod semantic_lists;
 pub mod trace;
+pub mod typehint;
 
+pub use declaration_check::append_diagnostics as append_declaration_diagnostics;
+pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
 pub use trace::{
     ProjectTrace, TraceCompletion, TraceEvent, TraceEventKind, TraceFileId, TraceFunctionId,
@@ -95,7 +102,8 @@ use ry_typeshed::{
     load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -302,6 +310,9 @@ pub fn builtin_environment_bindings(path: &str) -> &'static [&'static str] {
 #[derive(Debug)]
 struct FunctionLookupFrame {
     possible_functions: FxSet<String>,
+    /// Exact literal bindings in this frame. A possible callable without an
+    /// exact identity blocks searching more distant frames for a contract.
+    definitions: FxMap<String, Span>,
     parent: Option<Arc<FunctionLookupFrame>>,
 }
 
@@ -412,9 +423,15 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: FxMap<String, String>,
+    /// Module/package objects introduced by a lexical `box::use()` call.
+    /// The binding journal restores these with the value on branch exit.
+    pub(crate) box_objects: FxMap<String, box_imports::BoxObject>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
+    /// Exact source identity for a directly bound nested function. A name
+    /// alone cannot select among same-spelled functions in different frames.
+    pub(crate) lexical_definitions: FxMap<String, Span>,
     pub data_mask_unknown: bool,
     pub(crate) tidy_injection: Option<InjectionMode>,
     /// The `[` subscript argument currently being inferred, if any.
@@ -448,7 +465,9 @@ impl Clone for Scope {
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
+            box_objects: self.box_objects.clone(),
             lexical_functions: self.lexical_functions.clone(),
+            lexical_definitions: self.lexical_definitions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
             select_subscript: self.select_subscript.clone(),
@@ -484,7 +503,7 @@ impl Scope {
         // A closure may run after its enclosing binding changes.
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
-        let possible_functions = self
+        let possible_functions: FxSet<String> = self
             .bindings
             .iter()
             .filter(|(name, ty)| {
@@ -493,8 +512,15 @@ impl Scope {
             })
             .map(|(name, _)| infer::semantic_argument_name(name).to_string())
             .collect();
+        let definitions = self
+            .lexical_definitions
+            .iter()
+            .filter(|(name, _)| possible_functions.contains(*name))
+            .map(|(name, span)| (name.clone(), *span))
+            .collect();
         scope.outward_functions = Some(Arc::new(FunctionLookupFrame {
             possible_functions,
+            definitions,
             parent: self.outward_functions.clone(),
         }));
         scope
@@ -512,6 +538,22 @@ impl Scope {
         false
     }
 
+    /// `None`: no enclosing candidate; `Some(None)`: an enclosing candidate
+    /// whose identity is unknown; `Some(Some(span))`: an exact literal in the
+    /// nearest candidate frame. A nonfunction local is skipped by R's
+    /// function-position lookup before this search begins.
+    pub(crate) fn outward_function_definition(&self, name: &str) -> Option<Option<Span>> {
+        let name = infer::semantic_argument_name(name);
+        let mut frame = self.outward_functions.as_deref();
+        while let Some(current) = frame {
+            if current.possible_functions.contains(name) {
+                return Some(current.definitions.get(name).copied());
+            }
+            frame = current.parent.as_deref();
+        }
+        None
+    }
+
     /// Unknown code may mutate values or install active bindings. Keep names,
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
@@ -527,7 +569,9 @@ impl Scope {
                 .chain(self.default_parameter_bindings.iter())
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
+                .chain(self.lexical_definitions.keys())
                 .chain(self.function_aliases.keys())
+                .chain(self.box_objects.keys())
                 .cloned()
                 .collect();
             for name in names {
@@ -545,7 +589,9 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
+        self.keep_box_calls_after_writes();
         self.lexical_functions.clear();
+        self.lexical_definitions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
         }
@@ -567,6 +613,16 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        match self.box_call_after_write(&name, &t) {
+            None => self.insert_value(name, t),
+            Some(marker) => {
+                self.insert_value(name.clone(), t);
+                self.set_box_object(name, marker);
+            }
+        }
+    }
+
+    fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
@@ -586,9 +642,13 @@ impl Scope {
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
         }
+        if !self.box_objects.is_empty() {
+            self.box_objects.remove(&name);
+        }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
+        self.lexical_definitions.remove(&name);
         if !self.list_origin_bindings.is_empty() {
             self.list_origin_bindings.remove(&name);
         }
@@ -625,10 +685,12 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
             self.loop_vector_bindings.remove(&name);
         }
+        self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.narrowed_bindings.insert(name);
@@ -654,9 +716,13 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
         self.loop_vector_bindings.remove(&name);
+        // A parameter default may install a different function value even
+        // when the lexical-callable marker is deliberately retained.
+        self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
         self.finish_binding_change(journal, previous);
         self.parameter_bindings.insert(name.clone());
@@ -730,7 +796,37 @@ impl Scope {
         self.function_aliases.insert(name, target);
     }
 
-    pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
+    pub(crate) fn set_box_object(
+        &mut self,
+        name: impl Into<String>,
+        object: box_imports::BoxObject,
+    ) {
+        let name = name.into();
+        self.journal_binding(&name);
+        self.box_objects.insert(name, object);
+    }
+
+    pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>, definition: Span) {
+        let name = name.into();
+        self.mark_lexical_callable(name.clone());
+        self.mark_bound_function_definition(name, definition);
+    }
+
+    /// Keep the exact source identity of a direct literal binding without
+    /// changing ordinary top-level function resolution through the table.
+    pub(crate) fn mark_bound_function_definition(
+        &mut self,
+        name: impl Into<String>,
+        definition: Span,
+    ) {
+        let name = name.into();
+        self.journal_lexical_definition(&name);
+        self.lexical_definitions.insert(name, definition);
+    }
+
+    /// Retain lexical shadowing after a join even when its exact source
+    /// definition is no longer common to every reachable path.
+    pub(crate) fn mark_lexical_callable(&mut self, name: impl Into<String>) {
         let name = name.into();
         self.journal_marker(&name, scope_journal::MarkerKind::Lexical);
         self.lexical_functions.insert(name);
@@ -738,6 +834,15 @@ impl Scope {
 
     pub(crate) fn is_lexical_function(&self, name: &str) -> bool {
         self.lexical_functions.contains(name)
+    }
+
+    pub(crate) fn lexical_definition(&self, name: &str) -> Option<Span> {
+        self.lexical_definitions.get(name).copied()
+    }
+
+    pub(crate) fn forget_lexical_definition(&mut self, name: &str) {
+        self.journal_lexical_definition(name);
+        self.lexical_definitions.remove(name);
     }
 
     pub(crate) fn function_alias(&self, name: &str) -> Option<&str> {
@@ -799,12 +904,24 @@ pub struct ScopeRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct UserFn {
     pub(crate) params: Vec<UserParam>,
+    /// Original default expressions, needed only when an adopted contract
+    /// asks for the possible effects of a known helper invocation.
+    pub(crate) source_params: Option<Arc<[Param]>>,
+    /// Definition identity, independent of a same-spelled binding elsewhere.
+    pub(crate) source_path: String,
+    pub(crate) definition_span: Span,
+    /// Physical source identity for relative imports in functions defined
+    /// by an on-disk file whose diagnostic path may be lossy.
+    pub(crate) source_native_path: Option<PathBuf>,
     // The function body, shared via `Arc` so the per-fixpoint-iteration
     // clone in `refine_fn_return` is a cheap refcount bump rather than a
     // deep clone of every statement. The body is immutable after
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
+    /// Bounded writes outside this function's frame. Shared clones compute
+    /// the summary only if an opted-in declaration call needs it.
+    outward_writes: Arc<OnceLock<FxSet<String>>>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -816,6 +933,7 @@ pub(crate) struct UserParam {
     pub(crate) name: String,
     pub(crate) type_: RType,
     pub(crate) required: bool,
+    pub(crate) defaulted: bool,
     pub(crate) defused: bool,
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
@@ -833,6 +951,15 @@ pub(crate) struct CallerVisibleSignature {
 }
 
 impl UserFn {
+    pub(crate) fn outward_writes(&self) -> &FxSet<String> {
+        self.outward_writes.get_or_init(|| {
+            collect::called_function_outward_writes(
+                self.source_params.as_deref().unwrap_or(&[]),
+                &self.body,
+            )
+        })
+    }
+
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
@@ -890,6 +1017,25 @@ impl ReturnSlots {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
     pub(crate) fns: FxMap<String, UserFn>,
+    /// Every direct literal, including definitions later replaced in `fns`.
+    /// Declaration checks address this map by source identity; ordinary
+    /// inference still uses the name-indexed last-definition table.
+    pub(crate) definition_fns: FxMap<(String, usize, usize), UserFn>,
+    /// Global-frame direct literal bindings addressable by declaration
+    /// source identity. Kept by binding name for cross-file invalidation;
+    /// nested local literals cannot be changed by another file's global
+    /// write. Unlike `fns`, this retains earlier same-name definitions.
+    pub(crate) capture_literal_bindings: FxMap<String, FxSet<(String, usize, usize)>>,
+    /// A closure captures an environment, not a frozen binding value. If a
+    /// later assignment in that environment can replace a literal, its
+    /// captured identity cannot prove a deferred call contract.
+    pub(crate) rebound_after_capture: FxSet<(String, usize, usize)>,
+    /// Ordinary writes in this file's global frame, including expressions,
+    /// control tests, and `for` binders. Nested local writes are excluded.
+    pub(crate) global_capture_writes: FxSet<String>,
+    /// Explicit `<<-` may reach an enclosing/global frame. Kept separately
+    /// because ordinary nested locals must not invalidate other files.
+    pub(crate) outward_capture_writes: FxSet<String>,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -922,6 +1068,16 @@ pub(crate) struct FnTable {
 }
 
 impl FnTable {
+    pub(crate) fn definition(&self, path: &str, span: Span) -> Option<&UserFn> {
+        self.definition_fns
+            .get(&(path.to_string(), span.start, span.end))
+    }
+
+    pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
+        self.rebound_after_capture
+            .contains(&(path.to_string(), span.start, span.end))
+    }
+
     fn append_collected(
         &mut self,
         collected: &FnTable,
@@ -930,6 +1086,44 @@ impl FnTable {
     ) {
         let slot_offset = return_slots.0.len();
         return_slots.0.extend_from_slice(&collected_slots.0);
+
+        // Project files share a global environment, but the inventory does
+        // not prove execution order. Broader syntactic writes come from the
+        // scope-aware mutation scan, not `known_vars` (which deliberately
+        // omits expression-position assignments and loop binders).
+        for name in collected
+            .global_capture_writes
+            .iter()
+            .chain(&collected.outward_capture_writes)
+        {
+            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
+                self.rebound_after_capture.extend(
+                    self.capture_literal_bindings
+                        .values()
+                        .flat_map(|definitions| definitions.iter().cloned()),
+                );
+            } else if let Some(definitions) = self.capture_literal_bindings.get(name) {
+                self.rebound_after_capture
+                    .extend(definitions.iter().cloned());
+            }
+        }
+        for name in self
+            .global_capture_writes
+            .iter()
+            .chain(&self.outward_capture_writes)
+        {
+            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
+                self.rebound_after_capture.extend(
+                    collected
+                        .capture_literal_bindings
+                        .values()
+                        .flat_map(|definitions| definitions.iter().cloned()),
+                );
+            } else if let Some(definitions) = collected.capture_literal_bindings.get(name) {
+                self.rebound_after_capture
+                    .extend(definitions.iter().cloned());
+            }
+        }
 
         let replaced: HashSet<_> = collected
             .fns
@@ -948,6 +1142,24 @@ impl FnTable {
             f.return_slot += slot_offset;
             (name.clone(), f)
         }));
+        self.definition_fns
+            .extend(collected.definition_fns.iter().map(|(key, function)| {
+                let mut function = function.clone();
+                function.return_slot += slot_offset;
+                (key.clone(), function)
+            }));
+        for (name, definitions) in &collected.capture_literal_bindings {
+            self.capture_literal_bindings
+                .entry(name.clone())
+                .or_default()
+                .extend(definitions.iter().cloned());
+        }
+        self.rebound_after_capture
+            .extend(collected.rebound_after_capture.iter().cloned());
+        self.global_capture_writes
+            .extend(collected.global_capture_writes.iter().cloned());
+        self.outward_capture_writes
+            .extend(collected.outward_capture_writes.iter().cloned());
         self.s3_methods.extend(
             collected
                 .s3_methods
@@ -1002,6 +1214,9 @@ pub(crate) struct EnclosingFormals {
     /// formal's binding, so a scalar check of the returned value says
     /// nothing about the binding read by a later expression.
     pub(crate) literal_defaults: FxSet<String>,
+    /// A forced default may install one of these names in this frame at
+    /// runtime; a same-named outward declaration is then not certain.
+    pub(crate) possible_default_writes: FxSet<String>,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,
@@ -1014,8 +1229,20 @@ pub struct Checker {
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Editor/project buffers take precedence over the disk copy of a
+    /// relative box module. Keys use the existing ancestor's identity.
+    box_sources: Arc<box_imports::BoxSources>,
+    box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
+    box_package_cache: HashMap<(PathBuf, String), Arc<box_imports::BoxInventory>>,
+    box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
+    /// Explicitly adopted structured records. Empty unless a caller opts in.
+    pub(crate) declarations: Arc<declaration_check::DeclarationSet>,
+    pub(crate) declaration_findings: Vec<DeclarationFinding>,
     pub(crate) path: String,
+    /// Native path of the file currently being inferred or emitted. Keep
+    /// diagnostics on `path`, but resolve relative box modules from this.
+    pub(crate) native_path: Option<PathBuf>,
     /// Source text corresponding to `path`, set at every production check seam.
     /// Messages that quote source spelling slice this exact text by parser
     /// spans.
@@ -1198,7 +1425,10 @@ impl Checker {
     /// silent by design and the fixpoint forces discarding mode.
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
+        self.box_module_cache.clear();
+        self.box_package_cache.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1266,8 +1496,15 @@ impl Checker {
         Self {
             typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
+            box_sources: Arc::new(HashMap::new()),
+            box_module_cache: HashMap::new(),
+            box_package_cache: HashMap::new(),
+            box_depth: 0,
             diagnostics: Vec::new(),
+            declarations: Arc::new(declaration_check::DeclarationSet::default()),
+            declaration_findings: Vec::new(),
             path: path.to_string(),
+            native_path: None,
             source: String::new(),
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
@@ -1337,6 +1574,7 @@ impl Checker {
     // union across files.
     pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.collect_fns(&file.stmts);
         self.harvest_attached_packages(&file.stmts)
     }
@@ -1423,7 +1661,9 @@ impl Checker {
     // top-level scope (also returned by `check_with_scope`).
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
+        self.declaration_findings.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1465,6 +1705,10 @@ impl Checker {
         // R's parser rejects it before any syntax consideration.
         let encoding_flagged = self.emit_encoding_diagnostics(file);
         self.emit_parse_errors(file);
+        if !encoding_flagged && file.parse_errors.is_empty() {
+            self.declaration_findings
+                .extend(self.declarations.reports_for(&file.path));
+        }
         // A recovered tree is partly invented by parser repair: the
         // statements, calls, and identifiers the checker walks can be
         // artifacts that exist nowhere in the source. Semantic rules
@@ -1489,6 +1733,9 @@ impl Checker {
         }
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
+            // Declarations are semantic claims too. A repaired AST cannot
+            // establish their attachment or a call/return mismatch.
+            self.declaration_findings.clear();
         } else {
             self.diagnostics
                 .extend(diagnostics::invalid_suppression_diagnostics(
@@ -1570,6 +1817,41 @@ impl Checker {
         std::mem::take(&mut self.diagnostics)
     }
 
+    /// Install explicit structured source records for the next check.
+    /// Recognition alone is not adoption: only records whose evidence use is
+    /// `AdoptedContract` can affect body assumptions or produce mismatches.
+    /// Callers re-install records after annotation-only source edits.
+    pub fn set_declaration_records(
+        &mut self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) {
+        self.declarations = Arc::new(declaration_check::DeclarationSet::new(records));
+        self.declaration_findings.clear();
+    }
+
+    pub(crate) fn set_shared_declarations(
+        &mut self,
+        declarations: Arc<declaration_check::DeclarationSet>,
+    ) {
+        self.declarations = declarations;
+    }
+
+    /// Original records, including unadopted and unsupported entries, for
+    /// the adapter/export layer. This does not imply successful checking.
+    pub fn declaration_records(&self) -> &[ry_core::declarations::DeclarationRecord] {
+        self.declarations.records()
+    }
+
+    /// Findings from the latest check, separate from existing R diagnostics.
+    /// The first public provider adapter maps these to rule codes.
+    pub fn declaration_findings(&self) -> &[DeclarationFinding] {
+        &self.declaration_findings
+    }
+
+    pub fn take_declaration_findings(&mut self) -> Vec<DeclarationFinding> {
+        std::mem::take(&mut self.declaration_findings)
+    }
+
     /// Build the outermost scope for a checked file. Shiny app fragments are
     /// sourced inside a server function, where these names are supplied by
     /// Shiny rather than assigned in the fragment itself.
@@ -1619,6 +1901,12 @@ impl Checker {
             .map(Arc::new)
             .unwrap_or_else(embedded_base);
         self.user_stubs = stubs;
+    }
+
+    pub(crate) fn set_box_sources(&mut self, sources: Arc<box_imports::BoxSources>) {
+        self.box_sources = sources;
+        self.box_module_cache.clear();
+        self.box_package_cache.clear();
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {

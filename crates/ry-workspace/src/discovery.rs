@@ -389,11 +389,17 @@ pub fn is_r_source_path(path: &Path) -> bool {
     is_source_path(path)
 }
 
+/// Every extension discovery admits: R, the S-dialect spellings, and reports.
+pub fn source_extensions() -> impl Iterator<Item = &'static str> {
+    ["R", "r", "S", "s", "q"]
+        .into_iter()
+        .chain(crate::reports::REPORT_EXTENSIONS.iter().copied())
+}
+
 fn is_source_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("R" | "r" | "S" | "s" | "q")
-    )
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| source_extensions().any(|source| source == ext))
 }
 
 /// Result of a bounded directory discovery.
@@ -430,13 +436,19 @@ pub fn discover_r_files(
     config: &ry_config::Config,
     check_test_fixtures: bool,
 ) -> DiscoveryResult {
-    // A single file passed directly is always included regardless of
-    // package rules: it is the explicit subject of the analysis.
+    // A single file passed directly is included regardless of package
+    // rules: it is the explicit subject of the analysis. Only a report
+    // still needs the explicit opt-in.
     if walk_root.is_file() {
-        return DiscoveryResult {
-            files: vec![walk_root.to_path_buf()],
-            ..Default::default()
-        };
+        let mut result = DiscoveryResult::default();
+        if crate::reports::is_report_path(walk_root) && !config.reports.enabled {
+            result
+                .skipped
+                .record(walk_root, false, "reports.enabled = false", usize::MAX);
+        } else {
+            result.files.push(walk_root.to_path_buf());
+        }
+        return result;
     }
     let limits = DiscoveryLimits::from_config(config);
     let excludes = ry_config::Excludes::from_config(config);
@@ -467,6 +479,7 @@ pub fn discover_r_files(
         package_root.as_deref(),
         &buildignore,
         check_test_fixtures,
+        config.reports.enabled,
         0,
         &limits,
         &excludes,
@@ -568,6 +581,7 @@ fn discover_recursive(
     package_root: Option<&Path>,
     buildignore: &[glob::Pattern],
     check_test_fixtures: bool,
+    reports_enabled: bool,
     depth: usize,
     limits: &DiscoveryLimits,
     excludes: &ry_config::Excludes,
@@ -666,6 +680,7 @@ fn discover_recursive(
                 nested_package_root.as_deref(),
                 &nested_buildignore,
                 check_test_fixtures,
+                reports_enabled,
                 depth + 1,
                 limits,
                 excludes,
@@ -673,6 +688,9 @@ fn discover_recursive(
                 exclude_root,
             );
         } else if is_source_path(&path) {
+            if crate::reports::is_report_path(&path) && !reports_enabled {
+                continue;
+            }
             if !check_test_fixtures && is_test_fixture(&path) {
                 skipped.record(&path, false, "test fixture", limits.max_files);
                 continue;

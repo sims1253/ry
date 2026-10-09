@@ -13,10 +13,24 @@ view is a declaration language. When a tooltip says it was truncated, use
 this structured export. Complete output here means that all *represented*
 type fields are present, not that static analysis knows every runtime fact.
 
-The [authored declaration model](declarations.md) is separate. Its canonical
-syntax and populated-record serializer are available to adapters internally;
-the public annotation option and schema-3 records arrive with the first
-source adapter. Schema 1 and 2 output remains unchanged meanwhile.
+The [authored declaration model](declarations.md) is separate. Opted-in
+`typehint` source comments can be exported as populated annotation records:
+
+```sh
+ry dump-facts R/ --annotations > facts-with-annotations.json
+```
+
+`--annotations` selects schema 3. Each file gains an `annotations` array of
+records with source, target, translation, assumptions, and evidence use. Exact,
+partial, unsupported, invalid, and ambiguous records retain those statuses;
+an exported record does not assert that a runtime guard succeeded. The
+existing binding `declaration` field still identifies a source definition.
+If a native filename collision prevents attachment, annotation export fails
+with RY117 and writes no JSON, even when only the UTF-8 filename was selected.
+Exporting a directory that includes a non-UTF-8 path also fails. Remove the
+collision or disable annotation export to obtain the older fact schemas.
+Without `--annotations`, schema 1 output remains unchanged; `--references`
+alone still selects schema 2.
 
 ```sh
 ry dump-facts R/ --format json > facts.json

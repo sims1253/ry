@@ -62,7 +62,7 @@ impl RParser {
             })?;
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
-        let (comments, special_operators) = collect_comments(root, src)?;
+        let (comments, special_operators, function_bodies) = collect_lexical(root, src)?;
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -89,9 +89,11 @@ impl RParser {
         Ok((
             SourceFile {
                 path: path.to_string(),
+                native_path: None,
                 source: src.to_string(),
                 stmts,
                 parse_errors,
+                input_issues: Vec::new(),
                 // Invalid-UTF-8 spans come from the on-disk decoding
                 // step, not tree-sitter (which only ever sees the
                 // already-decoded text). The read boundary fills this in
@@ -104,6 +106,7 @@ impl RParser {
                 special_operators,
                 syntax_violations,
                 comments,
+                function_bodies,
             },
             tree,
         ))
@@ -675,7 +678,8 @@ impl RParser {
     ///     packages' export tables.
     ///
     /// Both `::` (exported) and `:::` (internal/unexported) are
-    /// preserved as written so the original spelling is recoverable.
+    /// preserved. Quoted namespace components carry their semantic R names;
+    /// the span retains their original source spelling.
     fn lower_namespace(&self, n: Node, src: &str) -> Option<Expr> {
         let span = self.span(n);
         let lhs = match n.child_by_field_name("lhs") {
@@ -689,6 +693,7 @@ impl RParser {
             Some(t) => t,
             None => return Some(Expr::Unknown(span)),
         };
+        let pkg = namespace_component(pkg, lhs.kind());
         let rhs = match n.child_by_field_name("rhs") {
             Some(rhs) => rhs,
             None => {
@@ -700,21 +705,14 @@ impl RParser {
             Some(t) => t,
             None => return Some(Expr::Unknown(span)),
         };
-        // For identifier RHS the raw text is the bare name. For a string
-        // RHS (e.g. `pkg::"my func"`, used for non-syntactic names) we
-        // strip the surrounding quotes.  Use the shared boundary-safe
-        // helper: `raw.len() - 1` need not be a char boundary
-        // when the string token is malformed/truncated, which would
-        // panic on the naive slice `raw[1..raw.len() - 1]`.
-        let name = if rhs.kind() == "string" {
-            strip_quotes_at_boundaries(&raw).to_string()
-        } else {
-            raw
-        };
+        // Decode each syntactically quoted component exactly once. In
+        // particular, a string whose *value* resembles raw-string syntax is
+        // still that literal value, not a second string to unquote.
+        let name = namespace_component(raw, rhs.kind());
         // Detect the operator (`::` vs `:::`) by scanning the node's
         // anonymous children. We preserve it so the checker can tell
         // exported (`::`) from internal (`:::`) references if needed,
-        // and so the original spelling round-trips through the AST.
+        // while the span retains the original source spelling.
         let op = namespace_op(n, src).unwrap_or("::");
         let full_name = format!("{}{}{}", pkg, op, name);
         Some(Expr::Ident {
@@ -738,6 +736,14 @@ fn text(n: Node, src: &str) -> Option<String> {
     n.utf8_text(src.as_bytes()).ok().map(String::from)
 }
 
+fn namespace_component(raw: String, kind: &str) -> String {
+    if kind == "string" || (raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2) {
+        unquote_r_string(&raw)
+    } else {
+        raw
+    }
+}
+
 /// Unquote an R string literal, handling escape sequences and raw
 /// strings.
 ///
@@ -753,7 +759,7 @@ fn text(n: Node, src: &str) -> Option<String> {
 /// escape processing matters because column-name matching
 /// (`df$"my col"`, `list("a b" = 1)`) and `# ry:` directive parsing
 /// depend on the literal value.
-fn unquote_r_string(raw: &str) -> String {
+pub fn unquote_r_string(raw: &str) -> String {
     // Raw strings: r"(...)" , r"(...){...}", R"(...)", r"[...]", etc.
     // The opening is r/R followed by an optional dash-delimiter and a
     // ( or [. The matching close is ) or ] followed by the same
@@ -774,6 +780,35 @@ fn unquote_r_string(raw: &str) -> String {
     // boundary-safe helper so the operation never panics.
     let inner = strip_quotes_at_boundaries(raw);
     process_r_escapes(inner)
+}
+
+/// Decode a quoted R argument name. `Arg::name` retains the source token,
+/// unlike `Expr::String`, so callers that use names as binding identities
+/// must not compare its raw backticks or escapes with runtime names.
+/// Return `None` when the tolerant escape decoder cannot prove the name.
+pub fn decode_r_quoted_name(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2
+        || !matches!(
+            (bytes[0], bytes[bytes.len() - 1]),
+            (b'`', b'`') | (b'\'', b'\'') | (b'"', b'"')
+        )
+    {
+        return None;
+    }
+    let inner = &raw[1..raw.len() - 1];
+    // R rejects Unicode escapes inside backticks, even though ordinary
+    // quoted strings accept them. An escaped backslash followed by `u`
+    // may be valid, but leaving it unresolved is safer than inventing a
+    // different import binding.
+    if bytes[0] == b'`' && (inner.contains("\\u") || inner.contains("\\U")) {
+        return None;
+    }
+    let decoded = unquote_r_string(raw);
+    if inner.contains('\\') && decoded == inner {
+        return None;
+    }
+    Some(decoded)
 }
 
 /// Strip the leading and trailing quote bytes from `raw`, walking back
@@ -806,60 +841,28 @@ fn strip_quotes_at_boundaries(raw: &str) -> &str {
 }
 
 /// Strip the delimiters of a raw string whose body starts after the
-/// leading `r"`/`R"` (so `body` begins at the optional `-delim(` or
-/// `(`). Returns the literal content if it parses as a raw string,
-/// else None.
+/// leading `r`/`R` (so `body` begins with `"` and optional dashes).
+/// Returns the literal content if the matching closing delimiter is present.
 fn try_unwrap_raw_string(body: &str) -> Option<String> {
-    // `body` is the token text after the leading `r`/`R`, so it begins
-    // with a quote (`"`). Strip it (and the trailing quote, which the
-    // close-sequence search handles).
     let body = body.strip_prefix('"')?;
-    // Opening sequence: optional delimiter chars, then `(` or `[`.
-    // R allows `r"(...)"`, `r"-(...)-"`, `r"--(...)--"`, and the `[`
-    // bracket form likewise. We capture the delimiter and the bracket.
     let bytes = body.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let (open_bracket, close_bracket) = match bytes[0] {
-        b'(' => (b'(', b')'),
-        b'[' => (b'[', b']'),
-        _ => {
-            // delimiter form: dashes then bracket
-            let mut i = 0;
-            while i < bytes.len() && bytes[i] == b'-' {
-                i += 1;
-            }
-            if i == 0 || i >= bytes.len() {
-                return None;
-            }
-            match bytes[i] {
-                b'(' => (b'(', b')'),
-                b'[' => (b'[', b']'),
-                _ => return None,
-            }
-        }
+    let dashes = bytes.iter().take_while(|&&byte| byte == b'-').count();
+    let close_bracket = match bytes.get(dashes)? {
+        b'(' => b')',
+        b'[' => b']',
+        b'{' => b'}',
+        _ => return None,
     };
-    // Find the content start (after the opening bracket) and the
-    // matching close. For the simple (no-delimiter) form, the close is
-    // the last `)bracket"` sequence. We do a conservative search from
-    // the end for the closing `"<close>` .
-    let close_quote_seq: &[u8] = &[close_bracket, b'"'];
-    if body.len() < close_quote_seq.len() {
+    let content_start = dashes + 1;
+    let close_idx = bytes.len().checked_sub(dashes + 2)?;
+    if close_idx < content_start
+        || bytes[close_idx] != close_bracket
+        || bytes[close_idx + 1..bytes.len() - 1] != bytes[..dashes]
+        || bytes.last() != Some(&b'"')
+    {
         return None;
     }
-    // The opening bracket is the FIRST bracket char in body.
-    let open_idx = body.find(open_bracket as char)?;
-    // The closing sequence is the LAST occurrence of `<close>"`.
-    let close_idx = body.rfind(std::str::from_utf8(close_quote_seq).ok()?)?;
-    if close_idx <= open_idx {
-        return None;
-    }
-    let content_start = open_idx + 1;
-    if content_start >= close_idx {
-        return Some(String::new());
-    }
-    Some(body[content_start..close_idx].to_string())
+    Some(body.get(content_start..close_idx)?.to_string())
 }
 
 /// Decode ordinary R string escapes when their value is representable as UTF-8.
@@ -982,6 +985,9 @@ fn process_r_escapes(s: &str) -> String {
 // Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
 const MAX_SYNTAX_DEPTH: usize = 128;
 
+/// Comments, special-operator spans, and function ranges from one CST walk.
+type LexicalNodes = (Vec<crate::ast::Comment>, Vec<Span>, Vec<FunctionBody>);
+
 /// Collect every `comment` node in the tree, returning `(line, body)`
 /// pairs in source order. The body is the text AFTER the leading `#`
 /// (untrimmed). These are the ONLY lexically-real comments -- a `#`
@@ -994,13 +1000,14 @@ const MAX_SYNTAX_DEPTH: usize = 128;
 /// special-operator bodies as raw bytes without multibyte validation,
 /// so the checker's invalid-UTF-8 tolerance treats both the same way
 /// (#376). Special spans are returned sorted by start offset.
+/// It also collects every function's lexical span and any braced body span,
+/// sorted by function span, so annotation readers can identify the innermost
+/// owning function.
 /// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
-fn collect_comments(
-    root: tree_sitter::Node,
-    src: &str,
-) -> Result<(Vec<crate::ast::Comment>, Vec<Span>), ParseError> {
+fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, ParseError> {
     let mut out = Vec::new();
     let mut special = Vec::new();
+    let mut bodies = Vec::new();
     let mut stack = vec![(root, 0_usize)];
     while let Some((node, depth)) = stack.pop() {
         if depth > MAX_SYNTAX_DEPTH {
@@ -1023,6 +1030,14 @@ fn collect_comments(
             }
         } else if node.kind() == "special" {
             special.push(self_span(node));
+        } else if node.kind() == "function_definition" {
+            bodies.push(FunctionBody {
+                function: self_span(node),
+                body: node
+                    .child_by_field_name("body")
+                    .filter(|body| body.kind() == "braced_expression")
+                    .map(self_span),
+            });
         }
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
@@ -1031,7 +1046,8 @@ fn collect_comments(
     }
     out.sort_by_key(|c| c.line);
     special.sort_by_key(|span| span.start);
-    Ok((out, special))
+    bodies.sort_by_key(|body| (body.function.start, body.function.end));
+    Ok((out, special, bodies))
 }
 
 /// A node's span without a `&self` receiver (the free-function twin of
@@ -1779,6 +1795,31 @@ mod tests {
     }
 
     #[test]
+    fn namespace_components_decode_r_literal_names_exactly_once() {
+        for (source, expected) in [
+            (r#"knitr::"opts_\x63hunk""#, "knitr::opts_chunk"),
+            (r#"knitr::'opts_\u0063hunk'"#, "knitr::opts_chunk"),
+            (r#"knitr::"opts_\U00000063hunk""#, "knitr::opts_chunk"),
+            (r#""knitr"::"opts_\x63hunk""#, "knitr::opts_chunk"),
+            (r#"r"(knitr)"::opts_chunk"#, "knitr::opts_chunk"),
+            (r#"R"--[knitr]--"::r"(opts_chunk)""#, "knitr::opts_chunk"),
+            (r#"r"{knitr}"::R"--{opts_chunk}--""#, "knitr::opts_chunk"),
+            (r#"`knitr`::`opts_\x63hunk`"#, "knitr::opts_chunk"),
+            (r#""r\"(knitr)\""::opts_chunk"#, "r\"(knitr)\"::opts_chunk"),
+            (r#"knitr::"r\"(opts_chunk)\"""#, "knitr::r\"(opts_chunk)\""),
+            (r#"base::"my\x20func""#, "base::my func"),
+        ] {
+            let file = parse(&format!("{source}\n"));
+            match file.stmts.first() {
+                Some(Stmt::Expr(Expr::Ident { name, .. })) => {
+                    assert_eq!(name, expected, "{source}")
+                }
+                other => panic!("expected namespace identifier for {source}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn parses_negative_integer_literal_as_unary() {
         // `-1L` lowers to a unary minus applied to a positive integer
         // literal. Type-wise this is equivalent to a negative literal,
@@ -1959,6 +2000,26 @@ mod tests {
     }
 
     #[test]
+    fn quoted_argument_names_decode_only_proven_r_bindings() {
+        use super::decode_r_quoted_name;
+        assert_eq!(
+            decode_r_quoted_name(r"`ren\x61med`"),
+            Some("renamed".into())
+        );
+        assert_eq!(
+            decode_r_quoted_name(r#""ren\u0061med""#),
+            Some("renamed".into())
+        );
+        assert_eq!(
+            decode_r_quoted_name(r"`ren\`amed`"),
+            Some("ren`amed".into())
+        );
+        assert_eq!(decode_r_quoted_name(r"`ren\u0061med`"), None);
+        assert_eq!(decode_r_quoted_name(r"`ren\qmed`"), None);
+        assert_eq!(decode_r_quoted_name("plain"), None);
+    }
+
+    #[test]
     fn string_unicode_escapes() {
         use super::unquote_r_string;
         assert_eq!(unquote_r_string(r#""\u00e9""#), "é");
@@ -2047,6 +2108,11 @@ mod tests {
         assert_eq!(unquote_r_string(r#"R"(x)""#), "x");
         // r"[...]" bracket form.
         assert_eq!(unquote_r_string(r#"r"[literal]""#), "literal");
+        // The same dash delimiter must appear after the closing bracket.
+        assert_eq!(unquote_r_string(r#"R"--[knitr]--""#), "knitr");
+        assert_eq!(unquote_r_string(r#"r"-(a]b)-""#), "a]b");
+        assert_eq!(unquote_r_string(r#"r"{knitr}""#), "knitr");
+        assert_eq!(unquote_r_string(r#"R"--{knitr}--""#), "knitr");
     }
 
     #[test]

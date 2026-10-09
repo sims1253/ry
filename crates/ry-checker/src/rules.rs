@@ -281,6 +281,54 @@ pub const RULES: &[Rule] = &[
         default_severity: Severity::Warning,
         summary: "Opt-in audit: a valid ry-owned selective line or standalone ignore names an enabled rule whose local syntax was checked in diagnostic mode and produced no matching finding before baseline or confidence filtering. The initial supported codes are RY034 and RY102. Invalid, bare, noqa, and file directives are outside this audit; parser errors, anonymous function bodies, and other unavailable analysis are left unaudited. Enable with `--warn RY113` or a severity override.",
     },
+    Rule {
+        code: "RY114",
+        name: "declaration-mismatch",
+        default_severity: Severity::Warning,
+        summary: "An independently known argument, default, or return value contradicts an explicitly adopted source declaration. For typehint's simple class clauses this compares effective R class(), not storage typeof(); unknown or incomplete facts remain silent.",
+    },
+    Rule {
+        code: "RY115",
+        name: "declaration-incomplete",
+        default_severity: Severity::Info,
+        summary: "An adopted declaration has an unsupported residual or a predicate that body inference cannot represent. The source expression is retained without claiming complete checking.",
+    },
+    Rule {
+        code: "RY116",
+        name: "declaration-conflict",
+        default_severity: Severity::Warning,
+        summary: "Multiple adopted records for one lexical function cannot be selected as one complete contract; none is used for checking.",
+    },
+    Rule {
+        code: "RY117",
+        name: "declaration-invalid",
+        default_severity: Severity::Warning,
+        summary: "An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking.",
+    },
+    Rule {
+        code: "RY118",
+        name: "missing-box-export",
+        default_severity: Severity::Warning,
+        summary: "A statically resolved local box module has a complete export inventory, but a selected import or exact `$` access names no export. Missing modules, dynamic export declarations, and package inventories are not proof of absence and stay silent.",
+    },
+    Rule {
+        code: "RY119",
+        name: "integer-coercion-range-loss",
+        default_severity: Severity::Warning,
+        summary: "`as.integer()` converts a proven out-of-range numeric value to `NA_integer_`; handle the new NA or constrain the input before casting.",
+    },
+    Rule {
+        code: "RY120",
+        name: "report-boundary",
+        default_severity: Severity::Warning,
+        summary: "An opted-in report has a malformed R fence or exceeds the bounded extraction budget; affected R chunks are not analyzed.",
+    },
+    Rule {
+        code: "RY121",
+        name: "report-execution-unknown",
+        default_severity: Severity::Warning,
+        summary: "A report execution option cannot be determined statically; analysis stops at that chunk rather than guessing which later bindings exist.",
+    },
 ];
 
 pub fn find(code: &str) -> Option<&'static Rule> {

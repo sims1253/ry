@@ -56,6 +56,35 @@ fn assert_context_changed(before: &Value, after: &Value, name: &str) {
     );
 }
 
+#[test]
+fn structured_configuration_exports_ordered_path_rule_policy() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(temp.path().join("R/main.R"), "x <- 1L\n").unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let before = dump(temp.path(), &["R/main.R"]);
+    assert_eq!(
+        before["configuration"]["effective"]["rule_overrides"][0]["paths"],
+        serde_json::json!(["R/**"])
+    );
+    assert_eq!(
+        before["configuration"]["effective"]["rule_overrides"][0]["error"],
+        serde_json::json!(["RY040"])
+    );
+
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nignore = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let after = dump(temp.path(), &["R/main.R"]);
+    assert_context_changed(&before, &after, "R/main.R");
+}
+
 fn stub(mode: &str) -> String {
     serde_json::json!({
         "schema_version": "2", "package": "factspkg", "version": "test",
@@ -202,6 +231,25 @@ fn effective_config_changes_invalidate_unchanged_source() {
     assert_ne!(
         context(&before, file(&before, "main.R"))["inputs"]["config_hash"],
         context(&after, file(&after, "main.R"))["inputs"]["config_hash"]
+    );
+}
+
+#[test]
+fn report_policy_changes_invalidate_facts_context() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("main.R"), "x <- 1L\n").unwrap();
+    fs::write(temp.path().join("ry.toml"), "[reports]\nenabled = false\n").unwrap();
+    let before = dump(temp.path(), &["main.R"]);
+    fs::write(temp.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    let after = dump(temp.path(), &["main.R"]);
+    assert_context_changed(&before, &after, "main.R");
+    assert_ne!(
+        context(&before, file(&before, "main.R"))["inputs"]["config_hash"],
+        context(&after, file(&after, "main.R"))["inputs"]["config_hash"]
+    );
+    assert_eq!(
+        after["configuration"]["effective"]["reports"]["enabled"],
+        true
     );
 }
 

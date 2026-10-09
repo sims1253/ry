@@ -56,6 +56,10 @@ max-serialized-bytes = 16777216 # 16 MiB (default)
 max-files      = 20000   # files discovered per root (default: 20,000)
 max-file-bytes = 2097152 # bytes per R file (default: 2 MiB)
 max-depth      = 64      # directory depth (default: 64)
+
+# Static report input is opt-in. It covers ordinary fenced R chunks only.
+[reports]
+enabled = false
 ```
 
 `include-build-ignored` contains glob patterns relative to `ry.toml`. It
@@ -103,6 +107,23 @@ includes descendants. Use forward slashes on every platform. Existing paths
 are resolved through symlinks before matching. A programmatically constructed
 configuration without a file location uses the analysis root.
 
+To adopt the audited `typehint` 0.1.0 comments only in selected source files:
+
+```toml
+[annotations.typehint]
+adopt = true
+version = "0.1.0"
+paths = ["R/**"]
+```
+
+All three settings are required when adoption is enabled. The path globs use
+the same configuration-root-relative physical path matching described above.
+The matcher refuses native filenames it cannot represent as UTF-8; a lossy
+display name cannot make an excluded file eligible. No comment is adopted by
+default. The [declaration guide](declarations.md) explains the supported class
+subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
+ordinary comments, and strings do not create typehint contracts.
+
 Explicit CLI values override scalar settings such as `output-format`.
 The `--error`, `--warn`, `--ignore`, and `--typeshed` lists append to the
 configuration lists. Rule filters apply errors first, then warnings, then
@@ -110,6 +131,61 @@ ignores. For example, `ignore = ["RY010"]` still suppresses RY010 when you
 pass `--error RY010`; remove the ignore entry to enable that rule.
 When multiple paths are checked, the first path anchors config discovery;
 that one configuration applies to the complete invocation.
+
+To change only the severity reported for selected source files, add ordered
+`[[rule-overrides]]` tables:
+
+```toml
+warn = ["RY040"]
+
+[[rule-overrides]]
+paths = ["R/**"]
+error = ["RY040"]
+
+[[rule-overrides]]
+paths = ["R/scratch/**"]
+warn = ["RY040"]
+```
+
+Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
+elsewhere. Each table accepts `error`, `warn`, and `ignore` rule lists by code,
+name, or `"all"`; `paths` is required. Globs use forward slashes relative to
+the directory containing `ry.toml`, including when checking a nested package.
+`*` matches one path component, while `**` includes descendants. For paths
+representable as UTF-8, the CLI, watch mode, and editor use the same matcher
+and filesystem identity for the config root and each source: existing symlinks
+and `..` components resolve before matching.
+For an unsaved file, the deepest existing ancestor resolves first and the
+remaining ordinary path components keep their names. On Unix, a `..` after a
+missing ancestor cannot be resolved and does not match. Windows non-verbatim
+paths use native normalization, which removes `..` before filesystem lookup.
+A symlink that points outside the config root is scoped by its target location,
+not its textual alias.
+On Unix, a backslash in a pattern is a literal filename character; use
+forward slashes to separate directories.
+The CLI and watch mode retain native paths when selecting rule policy. Path
+scopes do not match filenames that cannot be represented as UTF-8 in those
+modes; the files keep the global rule settings even if their displayed names
+contain a replacement character. The editor's existing document and index keys
+use Unicode display strings, which can lose a non-UTF-8 filename's original
+identity. That native-path guarantee does not extend to editor diagnostics for
+such filenames.
+
+The last matching table to mention a rule wins; within one table, `ignore`
+wins over `error`, which wins over `warn`. Unmentioned rules keep the global
+policy. A rule ignored by the effective global policy remains disabled even
+when a path table enables it. Editor `lint.ignore` replaces the config's
+`ignore` list, including when set to `[]`; scopes preserve that replacement.
+Explicit CLI `--error`/`--warn`/`--ignore` and editor `lint.error`/
+`lint.warn`/`lint.ignore` lists take priority over path tables for the rules
+they name, while retaining the existing global bucket precedence (`ignore` >
+`error` > `warn`). A path table can enable a rule disabled by `select`, unless
+a global ignore or explicit CLI/editor choice prevents it. The policy changes
+reported findings only: every discovered file still contributes bindings and
+types to project analysis. Inline suppression, severity, path confidence
+demotion, baseline subtraction, and minimum confidence filtering keep their
+existing order. A file's effective policy also controls whether the optional
+RY113 unused-ignore audit and its target rule are eligible.
 
 In the editor, open documents that are ineligible for analysis (excluded by
 `exclude` patterns, over `max-file-bytes`, or below a pruned `max-depth`)

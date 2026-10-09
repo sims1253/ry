@@ -7,10 +7,16 @@ scope exit describes one analysis snapshot. A declaration describes a
 provider's claim about a function, with its original source and attachment.
 Neither a compact hint nor an inferred fact silently becomes a contract.
 
-This document describes the declaration core introduced in [#592]. The first
-external reader and public `dump-facts` annotation export are delivered in
-[#594]. Until then, `dump-facts` keeps schema versions 1 and 2 and has no
-annotation flag or empty annotation placeholder.
+This document describes the declaration core in [#592], shared checking in
+[#593], and the first source adapter in [#594]. The adapter is opt-in and reads
+the audited `typehint` 0.1.0 `#| formal class` comment convention from named,
+braced function bodies. It never runs inspected R code or assumes that a call
+to `check_types()` succeeded.
+The `#|` must begin a source line after indentation; an inline R comment is
+not a provider clause. A comment in a nested function's header, default, or
+unbraced body cannot attach to an enclosing function.
+This lexical ownership rule is deliberately narrower than the provider's
+textual scan: uncertain nested comments never become a contract.
 
 ## Supported canonical vocabulary
 
@@ -20,6 +26,14 @@ not treat `numeric` as an alias: an adapter must establish its provider's
 predicate semantics first. `unknown` records an explicit lack of a type claim;
 it is not a request to skip checking. `none` in a signature means no
 constraint was supplied, distinct from an explicit `unknown` constraint.
+
+The `typehint` adapter also supports `class["name"]`: one exact effective R
+`class()` value. This is distinct from storage mode and from evidence that an
+explicit class attribute exists. A double or character value with an explicit
+`"integer"` class can satisfy `class["integer"]`; ordinary `1` does not, while
+ordinary `1L` does. Unknown, incomplete, or dimension-dependent class facts
+cannot prove a mismatch, and neither can a passing class test such as
+`inherits()` or `is.object()`. A class clause does not seed a body-entry type.
 
 An atomic constraint can omit length, specify an exact nonnegative length, or
 specify `1+` for nonempty. `null` can only have length zero. Unions contain
@@ -49,6 +63,11 @@ or `unknown`. Evaluation behavior is `value`, `promise`, `quoted`, or
 `unknown`. These are metadata about a provider's semantics, not claims that
 ry implements the corresponding runtime behavior. Unsupported effects must
 remain explicit rather than being translated into a plain entry condition.
+`defaulted_supplied_only` means the provider constrains an explicitly supplied
+actual but does not check an omitted formal's default. The typehint adapter
+uses this status because its pinned `check_types()` implementation iterates
+supplied actuals. A contrary authored default is therefore not a mismatch
+unless the caller explicitly supplies that value.
 
 Parsing and formatting cap a declaration at 4096 bytes, 16 type nesting
 levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
@@ -74,9 +93,69 @@ Translation status is independent of whether the user adopted the claim:
 
 Evidence use separately records `adopted_contract`, `runtime_guard`, or
 `documentation_candidate`. Recognition alone establishes none of these as a
-runtime guard. The shared checker in [#593] will decide how adopted contracts
-affect analysis and diagnostics. It must keep an unresolved conflict visible
-rather than selecting a declaration by file order.
+runtime guard. The shared checker keeps an unresolved conflict visible rather
+than selecting a declaration by file order.
+
+## Shared checking boundary
+
+`Checker::set_declaration_records` and `Project::set_declaration_records`
+accept structured records. A source reader must verify each local target
+against the source AST and current source text before it installs records.
+A matching display name alone does not identify a function. Readers must
+reinstall records after an annotation-only edit or a configuration change.
+Project rechecks affected files when its record set changes.
+Records without a selected adopted contract retain their provenance and
+findings without activating declaration effects on ordinary inference.
+Attachment requires an exact native file identity. Distinct native filenames
+that collapse to one display path supply no contract: CLI checking reports
+RY117 once for that path, and the editor reports RY117 at each opened URI with
+a clause while keeping each URI's own buffer. A native path that is not exactly
+representable also supplies no contract. CLI scope matching excludes it
+without a diagnostic; the editor reports RY117 at its opened URI. A sole,
+genuine Unicode replacement-character filename remains eligible. Backtick quoting of an AST formal is equivalent to
+the same unquoted R name; structured declaration-record names are literal
+semantic names. The simple clause grammar does not decode encoded or escaped
+formal spellings; such attachments are reported as ambiguous.
+
+Only an explicitly adopted, exact `entry_only` signature can supply a body
+entry type. Its declared parameters must be an ordered subset of the R formals,
+with matching supplied/defaulted status. Partial, unsupported,
+invalid, and ambiguous records retain their status but supply no entry type.
+Equivalent adopted signatures share provenance. Conflicting adopted signatures
+block adoption. A declaration of more than four union alternatives remains
+checkable at a known call but exceeds the body inference cap; the checker
+reports this limit and leaves the body entry type unknown.
+
+The checker keeps a defaulted formal's default marker when it applies a
+declared entry type. Later assignments update the local type in the usual
+way. Call checks use R's exact-name, unambiguous partial-name, and positional
+argument matching. They skip omitted arguments and unknown evidence. A mixed
+inferred union cannot prove a mismatch. Return checks use independently
+inferred returns; a declaration does not verify itself.
+
+Known-call mismatch checks require a current callable identity. A local
+assignment later in a body does not prove that an earlier read used that
+binding, and a historical function definition does not prove a call head still
+resolves to it after removal or active-binding installation. When an evaluated
+read, call, or operator can change a binding and its effects cannot be proved
+absent, later call checks become inconclusive; source attachment, default
+checks, and independent return evidence remain available. A typeshed
+signature alone does not establish that a call is effect-free.
+For precision, even an ordinary local data read or subscript can make a later
+contract check inconclusive when the checker cannot prove its binding effects
+absent. Local assignments inside an immediately invoked closure belong to
+that closure; they cannot certify a later read in its caller.
+Named helpers use their own local binding proofs and stable project bindings.
+Caller-local definitions and aliases do not prove a helper's free-name lookup.
+
+`Checker::declaration_findings` and `Project::declaration_findings` expose
+structured mismatch, partial, unsupported, conflict, invalid-syntax, and
+ambiguous-attachment findings. Parse or encoding errors suppress findings
+from a repaired source tree. These findings are separate from public RY rule
+codes. The typehint adapter maps known call mismatches to RY114, limited or
+unsupported checking to RY115, conflicts to RY116, and invalid or ambiguous
+source records to RY117. Recognition and translation fidelity remain separate
+from how much static checking is possible.
 
 ## Export boundary
 
@@ -96,12 +175,13 @@ with that loss stated explicitly. Conversion does not inspect schema fields.
 It omits schema constraints and field identity and states that loss in the
 proposal.
 
-The annotation serializer is tested with populated exact/partial/unsupported
-records and validates same-file source/residual spans. [#594] will wire real
-adopted source records into a public schema-3 `dump-facts` option, include
-translation and evidence status per record, and keep the existing
-`declaration` field's source-definition meaning unchanged. Schema 1 and 2
-consumers need no migration until they opt into that option.
+The annotation serializer validates same-file source and residual spans.
+`dump-facts --annotations` exports real adopted records in schema 3 with
+translation, provenance, and evidence status. The existing `declaration`
+field retains its source-definition meaning. Schema 1 and 2 output remains
+unchanged for callers that do not request annotations. If a native filename
+collision makes attachment ambiguous, annotation export fails with RY117
+instead of presenting an empty array as a complete record set.
 
 [#592]: https://github.com/sims1253/ry/issues/592
 [#593]: https://github.com/sims1253/ry/issues/593

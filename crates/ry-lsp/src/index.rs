@@ -99,6 +99,7 @@ fn parse_paths_with(
         let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
         let path_str = path.to_string_lossy().into_owned();
         let mut file = parse_with_worker_parser(&path_str, &decoded.text)?;
+        file.native_path = Some(path.clone());
         // Record where the on-disk bytes were not valid UTF-8, and
         // whether they started with a BOM, so checks over the on-disk
         // index flag files R's parser rejects (#376, #474).
@@ -132,7 +133,7 @@ fn parse_with_worker_parser(path: &str, source: &str) -> Option<SourceFile> {
                 }
             },
         };
-        match parser.parse(path, source) {
+        match ry_workspace::reports::parse_source(parser, path, source) {
             Ok(file) => Some(file),
             Err(error) => {
                 tracing::debug!(path, %error, "index parse failed; skipping file");

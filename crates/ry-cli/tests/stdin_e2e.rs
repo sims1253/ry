@@ -79,6 +79,87 @@ fn identical_buffer_matches_disk_with_package_and_neighbor() {
 }
 
 #[test]
+fn stdin_logical_filename_uses_the_same_path_rule_policy_as_disk() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(temp.path().join("R/sub")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"R/**\"]\nwarn = [\"RY040\"]\n",
+    )
+    .unwrap();
+    let source = b"\"a\" + 1L\n";
+    fs::write(temp.path().join("R/new.R"), source).unwrap();
+    let disk = run(
+        temp.path(),
+        &["R/new.R", "--output-format", "json"],
+        b"unused",
+    );
+    let overlay = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&disk), json(&overlay));
+    assert_eq!(json(&overlay)[0]["severity"], "warning");
+    fs::remove_file(temp.path().join("R/new.R")).unwrap();
+    let unsaved = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&unsaved)[0]["severity"], "warning");
+    let dotted_unsaved = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "R/sub/../new.R",
+            "--output-format",
+            "json",
+        ],
+        source,
+    );
+    assert_eq!(json(&dotted_unsaved)[0]["severity"], "warning");
+}
+
+#[test]
+fn unicode_unsaved_filename_keeps_its_path_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "warn = ['RY040']\n[[rule-overrides]]\npaths = ['mémoire.R']\nerror = ['RY040']\n",
+    )
+    .unwrap();
+    let output = run(
+        temp.path(),
+        &[
+            "-",
+            "--stdin-filename",
+            "mémoire.R",
+            "--output-format",
+            "json",
+        ],
+        b"\"text\" + 1L\n",
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let findings = json(&output);
+    assert_eq!(findings[0]["severity"], "error", "{findings}");
+    assert!(!temp.path().join("mémoire.R").exists());
+}
+
+#[test]
 fn overlay_replaces_stale_disk_copy_in_directory_scan() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir(temp.path().join("R")).unwrap();
@@ -106,6 +187,43 @@ fn overlay_replaces_stale_disk_copy_in_directory_scan() {
         fs::read(temp.path().join("R/main.R")).unwrap(),
         b"\"stale\" + 1L\n"
     );
+}
+
+#[test]
+fn typehint_adoption_uses_the_stdin_overlay_at_its_native_path() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("R")).unwrap();
+    fs::write(
+        temp.path().join("ry.toml"),
+        "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
+    )
+    .unwrap();
+    let disk = "f <- function(x) {\n #| x character\n x\n}\nf('ok')\n";
+    fs::write(temp.path().join("R/main.R"), disk).unwrap();
+    for path in ["R/main.R", "R/unsaved.R"] {
+        for (class, mismatches) in [("integer", 1), ("character", 0)] {
+            let source = format!("f <- function(x) {{\n #| x {class}\n x\n}}\nf('text')\n");
+            let output = run(
+                temp.path(),
+                &["-", "--stdin-filename", path, "--output-format", "json"],
+                source.as_bytes(),
+            );
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                codes(&output)
+                    .iter()
+                    .filter(|code| *code == "RY114")
+                    .count(),
+                mismatches,
+                "path: {path}, class: {class}"
+            );
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(temp.path().join("R/main.R")).unwrap(),
+        disk
+    );
+    assert!(!temp.path().join("R/unsaved.R").exists());
 }
 
 #[test]

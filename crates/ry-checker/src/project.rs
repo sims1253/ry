@@ -16,21 +16,26 @@
 //! single-file use cases (the corpus harness and the existing unit
 //! tests rely on this).
 
+use crate::declaration_check::DeclarationSet;
 use crate::trace::{
     ProjectTrace, TraceEventKind, TraceFileId, TraceFunctionId, TraceOptions, TraceReason,
     TraceRecorder,
 };
-use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
+use crate::{
+    CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
+};
 use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 struct FileEmission {
     index: usize,
     path: String,
     diagnostics: Vec<Diagnostic>,
+    declaration_findings: Vec<DeclarationFinding>,
     scopes: Vec<crate::ScopeRecord>,
     references: crate::ReferenceFacts,
     read_fns: HashSet<String>,
@@ -60,6 +65,10 @@ pub struct Project {
     /// Serves `check_incremental`, which reuses them for files outside
     /// the dirty set instead of re-checking those files.
     diagnostics: Vec<(String, Vec<Diagnostic>)>,
+    /// Opt-in authored records and their latest per-file findings. The
+    /// original records remain available to the adapter/export layer.
+    declarations: Arc<DeclarationSet>,
+    declaration_findings: Vec<(String, Vec<DeclarationFinding>)>,
     /// Packages declared in `ry.toml`'s `packages` key, unioned at
     /// `check()` time with packages attached via `library`/`require` in
     /// any file. Seeded into every pass-3 emitter
@@ -83,6 +92,9 @@ pub struct Project {
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Paths open in an editor. A box module at such a path that this
+    /// project does not check is opaque: its disk copy may be stale.
+    open_buffer_paths: HashSet<String>,
     /// Pass-1 output cached independently for each source path. Incremental
     /// checks invalidate only the entry updated through `update_file`.
     collected_files: HashMap<String, CollectedFile>,
@@ -130,6 +142,9 @@ pub struct Project {
     /// Previous pooled known_vars set, used to detect when non-function
     /// bindings changed across files (affects RY010 diagnostics).
     prev_known_vars: HashSet<String>,
+    /// A write-only file edit can change which captured declaration is
+    /// provable without changing function names, return slots, or known_vars.
+    prev_capture_rebounds: FxSet<(String, usize, usize)>,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
     /// Escaped operator names gate refinement and emission across the project.
@@ -182,6 +197,31 @@ impl Project {
     /// Construct an empty project with no files and empty tables.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the project's complete adopted/candidate record set. An
+    /// annotation-only edit changes this input even when R ASTs and inferred
+    /// returns are identical, so every file is re-emitted on the next warm
+    /// check. Reinstalling identical records is a no-op.
+    pub fn set_declaration_records(
+        &mut self,
+        records: Vec<ry_core::declarations::DeclarationRecord>,
+    ) {
+        if self.declarations.records() == records.as_slice() {
+            return;
+        }
+        self.declarations = Arc::new(DeclarationSet::new(records));
+        self.declaration_findings.clear();
+        self.dirty_paths
+            .extend(self.files.iter().map(|(path, _)| path.clone()));
+    }
+
+    pub fn declaration_records(&self) -> &[ry_core::declarations::DeclarationRecord] {
+        self.declarations.records()
+    }
+
+    pub fn declaration_findings(&self) -> &[(String, Vec<DeclarationFinding>)] {
+        &self.declaration_findings
     }
 
     /// Enable bounded execution telemetry on subsequent `check` and
@@ -316,6 +356,11 @@ impl Project {
         } else {
             self.files.push((path, file));
         }
+        // A module can supply exports to unchanged importers, which the
+        // function-name dependency graph does not describe.
+        if self.has_box_imports() {
+            self.mark_all_dirty();
+        }
     }
 
     /// Reinstall the project's files in the order given by `order`.
@@ -432,6 +477,22 @@ impl Project {
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
         if set_if_changed(&mut self.bare_loaded, loaded) {
             self.mark_all_dirty();
+        }
+    }
+
+    fn has_box_imports(&self) -> bool {
+        self.files
+            .iter()
+            .any(|(_, file)| crate::box_imports::has_box_use(file))
+    }
+
+    /// Record the paths open in an editor; see `open_buffer_paths`.
+    pub fn set_open_buffer_paths(&mut self, paths: HashSet<String>) {
+        if self.open_buffer_paths != paths {
+            self.open_buffer_paths = paths;
+            if self.has_box_imports() {
+                self.mark_all_dirty();
+            }
         }
     }
 
@@ -581,6 +642,7 @@ impl Project {
         self.refinement_dependencies.clear();
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
+        self.prev_capture_rebounds.clear();
         self.prev_callable_vars.clear();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
@@ -913,6 +975,24 @@ impl Project {
         &mut self,
         mut trace: Option<TraceRecorder>,
     ) -> Vec<(String, Vec<Diagnostic>)> {
+        // Box overlays are keyed by physical identity. A native path keeps
+        // a lossy display path from colliding with a distinct Unicode module;
+        // unsaved buffers use their logical path.
+        let mut box_sources = HashMap::new();
+        if self.has_box_imports() {
+            for path in &self.open_buffer_paths {
+                if let Some(identity) = crate::box_imports::path_identity(Path::new(path)) {
+                    box_sources.insert(identity, None);
+                }
+            }
+            for (path, file) in &self.files {
+                let path = file.native_path.as_deref().unwrap_or(Path::new(path));
+                if let Some(identity) = crate::box_imports::path_identity(path) {
+                    box_sources.insert(identity, Some(Arc::clone(file)));
+                }
+            }
+        }
+        let box_sources = Arc::new(box_sources);
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -931,6 +1011,7 @@ impl Project {
         );
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.set_box_sources(Arc::clone(&box_sources));
         refiner.refinement_dependencies = Some(HashMap::new());
 
         // Scoping: refine only functions whose return type can have
@@ -977,6 +1058,7 @@ impl Project {
             refiner = Checker::with_tables("__project_pass2__", table, slots);
             refiner.set_loaded(self.loaded.clone());
             refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+            refiner.set_box_sources(Arc::clone(&box_sources));
             refiner.refinement_dependencies = Some(HashMap::new());
             if let Some(trace) = &mut trace {
                 refiner.run_fixpoint_traced(trace);
@@ -1091,10 +1173,13 @@ impl Project {
             || self.prev_callable_vars != self.fn_table.callable_vars
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
+        let capture_rebounds_changed =
+            self.prev_capture_rebounds != self.fn_table.rebound_after_capture;
         let first_call = !self.has_prev_emit;
         let must_emit: HashSet<&str> = if first_call
             || loaded_changed
             || known_vars_changed
+            || capture_rebounds_changed
             || self.callable_names_changed()
         {
             if let Some(trace) = &mut trace {
@@ -1184,6 +1269,7 @@ impl Project {
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
         let bare_loaded = Arc::new(std::mem::take(&mut self.bare_loaded));
         let user_stubs = Arc::clone(&self.user_stubs);
+        let declarations = Arc::clone(&self.declarations);
 
         // Split files into those that need emission and those that can
         // reuse cached diagnostics.
@@ -1231,6 +1317,7 @@ impl Project {
                     Arc::clone(&fn_table),
                     Arc::clone(&return_slots),
                 );
+                emitter.set_shared_declarations(Arc::clone(&declarations));
                 emitter.disable_user_call_argument_validation();
                 emitter.set_shared_known_vars(Arc::clone(&package_known_vars));
                 emitter.set_shared_loaded(Arc::clone(&loaded));
@@ -1243,6 +1330,7 @@ impl Project {
                         .unwrap_or_else(|| loaded.as_ref().clone()),
                 );
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
+                emitter.set_box_sources(Arc::clone(&box_sources));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );
@@ -1278,6 +1366,7 @@ impl Project {
                     index: i,
                     path: path.clone(),
                     diagnostics: emitter.take_diagnostics(),
+                    declaration_findings: emitter.take_declaration_findings(),
                     scopes: records,
                     references,
                     read_fns,
@@ -1329,28 +1418,55 @@ impl Project {
                 .collect();
         }
 
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>)> = per_file
+        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>, Vec<DeclarationFinding>)> =
+            per_file
+                .into_iter()
+                .map(|emission| {
+                    (
+                        emission.index,
+                        (
+                            emission.path,
+                            emission.diagnostics,
+                            emission.declaration_findings,
+                        ),
+                    )
+                })
+                .collect();
+
+        let mut declaration_findings = Vec::with_capacity(self.files.len());
+        // Reuse warm results by path in one pass. Repeated linear scans here
+        // would make an unchanged project check quadratic in its file count.
+        let mut cached_diagnostics: HashMap<_, _> =
+            std::mem::take(&mut self.diagnostics).into_iter().collect();
+        let mut cached_findings: HashMap<_, _> = std::mem::take(&mut self.declaration_findings)
             .into_iter()
-            .map(|emission| (emission.index, (emission.path, emission.diagnostics)))
             .collect();
 
         for (i, (path, _)) in self.files.iter().enumerate() {
-            if let Some((p, d)) = emitted_map.remove(&i) {
+            if let Some((p, d, findings)) = emitted_map.remove(&i) {
+                declaration_findings.push((p.clone(), findings));
                 result.push((p, d));
-            } else if let Some(idx) = self.diagnostics.iter().position(|(dp, _)| dp == path) {
-                // Clone cached diagnostics (they're unchanged).
-                result.push(self.diagnostics[idx].clone());
+            } else if let Some(diagnostics) = cached_diagnostics.remove(path) {
+                // The unchanged file reuses its previous emissions.
+                result.push((path.clone(), diagnostics));
+                declaration_findings.push((
+                    path.clone(),
+                    cached_findings.remove(path).unwrap_or_default(),
+                ));
             } else {
                 // No cached diagnostics and not emitted (shouldn't happen
                 // after the first check, but handle gracefully).
                 result.push((path.clone(), Vec::new()));
+                declaration_findings.push((path.clone(), Vec::new()));
             }
         }
+        self.declaration_findings = declaration_findings;
 
         // Record state for the next incremental check.
         self.prev_loaded = Some(self.loaded.clone());
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
+        self.prev_capture_rebounds = self.fn_table.rebound_after_capture.clone();
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;

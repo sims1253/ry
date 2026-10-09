@@ -306,11 +306,32 @@ pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
     Some(RType::unknown().with_class(ClassVector::guard(class)))
 }
 
-/// Mark a stub-declared predicate or assertion target's class as guard
-/// evidence, like the built-in class tests.
+/// Mark a stub-declared predicate or assertion target's classes as guard
+/// evidence, like the built-in class tests. Union members and columns carry
+/// their own classes.
 pub(crate) fn guard_target(mut target: RType) -> RType {
     target.class.guarded = target.class.has_known_class();
+    if let Some(members) = &target.members {
+        target.members = Some(members.iter().cloned().map(guard_target).collect());
+    }
+    if let Some(schema) = &target.columns {
+        let mut schema = ColumnSchema::clone(schema);
+        for (_, column) in &mut schema.columns {
+            *column = guard_target(column.clone());
+        }
+        target.columns = Some(Arc::new(schema));
+    }
     target
+}
+
+/// A method selected from guard evidence need not be the one R dispatches
+/// to, so the classes of its result are guard evidence as well.
+pub(crate) fn dispatch_result(guarded_receiver: bool, result: RType) -> RType {
+    if guarded_receiver {
+        guard_target(result)
+    } else {
+        result
+    }
 }
 
 /// The type a passing guard installs. A guard filters paths without
@@ -601,7 +622,7 @@ fn apply_single_narrowing_branch<'a>(
                     scope.unreachable = true;
                 } else {
                     let mut scalar = match target {
-                        Some(target) => target.clone(),
+                        Some(target) => guarded_type(scope, var, &existing, target),
                         None if existing.mode == Mode::Null => RType::unknown(),
                         None => existing,
                     };

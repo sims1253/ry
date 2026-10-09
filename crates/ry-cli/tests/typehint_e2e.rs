@@ -118,6 +118,98 @@ fn class_guards_do_not_establish_or_erase_an_explicit_class() {
             "value: {value}, guard: {guard}, class: {class}"
         );
     }
+
+    // A rejecting `||` continuation keeps the known class vector too.
+    fs::write(
+        temp.path().join("R/main.R"),
+        "g <- function() {\n x <- structure(1L, class = c('foo', 'bar'))\n if (!inherits(x, 'foo') || length(x) != 1) stop('bad')\n f <- function(y) {\n  #| y foo\n  y\n }\n f(x)\n}\ng()\n",
+    )
+    .unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 1);
+}
+
+#[test]
+fn methods_selected_from_class_tests_do_not_return_exact_classes() {
+    let temp = project(Some(ADOPT));
+    let fixture = include_str!("../../ry-checker/testdata/oracle/typehint_guarded_dispatch.R");
+    fs::write(temp.path().join("R/main.R"), fixture).unwrap();
+    assert_eq!(count(temp.path(), "RY114"), 0);
+
+    // An exact receiver class still selects a method with a known result.
+    for call in ["test(x)", "x + 1L"] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "{fixture}known <- function() {{\n x <- structure(1L, class = 'foo')\n if (TRUE) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f({call})\n }}\n}}\nknown()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(count(temp.path(), "RY114"), 1, "{call}");
+    }
+}
+
+const GUARD_STUBS: &str = r#"{
+  "schema_version": "2",
+  "package": "guards",
+  "version": "test",
+  "functions": {
+    "is_bar": {
+      "params": [{"name": "x", "required": true}],
+      "return": {"mode": "logical", "length": "1", "na": false},
+      "predicate": {"subject_param": "x", "target": {"mode": "union", "members": ["integer", "double"], "class": ["bar"], "length": "1"}}
+    },
+    "has_a": {
+      "params": [{"name": "x", "required": true}],
+      "return": {"mode": "logical", "length": "1", "na": false},
+      "predicate": {"subject_param": "x", "target": {"mode": "list", "length": "unknown", "columns": {"a": {"mode": "integer", "length": "1", "class": ["bar"]}}}}
+    },
+    "check_bar": {
+      "params": ["x", "arg", "call"],
+      "return": {"mode": "null", "length": "0", "na": false},
+      "assertion": {
+        "subject_param": "x",
+        "target": {"mode": "union", "members": ["integer", "double"], "class": ["bar"], "length": "1"},
+        "provenance": {"kind": "standalone_types_check", "fingerprint_params": ["arg", "call"]}
+      }
+    }
+  }
+}"#;
+
+#[test]
+fn stub_class_tests_mark_union_member_and_column_classes() {
+    let temp = project(Some(&format!("typeshed = ['stubs']\n{ADOPT}")));
+    fs::create_dir(temp.path().join("stubs")).unwrap();
+    fs::write(temp.path().join("stubs/guards.json"), GUARD_STUBS).unwrap();
+    for (setup, guard, actual, mismatches) in [
+        ("", "if (guards::is_bar(x))", "x", 0),
+        (
+            "x <- structure(1L, class = 'bar')",
+            "if (guards::is_bar(x))",
+            "x",
+            1,
+        ),
+        ("", "if (guards::has_a(x))", "x$a", 0),
+        (
+            "x <- list(a = structure(1L, class = 'bar'))",
+            "if (guards::has_a(x))",
+            "x$a",
+            1,
+        ),
+        ("guards::check_bar(x)", "if (TRUE)", "x", 0),
+    ] {
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "g <- function(x) {{\n {setup}\n {guard} {{\n  f <- function(y) {{\n   #| y baz\n   y\n  }}\n  f({actual})\n }}\n}}\ng()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            count(temp.path(), "RY114"),
+            mismatches,
+            "setup: {setup}, guard: {guard}"
+        );
+    }
 }
 
 #[test]

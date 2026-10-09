@@ -1138,7 +1138,7 @@ pub struct Checker {
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
     /// Editor/project buffers take precedence over the disk copy of a
     /// relative box module. Keys use the existing ancestor's identity.
-    box_sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>,
+    box_sources: Arc<box_imports::BoxSources>,
     box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
     box_package_cache: HashMap<(PathBuf, String), Arc<box_imports::BoxInventory>>,
     box_depth: u8,
@@ -1810,7 +1810,7 @@ impl Checker {
         self.user_stubs = stubs;
     }
 
-    pub(crate) fn set_box_sources(&mut self, sources: Arc<HashMap<PathBuf, Arc<SourceFile>>>) {
+    pub(crate) fn set_box_sources(&mut self, sources: Arc<box_imports::BoxSources>) {
         self.box_sources = sources;
         self.box_module_cache.clear();
         self.box_package_cache.clear();

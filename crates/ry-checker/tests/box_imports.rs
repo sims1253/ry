@@ -946,3 +946,136 @@ fn dotted_module_basename_keeps_its_full_name_before_suffix() {
         fs::remove_file(root.path().join(module)).unwrap();
     }
 }
+
+#[test]
+fn opaque_attachments_do_not_borrow_base_signatures() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "impl.r",
+        "assign('paste0', function(...) 1L)\nbox::export(paste0)\n",
+    );
+    for source in [
+        "box::use(./impl[paste0])\npaste0('x') + 1L\n",
+        "box::use(mod/impl[paste0])\npaste0('x') + 1L\n",
+    ] {
+        let diagnostics = codes_for(root.path(), source);
+        assert!(!has(&diagnostics, "RY040"), "{source}: {diagnostics:#?}");
+    }
+    let control = codes_for(root.path(), "paste0('x') + 1L\n");
+    assert!(has(&control, "RY040"));
+}
+
+#[test]
+fn branch_joins_keep_box_provenance_only_when_paths_agree() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "empty.r", "box::export()\n");
+    write(root.path(), "text.r", "foo <- function() 'x'\n");
+    write(root.path(), "int.r", "foo <- function() 1L\n");
+    let branches = |then: &str, else_: &str| {
+        format!("if (runif(1) > 0.5) {{\n  {then}\n}} else {{\n  {else_}\n}}\n")
+    };
+    let both = branches("box::use(m = ./int)", "box::use(m = ./int)");
+    let diagnostics = codes_for(
+        root.path(),
+        &format!("box::use(m = ./empty)\n{both}m$foo()\n"),
+    );
+    assert!(!has(&diagnostics, "RY118"), "{diagnostics:#?}");
+    let both = branches("box::use(./int[foo])", "box::use(./int[foo])");
+    let diagnostics = codes_for(
+        root.path(),
+        &format!("box::use(./text[foo])\n{both}foo() + 1L\n"),
+    );
+    assert!(!has(&diagnostics, "RY040"), "{diagnostics:#?}");
+    let either = branches("box::use(./int[foo])", "box::use(./text[foo])");
+    let diagnostics = codes_for(root.path(), &format!("{either}foo() + 1L\n"));
+    assert!(!has(&diagnostics, "RY040"), "{diagnostics:#?}");
+}
+
+#[test]
+fn attachments_do_not_hide_own_bindings() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "text.r", "foo <- 'x'\nfilter <- 'x'\n");
+    for source in [
+        "foo <- 1L\nbox::use(./text[foo])\nfoo + 1L\n",
+        "foo <- 1L\nbox::use(./text[...])\nfoo + 1L\n",
+        "filter <- 1L\nbox::use(dplyr[filter])\nfilter + 1L\n",
+    ] {
+        let diagnostics = codes_for(root.path(), source);
+        assert!(diagnostics.is_empty(), "{source}: {diagnostics:#?}");
+    }
+    // A function lookup skips the own value and may find the attachment.
+    write(root.path(), "fun.r", "foo <- function() 'x'\n");
+    let diagnostics = codes_for(root.path(), "foo <- 1L\nbox::use(./fun[foo])\nfoo() + 1L\n");
+    assert!(!has(&diagnostics, "RY040"), "{diagnostics:#?}");
+    let control = codes_for(root.path(), "box::use(./text[foo])\nfoo + 1L\n");
+    assert!(has(&control, "RY040"));
+}
+
+#[test]
+fn open_buffers_outside_the_project_hide_their_disk_modules() {
+    let root = tempfile::tempdir().unwrap();
+    let module = root.path().join("mod.r");
+    let caller = root.path().join("run.R");
+    fs::write(&module, "foo <- 1L\n").unwrap();
+    for open in [false, true] {
+        let mut project = Project::new();
+        add(
+            &mut project,
+            &caller,
+            "box::use(./mod[foo, missing])\nfoo\n",
+        );
+        if open {
+            project.set_open_buffer_paths([module.to_string_lossy().into_owned()].into());
+        }
+        let result = project.check();
+        assert_eq!(
+            result[0].1.iter().any(|d| d.code == "RY118"),
+            !open,
+            "open={open}: {:#?}",
+            result[0].1
+        );
+    }
+}
+
+#[test]
+fn tags_that_name_nothing_keep_legacy_exports() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "mod.r", "#' @export\nbox::use()\nfoo <- 1L\n");
+    let diagnostics = codes_for(root.path(), "box::use(./mod[foo])\n");
+    assert!(!has(&diagnostics, "RY118"), "{diagnostics:#?}");
+    let diagnostics = codes_for(root.path(), "box::use(./mod[absent])\n");
+    assert_eq!(
+        messages(&diagnostics, "RY118"),
+        ["box module does not export `absent`"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_modules_resolve_imports_beside_their_target() {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("lib")).unwrap();
+    let target = root.path().join("lib/mod.r");
+    let module_source = "box::use(./dep[f])\nbox::export(f)\n";
+    fs::write(&target, module_source).unwrap();
+    write(root.path(), "lib/dep.r", "f <- function() 1L\n");
+    write(root.path(), "dep.r", "f <- function() 'wrong'\n");
+    let link = root.path().join("link.r");
+    symlink(&target, &link).unwrap();
+    let source = "box::use(./link[f])\nf() + 1L\n";
+    let diagnostics = codes_for(root.path(), source);
+    assert!(!has(&diagnostics, "RY040"), "disk: {diagnostics:#?}");
+    // An overlay reached through the link resolves the same way.
+    let mut project = Project::new();
+    add(&mut project, &link, module_source);
+    add(&mut project, &root.path().join("run.R"), source);
+    let result = project.check();
+    assert!(
+        result[1].1.iter().all(|d| d.code != "RY040"),
+        "overlay: {:#?}",
+        result[1].1
+    );
+}

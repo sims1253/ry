@@ -219,6 +219,24 @@ impl BranchDelta {
         )
     }
 
+    pub(crate) fn box_object<'a>(
+        &'a self,
+        base: &'a Scope,
+        name: &str,
+    ) -> Option<&'a box_imports::BoxObject> {
+        self.changed.get(name).map_or_else(
+            || base.box_objects.get(name),
+            |state| state.box_object.as_ref(),
+        )
+    }
+
+    pub(crate) fn box_object_names(&self) -> impl Iterator<Item = &str> {
+        self.changed
+            .iter()
+            .filter(|(_, state)| state.box_object.is_some())
+            .map(|(name, _)| name.as_str())
+    }
+
     pub fn binding<'a>(
         &'a self,
         base: &'a Scope,

@@ -2,6 +2,7 @@
 //! loads a module or a package: only parsed project buffers, local module
 //! source, installed NAMESPACE declarations, and typeshed are consulted.
 
+use crate::scope_journal::BranchDelta;
 use crate::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -14,11 +15,20 @@ const MAX_MODULE_DEPTH: u8 = 4;
 /// Function-alias prefix of a callable imported from a package.
 const IMPORT_ALIAS: &str = "__ry_box_import::";
 
+/// Project buffers by physical identity. `None` marks an open buffer that
+/// this check does not read, whose disk copy may be stale.
+pub(crate) type BoxSources = HashMap<PathBuf, Option<Arc<SourceFile>>>;
+
+/// Box provenance of a binding, stored beside its value type.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum BoxObject {
     Package(String),
     Module(Arc<BoxInventory>),
-    ModuleFunction(Arc<BoxFunction>),
+    /// A selected or wildcard attachment, with its call target if known.
+    Attached(Option<BoxCallable>),
+    /// A binding whose call target is unknown: an own non-function value
+    /// hiding an attachment, or provenance that differs between branches.
+    OpaqueCall,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -27,11 +37,22 @@ pub(crate) struct BoxFunction {
     return_type: RType,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum BoxCallable {
+    Function(Arc<BoxFunction>),
+    /// A package function, by its qualified `pkg::name`.
+    Package(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BoxExport {
+    pub(crate) value: RType,
+    pub(crate) callable: Option<BoxCallable>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct BoxInventory {
-    pub(crate) exports: BTreeMap<String, RType>,
-    pub(crate) functions: BTreeMap<String, Arc<BoxFunction>>,
-    pub(crate) package_functions: BTreeMap<String, String>,
+    pub(crate) exports: BTreeMap<String, BoxExport>,
     /// False if a dynamic export declaration or unmodeled source effect may
     /// add names; absence then cannot support RY118.
     pub(crate) complete: bool,
@@ -500,7 +521,8 @@ fn declared_exports(
     if all_calls > 0 {
         return (names, complete && all_calls == direct_calls);
     }
-    if roxygen.tagged {
+    // box 1.2.3 falls back to legacy exports when tags name nothing.
+    if roxygen.tagged && !(roxygen.complete && roxygen.names.is_empty()) {
         // An aliased or computed box::export() can extend a tagged module's
         // inventory during load. Only an effect-free body proves absence.
         return (roxygen.names, complete && roxygen.complete);
@@ -516,29 +538,95 @@ fn declared_exports(
     (assigned, complete)
 }
 
-fn bind_export(
-    scope: &mut Scope,
-    bound: &str,
-    original: &str,
-    object: Option<&BoxObject>,
-    value: RType,
-) {
-    let is_function = value.mode == Mode::Function;
-    scope.insert(bound.to_string(), value);
-    match object {
-        Some(BoxObject::Module(module)) => {
-            if let Some(function) = module.functions.get(original) {
-                scope.set_box_object(bound, BoxObject::ModuleFunction(Arc::clone(function)));
-            }
-            if let Some(target) = module.package_functions.get(original) {
-                scope.set_function_alias(bound, format!("{IMPORT_ALIAS}{target}"));
-            }
+/// Bind a selected or wildcard attachment. box attaches it in a parent of
+/// the caller's environment, so an existing own binding stays visible; a
+/// call skips an own non-function value and may reach the attachment.
+/// Inside a function an existing binding may instead belong to an
+/// enclosing frame, which the attachment shadows.
+fn bind_attachment(scope: &mut Scope, name: &str, export: Option<&BoxExport>, top_level: bool) {
+    if let Some(own) = scope.get(name)
+        && !matches!(scope.box_objects.get(name), Some(BoxObject::Attached(_)))
+    {
+        let own_function = own.mode == Mode::Function;
+        if !top_level {
+            scope.insert(name.to_string(), RType::unknown());
         }
-        Some(BoxObject::Package(package)) if is_function => {
-            scope.set_function_alias(bound, format!("{IMPORT_ALIAS}{package}::{original}"));
+        if !top_level || !own_function {
+            scope.set_box_object(name, BoxObject::OpaqueCall);
         }
-        _ => {}
+        return;
     }
+    let value = export.map_or_else(RType::unknown, |export| export.value.clone());
+    let callable = export.and_then(|export| export.callable.clone());
+    scope.insert(name.to_string(), value);
+    scope.set_box_attachment(name, callable);
+}
+
+impl Scope {
+    fn set_box_attachment(&mut self, name: &str, callable: Option<BoxCallable>) {
+        // Other call stages see a package function through its alias.
+        if let Some(BoxCallable::Package(target)) = &callable {
+            self.set_function_alias(name, format!("{IMPORT_ALIAS}{target}"));
+        }
+        self.set_box_object(name, BoxObject::Attached(callable));
+    }
+
+    /// Install the provenance from `join_box_provenance` after a branch
+    /// merge. Disagreeing paths leave a binding whose calls are opaque.
+    pub(crate) fn apply_box_provenance(&mut self, joined: Vec<(String, Option<BoxObject>)>) {
+        for (name, object) in joined {
+            if self.box_objects.get(&name) == object.as_ref() {
+                continue;
+            }
+            self.journal_binding(&name);
+            if self
+                .function_aliases
+                .get(&name)
+                .is_some_and(|alias| alias.starts_with(IMPORT_ALIAS))
+            {
+                self.function_aliases.remove(&name);
+            }
+            match object {
+                Some(BoxObject::Attached(callable)) => self.set_box_attachment(&name, callable),
+                Some(object) => {
+                    self.box_objects.insert(name, object);
+                }
+                None => {
+                    self.box_objects.remove(&name);
+                }
+            }
+        }
+    }
+}
+
+/// Branch joins compare binding types, which cannot tell two opaque module
+/// objects or callables apart. For each name with a box object on some
+/// path, return the object every reaching path agrees on, or `OpaqueCall`
+/// when they differ. A `None` path is the pre-branch scope.
+pub(crate) fn join_box_provenance(
+    scope: &Scope,
+    paths: &[Option<&BranchDelta>],
+) -> Vec<(String, Option<BoxObject>)> {
+    let mut names: HashSet<&str> = scope.box_objects.keys().map(String::as_str).collect();
+    for delta in paths.iter().flatten() {
+        names.extend(delta.box_object_names());
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let mut objects = paths.iter().map(|path| match path {
+                Some(delta) => delta.box_object(scope, name),
+                None => scope.box_objects.get(name),
+            });
+            let first = objects.next()?;
+            let joined = if objects.all(|other| other == first) {
+                first.cloned()
+            } else {
+                Some(BoxObject::OpaqueCall)
+            };
+            Some((name.to_string(), joined))
+        })
+        .collect()
 }
 
 /// `object$member` on a box object, with the member's decoded name.
@@ -555,14 +643,20 @@ pub(crate) fn box_member<'a>(
     else {
         return None;
     };
-    let object = scope.box_objects.get(ident_name(base)?)?.clone();
+    let object = match scope.box_objects.get(ident_name(base)?)? {
+        object @ (BoxObject::Package(_)
+        | BoxObject::Module(_)
+        | BoxObject::Attached(Some(BoxCallable::Function(_)))) => object.clone(),
+        // Other attachments keep their value's ordinary `$` inference.
+        _ => return None,
+    };
     let member = binding_name_token(args.first()?.name.as_deref()?)?;
     Some((base, object, member))
 }
 
 /// Read and parse an existing module file. The read is bounded as well as
 /// the metadata precheck: the file can grow between those operations.
-fn read_module(path: &Path) -> Option<SourceFile> {
+fn read_module(path: &Path, identity: &Path) -> Option<SourceFile> {
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
         return None;
@@ -579,7 +673,7 @@ fn read_module(path: &Path) -> Option<SourceFile> {
         .parse(&path.to_string_lossy(), &decoded.text)
         .ok()?;
     decoded.attach_boundary_findings(&mut file);
-    file.native_path = Some(path.to_path_buf());
+    file.native_path = Some(identity.to_path_buf());
     Some(file)
 }
 
@@ -610,9 +704,17 @@ impl Checker {
                 exports.entry(name).or_insert_with(RType::unknown);
             }
         }
+        let exports = exports
+            .into_iter()
+            .map(|(name, value)| {
+                let callable = (value.mode == Mode::Function)
+                    .then(|| BoxCallable::Package(format!("{package}::{name}")));
+                (name, BoxExport { value, callable })
+            })
+            .collect();
         let inventory = Arc::new(BoxInventory {
             exports,
-            ..BoxInventory::default()
+            complete: false,
         });
         self.box_package_cache.insert(key, Arc::clone(&inventory));
         inventory
@@ -627,13 +729,15 @@ impl Checker {
             if let Some(inventory) = self.box_module_cache.get(&identity) {
                 return Some(Arc::clone(inventory));
             }
-            let file = match self.box_sources.get(&identity) {
-                Some(source) => Arc::clone(source),
+            let mut file = match self.box_sources.get(&identity) {
+                Some(Some(source)) => Arc::clone(source),
+                // An open buffer outside this check: its disk copy may be stale.
+                Some(None) => return None,
                 // Only an absent candidate permits the next spelling. An
                 // existing but unsupported preferred `.r` is the module box
                 // selects; `.R` would describe a different module.
                 None => match std::fs::symlink_metadata(&candidate) {
-                    Ok(_) => Arc::new(read_module(&candidate)?),
+                    Ok(_) => Arc::new(read_module(&candidate, &identity)?),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(_) => return None,
                 },
@@ -647,6 +751,13 @@ impl Checker {
                 || !file.syntax_violations.is_empty()
             {
                 return None;
+            }
+            // box loads a module from its canonical path, so its own
+            // relative imports resolve beside the symlink target.
+            if file.native_path.as_deref() != Some(identity.as_path()) {
+                let mut canonical = SourceFile::clone(&file);
+                canonical.native_path = Some(identity.clone());
+                file = Arc::new(canonical);
             }
             let inventory = Arc::new(self.analyze_box_module(&file));
             self.box_module_cache
@@ -684,37 +795,28 @@ impl Checker {
             // at module load may replace it.
             let imported = !unmodeled_load_effects && !written;
             let alias = scope.function_alias(&name);
-            if imported
-                && let Some(target) = alias.and_then(|alias| alias.strip_prefix(IMPORT_ALIAS))
-            {
-                inventory
-                    .package_functions
-                    .insert(name.clone(), target.to_string());
-            }
-            if imported
-                && let Some(BoxObject::ModuleFunction(function)) = scope.box_objects.get(&name)
-            {
-                inventory
-                    .functions
-                    .insert(name.clone(), Arc::clone(function));
-            } else if alias.is_none()
-                && stable_functions.contains(&name)
-                && value.is_some_and(|value| value.mode == Mode::Function)
-                && let Some(function) = nested.fn_table.fns.get(&name)
-            {
-                // Refinement starts from formals, without the module's
-                // lexical imports. It can borrow a base signature for a
-                // replaced name, so retain formals with an unknown return.
-                let function = BoxFunction {
-                    params: function.params.clone(),
-                    return_type: if module_imports {
-                        RType::unknown()
-                    } else {
-                        nested.return_slots.get(function.return_slot)
-                    },
-                };
-                inventory.functions.insert(name.clone(), Arc::new(function));
-            }
+            let callable = match (scope.box_objects.get(&name), alias) {
+                (Some(BoxObject::Attached(callable)), _) if imported => callable.clone(),
+                (_, None)
+                    if stable_functions.contains(&name)
+                        && value.is_some_and(|value| value.mode == Mode::Function) =>
+                {
+                    // Refinement starts from formals, without the module's
+                    // lexical imports. It can borrow a base signature for a
+                    // replaced name, so retain formals with an unknown return.
+                    nested.fn_table.fns.get(&name).map(|function| {
+                        BoxCallable::Function(Arc::new(BoxFunction {
+                            params: function.params.clone(),
+                            return_type: if module_imports {
+                                RType::unknown()
+                            } else {
+                                nested.return_slots.get(function.return_slot)
+                            },
+                        }))
+                    })
+                }
+                _ => None,
+            };
             let stale_callable = value.is_some_and(|value| value.mode == Mode::Function)
                 && written
                 && !stable_functions.contains(&name);
@@ -726,7 +828,9 @@ impl Checker {
             } else {
                 value.cloned().unwrap_or_else(RType::unknown)
             };
-            inventory.exports.insert(name, value);
+            inventory
+                .exports
+                .insert(name, BoxExport { value, callable });
         }
         inventory
     }
@@ -762,12 +866,13 @@ impl Checker {
                     scope.set_box_object(object_name, object.clone());
                 }
             }
+            let top_level = self.enclosing_formals.is_empty();
             let selections = import.selection.unwrap_or_default();
             for selection in &selections {
-                let value = inventory
+                let export = inventory
                     .as_ref()
                     .and_then(|inventory| inventory.exports.get(&selection.original));
-                if value.is_none()
+                if export.is_none()
                     && inventory
                         .as_ref()
                         .is_some_and(|inventory| inventory.complete)
@@ -779,23 +884,16 @@ impl Checker {
                         format!("box module does not export `{}`", selection.original),
                     );
                 }
-                let value = value.cloned().unwrap_or_else(RType::unknown);
-                bind_export(
-                    scope,
-                    &selection.bound,
-                    &selection.original,
-                    object.as_ref(),
-                    value,
-                );
+                bind_attachment(scope, &selection.bound, export, top_level);
             }
             if import.wildcard {
                 if let Some(inventory) = &inventory {
                     // Renaming an export removes its original spelling.
-                    for (name, value) in &inventory.exports {
+                    for (name, export) in &inventory.exports {
                         if !selections.iter().any(|selection| {
                             selection.original == *name && selection.bound != *name
                         }) {
-                            bind_export(scope, name, name, object.as_ref(), value.clone());
+                            bind_attachment(scope, name, Some(export), top_level);
                         }
                     }
                 }
@@ -817,10 +915,10 @@ impl Checker {
         let inventory = match object {
             BoxObject::Package(package) => self.box_package_inventory(package),
             BoxObject::Module(inventory) => Arc::clone(inventory),
-            BoxObject::ModuleFunction(_) => return RType::unknown(),
+            BoxObject::Attached(_) | BoxObject::OpaqueCall => return RType::unknown(),
         };
-        if let Some(value) = inventory.exports.get(member) {
-            return value.clone();
+        if let Some(export) = inventory.exports.get(member) {
+            return export.value.clone();
         }
         if inventory.complete {
             self.emit(
@@ -843,10 +941,6 @@ impl Checker {
         span: Span,
         environment_known_before_call: bool,
     ) -> Option<RType> {
-        let qualified_call = |checker: &mut Self, scope: &mut Scope, name: String| {
-            let callee = Expr::Ident { name, span };
-            checker.infer_call_inner(&callee, args, scope, span, environment_known_before_call)
-        };
         if let Some((base, object, member)) = box_member(func, scope) {
             match object {
                 BoxObject::Package(package) => {
@@ -856,7 +950,15 @@ impl Checker {
                         .exports
                         .contains_key(&member)
                     {
-                        return Some(qualified_call(self, scope, format!("{package}::{member}")));
+                        let callable = BoxCallable::Package(format!("{package}::{member}"));
+                        return Some(self.infer_box_callable(
+                            &member,
+                            &callable,
+                            args,
+                            scope,
+                            span,
+                            environment_known_before_call,
+                        ));
                     }
                     self.infer_args_for_diagnostics(args, scope);
                     return Some(RType::unknown());
@@ -864,13 +966,19 @@ impl Checker {
                 BoxObject::Module(inventory) => {
                     // Infer the member itself for its RY118.
                     let member_type = self.infer(func, scope);
-                    if let Some(function) = inventory.functions.get(&member) {
-                        return Some(
-                            self.infer_box_function_call(&member, function, args, scope, span),
-                        );
-                    }
-                    if let Some(target) = inventory.package_functions.get(&member) {
-                        return Some(qualified_call(self, scope, target.clone()));
+                    let callable = inventory
+                        .exports
+                        .get(&member)
+                        .and_then(|export| export.callable.clone());
+                    if let Some(callable) = callable {
+                        return Some(self.infer_box_callable(
+                            &member,
+                            &callable,
+                            args,
+                            scope,
+                            span,
+                            environment_known_before_call,
+                        ));
                     }
                     self.infer_args_for_diagnostics(args, scope);
                     return Some(
@@ -880,22 +988,59 @@ impl Checker {
                             .unwrap_or_else(RType::unknown),
                     );
                 }
-                BoxObject::ModuleFunction(_) => {}
+                BoxObject::Attached(_) | BoxObject::OpaqueCall => {}
             }
         }
         let name = binding_name(func)?;
-        if let Some(BoxObject::ModuleFunction(function)) = scope.box_objects.get(name).cloned() {
-            return Some(self.infer_box_function_call(name, &function, args, scope, span));
+        let opaque = match scope.box_objects.get(name).cloned() {
+            Some(BoxObject::Attached(Some(callable))) => {
+                return Some(self.infer_box_callable(
+                    name,
+                    &callable,
+                    args,
+                    scope,
+                    span,
+                    environment_known_before_call,
+                ));
+            }
+            Some(BoxObject::OpaqueCall) => true,
+            // An opaque attachment may be a function, so base or project
+            // signatures of the same name do not describe the call.
+            Some(BoxObject::Attached(None)) => scope
+                .get(name)
+                .is_some_and(|value| value.mode == Mode::Opaque),
+            _ => false,
+        };
+        if opaque {
+            self.infer_args_for_diagnostics(args, scope);
+            return Some(RType::unknown());
         }
         match name {
             "box::use" => Some(self.infer_box_use(args, scope)),
             "box::export" => Some(RType::new(Mode::Null, Length::Zero)),
-            _ => {
-                let target = scope
-                    .function_alias(name)?
-                    .strip_prefix(IMPORT_ALIAS)?
-                    .to_string();
-                Some(qualified_call(self, scope, target))
+            _ => None,
+        }
+    }
+
+    fn infer_box_callable(
+        &mut self,
+        name: &str,
+        callable: &BoxCallable,
+        args: &[Arg],
+        scope: &mut Scope,
+        span: Span,
+        environment_known_before_call: bool,
+    ) -> RType {
+        match callable {
+            BoxCallable::Function(function) => {
+                self.infer_box_function_call(name, function, args, scope, span)
+            }
+            BoxCallable::Package(target) => {
+                let callee = Expr::Ident {
+                    name: target.clone(),
+                    span,
+                };
+                self.infer_call_inner(&callee, args, scope, span, environment_known_before_call)
             }
         }
     }

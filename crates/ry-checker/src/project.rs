@@ -92,6 +92,9 @@ pub struct Project {
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Paths open in an editor. A box module at such a path that this
+    /// project does not check is opaque: its disk copy may be stale.
+    open_buffer_paths: HashSet<String>,
     /// Pass-1 output cached independently for each source path. Incremental
     /// checks invalidate only the entry updated through `update_file`.
     collected_files: HashMap<String, CollectedFile>,
@@ -481,6 +484,16 @@ impl Project {
         self.files
             .iter()
             .any(|(_, file)| crate::box_imports::has_box_use(file))
+    }
+
+    /// Record the paths open in an editor; see `open_buffer_paths`.
+    pub fn set_open_buffer_paths(&mut self, paths: HashSet<String>) {
+        if self.open_buffer_paths != paths {
+            self.open_buffer_paths = paths;
+            if self.has_box_imports() {
+                self.mark_all_dirty();
+            }
+        }
     }
 
     /// Mark every file dirty so the next incremental check re-emits all.
@@ -967,10 +980,15 @@ impl Project {
         // unsaved buffers use their logical path.
         let mut box_sources = HashMap::new();
         if self.has_box_imports() {
+            for path in &self.open_buffer_paths {
+                if let Some(identity) = crate::box_imports::path_identity(Path::new(path)) {
+                    box_sources.insert(identity, None);
+                }
+            }
             for (path, file) in &self.files {
                 let path = file.native_path.as_deref().unwrap_or(Path::new(path));
                 if let Some(identity) = crate::box_imports::path_identity(path) {
-                    box_sources.insert(identity, Arc::clone(file));
+                    box_sources.insert(identity, Some(Arc::clone(file)));
                 }
             }
         }

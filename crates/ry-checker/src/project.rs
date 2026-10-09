@@ -20,7 +20,7 @@ use crate::trace::{
     ProjectTrace, TraceEventKind, TraceFileId, TraceFunctionId, TraceOptions, TraceReason,
     TraceRecorder,
 };
-use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, FxMap, FxSet, ReturnSlots};
+use crate::{CallerVisibleSignature, Checker, Diagnostic, FnTable, ReturnSlots};
 use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
@@ -132,9 +132,6 @@ pub struct Project {
     prev_known_vars: HashSet<String>,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
-    /// Alias-value changes can alter caller binding effects without changing
-    /// any function's return type or signature.
-    prev_caller_binding_aliases: FxMap<String, FxSet<String>>,
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
     prev_escaped_slot_names: bool,
@@ -585,7 +582,6 @@ impl Project {
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.prev_callable_vars.clear();
-        self.prev_caller_binding_aliases.clear();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
@@ -749,7 +745,6 @@ impl Project {
         // no observed dependency exists for that earlier lookup miss.
         if self.callable_names_changed()
             || self.prev_callable_vars != self.fn_table.callable_vars
-            || self.prev_caller_binding_aliases != self.fn_table.caller_binding_aliases
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
         {
@@ -918,7 +913,6 @@ impl Project {
         &mut self,
         mut trace: Option<TraceRecorder>,
     ) -> Vec<(String, Vec<Diagnostic>)> {
-        self.fn_table.propagate_caller_binding_installers();
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -978,7 +972,6 @@ impl Project {
                 table.append_collected(&collected.fn_table, &mut slots, &collected.return_slots);
             }
             table.known_vars = self.pooled_known_vars();
-            table.propagate_caller_binding_installers();
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
             refiner = Checker::with_tables("__project_pass2__", table, slots);
@@ -1096,7 +1089,6 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
             || self.prev_callable_vars != self.fn_table.callable_vars
-            || self.prev_caller_binding_aliases != self.fn_table.caller_binding_aliases
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
         let first_call = !self.has_prev_emit;
@@ -1360,7 +1352,6 @@ impl Project {
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
-        self.prev_caller_binding_aliases = self.fn_table.caller_binding_aliases.clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
         // Save refined return types keyed by function name for the next
@@ -1416,95 +1407,6 @@ mod tests {
         assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
         actual
-    }
-
-    #[test]
-    fn caller_binding_summary_retracts_after_helper_edit() {
-        let mut project = Project::new();
-        project.add_file(
-            "helper.R".into(),
-            parse_file(
-                "helper.R",
-                "install <- function(env) makeActiveBinding('x', function() c(1L, 2L), env)",
-            ),
-        );
-        project.add_file(
-            "wrapper.R".into(),
-            parse_file(
-                "wrapper.R",
-                "saved_install <- install\nbridge <- function(target) { local_alias <- saved_install; local_alias(target) }",
-            ),
-        );
-        project.add_file(
-            "consumer.R".into(),
-            parse_file(
-                "consumer.R",
-                "saved <- bridge\nf <- function(x = NULL) { saved(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }",
-            ),
-        );
-        let initial = project.check();
-        assert!(
-            initial
-                .iter()
-                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
-            "caller-binding helper must revoke the scalar proof: {initial:?}"
-        );
-        project.update_file(
-            "helper.R".into(),
-            parse_file("helper.R", "install <- function(env) invisible(NULL)").into(),
-        );
-        let updated = assert_matches_cold(&mut project);
-        assert!(
-            updated
-                .iter()
-                .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
-            "removing the helper effect restores the scalar proof: {updated:?}"
-        );
-    }
-
-    #[test]
-    fn primitive_installer_alias_retracts_after_cross_file_edit() {
-        let mut project = Project::new();
-        project.add_file(
-            "alias.R".into(),
-            parse_file("alias.R", "put <- base::delayedAssign"),
-        );
-        project.add_file(
-            "helper.R".into(),
-            parse_file(
-                "helper.R",
-                "install <- function(env) put('x', { x <- c(1L, 2L); 1L }, assign.env=env, eval.env=env)",
-            ),
-        );
-        project.add_file(
-            "consumer.R".into(),
-            parse_file(
-                "consumer.R",
-                "f <- function(x = NULL) { install(environment()); stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }",
-            ),
-        );
-        let initial = project.check();
-        assert!(
-            initial
-                .iter()
-                .any(|(_, diagnostics)| diagnostics.iter().any(|d| d.code == "RY032")),
-            "a cross-file primitive alias can install the caller binding: {initial:?}"
-        );
-        project.update_file(
-            "alias.R".into(),
-            parse_file(
-                "alias.R",
-                "put <- function(x, value, assign.env, eval.env) base::invisible(NULL)",
-            )
-            .into(),
-        );
-        let updated = assert_matches_cold(&mut project);
-        assert!(
-            updated
-                .iter()
-                .all(|(_, diagnostics)| diagnostics.iter().all(|d| d.code != "RY032")),
-            "replacing the primitive alias retracts the effect: {updated:?}"
-        );
     }
 
     #[test]

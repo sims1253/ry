@@ -47,6 +47,35 @@ pub(crate) enum Narrowing {
     ScalarThen { var: String },
 }
 
+impl Narrowing {
+    /// Whether any fact in this narrowing is about one of `names`.
+    pub(crate) fn mentions_any(&self, names: &HashSet<String>) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+        match self {
+            Narrowing::Compound {
+                base,
+                on_true,
+                on_false,
+            } => {
+                base.mentions_any(names)
+                    || on_true
+                        .iter()
+                        .chain(on_false)
+                        .any(|narrowing| narrowing.mentions_any(names))
+            }
+            Narrowing::None => false,
+            Narrowing::Positive { var, .. }
+            | Narrowing::Negative { var, .. }
+            | Narrowing::Else { var, .. }
+            | Narrowing::NonNullElse { var }
+            | Narrowing::ScalarElse { var, .. }
+            | Narrowing::ScalarThen { var } => names.contains(var),
+        }
+    }
+}
+
 /// Extract a type narrowing from an `if` condition expression.
 /// Recognizes:
 ///   * `is.numeric(x)` / `is.double(x)` / `is.integer(x)` /
@@ -891,8 +920,7 @@ mod selected_branch_tests {
         assert_eq!(scope.get("x").map(|ty| ty.mode), Some(Mode::Double));
         assert!(scope.is_parameter("x") && scope.is_default_parameter("x"));
         assert!(scope.has_list_origin("x") && scope.narrowed_bindings.contains("x"));
-        assert_eq!(scope.function_alias("x"), Some("base::identity"));
-        assert!(scope.is_lexical_function("x"));
+        assert!(scope.function_alias("x").is_none() && !scope.is_lexical_function("x"));
         assert_eq!(
             scope.get("untouched").map(|ty| ty.mode),
             Some(Mode::Integer)

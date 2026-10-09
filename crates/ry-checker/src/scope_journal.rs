@@ -9,14 +9,10 @@ pub(crate) struct BindingState {
     pub parameter: bool,
     pub scalar_asserted: bool,
     pub loop_vector: bool,
-    pub uncertain_caller_binding_alias: bool,
-    pub inert_caller_binding_function: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
     lexical: bool,
     alias: Option<String>,
-    bounded_sources: Option<FxSet<String>>,
-    local_function: Option<Arc<LocalCallerBindingFunction>>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -27,10 +23,6 @@ impl BindingState {
             narrowed: self.narrowed,
             list_origin: self.list_origin,
             default_parameter: self.default_parameter,
-            alias: self.alias.as_deref(),
-            local_function: self.local_function.as_ref(),
-            uncertain_caller_binding_alias: self.uncertain_caller_binding_alias,
-            inert_caller_binding_function: self.inert_caller_binding_function,
         }
     }
 
@@ -47,14 +39,10 @@ impl BindingState {
             parameter: scope.parameter_bindings.contains(name),
             scalar_asserted: scope.scalar_asserted_bindings.contains(name),
             loop_vector: scope.loop_vector_bindings.contains(name),
-            uncertain_caller_binding_alias: scope.uncertain_caller_binding_aliases.contains(name),
-            inert_caller_binding_function: scope.inert_caller_binding_functions.contains(name),
             list_origin: scope.list_origin_bindings.contains(name),
             default_parameter: scope.default_parameter_bindings.contains(name),
             lexical: scope.lexical_functions.contains(name),
             alias: scope.function_aliases.get(name).cloned(),
-            bounded_sources: scope.bounded_caller_binding_sources.get(name).cloned(),
-            local_function: scope.local_caller_binding_functions.get(name).cloned(),
             provenance: scope
                 .reference_provenance
                 .as_ref()
@@ -77,11 +65,6 @@ impl BindingState {
             self.scalar_asserted,
         );
         marker(&mut scope.loop_vector_bindings, &name, self.loop_vector);
-        marker(
-            &mut scope.uncertain_caller_binding_aliases,
-            &name,
-            self.uncertain_caller_binding_alias,
-        );
         marker(&mut scope.list_origin_bindings, &name, self.list_origin);
         marker(
             &mut scope.default_parameter_bindings,
@@ -89,29 +72,10 @@ impl BindingState {
             self.default_parameter,
         );
         marker(&mut scope.lexical_functions, &name, self.lexical);
-        marker(
-            &mut scope.inert_caller_binding_functions,
-            &name,
-            self.inert_caller_binding_function,
-        );
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
         } else {
             scope.function_aliases.remove(&name);
-        }
-        if let Some(sources) = self.bounded_sources {
-            scope
-                .bounded_caller_binding_sources
-                .insert(name.clone(), sources);
-        } else {
-            scope.bounded_caller_binding_sources.remove(&name);
-        }
-        if let Some(function) = self.local_function {
-            scope
-                .local_caller_binding_functions
-                .insert(name.clone(), function);
-        } else {
-            scope.local_caller_binding_functions.remove(&name);
         }
         if let Some(p) = scope.reference_provenance.as_mut() {
             if let Some(value) = self.provenance {
@@ -133,10 +97,8 @@ impl BindingState {
 #[derive(Debug)]
 pub(crate) struct AssignmentUndo {
     ty: Option<RType>,
-    removed_markers: u16,
+    removed_markers: u8,
     alias: Option<String>,
-    bounded_sources: Option<FxSet<String>>,
-    local_function: Option<Arc<LocalCallerBindingFunction>>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -150,8 +112,6 @@ impl AssignmentUndo {
             &mut scope.list_origin_bindings,
             &mut scope.default_parameter_bindings,
             &mut scope.lexical_functions,
-            &mut scope.uncertain_caller_binding_aliases,
-            &mut scope.inert_caller_binding_functions,
         ];
         for (index, set) in sets.into_iter().enumerate() {
             debug_assert!(!set.contains(&name));
@@ -162,16 +122,6 @@ impl AssignmentUndo {
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
-        }
-        if let Some(sources) = self.bounded_sources {
-            scope
-                .bounded_caller_binding_sources
-                .insert(name.clone(), sources);
-        }
-        if let Some(function) = self.local_function {
-            scope
-                .local_caller_binding_functions
-                .insert(name.clone(), function);
         }
         if let Some(provenance) = self.provenance
             && let Some(table) = scope.reference_provenance.as_mut()
@@ -194,8 +144,6 @@ pub(crate) enum MarkerKind {
     Parameter,
     ScalarAsserted,
     LoopVector,
-    UncertainCallerBindingAlias,
-    InertCallerBindingFunction,
 }
 
 #[derive(Debug)]
@@ -252,10 +200,6 @@ pub(crate) struct BindingView<'a> {
     pub narrowed: bool,
     pub list_origin: bool,
     pub default_parameter: bool,
-    pub alias: Option<&'a str>,
-    pub local_function: Option<&'a Arc<LocalCallerBindingFunction>>,
-    pub uncertain_caller_binding_alias: bool,
-    pub inert_caller_binding_function: bool,
 }
 
 impl BranchDelta {
@@ -273,12 +217,6 @@ impl BranchDelta {
                 narrowed: base.narrowed_bindings.contains(name),
                 list_origin: base.has_list_origin(name),
                 default_parameter: base.is_default_parameter(name),
-                alias: base.function_alias(name),
-                local_function: base.local_caller_binding_functions.get(name),
-                uncertain_caller_binding_alias: base
-                    .uncertain_caller_binding_aliases
-                    .contains(name),
-                inert_caller_binding_function: base.inert_caller_binding_functions.contains(name),
             }
         }
     }
@@ -348,8 +286,6 @@ impl Scope {
             &mut self.list_origin_bindings,
             &mut self.default_parameter_bindings,
             &mut self.lexical_functions,
-            &mut self.uncertain_caller_binding_aliases,
-            &mut self.inert_caller_binding_functions,
         ];
         let mut removed_markers = 0;
         // Rollback retains empty tables' capacity. Avoid hashing a name for
@@ -364,16 +300,6 @@ impl Scope {
         } else {
             self.function_aliases.remove(&name)
         };
-        let bounded_sources = if self.bounded_caller_binding_sources.is_empty() {
-            None
-        } else {
-            self.bounded_caller_binding_sources.remove(&name)
-        };
-        let local_function = if self.local_caller_binding_functions.is_empty() {
-            None
-        } else {
-            self.local_caller_binding_functions.remove(&name)
-        };
         let provenance = self.reference_provenance.as_mut().and_then(|table| {
             if table.bindings.is_empty() {
                 None
@@ -382,13 +308,7 @@ impl Scope {
             }
         });
         let previous = if let Some(current) = self.bindings.get_mut(&name) {
-            if current == &ty
-                && removed_markers == 0
-                && alias.is_none()
-                && bounded_sources.is_none()
-                && local_function.is_none()
-                && provenance.is_none()
-            {
+            if current == &ty && removed_markers == 0 && alias.is_none() && provenance.is_none() {
                 return;
             }
             Some(std::mem::replace(current, ty))
@@ -402,8 +322,6 @@ impl Scope {
                 ty: previous,
                 removed_markers,
                 alias,
-                bounded_sources,
-                local_function,
                 provenance,
             },
         ));
@@ -446,12 +364,6 @@ impl Scope {
                 MarkerKind::Parameter => self.parameter_bindings.contains(name),
                 MarkerKind::ScalarAsserted => self.scalar_asserted_bindings.contains(name),
                 MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
-                MarkerKind::UncertainCallerBindingAlias => {
-                    self.uncertain_caller_binding_aliases.contains(name)
-                }
-                MarkerKind::InertCallerBindingFunction => {
-                    self.inert_caller_binding_functions.contains(name)
-                }
             };
             self.undo
                 .push(Undo::Marker(kind, name.to_string(), present));
@@ -585,12 +497,6 @@ impl Scope {
                         MarkerKind::Parameter => &mut self.parameter_bindings,
                         MarkerKind::ScalarAsserted => &mut self.scalar_asserted_bindings,
                         MarkerKind::LoopVector => &mut self.loop_vector_bindings,
-                        MarkerKind::UncertainCallerBindingAlias => {
-                            &mut self.uncertain_caller_binding_aliases
-                        }
-                        MarkerKind::InertCallerBindingFunction => {
-                            &mut self.inert_caller_binding_functions
-                        }
                     };
                     if present {
                         set.insert(name);
@@ -774,26 +680,6 @@ mod tests {
         scope.mark_list_origin("x");
         scope.mark_lexical_function("x");
         scope.set_function_alias("x", "original".into());
-        scope.set_bounded_caller_binding_sources(
-            "x",
-            FxSet::from_iter(["base::assign".to_string()]),
-        );
-        let local_function = Arc::new(LocalCallerBindingFunction {
-            default_aliases: FxMap::default(),
-            params: vec!["env".to_string()],
-            may_install: true,
-            called_formals: Vec::new(),
-            fresh_target_formal: Some("env".to_string()),
-            fresh_target_needs_base_c: false,
-            forwarded_installer: None,
-            definition: Span {
-                start: 0,
-                end: 1,
-                line: 0,
-                col: 0,
-            },
-        });
-        scope.set_local_caller_binding_function("x", local_function.clone());
         scope.reference_provenance = Some(Box::new(ScopeProvenance {
             owner: Span {
                 start: 0,
@@ -808,11 +694,6 @@ mod tests {
         let initial = format!("{:?}", scope.clone());
         let outer = scope.begin_snapshot();
         scope.insert_narrowed("x", RType::new(Mode::Double, Length::One));
-        assert_eq!(
-            scope.local_caller_binding_functions.get("x"),
-            Some(&local_function)
-        );
-        scope.clear_bounded_caller_binding_sources("x");
         scope.data_mask_unknown = true;
         scope.search_path_unknown = true;
         scope.tidy_injection = Some(InjectionMode::Full);
@@ -825,7 +706,6 @@ mod tests {
         let outer_state = format!("{:?}", scope.clone());
         let inner = scope.begin_snapshot();
         scope.insert("x", RType::new(Mode::Character, Length::One));
-        assert!(!scope.local_caller_binding_functions.contains_key("x"));
         scope.insert("new", RType::unknown());
         scope.replace_binding_only(".", Some(RType::unknown()));
         let clone = scope.clone();
@@ -848,22 +728,6 @@ mod tests {
         assert_eq!(left.list_origin_bindings, right.list_origin_bindings);
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.function_aliases, right.function_aliases);
-        assert_eq!(
-            left.bounded_caller_binding_sources,
-            right.bounded_caller_binding_sources
-        );
-        assert_eq!(
-            left.local_caller_binding_functions,
-            right.local_caller_binding_functions
-        );
-        assert_eq!(
-            left.uncertain_caller_binding_aliases,
-            right.uncertain_caller_binding_aliases
-        );
-        assert_eq!(
-            left.inert_caller_binding_functions,
-            right.inert_caller_binding_functions
-        );
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(left.literal_values_unknown, right.literal_values_unknown);

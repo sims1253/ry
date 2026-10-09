@@ -251,9 +251,34 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "while",
 ];
 
+/// Base functions that can bind, remove, or evaluate code in their caller's
+/// frame. A call to any of them may swap a binding for an active or delayed
+/// binding, so no earlier scalar assertion about it survives the call.
+pub const BINDING_INSTALLERS: &[&str] = &[
+    "assign",
+    "delayedAssign",
+    "makeActiveBinding",
+    "do.call",
+    "eval",
+    "evalq",
+    "rm",
+    "remove",
+    "list2env",
+    "sys.source",
+    "source",
+    "attach",
+    "Recall",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "BINDING_INSTALLERS",
+            items: BINDING_INSTALLERS,
+            check: CheckKind::TypeshedAgreement,
+            claim: "base functions that can bind, remove, or evaluate code in the caller's frame",
+        },
         SemanticList {
             name: "PLAIN_NEW_CLASSES",
             items: PLAIN_NEW_CLASSES,

@@ -12,6 +12,7 @@ mod operator_s3_dispatch;
 mod ops_fallback;
 mod packages_typeshed;
 mod quoting_data_mask;
+mod scalar_flow;
 mod scope_resolution;
 mod superassignment;
 mod table_index_masks;

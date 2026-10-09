@@ -489,27 +489,19 @@ impl Checker {
         let subject = match expr {
             Expr::Ident { name, .. } => Some(name.as_str()),
             Expr::BinOp { op, lhs, rhs, .. }
-                if matches!(
-                    op,
-                    BinOpKind::Lt
-                        | BinOpKind::Le
-                        | BinOpKind::Gt
-                        | BinOpKind::Ge
-                        | BinOpKind::Eq
-                        | BinOpKind::Ne
-                ) && !ops_chooser::operator_rebound(self, op_symbol(*op), scope) =>
+                if is_comparison(*op)
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope) =>
             {
                 let numeric = |expr: &Expr| match expr {
-                    Expr::Integer(..) | Expr::Double(..) => true,
                     Expr::UnaryOp {
                         op: UnaryOpKind::Neg,
                         expr: value,
                         ..
                     } => {
-                        matches!(value.as_ref(), Expr::Integer(..) | Expr::Double(..))
+                        is_numeric_literal(value)
                             && !ops_chooser::operator_rebound(self, "-", scope)
                     }
-                    _ => false,
+                    expr => is_numeric_literal(expr),
                 };
                 match (lhs.as_ref(), rhs.as_ref()) {
                     (Expr::Ident { name, .. }, rhs) if numeric(rhs) => Some(name.as_str()),
@@ -520,8 +512,7 @@ impl Checker {
             _ => None,
         };
         subject.is_some_and(|name| {
-            scope.loop_vector_bindings.contains(name)
-                && !scope.scalar_asserted_bindings.contains(name)
+            scope.loop_vector_bindings.contains(name) && !scope.is_scalar_asserted(name)
         })
     }
 
@@ -674,7 +665,7 @@ impl Checker {
         // return it, making the separate `is_parameter` check redundant.
         guarded
             .filter(|parameter| vector_predicate_parameter(rhs, scope) == Some(*parameter))
-            .filter(|parameter| !scope.scalar_asserted_bindings.contains(*parameter))
+            .filter(|parameter| !scope.is_scalar_asserted(parameter))
             .is_some()
     }
 
@@ -760,10 +751,8 @@ impl Checker {
                 if !matches!(
                     op,
                     BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge
-                ) || !matches!(
-                    comparison_rhs.as_ref(),
-                    Expr::Integer(..) | Expr::Double(..)
-                ) || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                ) || !is_numeric_literal(comparison_rhs)
+                    || ops_chooser::operator_rebound(self, op_symbol(*op), scope)
                     || self.project_defines_comparison_method()
                 {
                     return None;
@@ -853,21 +842,10 @@ impl Checker {
                         && !scope.data_mask_unknown
                         && !scope.effects_unknown)
             }
-            Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::Logical(..)
-            | Expr::String(..)
-            | Expr::Null(..) => true,
+            expr if is_scalar_literal(expr) => true,
             Expr::BinOp { op, lhs, rhs, .. }
-                if matches!(
-                    op,
-                    BinOpKind::Lt
-                        | BinOpKind::Le
-                        | BinOpKind::Gt
-                        | BinOpKind::Ge
-                        | BinOpKind::Eq
-                        | BinOpKind::Ne
-                ) && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                if is_comparison(*op)
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
                     && !self.project_defines_comparison_method() =>
             {
                 self.scalar_assertion_pure_rhs(lhs, subject, scope)
@@ -1048,6 +1026,9 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
         scope.invalidate_literal_values();
     }
     scope.effects_unknown |= evaluated.effects_unknown;
+    if evaluated.dynamic_bindings_unknown && !scope.dynamic_bindings_unknown {
+        scope.invalidate_scalar_assertions();
+    }
     let mut names = HashSet::new();
     collect_condition_assignment_names(expr, &mut names);
     for name in names {
@@ -1075,7 +1056,7 @@ fn insert_bound_name(expr: &Expr, names: &mut HashSet<String>) {
 /// and the remaining statement forms (if, while, for, function
 /// definitions, return), which cannot bind a name in the current
 /// environment from inside a condition value.
-fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
+pub(super) fn collect_condition_assignment_names(expr: &Expr, names: &mut HashSet<String>) {
     let _ = walk_expr(
         expr,
         Walk {

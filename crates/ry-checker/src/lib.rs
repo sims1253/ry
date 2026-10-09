@@ -123,32 +123,6 @@ fn ident_name(expr: &Expr) -> Option<&str> {
     }
 }
 
-const UNKNOWN_CALLER_BINDING_IDENTITY: &str = "\0caller-binding-identity";
-const LITERAL_QUALIFIED_CALLER_BINDING_PREFIX: &str = "\0caller-binding-literal-qualified:";
-
-/// Use one semantic key for ordinary and simply quoted lexical names in the
-/// binding effect graph. A quoted local name containing `::` is still a
-/// lexical binding, not a namespace reference with the same visible text.
-/// R's escaped backtick contents need a decoder; their identity stays unknown.
-fn caller_binding_identity(raw: &str) -> Option<String> {
-    if raw.contains('\\') {
-        return None;
-    }
-    let name = infer::semantic_argument_name(raw);
-    if raw.starts_with('`') {
-        if name.contains("::") {
-            return Some(format!("{LITERAL_QUALIFIED_CALLER_BINDING_PREFIX}{name}"));
-        }
-        return Some(name.to_string());
-    }
-    if let Some(primitive) = name.strip_prefix("base:::")
-        && matches!(primitive, "assign" | "delayedAssign" | "makeActiveBinding")
-    {
-        return Some(format!("base::{primitive}"));
-    }
-    Some(name.to_string())
-}
-
 fn binding_name(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
@@ -402,9 +376,8 @@ pub struct Scope {
     /// An unmodeled call may force promises that mutate this frame or install
     /// active bindings. Later expression inference cannot reuse caller facts.
     pub(crate) effects_unknown: bool,
-    /// A binding-installing primitive may have replaced a value with an
-    /// active binding or promise. The name may still look like a parameter,
-    /// but forcing it need not leave the binding stable.
+    /// A call may have replaced a binding with an active binding or promise.
+    /// A later read need not return the value an assertion just checked.
     pub(crate) dynamic_bindings_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
@@ -439,19 +412,6 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: FxMap<String, String>,
-    /// Callable values with more than one possible installer source. This is
-    /// effect-only provenance: ordinary call resolution keeps its own alias.
-    pub(crate) uncertain_caller_binding_aliases: FxSet<String>,
-    /// Proven alternatives for a loop-joined callable. An empty set means
-    /// every reaching value is inert; entries are qualified base installers.
-    /// This is used only for the caller-binding effect check.
-    pub(crate) bounded_caller_binding_sources: FxMap<String, FxSet<String>>,
-    /// The actual lexical function value used by the caller-binding effect
-    /// check. A flat project function name is not a lexical identity.
-    pub(crate) local_caller_binding_functions: FxMap<String, Arc<LocalCallerBindingFunction>>,
-    /// Literal callables proven inert for the bounded caller-binding effect
-    /// check. This is separate from ordinary function/return inference.
-    pub(crate) inert_caller_binding_functions: FxSet<String>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
@@ -464,20 +424,6 @@ pub struct Scope {
     /// Execution cannot continue in this block because a preceding operation
     /// is known to throw. Cloned scopes keep this fact local to that path.
     pub(crate) unreachable: bool,
-}
-
-/// A value-bound lexical function summary used only for caller-frame effects.
-/// Cloning a scope shares the summary; an assignment replaces its identity.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct LocalCallerBindingFunction {
-    pub(crate) params: Vec<String>,
-    pub(crate) default_aliases: FxMap<String, String>,
-    pub(crate) may_install: bool,
-    pub(crate) called_formals: Vec<String>,
-    pub(crate) fresh_target_formal: Option<String>,
-    pub(crate) fresh_target_needs_base_c: bool,
-    pub(crate) forwarded_installer: Option<String>,
-    pub(crate) definition: Span,
 }
 
 impl Clone for Scope {
@@ -502,10 +448,6 @@ impl Clone for Scope {
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
-            uncertain_caller_binding_aliases: self.uncertain_caller_binding_aliases.clone(),
-            bounded_caller_binding_sources: self.bounded_caller_binding_sources.clone(),
-            local_caller_binding_functions: self.local_caller_binding_functions.clone(),
-            inert_caller_binding_functions: self.inert_caller_binding_functions.clone(),
             lexical_functions: self.lexical_functions.clone(),
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
@@ -586,10 +528,6 @@ impl Scope {
                 .chain(self.list_origin_bindings.iter())
                 .chain(self.lexical_functions.iter())
                 .chain(self.function_aliases.keys())
-                .chain(self.uncertain_caller_binding_aliases.iter())
-                .chain(self.bounded_caller_binding_sources.keys())
-                .chain(self.local_caller_binding_functions.keys())
-                .chain(self.inert_caller_binding_functions.iter())
                 .cloned()
                 .collect();
             for name in names {
@@ -607,10 +545,6 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
-        self.uncertain_caller_binding_aliases.clear();
-        self.bounded_caller_binding_sources.clear();
-        self.local_caller_binding_functions.clear();
-        self.inert_caller_binding_functions.clear();
         self.lexical_functions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
@@ -652,18 +586,6 @@ impl Scope {
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
         }
-        if !self.uncertain_caller_binding_aliases.is_empty() {
-            self.uncertain_caller_binding_aliases.remove(&name);
-        }
-        if !self.bounded_caller_binding_sources.is_empty() {
-            self.bounded_caller_binding_sources.remove(&name);
-        }
-        if !self.local_caller_binding_functions.is_empty() {
-            self.local_caller_binding_functions.remove(&name);
-        }
-        if !self.inert_caller_binding_functions.is_empty() {
-            self.inert_caller_binding_functions.remove(&name);
-        }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
         }
@@ -689,8 +611,8 @@ impl Scope {
     }
 
     pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
-        // A type guard refines the existing value; it does not replace its
-        // callable identity or caller-binding effect provenance.
+        // Preserve parameter, default-parameter, and list-origin markers;
+        // clear function aliases and lexical-function markers, then mark narrowed.
         let name = name.into();
         let excludes_unclassed_vector =
             t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
@@ -702,6 +624,8 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate(&name);
         }
+        self.function_aliases.remove(&name);
+        self.lexical_functions.remove(&name);
         if excludes_unclassed_vector {
             self.loop_vector_bindings.remove(&name);
         }
@@ -730,10 +654,6 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
-        self.uncertain_caller_binding_aliases.remove(&name);
-        self.bounded_caller_binding_sources.remove(&name);
-        self.local_caller_binding_functions.remove(&name);
-        self.inert_caller_binding_functions.remove(&name);
         self.narrowed_bindings.remove(&name);
         self.scalar_asserted_bindings.remove(&name);
         self.loop_vector_bindings.remove(&name);
@@ -764,17 +684,25 @@ impl Scope {
         }
     }
 
-    pub(crate) fn invalidate_scalar_assertions(&mut self) {
-        self.dynamic_bindings_unknown = true;
-        for binding in self.scalar_asserted_bindings.clone() {
-            self.clear_scalar_asserted(&binding);
-        }
+    /// A scalar fact counts only while no call may have swapped bindings.
+    pub(crate) fn is_scalar_asserted(&self, name: &str) -> bool {
+        !self.dynamic_bindings_unknown && self.scalar_asserted_bindings.contains(name)
     }
 
     pub(crate) fn clear_scalar_asserted(&mut self, name: &str) {
         if self.scalar_asserted_bindings.contains(name) {
             self.journal_marker(name, scope_journal::MarkerKind::ScalarAsserted);
             self.scalar_asserted_bindings.remove(name);
+        }
+    }
+
+    /// A call may have swapped a binding for an active binding or promise.
+    /// Drop current scalar facts, and refuse new ones in this frame: a later
+    /// assertion could read a value that the next read no longer returns.
+    pub(crate) fn invalidate_scalar_assertions(&mut self) {
+        self.dynamic_bindings_unknown = true;
+        for binding in self.scalar_asserted_bindings.clone() {
+            self.clear_scalar_asserted(&binding);
         }
     }
 
@@ -800,81 +728,6 @@ impl Scope {
         let name = name.into();
         self.journal_alias(&name);
         self.function_aliases.insert(name, target);
-    }
-
-    pub(crate) fn set_joined_function_alias(&mut self, name: &str, target: Option<String>) {
-        if self.function_alias(name) == target.as_deref() {
-            return;
-        }
-        self.journal_alias(name);
-        if let Some(target) = target {
-            self.function_aliases.insert(name.to_string(), target);
-        } else {
-            self.function_aliases.remove(name);
-        }
-    }
-
-    pub(crate) fn mark_uncertain_caller_binding_alias(&mut self, name: &str) {
-        if !self.uncertain_caller_binding_aliases.contains(name) {
-            self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
-            self.uncertain_caller_binding_aliases
-                .insert(name.to_string());
-        }
-    }
-
-    pub(crate) fn set_bounded_caller_binding_sources(
-        &mut self,
-        name: &str,
-        sources: FxSet<String>,
-    ) {
-        self.journal_binding(name);
-        self.bounded_caller_binding_sources
-            .insert(name.to_string(), sources);
-    }
-
-    pub(crate) fn clear_bounded_caller_binding_sources(&mut self, name: &str) {
-        if self.bounded_caller_binding_sources.contains_key(name) {
-            self.journal_binding(name);
-            self.bounded_caller_binding_sources.remove(name);
-        }
-    }
-
-    pub(crate) fn set_local_caller_binding_function(
-        &mut self,
-        name: &str,
-        function: Arc<LocalCallerBindingFunction>,
-    ) {
-        self.journal_binding(name);
-        self.local_caller_binding_functions
-            .insert(name.to_string(), function);
-    }
-
-    pub(crate) fn clear_local_caller_binding_function(&mut self, name: &str) {
-        if self.local_caller_binding_functions.contains_key(name) {
-            self.journal_binding(name);
-            self.local_caller_binding_functions.remove(name);
-        }
-    }
-
-    pub(crate) fn mark_inert_caller_binding_function(&mut self, name: &str) {
-        if !self.inert_caller_binding_functions.contains(name) {
-            self.journal_marker(name, scope_journal::MarkerKind::InertCallerBindingFunction);
-            self.inert_caller_binding_functions.insert(name.to_string());
-        }
-    }
-
-    pub(crate) fn clear_inert_caller_binding_function(&mut self, name: &str) {
-        if self.inert_caller_binding_functions.contains(name) {
-            self.journal_marker(name, scope_journal::MarkerKind::InertCallerBindingFunction);
-            self.inert_caller_binding_functions.remove(name);
-        }
-    }
-
-    pub(crate) fn clear_uncertain_caller_binding_alias(&mut self, name: &str) {
-        if self.uncertain_caller_binding_aliases.contains(name) {
-            self.journal_marker(name, scope_journal::MarkerKind::UncertainCallerBindingAlias);
-            self.uncertain_caller_binding_aliases.remove(name);
-        }
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>) {
@@ -952,157 +805,10 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
-    /// A bounded syntactic summary for helpers that can install an active or
-    /// delayed binding in their caller's frame through `parent.frame()`.
-    pub(crate) may_install_caller_binding: bool,
-    /// Direct call names in this body, used once to propagate the bounded
-    /// caller-binding summary through package-local wrappers.
-    pub(crate) caller_binding_callees: Vec<String>,
-    /// Formals invoked as callables, directly or through a local alias. A
-    /// supplied actual may differ from a harmless default at this call site.
-    pub(crate) caller_binding_called_formals: Vec<String>,
-    /// Calls whose supplied actuals may be invoked through a callee's formal.
-    /// Resolved against the shared table after every file is collected.
-    pub(crate) caller_binding_callback_calls: Arc<[CallerBindingCallbackCall]>,
-    pub(crate) caller_binding_local_summary: Arc<LocalCallerBindingFunction>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
     pub(crate) return_slot: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CallerBindingCallbackCall {
-    callee: String,
-    args: Arc<[Arg]>,
-    forwarded_only: Vec<bool>,
-}
-
-/// Completed purity results depend only on the immutable alias graph and
-/// function bodies, not on the effect flags set later in propagation. One
-/// memo and work budget are shared by every branch and callback in this pass.
-struct CallerBindingPurity<'a> {
-    table: &'a FnTable,
-    completed: HashMap<String, bool>,
-    visiting: HashSet<String>,
-    remaining: usize,
-}
-
-impl CallerBindingPurity<'_> {
-    fn inert_source(&mut self, source: &str) -> bool {
-        if let Some(result) = self.completed.get(source) {
-            return *result;
-        }
-        if self.remaining == 0 || self.visiting.len() >= 128 {
-            return false;
-        }
-        if !self.visiting.insert(source.to_string()) {
-            return false;
-        }
-        self.remaining -= 1;
-        let result = if let Some(sources) = self.table.caller_binding_aliases.get(source) {
-            !sources.is_empty() && sources.iter().all(|source| self.inert_source(source))
-        } else {
-            self.table
-                .fns
-                .get(source)
-                .is_some_and(|function| collect::inert_caller_binding_body(&function.body))
-        };
-        self.visiting.remove(source);
-        self.completed.insert(source.to_string(), result);
-        result
-    }
-}
-
-fn callback_actual_may_install_caller_binding(
-    actual: &Expr,
-    purity: &mut CallerBindingPurity<'_>,
-) -> bool {
-    collect::global_caller_binding_value_sources(actual, 64)
-        .iter()
-        .any(|source| !purity.inert_source(source))
-}
-
-/// Use the same semantic names for direct and composed callback effects.
-/// Ordinary type inference keeps its own argument and Scope spellings; an
-/// escaped name is not a negative proof until its R identity is decoded.
-fn match_caller_binding_argument_names(
-    formals: &[&str],
-    args: &[Arg],
-) -> Option<infer::ArgumentMatch> {
-    let actual_names: Option<Vec<_>> = args
-        .iter()
-        .map(|arg| match arg.name.as_deref() {
-            Some(name) => caller_binding_identity(name).map(Some),
-            None => Some(None),
-        })
-        .collect();
-    let actual_names = actual_names?;
-    Some(infer::match_argument_names(
-        formals,
-        actual_names.iter().map(|name| name.as_deref()),
-    ))
-}
-
-fn match_caller_binding_arguments(
-    function: &UserFn,
-    args: &[Arg],
-) -> Option<(Vec<String>, infer::ArgumentMatch)> {
-    let param_names: Option<Vec<_>> = function
-        .params
-        .iter()
-        .map(|param| caller_binding_identity(&param.name))
-        .collect();
-    let param_names = param_names?;
-    let param_refs: Vec<_> = param_names.iter().map(String::as_str).collect();
-    let matches = match_caller_binding_argument_names(&param_refs, args)?;
-    Some((param_names, matches))
-}
-
-fn invoked_callback_actual_may_install(
-    function: &UserFn,
-    call: &CallerBindingCallbackCall,
-    purity: &mut CallerBindingPurity<'_>,
-) -> bool {
-    if function.caller_binding_called_formals.is_empty() {
-        return false;
-    }
-    let Some((param_names, matches)) = match_caller_binding_arguments(function, &call.args) else {
-        // Escaped R names require a decoder. They cannot certify that a
-        // supplied callback was not bound to an invoked formal.
-        return true;
-    };
-    let dots_actuals: Vec<_> = matches
-        .param_for_arg
-        .iter()
-        .enumerate()
-        .filter_map(|(actual, formal)| formal.is_none().then_some(actual))
-        .collect();
-    let mut may_install = |actual: usize| {
-        !call.forwarded_only.get(actual).copied().unwrap_or(false)
-            && call
-                .args
-                .get(actual)
-                .is_some_and(|arg| callback_actual_may_install_caller_binding(&arg.value, purity))
-    };
-    function.caller_binding_called_formals.iter().any(|called| {
-        if let Some(formal) = param_names.iter().position(|name| name == called) {
-            return matches.arg_for_param(formal).is_some_and(&mut may_install);
-        }
-        if matches.dots.is_none() {
-            return false;
-        }
-        if called == "..." {
-            return dots_actuals.iter().copied().any(&mut may_install);
-        }
-        called
-            .strip_prefix("..")
-            .and_then(|index| index.parse::<usize>().ok())
-            .and_then(|index| index.checked_sub(1))
-            .and_then(|index| dots_actuals.get(index))
-            .copied()
-            .is_some_and(&mut may_install)
-    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1124,18 +830,12 @@ pub(crate) struct UserParam {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
-    may_install_caller_binding: bool,
-    called_formals: Vec<String>,
-    caller_binding_local_summary: Arc<LocalCallerBindingFunction>,
 }
 
 impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
-            may_install_caller_binding: self.may_install_caller_binding,
-            called_formals: self.caller_binding_called_formals.clone(),
-            caller_binding_local_summary: self.caller_binding_local_summary.clone(),
         }
     }
 
@@ -1212,12 +912,6 @@ pub(crate) struct FnTable {
     // lookup must treat them as candidates even though their inferred value is
     // otherwise opaque.
     pub(crate) callable_vars: std::collections::HashSet<String>,
-    // Possible top-level function-value aliases. The caller-binding effect
-    // graph follows these when a wrapper invokes an alias in another file.
-    pub(crate) caller_binding_aliases: FxMap<String, FxSet<String>>,
-    // An escaped alias target cannot be identified without decoding R's
-    // backtick escapes. Its possible caller effect is retained conservatively.
-    pub(crate) caller_binding_unresolved_alias_target: bool,
     // Syntactic call sites used only for conservative internal-helper
     // default selection. Each argument records its optional exact name.
     pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
@@ -1228,147 +922,6 @@ pub(crate) struct FnTable {
 }
 
 impl FnTable {
-    /// Propagate the bounded caller-binding effect through local wrappers.
-    /// The reverse graph keeps the work linear even for a long helper chain.
-    /// Project checks rebuild this table from pass-1 file summaries before
-    /// each propagation, so an edit that removes an installer retracts the
-    /// previously derived effects as well.
-    pub(crate) fn propagate_caller_binding_installers(&mut self) {
-        let mut callers: HashMap<String, Vec<String>> = HashMap::new();
-        let mut aliases_by_source: HashMap<String, Vec<String>> = HashMap::new();
-        let mut work = Vec::new();
-        let mut unresolved_effectful_function = false;
-        for (name, function) in &self.fns {
-            if function.may_install_caller_binding {
-                if let Some(identity) = caller_binding_identity(name) {
-                    work.push(identity);
-                } else {
-                    unresolved_effectful_function = true;
-                }
-            }
-            for callee in &function.caller_binding_callees {
-                callers
-                    .entry(callee.clone())
-                    .or_default()
-                    .push(name.clone());
-            }
-        }
-        for (alias, sources) in &self.caller_binding_aliases {
-            for source in sources {
-                aliases_by_source
-                    .entry(source.clone())
-                    .or_default()
-                    .push(alias.clone());
-            }
-        }
-        let callback_affected = {
-            let mut functions_by_identity: HashMap<String, Vec<&UserFn>> = HashMap::new();
-            for (name, function) in &self.fns {
-                if let Some(identity) = caller_binding_identity(name) {
-                    functions_by_identity
-                        .entry(identity)
-                        .or_default()
-                        .push(function);
-                }
-            }
-            let mut purity = CallerBindingPurity {
-                table: self,
-                completed: HashMap::new(),
-                visiting: HashSet::new(),
-                remaining: 16_384,
-            };
-            let mut callback_affected = HashSet::new();
-            for (caller, function) in &self.fns {
-                for call in function.caller_binding_callback_calls.iter() {
-                    let Some(callee) = caller_binding_identity(&call.callee) else {
-                        callback_affected.insert(caller.clone());
-                        continue;
-                    };
-                    let mut pending = vec![callee];
-                    let mut seen = HashSet::new();
-                    while let Some(candidate) = pending.pop() {
-                        if !seen.insert(candidate.clone()) || seen.len() > 128 {
-                            if seen.len() > 128 {
-                                callback_affected.insert(caller.clone());
-                            }
-                            continue;
-                        }
-                        if candidate == UNKNOWN_CALLER_BINDING_IDENTITY {
-                            callback_affected.insert(caller.clone());
-                        }
-                        if functions_by_identity
-                            .get(&candidate)
-                            .is_some_and(|functions| {
-                                functions.iter().any(|function| {
-                                    invoked_callback_actual_may_install(function, call, &mut purity)
-                                })
-                            })
-                        {
-                            callback_affected.insert(caller.clone());
-                        }
-                        if let Some(sources) = self.caller_binding_aliases.get(&candidate) {
-                            pending.extend(sources.iter().cloned());
-                        }
-                    }
-                }
-            }
-            callback_affected
-        };
-        for name in callback_affected {
-            if let Some(function) = self.fns.get_mut(&name) {
-                function.may_install_caller_binding = true;
-                if let Some(identity) = caller_binding_identity(&name) {
-                    work.push(identity);
-                }
-            }
-        }
-        // A top-level `put <- delayedAssign` or `put <- makeActiveBinding`
-        // creates a callable installer even though the primitive has no
-        // UserFn entry to seed the ordinary reverse graph. Direct primitive
-        // calls are classified with their actual environment argument during
-        // collection; only aliases enter this conservative graph seed.
-        for primitive in [
-            "delayedAssign",
-            "makeActiveBinding",
-            "base::delayedAssign",
-            "base::makeActiveBinding",
-            UNKNOWN_CALLER_BINDING_IDENTITY,
-        ] {
-            if let Some(aliases) = aliases_by_source.get(primitive) {
-                work.extend(aliases.iter().cloned());
-            }
-        }
-        if self.caller_binding_unresolved_alias_target || unresolved_effectful_function {
-            for (name, function) in &mut self.fns {
-                if !function.caller_binding_callees.is_empty() {
-                    function.may_install_caller_binding = true;
-                    work.push(name.clone());
-                }
-            }
-        }
-        let mut reached = HashSet::new();
-        while let Some(callee) = work.pop() {
-            if !reached.insert(callee.clone()) {
-                continue;
-            }
-            if let Some(aliases) = aliases_by_source.get(callee.as_str()) {
-                work.extend(aliases.iter().cloned());
-            }
-            if let Some(parents) = callers.get(callee.as_str()) {
-                for caller in parents {
-                    if let Some(function) = self.fns.get_mut(caller)
-                        && !function.may_install_caller_binding
-                    {
-                        function.may_install_caller_binding = true;
-                        if let Some(identity) = caller_binding_identity(caller) {
-                            work.push(identity);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn append_collected(
         &mut self,
         collected: &FnTable,
@@ -1410,14 +963,6 @@ impl FnTable {
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
-        self.caller_binding_unresolved_alias_target |=
-            collected.caller_binding_unresolved_alias_target;
-        for (alias, sources) in &collected.caller_binding_aliases {
-            self.caller_binding_aliases
-                .entry(alias.clone())
-                .or_default()
-                .extend(sources.iter().cloned());
-        }
         for (name, sites) in &collected.call_sites {
             self.call_sites
                 .entry(name.clone())
@@ -1677,7 +1222,6 @@ impl Checker {
         // emit diagnostics yet - the body's `return` types depend on the
         // table being fully populated.
         self.collect_fns(&file.stmts);
-        Arc::make_mut(&mut self.fn_table).propagate_caller_binding_installers();
 
         // Pass 2 (fixpoint): refine each function's inferred return type
         // until the table stabilizes or we hit MAX_FIXPOINT_DEPTH.

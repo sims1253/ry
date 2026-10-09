@@ -2,14 +2,13 @@
 //! No report engine is invoked. Every retained R byte has its original
 //! offset; all other non-newline bytes become ASCII spaces.
 
-use std::borrow::Cow;
 use std::ops::ControlFlow;
+use std::path::Path;
 
 use ry_core::ast::{Expr, InputIssue, Stmt};
 use ry_core::parser::unquote_r_string;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use ry_core::{RParser, SourceFile, Span};
-use tree_sitter::Tree;
+use ry_core::{ParseError, RParser, SourceFile, Span, Tree};
 
 pub const MAX_REPORT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CHUNKS: usize = 128;
@@ -21,7 +20,7 @@ enum HeaderError {
     Unsupported,
 }
 
-pub fn is_report_path(path: &std::path::Path) -> bool {
+pub fn is_report_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|s| s.to_str()),
         Some("Rmd" | "rmd" | "qmd")
@@ -70,33 +69,19 @@ fn source_issue(
     }
 }
 
-fn mask(masked: &mut [u8], start: usize, end: usize) {
-    for byte in &mut masked[start..end] {
-        if *byte != b'\n' && *byte != b'\r' {
-            *byte = b' ';
-        }
-    }
-}
-
-fn r_name_component(raw: &str) -> Cow<'_, str> {
-    let bytes = raw.as_bytes();
-    if bytes.len() >= 2
+fn is_quoted(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() >= 2
         && matches!(
             (bytes[0], bytes[bytes.len() - 1]),
             (b'`', b'`') | (b'"', b'"') | (b'\'', b'\'')
         )
-    {
-        Cow::Owned(unquote_r_string(raw))
-    } else {
-        Cow::Borrowed(raw)
-    }
 }
 
 /// A real reference to knitr's chunk-option object can change the execution
-/// of later chunks. Inspect lowered R identifiers so raw strings, comments,
-/// and similarly named variables cannot invent that boundary. We include
-/// function bodies and assignment targets conservatively: without executing
-/// the report, a later call or replacement could use either reference.
+/// of later chunks. Only lowered R identifiers count, so strings, comments,
+/// and similar names stay inert. Function bodies and assignment targets count
+/// conservatively: a later call or replacement could use either reference.
 fn has_runtime_chunk_options(stmts: &[Stmt]) -> bool {
     let policy = Walk {
         assign_targets: true,
@@ -108,15 +93,14 @@ fn has_runtime_chunk_options(stmts: &[Stmt]) -> bool {
     matches!(
         walk_stmts(stmts, policy, |node, _| {
             if let AstNode::Expr(Expr::Ident { name, .. }) = node {
-                // The parser has already decoded *components* of a
-                // namespace reference. Do not unquote those semantic values
-                // again: the literal object name `r"(opts_chunk)"` is not
-                // knitr's `opts_chunk`. A standalone backtick identifier is
-                // still decoded here, once, for its own spelling.
+                // Namespace components are already decoded by the parser;
+                // only a standalone backtick name is decoded here.
                 let is_options = if let Some((package, object)) = name.rsplit_once("::") {
                     package.trim_end_matches(':') == "knitr" && object == "opts_chunk"
+                } else if is_quoted(name) {
+                    unquote_r_string(name) == "opts_chunk"
                 } else {
-                    r_name_component(name) == "opts_chunk"
+                    name == "opts_chunk"
                 };
                 if is_options {
                     return ControlFlow::Break(());
@@ -142,30 +126,9 @@ fn fence(text: &str) -> Option<(u8, usize, &str)> {
     (count >= 3).then_some((kind, count, &rest[count..]))
 }
 
-fn yaml_bool(text: &str) -> Option<bool> {
-    match text.trim().to_ascii_lowercase().as_str() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
-}
-
-fn r_bool(text: &str) -> Option<bool> {
-    match text.trim() {
-        "TRUE" => Some(true),
-        "FALSE" => Some(false),
-        _ => None,
-    }
-}
-
 fn simple_key(key: &str) -> Result<&str, ()> {
     let key = key.trim();
-    if key.len() >= 2
-        && matches!(
-            (key.as_bytes()[0], key.as_bytes()[key.len() - 1]),
-            (b'"', b'"') | (b'\'', b'\'') | (b'`', b'`')
-        )
-    {
+    if is_quoted(key) {
         // Encoded spellings can decode to execution keys. Without a full
         // R/YAML key decoder, make that uncertainty visible.
         if key.as_bytes().contains(&b'\\') {
@@ -181,16 +144,27 @@ fn simple_key(key: &str) -> Result<&str, ()> {
 
 fn execution_option(key: &str, value: &str, r_header: bool) -> Result<Option<bool>, ()> {
     let key = simple_key(key)?;
-    let boolean = if r_header { r_bool } else { yaml_bool };
-    if ["child", "ref.label", "engine", "file", "code", "dependson"].contains(&key) {
-        return Err(());
-    }
-    if key == "eval" {
-        boolean(value).map(Some).ok_or(())
-    } else if key == "include" || key == "echo" {
-        boolean(value).map(|_| None).ok_or(())
+    // R headers need the uppercase literals; YAML booleans ignore case.
+    let value = value.trim();
+    let literal = |truth: &str| {
+        if r_header {
+            value == truth
+        } else {
+            value.eq_ignore_ascii_case(truth)
+        }
+    };
+    let boolean = if literal("TRUE") {
+        Ok(true)
+    } else if literal("FALSE") {
+        Ok(false)
     } else {
-        Ok(None)
+        Err(())
+    };
+    match key {
+        "child" | "ref.label" | "engine" | "file" | "code" | "dependson" => Err(()),
+        "eval" => boolean.map(Some),
+        "include" | "echo" => boolean.map(|_| None),
+        _ => Ok(None),
     }
 }
 
@@ -309,30 +283,31 @@ fn root_flow_execution(line: &str) -> Result<bool, ()> {
     Ok(false)
 }
 
+/// Parse a `{r ...}` header. Header metadata is evaluated as R before the
+/// body, so a real reference to knitr's options object makes it unsupported
+/// even when the option itself is just a caption or plot setting.
 fn header_options(
     parser: &mut RParser,
     path: &str,
     rest: &str,
-) -> Result<Option<Option<bool>>, HeaderError> {
+) -> Result<Option<bool>, HeaderError> {
     let header = rest.trim();
     if !(header.starts_with("{r") && header.ends_with('}')) {
-        return Ok(None);
+        return Err(HeaderError::Unsupported);
     }
     if header.len() > MAX_HEADER_BYTES {
         return Err(HeaderError::Budget);
     }
     let inner = &header[2..header.len() - 1];
     if !inner.is_empty() && !inner.starts_with([',', ' ', '\t']) {
-        return Ok(None);
+        return Err(HeaderError::Unsupported);
     }
     let mut eval = None;
     for part in header_fields(inner)? {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
-        // A leading label such as `setup eval = FALSE` has no effect on
-        // the option name. More than one assignment in the same segment
-        // leaves the value dynamic and is refused below.
+        // A leading label (`setup eval = FALSE`) is not part of the key.
         let key = key.split_whitespace().last().unwrap_or("");
         if let Some(value) =
             execution_option(key, value, true).map_err(|()| HeaderError::Unsupported)?
@@ -340,9 +315,6 @@ fn header_options(
         {
             return Err(HeaderError::Unsupported);
         }
-        // Chunk-header metadata is evaluated as R before the body. A real
-        // reference to knitr's options object can change later chunks even
-        // when the option's own key is just a caption or plot setting.
         let expression = parser
             .parse(path, value.trim())
             .map_err(|_| HeaderError::Unsupported)?;
@@ -350,267 +322,321 @@ fn header_options(
             return Err(HeaderError::Unsupported);
         }
     }
-    Ok(Some(eval))
+    Ok(eval)
 }
 
-/// Parse original report text through a byte-preserving R mask. The returned
-/// tree is the masked whole-document tree and can be incrementally edited with
-/// original-document byte and row deltas.
-pub fn parse_report_with_tree(
+/// Parse `source` as plain R, or through the report mask when `path` names
+/// a report. Reports return no tree: an option edit can mask or unmask text
+/// outside the edited range, so a masked tree is never safe to reuse.
+pub fn parse_source_with_tree(
     parser: &mut RParser,
     path: &str,
     source: &str,
     old_tree: Option<&Tree>,
-) -> Result<(SourceFile, Tree), ry_core::parser::ParseError> {
-    let issue = |offset, line, code, message| source_issue(source, offset, line, code, message);
+) -> Result<(SourceFile, Option<Tree>), ParseError> {
+    if is_report_path(Path::new(path)) {
+        parse_report(parser, path, source).map(|file| (file, None))
+    } else {
+        let (file, tree) = parser.parse_with_tree(path, source, old_tree)?;
+        Ok((file, Some(tree)))
+    }
+}
+
+pub fn parse_source(
+    parser: &mut RParser,
+    path: &str,
+    source: &str,
+) -> Result<SourceFile, ParseError> {
+    parse_source_with_tree(parser, path, source, None).map(|(file, _)| file)
+}
+
+fn parse_report(parser: &mut RParser, path: &str, source: &str) -> Result<SourceFile, ParseError> {
     if source.len() > MAX_REPORT_BYTES {
-        let (mut file, tree) = parser.parse_with_tree(path, "", None)?;
+        let mut file = parser.parse(path, "")?;
         file.source = source.to_owned();
-        file.input_issues.push(issue(
+        file.input_issues.push(source_issue(
+            source,
             0,
             0,
             "RY120",
             "report exceeds the 2 MiB static input limit",
         ));
-        return Ok((file, tree));
+        return Ok(file);
     }
-    let rows = lines(source);
-    let mut masked = source.as_bytes().to_vec();
-    mask(&mut masked, 0, source.len());
-    let mut issues = Vec::new();
-    let mut chunks = Vec::new();
-    let mut chunk_parse_errors = Vec::new();
-    {
-        // Global execution settings can change the meaning of every chunk.
-        let mut first = 0;
-        if rows.first().is_some_and(|line| line.text.trim() == "---") {
-            first = 1;
-            let mut root_key = None;
-            let mut root_indent = None;
-            while first < rows.len() && rows[first].text.trim() != "---" {
-                let raw = rows[first].text.trim_end_matches(['\r', '\n']);
-                let indent = raw.len() - raw.trim_start_matches(' ').len();
-                let content = raw.trim_start_matches(' ');
-                if content.is_empty() || content.starts_with('#') {
-                    first += 1;
-                    continue;
+    let mut report = Report {
+        source,
+        rows: lines(source),
+        masked: source
+            .bytes()
+            .map(|byte| {
+                if matches!(byte, b'\n' | b'\r') {
+                    byte
+                } else {
+                    b' '
                 }
-                let root = *root_indent.get_or_insert(indent);
-                if indent < root || content.starts_with('\t') {
-                    issues.push(issue(rows[first].offset, first, "RY121", "report YAML indentation cannot be classified safely; no chunks are assumed executable"));
-                    break;
-                }
-                let at_root = indent == root;
-                if at_root && content.starts_with('{') {
-                    match root_flow_execution(content) {
-                        Ok(false) => {
-                            first += 1;
-                            continue;
-                        }
-                        Ok(true) | Err(()) => {
-                            issues.push(issue(rows[first].offset, first, "RY121", "root flow YAML execution settings cannot be classified safely; no chunks are assumed executable"));
-                            break;
-                        }
-                    }
-                }
-                if at_root && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
-                    issues.push(issue(rows[first].offset, first, "RY121", "report YAML root syntax cannot be classified safely; no chunks are assumed executable"));
-                    break;
-                }
-                match yaml_key_value(raw) {
-                    Ok(Some((key, value))) => {
-                        if at_root {
-                            root_key = Some(key);
-                        }
-                        let execution_key = key == "execute" || key == "knitr";
-                        let root_execution = at_root && (execution_key || key == "eval");
-                        let format_execution =
-                            !at_root && root_key == Some("format") && execution_key;
-                        let format_inheritance = root_key == Some("format")
-                            && (key == "<<" || complex_format_value(value));
-                        if root_execution
-                            || format_execution
-                            || format_inheritance
-                            || at_root && key == "<<"
-                        {
-                            issues.push(issue(rows[first].offset, first, "RY121", "report-level execution options need a report engine; no chunks are assumed executable"));
-                            break;
-                        }
-                    }
-                    Err(()) => {
-                        issues.push(issue(rows[first].offset, first, "RY121", "report YAML key cannot be classified safely; no chunks are assumed executable"));
-                        break;
-                    }
-                    Ok(None) => {}
-                }
-                first += 1;
-            }
-            if first == rows.len() {
-                issues.push(issue(0, 0, "RY120", "unclosed report YAML front matter"));
-            }
-            first = first.saturating_add(1);
+            })
+            .collect(),
+        chunk_errors: Vec::new(),
+    };
+    let issue = match report.front_matter() {
+        Ok(first) => report.chunks(parser, path, first)?,
+        Err(issue) => Some(issue),
+    };
+    let masked = String::from_utf8(report.masked).expect("ASCII mask plus valid UTF-8 R chunks");
+    let mut file = parser.parse(path, &masked)?;
+    file.source = source.to_owned();
+    file.input_issues.extend(issue);
+    file.parse_errors.extend(report.chunk_errors);
+    file.parse_errors.sort_by_key(|span| (span.start, span.end));
+    file.parse_errors.dedup();
+    Ok(file)
+}
+
+struct Report<'a> {
+    source: &'a str,
+    rows: Vec<Line<'a>>,
+    /// The source with only admitted R chunk bodies left unmasked.
+    masked: Vec<u8>,
+    /// Each admitted chunk also parses on its own, so syntax cannot
+    /// continue through masked Markdown between chunks.
+    chunk_errors: Vec<Span>,
+}
+
+impl Report<'_> {
+    fn issue(&self, row: usize, code: &'static str, message: &str) -> InputIssue {
+        source_issue(self.source, self.rows[row].offset, row, code, message)
+    }
+
+    /// Return the first row after any YAML front matter. Global execution
+    /// settings can change the meaning of every chunk.
+    fn front_matter(&self) -> Result<usize, InputIssue> {
+        if !self
+            .rows
+            .first()
+            .is_some_and(|line| line.text.trim() == "---")
+        {
+            return Ok(0);
         }
-        if issues.is_empty() {
-            let mut open: Option<(u8, usize, bool, bool, usize, usize, usize)> = None;
-            let mut seen_r_chunks = 0;
-            let mut row = first;
-            while row < rows.len() {
-                let line = &rows[row];
-                if let Some((kind, width, r_chunk, enabled, start_row, body_row, body_start)) = open
-                {
-                    if let Some((close_kind, close_width, tail)) = fence(line.text)
-                        && close_kind == kind
-                        && close_width >= width
-                        && tail.trim().is_empty()
-                    {
-                        if r_chunk && enabled {
-                            chunks.push((start_row, body_row, body_start, line.offset));
-                            let chunk = parser.parse(path, &source[body_start..line.offset])?;
-                            for span in chunk.parse_errors {
-                                chunk_parse_errors.push(Span::new(
-                                    span.start + body_start,
-                                    span.end + body_start,
-                                    span.line + body_row,
-                                    span.col,
-                                ));
-                            }
-                            if has_runtime_chunk_options(&chunk.stmts) {
-                                issues.push(issue(rows[start_row].offset, start_row, "RY121", "runtime chunk options may change later execution; later chunks are not analyzed"));
-                                break;
-                            }
-                        }
-                        open = None;
-                        row += 1;
-                        continue;
-                    }
-                    row += 1;
-                    continue;
-                }
-                let Some((kind, width, rest)) = fence(line.text) else {
-                    row += 1;
-                    continue;
-                };
-                let header = rest.trim();
-                let r_chunk = ["{r}", "{r,", "{r ", "{r\t", "{r"].iter().any(|prefix| {
-                    header == *prefix || (*prefix != "{r" && header.starts_with(prefix))
-                });
-                if r_chunk {
-                    if seen_r_chunks >= MAX_CHUNKS {
-                        issues.push(issue(
-                            line.offset,
-                            row,
-                            "RY120",
-                            "report exceeds the 128 R chunk limit; later chunks are not analyzed",
-                        ));
-                        break;
-                    }
-                    seen_r_chunks += 1;
-                }
-                let header_eval = if r_chunk {
-                    match header_options(parser, path, rest) {
-                        Ok(Some(value)) => value,
-                        Err(HeaderError::Budget) => {
-                            issues.push(issue(line.offset, row, "RY120", "R chunk header exceeds the 16 KiB or 128-field static input limit; later chunks are not analyzed"));
-                            break;
-                        }
-                        _ => {
-                            let (code, message) = if header.ends_with('}') {
-                                (
-                                    "RY121",
-                                    "R chunk header has unsupported or conflicting execution options; later chunks are not analyzed",
-                                )
-                            } else {
-                                (
-                                    "RY120",
-                                    "malformed R chunk header; later chunks are not analyzed",
-                                )
-                            };
-                            issues.push(issue(line.offset, row, code, message));
-                            break;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let start_row = row;
-                let mut enabled = header_eval.unwrap_or(true);
-                // `#|` options at the start of a Quarto R cell are metadata.
-                // Keep these lines masked, including their Unicode bytes.
-                row += 1;
-                if r_chunk {
-                    let mut cell_eval = None;
-                    while row < rows.len() && rows[row].text.trim_start().starts_with("#|") {
-                        let option = rows[row].text.trim_start().trim_start_matches("#|").trim();
-                        let parsed = option
-                            .split_once(':')
-                            .map_or(Ok(None), |(key, value)| execution_option(key, value, false));
-                        match parsed {
-                            Ok(Some(value)) if cell_eval.replace(value).is_none() => {}
-                            Ok(Some(_)) | Err(()) => {
-                                issues.push(issue(rows[row].offset, row, "RY121", "R chunk has dynamic or conflicting execution options; later chunks are not analyzed"));
-                                break;
-                            }
-                            Ok(None) => {}
-                        }
-                        row += 1;
-                    }
-                    if !issues.is_empty() {
-                        break;
-                    }
-                    if let Some(value) = cell_eval {
-                        if header_eval.is_some() && value != enabled {
-                            // A header and a cell option disagree; neither is a
-                            // static execution certificate.
-                            issues.push(issue(
-                                line.offset,
-                                start_row,
-                                "RY121",
-                                "R chunk execution options conflict; later chunks are not analyzed",
-                            ));
-                            break;
-                        }
-                        enabled = value;
-                    }
-                }
-                let body_start = if r_chunk && row < rows.len() {
-                    rows[row].offset
-                } else {
-                    line.offset + line.text.len()
-                };
-                open = Some((kind, width, r_chunk, enabled, start_row, row, body_start));
+        let unclassified = |row, what: &str| {
+            self.issue(
+                row,
+                "RY121",
+                &format!("{what} cannot be classified safely; no chunks are assumed executable"),
+            )
+        };
+        let mut root_key = None;
+        let mut root_indent = None;
+        for (row, line) in self.rows.iter().enumerate().skip(1) {
+            if line.text.trim() == "---" {
+                return Ok(row + 1);
             }
-            if let Some((_, _, r_chunk, _, start_row, _, _)) = open
-                && issues.is_empty()
-                && r_chunk
+            let raw = line.text.trim_end_matches(['\r', '\n']);
+            let content = raw.trim_start_matches(' ');
+            if content.is_empty() || content.starts_with('#') {
+                continue;
+            }
+            let indent = raw.len() - content.len();
+            let root = *root_indent.get_or_insert(indent);
+            if indent < root || content.starts_with('\t') {
+                return Err(unclassified(row, "report YAML indentation"));
+            }
+            let at_root = indent == root;
+            if at_root && content.starts_with('{') {
+                if root_flow_execution(content) == Ok(false) {
+                    continue;
+                }
+                return Err(unclassified(row, "root flow YAML execution settings"));
+            }
+            if at_root && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
+                return Err(unclassified(row, "report YAML root syntax"));
+            }
+            let Some((key, value)) =
+                yaml_key_value(raw).map_err(|()| unclassified(row, "report YAML key"))?
+            else {
+                continue;
+            };
+            if at_root {
+                root_key = Some(key);
+            }
+            let in_format = root_key == Some("format");
+            let execution_key = key == "execute" || key == "knitr";
+            if (at_root && (execution_key || key == "eval" || key == "<<"))
+                || (!at_root && in_format && execution_key)
+                || (in_format && (key == "<<" || complex_format_value(value)))
             {
-                issues.push(issue(
-                    rows[start_row].offset,
-                    start_row,
-                    "RY120",
-                    "unclosed R chunk fence; its body is not analyzed",
+                return Err(self.issue(
+                    row,
+                    "RY121",
+                    "report-level execution options need a report engine; no chunks are assumed executable",
                 ));
             }
         }
-        // A chunk is only admitted after its matching close. Parse it on
-        // its own as well, so syntax cannot accidentally continue through
-        // masked Markdown between chunks.
-        for &(_, _, start, end) in &chunks {
-            masked[start..end].copy_from_slice(&source.as_bytes()[start..end]);
+        Err(self.issue(0, "RY120", "unclosed report YAML front matter"))
+    }
+
+    /// Admit enabled R chunks in document order from `row`, stopping at the
+    /// first boundary that makes later execution uncertain.
+    fn chunks(
+        &mut self,
+        parser: &mut RParser,
+        path: &str,
+        mut row: usize,
+    ) -> Result<Option<InputIssue>, ParseError> {
+        let mut r_chunks = 0;
+        while row < self.rows.len() {
+            let Some((kind, width, rest)) = fence(self.rows[row].text) else {
+                row += 1;
+                continue;
+            };
+            let r_chunk = rest
+                .trim()
+                .strip_prefix("{r")
+                .is_some_and(|tail| tail.is_empty() || tail.starts_with(['}', ',', ' ', '\t']));
+            let (enabled, body_row) = if r_chunk {
+                if r_chunks == MAX_CHUNKS {
+                    return Ok(Some(self.issue(
+                        row,
+                        "RY120",
+                        "report exceeds the 128 R chunk limit; later chunks are not analyzed",
+                    )));
+                }
+                r_chunks += 1;
+                match self.chunk_options(parser, path, row, rest) {
+                    Ok(options) => options,
+                    Err(issue) => return Ok(Some(issue)),
+                }
+            } else {
+                (false, row + 1)
+            };
+            let close = (body_row..self.rows.len()).find(|&close| {
+                fence(self.rows[close].text).is_some_and(|(close_kind, close_width, tail)| {
+                    close_kind == kind && close_width >= width && tail.trim().is_empty()
+                })
+            });
+            let Some(close) = close else {
+                return Ok(r_chunk.then(|| {
+                    self.issue(
+                        row,
+                        "RY120",
+                        "unclosed R chunk fence; its body is not analyzed",
+                    )
+                }));
+            };
+            if enabled {
+                let body = self.rows[body_row].offset..self.rows[close].offset;
+                let chunk = parser.parse(path, &self.source[body.clone()])?;
+                self.chunk_errors
+                    .extend(chunk.parse_errors.iter().map(|span| {
+                        Span::new(
+                            span.start + body.start,
+                            span.end + body.start,
+                            span.line + body_row,
+                            span.col,
+                        )
+                    }));
+                self.masked[body.clone()].copy_from_slice(&self.source.as_bytes()[body]);
+                if has_runtime_chunk_options(&chunk.stmts) {
+                    return Ok(Some(self.issue(
+                        row,
+                        "RY121",
+                        "runtime chunk options may change later execution; later chunks are not analyzed",
+                    )));
+                }
+            }
+            row = close + 1;
+        }
+        Ok(None)
+    }
+
+    /// Read an R chunk's header and its leading `#|` cell options, which stay
+    /// masked metadata. Returns whether the chunk runs and its first body row.
+    fn chunk_options(
+        &self,
+        parser: &mut RParser,
+        path: &str,
+        row: usize,
+        rest: &str,
+    ) -> Result<(bool, usize), InputIssue> {
+        let header_eval = match header_options(parser, path, rest) {
+            Ok(eval) => eval,
+            Err(HeaderError::Budget) => {
+                return Err(self.issue(
+                    row,
+                    "RY120",
+                    "R chunk header exceeds the 16 KiB or 128-field static input limit; later chunks are not analyzed",
+                ));
+            }
+            Err(HeaderError::Unsupported) if rest.trim().ends_with('}') => {
+                return Err(self.issue(
+                    row,
+                    "RY121",
+                    "R chunk header has unsupported or conflicting execution options; later chunks are not analyzed",
+                ));
+            }
+            Err(HeaderError::Unsupported) => {
+                return Err(self.issue(
+                    row,
+                    "RY120",
+                    "malformed R chunk header; later chunks are not analyzed",
+                ));
+            }
+        };
+        let mut cell_eval = None;
+        let mut body_row = row + 1;
+        while let Some(option) = self
+            .rows
+            .get(body_row)
+            .map(|line| line.text.trim_start())
+            .filter(|text| text.starts_with("#|"))
+        {
+            let option = option.trim_start_matches("#|").trim();
+            match option
+                .split_once(':')
+                .map_or(Ok(None), |(key, value)| execution_option(key, value, false))
+            {
+                Ok(None) => {}
+                Ok(Some(value)) if cell_eval.replace(value).is_none() => {}
+                _ => {
+                    return Err(self.issue(
+                        body_row,
+                        "RY121",
+                        "R chunk has dynamic or conflicting execution options; later chunks are not analyzed",
+                    ));
+                }
+            }
+            body_row += 1;
+        }
+        match (header_eval, cell_eval) {
+            (Some(header), Some(cell)) if header != cell => Err(self.issue(
+                row,
+                "RY121",
+                "R chunk execution options conflict; later chunks are not analyzed",
+            )),
+            _ => Ok((cell_eval.or(header_eval).unwrap_or(true), body_row)),
         }
     }
-    let masked = String::from_utf8(masked).expect("ASCII mask plus valid UTF-8 R chunks");
-    let (mut file, tree) = parser.parse_with_tree(path, &masked, old_tree)?;
-    file.source = source.to_owned();
-    file.input_issues = issues;
-    file.parse_errors.extend(chunk_parse_errors);
-    file.parse_errors.sort_by_key(|span| (span.start, span.end));
-    file.parse_errors.dedup();
-    Ok((file, tree))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(source: &str) -> SourceFile {
+        parse_report(&mut RParser::new().unwrap(), "a.qmd", source).unwrap()
+    }
+
+    /// Assert the number of admitted statements and the boundary code, if any.
+    #[track_caller]
+    fn assert_report(source: &str, stmts: usize, code: Option<&str>) {
+        let file = parse(source);
+        let issue = file.input_issues.first().map(|issue| issue.code);
+        assert_eq!(
+            (file.stmts.len(), issue),
+            (stmts, code),
+            "{source}: {:?}",
+            file.input_issues
+        );
+    }
 
     #[test]
     fn report_issue_spans_end_on_original_character_boundaries() {
@@ -626,8 +652,6 @@ mod tests {
         ] {
             let span = source_issue(source, offset, 0, "RY120", "limit").span;
             assert_eq!((span.start, span.end), expected, "offset {offset}");
-            assert!(source.is_char_boundary(span.start));
-            assert!(source.is_char_boundary(span.end));
         }
         assert_eq!(source_issue("", 0, 0, "RY120", "limit").span.end, 0);
         assert_eq!(source_issue("a", 0, 0, "RY120", "limit").span.end, 1);
@@ -636,54 +660,48 @@ mod tests {
     #[test]
     fn report_mask_keeps_original_offsets_and_execution_boundaries() {
         let source = "é prose\r\n```{r}\r\nx <- 1L\r\n```\r\n~~~{r, eval = FALSE}\r\nx <- 2L\r\n~~~\r\n```{r, include = FALSE}\r\nx + \"s\"\r\n```\r\n";
-        let mut parser = RParser::new().unwrap();
-        let (file, _) = parse_report_with_tree(&mut parser, "a.qmd", source, None).unwrap();
+        let file = parse(source);
         assert_eq!(file.source, source);
-        assert_eq!(file.stmts.len(), 2);
-        assert!(file.input_issues.is_empty());
+        assert_report(source, 2, None);
     }
 
     #[test]
     fn quarto_options_and_outer_fences_do_not_invent_execution() {
         let source = "~~~~~python\n```{r}\nforeign <- 1L\n```\n~~~~~\n```{{r}}\nexample <- 1L\n```\n```r\nexample2 <- 1L\n```\n```{r}\n#| eval: false\nremoved <- 1L\n```\n```{r}\n#| include: false\n#| echo: false\nretained <- 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
-        assert!(file.input_issues.is_empty());
+        let file = parse(source);
         assert!(file.parse_errors.is_empty());
-        assert_eq!(file.stmts.len(), 1);
         assert!(file.comments.is_empty(), "cell options remain metadata");
+        assert_report(source, 1, None);
     }
 
     #[test]
-    fn dynamic_execution_stops_later_chunks_but_keeps_earlier_evidence() {
-        let source = "```{r}\nfirst <- 1L\n```\n```{r, eval=choose()}\nuncertain <- 1L\n```\n```{r}\nlater <- first\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None).unwrap();
-        assert_eq!(file.stmts.len(), 1);
-        assert_eq!(file.input_issues.len(), 1);
-        assert_eq!(file.input_issues[0].code, "RY121");
-        assert_eq!(file.input_issues[0].span.line, 3);
-
-        // A header/cell conflict is anchored to the fence row by both offset
-        // and line.
-        let source = "```{r, eval=TRUE}\n#| echo: false\n#| eval: false\nx <- 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
-        assert_eq!(file.input_issues[0].code, "RY121");
-        assert_eq!(
+    fn execution_boundaries_keep_earlier_evidence_and_their_own_row() {
+        for (source, line) in [
             (
-                file.input_issues[0].span.start,
-                file.input_issues[0].span.line
+                "```{r}\nfirst <- 1L\n```\n```{r, eval=choose()}\nuncertain <- 1L\n```\n```{r}\nlater <- first\n```\n",
+                3,
             ),
-            (0, 0)
-        );
+            (
+                "```{r}\nfirst <- 1L\n```\n```{r, eval=TRUE}\n#| echo: false\n#| eval: false\nx <- 1L\n```\n",
+                3,
+            ),
+        ] {
+            let file = parse(source);
+            assert_report(source, 1, Some("RY121"));
+            let span = file.input_issues[0].span;
+            assert_eq!(span.line, line);
+            assert_eq!(
+                source[..span.start].matches('\n').count(),
+                line,
+                "offset and line describe the same row"
+            );
+        }
     }
 
     #[test]
     fn split_syntax_is_rejected_per_chunk_even_if_combined_mask_can_parse() {
         let source = "```{r}\nvalue <- (\n```\n```{r}\n1L)\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
+        let file = parse(source);
         assert!(!file.parse_errors.is_empty());
         assert!(
             file.parse_errors
@@ -693,54 +711,83 @@ mod tests {
     }
 
     #[test]
-    fn unclosed_fence_and_global_options_are_visible() {
-        for source in [
-            "```{r}\nx <- 1L\n",
-            "---\nexecute:\n  eval: false\n---\n```{r}\nx <- 1L\n```\n",
+    fn chunk_options_decide_execution() {
+        for (source, stmts, code) in [
+            ("```{r}\nx <- 1L\n", 0, Some("RY120")),
+            ("```{r\nx <- 1L\n```\n", 0, Some("RY120")),
+            (
+                "```{r, child='other.Rmd'}\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            (
+                "```{r}\n#| code: external_code\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            (
+                "```{r}\n#| eval: choose()\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            // Quoted keys are recognized; option names are case-sensitive.
+            ("```{r, \"eval\"=FALSE}\nx <- 'a'\n```\n", 0, None),
+            ("```{r}\n#| \"eval\": false\nx <- 'a'\n```\n", 0, None),
+            ("```{r, Eval=FALSE}\n'x' + 1L\n```\n", 1, None),
+            ("```{r}\n#| Eval: false\n'x' + 1L\n```\n", 1, None),
+            // R headers need uppercase literals; Quarto accepts YAML booleans.
+            ("```{r, eval=T}\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r, eval=t}\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r, eval=true}\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r, echo=F}\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r, include=f}\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r}\n#| eval: TRUE\nx <- 1L\n```\n", 1, None),
         ] {
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty());
-            assert_eq!(file.input_issues.len(), 1);
-            assert!(matches!(file.input_issues[0].code, "RY120" | "RY121"));
+            assert_report(source, stmts, code);
         }
     }
 
     #[test]
-    fn child_and_dynamic_chunk_options_stop_static_execution() {
-        for source in [
-            "```{r, child='other.Rmd'}\nx <- 1L\n```\n",
-            "```{r}\n#| code: external_code\nx <- 1L\n```\n",
-            "```{r}\n#| eval: choose()\nx <- 1L\n```\n",
+    fn header_fields_keep_quoted_commas_and_nested_expressions_together() {
+        for header in [
+            "{r, fig.cap=\"caption, eval=FALSE\"}",
+            "{r, fig.cap=paste('a,b', c(1,2))}",
+            "{r, fig.cap={\"caption\"}}",
         ] {
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty());
-            assert_eq!(file.input_issues.len(), 1);
-            assert_eq!(file.input_issues[0].code, "RY121");
+            assert_report(
+                &format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
+                2,
+                None,
+            );
         }
-    }
-
-    #[test]
-    fn runtime_option_mentions_in_strings_and_comments_are_inert() {
-        let source = "```{r}\nx <- 'opts_chunk$set(eval=FALSE)'\n# knitr::opts_chunk$set(eval=FALSE)\n```\n```{r}\ny <- 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
-        assert_eq!(file.stmts.len(), 2);
-        assert!(file.input_issues.is_empty());
-
-        let active = "```{r}\nknitr::opts_chunk$set(eval=FALSE)\n```\n```{r}\ny <- 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", active, None).unwrap();
-        assert_eq!(file.stmts.len(), 1);
-        assert_eq!(file.input_issues[0].code, "RY121");
+        for header in [
+            "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
+            r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
+            r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
+        ] {
+            assert_report(
+                &format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
+                0,
+                Some("RY121"),
+            );
+        }
+        for header in [
+            format!("{{r, fig.cap=\"{}\"}}", "a".repeat(MAX_HEADER_BYTES)),
+            format!("{{r, {}}}", "fig.cap=\"x\",".repeat(MAX_HEADER_FIELDS + 1)),
+        ] {
+            let file = parse(&format!("```{header}\nNULL\n```\n"));
+            assert!(file.stmts.is_empty());
+            assert_eq!(file.input_issues[0].code, "RY120");
+            assert!(file.input_issues[0].message.contains("header exceeds"));
+        }
     }
 
     #[test]
     fn runtime_options_use_r_identifier_identity() {
         for body in [
+            "x <- 'opts_chunk$set(eval=FALSE)'\n# knitr::opts_chunk$set(eval=FALSE)",
             "my_opts_chunk_counter <- 1L",
             "opts_chunkish <- 1L",
             "value <- r\"(a \" opts_chunk x)\"",
@@ -752,24 +799,12 @@ mod tests {
             r#"knitr::"r\"(opts_chunk)\""$set(eval=FALSE)"#,
         ] {
             let source = format!("```{{r}}\n{body}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert_eq!(file.stmts.len(), 3, "{body}: {:?}", file.input_issues);
-            assert!(file.input_issues.is_empty(), "{body}");
-            assert!(
-                file.parse_errors.is_empty(),
-                "{body}: {:?}",
-                file.parse_errors
-            );
+            assert!(parse(&source).parse_errors.is_empty(), "{body}");
+            assert_report(&source, 3, None);
         }
-        let source = "```{r}\nknitr::`opts_chunk`$set(eval=FALSE)\n```\n```{r}\nx + 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None).unwrap();
-        assert_eq!(file.stmts.len(), 1);
-        assert_eq!(file.input_issues[0].code, "RY121");
-
         for body in [
+            "knitr::opts_chunk$set(eval=FALSE)",
+            "knitr::`opts_chunk`$set(eval=FALSE)",
             "change_options <- function() knitr::opts_chunk$set(eval=FALSE)",
             "knitr::opts_chunk$set <- function(...) NULL",
             "`knitr`::opts_chunk$set(eval=FALSE)",
@@ -779,115 +814,18 @@ mod tests {
             r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#,
             r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#,
         ] {
-            let source = format!("```{{r}}\n{body}\n```\n```{{r}}\nx + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert_eq!(file.input_issues[0].code, "RY121", "{body}");
+            assert_report(
+                &format!("```{{r}}\n{body}\n```\n```{{r}}\nx + 1L\n```\n"),
+                1,
+                Some("RY121"),
+            );
         }
-    }
-
-    #[test]
-    fn header_fields_keep_quoted_commas_and_nested_expressions_together() {
-        for header in [
-            "{r, fig.cap=\"caption, eval=FALSE\"}",
-            "{r, fig.cap=paste('a,b', c(1,2))}",
-            "{r, fig.cap={\"caption\"}}",
-        ] {
-            let source = format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert_eq!(file.stmts.len(), 2, "{header}: {:?}", file.input_issues);
-            assert!(file.input_issues.is_empty(), "{header}");
-        }
-    }
-
-    #[test]
-    fn executable_header_metadata_cannot_hide_runtime_option_changes() {
-        for header in [
-            "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
-            r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
-            r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
-            r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
-            r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
-        ] {
-            let source = format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert_eq!(file.input_issues[0].code, "RY121", "{header}");
-            assert_eq!(file.stmts.len(), 0, "{header}");
-        }
-    }
-
-    #[test]
-    fn parsed_header_metadata_has_a_visible_input_budget() {
-        for header in [
-            format!("{{r, fig.cap=\"{}\"}}", "a".repeat(MAX_HEADER_BYTES)),
-            format!("{{r, {}}}", "fig.cap=\"x\",".repeat(MAX_HEADER_FIELDS + 1)),
-        ] {
-            let source = format!("```{header}\nNULL\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty());
-            assert_eq!(file.input_issues[0].code, "RY120");
-            assert!(file.input_issues[0].message.contains("header exceeds"));
-        }
-    }
-
-    #[test]
-    fn quoted_eval_keys_do_not_enable_disabled_chunks() {
-        for source in [
-            "```{r, \"eval\"=FALSE}\nx <- 'a'\n```\n",
-            "```{r}\n#| \"eval\": false\nx <- 'a'\n```\n",
-        ] {
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty(), "{source}");
-            assert!(file.input_issues.is_empty(), "{source}");
-        }
-    }
-
-    #[test]
-    fn execution_option_names_are_case_sensitive() {
-        for header in ["{r, Eval=FALSE}", "{r}\n#| Eval: false"] {
-            let source = format!("```{header}\n'x' + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert_eq!(file.stmts.len(), 1, "{header}: {:?}", file.input_issues);
-            assert!(file.input_issues.is_empty(), "{header}");
-        }
-    }
-
-    #[test]
-    fn r_header_booleans_require_unambiguous_literals() {
-        for option in ["eval=T", "eval=t", "eval=true", "echo=F", "include=f"] {
-            let source = format!("```{{r, {option}}}\nx <- 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.Rmd", &source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty(), "{option}");
-            assert_eq!(file.input_issues[0].code, "RY121", "{option}");
-        }
-        let source = "```{r}\n#| eval: TRUE\nx <- 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
-        assert_eq!(file.stmts.len(), 1);
-        assert!(file.input_issues.is_empty());
     }
 
     #[test]
     fn yaml_execution_keys_are_scoped_and_quoted_keys_are_recognized() {
-        let benign = "---\nmetadata:\n  eval: false\n---\n```{r}\n'a' + 1L\n```\n";
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", benign, None).unwrap();
-        assert_eq!(file.stmts.len(), 1);
-        assert!(file.input_issues.is_empty());
         for front_matter in [
+            "execute:\n  eval: false",
             "\"execute\":\n  \"eval\": false",
             "format:\n  html:\n    execute:\n      eval: false",
             "  {execute: {eval: false}}",
@@ -909,15 +847,14 @@ mod tests {
             "'knitr':\n  opts_chunk:\n    eval: false",
             "<<: *execution_defaults",
         ] {
-            let source = format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &source, None)
-                    .unwrap();
-            assert!(file.stmts.is_empty(), "{front_matter}");
-            assert_eq!(file.input_issues[0].code, "RY121", "{front_matter}");
+            assert_report(
+                &format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n"),
+                0,
+                Some("RY121"),
+            );
         }
-
         for front_matter in [
+            "metadata:\n  eval: false",
             "metadata: {eval: false}",
             "  metadata:\n    eval: false",
             "  {title: \"test\", metadata: {execute: {eval: false}}}",
@@ -925,41 +862,25 @@ mod tests {
             "settings: &fmt\n  html:\n    execute:\n      eval: false\nmetadata:\n  default: *fmt",
             "format:\n  html:\n    toc: true",
         ] {
-            let source = format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n");
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &source, None)
-                    .unwrap();
-            assert_eq!(
-                file.stmts.len(),
+            assert_report(
+                &format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n"),
                 1,
-                "{front_matter}: {:?}",
-                file.input_issues
+                None,
             );
-            assert!(file.input_issues.is_empty(), "{front_matter}");
         }
     }
 
     #[test]
     fn source_and_chunk_limits_report_without_parsing_unbounded_r() {
-        let source = "```{r}\nx <- 1L\n```\n".repeat(MAX_CHUNKS + 1);
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &source, None).unwrap();
-        assert_eq!(file.stmts.len(), MAX_CHUNKS);
-        assert_eq!(file.input_issues.len(), 1);
-        assert_eq!(file.input_issues[0].code, "RY120");
-
+        let chunks = "```{r}\nx <- 1L\n```\n".repeat(MAX_CHUNKS + 1);
+        assert_report(&chunks, MAX_CHUNKS, Some("RY120"));
         let disabled = "```{r, eval=FALSE}\nx <- 1L\n```\n".repeat(MAX_CHUNKS + 1);
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &disabled, None).unwrap();
-        assert!(file.stmts.is_empty());
-        assert_eq!(file.input_issues[0].code, "RY120");
+        assert_report(&disabled, 0, Some("RY120"));
+        assert_report("---\ntitle: x\n", 0, Some("RY120"));
 
         let huge = "é".repeat(MAX_REPORT_BYTES / 2 + 1);
-        let (file, _) =
-            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", &huge, None).unwrap();
-        assert!(file.stmts.is_empty());
-        assert_eq!(file.input_issues[0].code, "RY120");
-        assert_eq!(file.input_issues[0].span.end, "é".len());
+        assert_report(&huge, 0, Some("RY120"));
+        assert_eq!(parse(&huge).input_issues[0].span.end, "é".len());
     }
 
     #[test]
@@ -983,9 +904,7 @@ mod tests {
                 seed ^= seed << 5;
                 source.push_str(alphabet[(seed as usize) % alphabet.len()]);
             }
-            let (file, _) =
-                parse_report_with_tree(&mut RParser::new().unwrap(), "f.qmd", &source, None)
-                    .unwrap();
+            let file = parse(&source);
             assert_eq!(file.source, source);
             assert!(file.input_issues.iter().all(|issue| {
                 issue.span.start <= issue.span.end

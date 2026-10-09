@@ -592,8 +592,9 @@ impl Checker {
         self.source.get(span.start..span.end)
     }
 
-    // Surface parse errors collected by `RParser` as `RY000`
-    // (syntax-error) diagnostics. Each tree-sitter `ERROR` / `MISSING`
+    // Surface report-input boundaries (RY120/RY121) as warnings, then
+    // parse errors collected by `RParser` as `RY000` (syntax-error)
+    // diagnostics. Each tree-sitter `ERROR` / `MISSING`
     // node becomes one diagnostic, and each native-pipe right-hand side
     // that base R's parser rejects (tree-sitter accepts it; see
     // `SourceFile::syntax_violations`) becomes one more. Always emitted,

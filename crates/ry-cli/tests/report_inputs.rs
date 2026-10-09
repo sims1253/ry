@@ -1,9 +1,10 @@
 //! Report input runs through the same discovery and checker path as R files.
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
-fn check(root: &std::path::Path) -> Vec<serde_json::Value> {
+fn check(root: &Path) -> Vec<serde_json::Value> {
     let output = Command::new(env!("CARGO_BIN_EXE_ry"))
         .args(["check", "--output-format", "json"])
         .arg(root)
@@ -13,21 +14,29 @@ fn check(root: &std::path::Path) -> Vec<serde_json::Value> {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{output:?}"))
 }
 
+/// Check `files` in a fresh project that opts in to reports.
+fn check_reports(files: &[(&str, &str)]) -> Vec<serde_json::Value> {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
+    for (name, source) in files {
+        fs::write(root.path().join(name), source).unwrap();
+    }
+    check(root.path())
+}
+
 fn code<'a>(diags: &'a [serde_json::Value], code: &str) -> Vec<&'a serde_json::Value> {
     diags.iter().filter(|diag| diag["code"] == code).collect()
 }
 
 #[test]
 fn opt_in_reports_keep_chunk_order_and_report_environments_separate() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(
-        root.path().join("first.qmd"),
-        "é prose\r\n```{r}\r\nx <- \"a\"\r\n```\r\n```{r}\r\nx + 1L\r\n```\r\n",
-    )
-    .unwrap();
-    fs::write(root.path().join("second.Rmd"), "```{r}\nx + 1L\n```\n").unwrap();
-    let diagnostics = check(root.path());
+    let diagnostics = check_reports(&[
+        (
+            "first.qmd",
+            "é prose\r\n```{r}\r\nx <- \"a\"\r\n```\r\n```{r}\r\nx + 1L\r\n```\r\n",
+        ),
+        ("second.Rmd", "```{r}\nx + 1L\n```\n"),
+    ]);
     assert_eq!(code(&diagnostics, "RY040").len(), 1, "{diagnostics:?}");
     assert_eq!(code(&diagnostics, "RY010").len(), 1, "{diagnostics:?}");
     let bad = code(&diagnostics, "RY040")[0];
@@ -37,290 +46,139 @@ fn opt_in_reports_keep_chunk_order_and_report_environments_separate() {
 
 #[test]
 fn disabled_and_uncertain_chunks_have_visible_boundaries() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(root.path().join("a.qmd"), "```{r}\nknown <- 1L\n```\n```{r}\n#| eval: false\nknown <- \"hidden\"\n```\n```{r, eval=choose()}\nuncertain <- 1L\n```\n```{r}\nuncertain + \"x\"\n```\n").unwrap();
-    let diagnostics = check(root.path());
+    let diagnostics = check_reports(&[(
+        "a.qmd",
+        "```{r}\nknown <- 1L\n```\n```{r}\n#| eval: false\nknown <- \"hidden\"\n```\n```{r, eval=choose()}\nuncertain <- 1L\n```\n```{r}\nuncertain + \"x\"\n```\n",
+    )]);
     assert_eq!(code(&diagnostics, "RY121").len(), 1, "{diagnostics:?}");
     assert!(code(&diagnostics, "RY040").is_empty(), "{diagnostics:?}");
 }
 
+/// Each case either runs the later `'a' + 1L` chunk (one RY040) or stops
+/// before it at a visible RY121 boundary; a disabled chunk yields neither.
 #[test]
-fn runtime_option_detection_uses_r_tokens_not_identifier_substrings() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    let report = root.path().join("tokens.qmd");
-    for body in [
-        "my_opts_chunk_counter <- 1L",
-        "opts_chunkish <- 1L",
-        "literal <- r\"(a \" opts_chunk x)\"",
-    ] {
-        fs::write(
-            &report,
-            format!("```{{r}}\n{body}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY040").len(),
+fn chunk_execution_options_are_truthful_end_to_end() {
+    let later = "```{r}\n'a' + 1L\n```\n";
+    let body = |body: &str| format!("```{{r}}\n{body}\n```\n{later}");
+    let header = |header: &str| format!("```{header}\nNULL\n```\n{later}");
+    let yaml = |yaml: &str| format!("---\n{yaml}\n---\n{later}");
+    let single = |header: &str| format!("```{header}\n'a' + 1L\n```\n");
+    let cases = [
+        // Runtime option references use R identifier identity.
+        (body("my_opts_chunk_counter <- 1L"), 1, 0),
+        (body("opts_chunkish <- 1L"), 1, 0),
+        (body("literal <- r\"(a \" opts_chunk x)\""), 1, 0),
+        (body("`knitr::opts_chunk` <- 1L"), 1, 0),
+        (body("`r\"(knitr)\"::opts_chunk` <- 1L"), 1, 0),
+        (
+            body("value <- r\"(knitr::opts_chunk$set(eval=FALSE))\""),
             1,
-            "{body}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY121").is_empty(),
-            "{body}: {diagnostics:?}"
-        );
-    }
-
-    fs::write(
-        &report,
-        "```{r}\nknitr::`opts_chunk`$set(eval=FALSE)\n```\n```{r}\n'a' + 1L\n```\n",
-    )
-    .unwrap();
-    let diagnostics = check(root.path());
-    assert_eq!(code(&diagnostics, "RY121").len(), 1, "{diagnostics:?}");
-    assert!(code(&diagnostics, "RY040").is_empty(), "{diagnostics:?}");
-}
-
-#[test]
-fn equivalent_r_names_and_executable_headers_decline_later_chunks() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    let report = root.path().join("options.Rmd");
-    for body in [
-        "`knitr`::opts_chunk$set(eval=FALSE)",
-        r"knitr::`opts_\x63hunk`$set(eval=FALSE)",
-        r#"knitr::"opts_\x63hunk"$set(eval=FALSE)"#,
-        r"knitr::'opts_\u0063hunk'$set(eval=FALSE)",
-        r#"r"(knitr)"::opts_chunk$set(eval=FALSE)"#,
-        r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#,
-        r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#,
-    ] {
-        fs::write(
-            &report,
-            format!("```{{r}}\n{body}\n```\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY121").len(),
+            0,
+        ),
+        (body("knitr::`opts_chunk`$set(eval=FALSE)"), 0, 1),
+        (body("`knitr`::opts_chunk$set(eval=FALSE)"), 0, 1),
+        (body(r"knitr::`opts_\x63hunk`$set(eval=FALSE)"), 0, 1),
+        (body(r#"knitr::"opts_\x63hunk"$set(eval=FALSE)"#), 0, 1),
+        (body(r"knitr::'opts_\u0063hunk'$set(eval=FALSE)"), 0, 1),
+        (body(r#"r"(knitr)"::opts_chunk$set(eval=FALSE)"#), 0, 1),
+        (
+            body(r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#),
+            0,
             1,
-            "{body}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY040").is_empty(),
-            "{body}: {diagnostics:?}"
-        );
-    }
-    for header in [
-        "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
-        r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
-        r#"{r, fig.cap={knitr::"opts_\x63hunk"$set(eval=FALSE); "caption"}}"#,
-        r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
-        r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
-        r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
-    ] {
-        fs::write(
-            &report,
-            format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY121").len(),
+        ),
+        (
+            body(r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#),
+            0,
             1,
-            "{header}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY040").is_empty(),
-            "{header}: {diagnostics:?}"
-        );
-    }
-    for header in [
-        "{r, fig.cap={\"caption\"}}",
-        "{r, fig.cap=\"caption, eval=FALSE\"}",
-    ] {
-        fs::write(
-            &report,
-            format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY040").len(),
+        ),
+        // Header metadata is R, but quoted commas stay inside one field.
+        (header("{r, fig.cap={\"caption\"}}"), 1, 0),
+        (header("{r, fig.cap=\"caption, eval=FALSE\"}"), 1, 0),
+        (
+            header("{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}"),
+            0,
             1,
-            "{header}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY121").is_empty(),
-            "{header}: {diagnostics:?}"
-        );
-    }
-    for body in [
-        "`knitr::opts_chunk` <- 1L",
-        "`r\"(knitr)\"::opts_chunk` <- 1L",
-        "value <- r\"(knitr::opts_chunk$set(eval=FALSE))\"",
-    ] {
-        fs::write(
-            &report,
-            format!("```{{r}}\n{body}\n```\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY040").len(),
+        ),
+        (
+            header(r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#),
+            0,
             1,
-            "{body}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY121").is_empty(),
-            "{body}: {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn quoted_header_commas_and_execution_keys_keep_chunk_execution_truthful() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    let report = root.path().join("headers.Rmd");
-    fs::write(
-        &report,
-        "```{r, fig.cap=\"caption, eval=FALSE\"}\nx <- 'a'\n```\n```{r}\nx + 1L\n```\n",
-    )
-    .unwrap();
-    let active = check(root.path());
-    assert_eq!(code(&active, "RY040").len(), 1, "{active:?}");
-    assert!(code(&active, "RY121").is_empty(), "{active:?}");
-
-    for header in ["{r, \"eval\"=FALSE}", "{r}\n#| \"eval\": false"] {
-        fs::write(
-            &report,
-            format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
-        )
-        .unwrap();
-        let disabled = check(root.path());
-        assert!(
-            code(&disabled, "RY040").is_empty(),
-            "{header}: {disabled:?}"
-        );
-        assert_eq!(code(&disabled, "RY010").len(), 1, "{header}: {disabled:?}");
-    }
-}
-
-#[test]
-fn yaml_exec_refusal_does_not_invent_an_unrelated_metadata_option() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    let report = root.path().join("front.qmd");
-    fs::write(
-        &report,
-        "---\nmetadata:\n  eval: false\n---\n```{r}\n'a' + 1L\n```\n",
-    )
-    .unwrap();
-    let benign = check(root.path());
-    assert_eq!(code(&benign, "RY040").len(), 1, "{benign:?}");
-    assert!(code(&benign, "RY121").is_empty(), "{benign:?}");
-
-    for yaml in [
-        "\"execute\":\n  \"eval\": false",
-        "format:\n  html:\n    execute:\n      eval: false",
-    ] {
-        fs::write(
-            &report,
-            format!("---\n{yaml}\n---\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let uncertain = check(root.path());
-        assert_eq!(code(&uncertain, "RY121").len(), 1, "{yaml}: {uncertain:?}");
-        assert!(
-            code(&uncertain, "RY040").is_empty(),
-            "{yaml}: {uncertain:?}"
-        );
-    }
-}
-
-#[test]
-fn format_inheritance_and_option_name_case_keep_execution_truthful() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    let report = root.path().join("format.qmd");
-    for yaml in [
-        "  {execute: {eval: false}}",
-        "  {format: {html: {execute: {eval: false}}}}",
-        "  execute:\n    eval: false",
-        "  title: study\n  format:\n    html:\n      execute:\n        eval: false",
-        "  !!map {execute: {eval: false}}",
-        "{execute: {eval: false}}",
-        "{format: {html: {execute: {eval: false}}}}",
-        "{\"exec\\u0075te\": {eval: false}}",
-        "!!map {execute: {eval: false}}",
-        "format: {html: {execute: {eval: false}}}",
-        "settings: &fmt\n  html:\n    execute:\n      eval: false\nformat: *fmt",
-        "settings: &fmt\n  execute:\n    eval: false\nformat:\n  html:\n    <<: *fmt",
-    ] {
-        fs::write(
-            &report,
-            format!("---\n{yaml}\n---\n```{{r}}\n'a' + 1L\n```\n"),
-        )
-        .unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY121").len(),
+        ),
+        (
+            header(r#"{r, fig.cap={knitr::"opts_\x63hunk"$set(eval=FALSE); "caption"}}"#),
+            0,
             1,
-            "{yaml}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY040").is_empty(),
-            "{yaml}: {diagnostics:?}"
-        );
-    }
-    fs::write(
-        &report,
-        "---\n{title: \"test\", metadata: {execute: {eval: false}}}\n---\n```{r}\n'a' + 1L\n```\n",
-    )
-    .unwrap();
-    let benign = check(root.path());
-    assert_eq!(code(&benign, "RY040").len(), 1, "{benign:?}");
-    assert!(code(&benign, "RY121").is_empty(), "{benign:?}");
-    fs::write(
-        &report,
-        "---\n  metadata:\n    eval: false\n---\n```{r}\n'a' + 1L\n```\n",
-    )
-    .unwrap();
-    let indented_metadata = check(root.path());
-    assert_eq!(
-        code(&indented_metadata, "RY040").len(),
-        1,
-        "{indented_metadata:?}"
-    );
-    assert!(
-        code(&indented_metadata, "RY121").is_empty(),
-        "{indented_metadata:?}"
-    );
-    for header in ["{r, Eval=FALSE}", "{r}\n#| Eval: false"] {
-        fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
-        let diagnostics = check(root.path());
-        assert_eq!(
-            code(&diagnostics, "RY040").len(),
+        ),
+        (
+            header(r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#),
+            0,
             1,
-            "{header}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY121").is_empty(),
-            "{header}: {diagnostics:?}"
-        );
-    }
-    for header in ["{r, eval=FALSE}", "{r}\n#| eval: false"] {
-        fs::write(&report, format!("```{header}\n'a' + 1L\n```\n")).unwrap();
-        let diagnostics = check(root.path());
-        assert!(
-            code(&diagnostics, "RY040").is_empty(),
-            "{header}: {diagnostics:?}"
-        );
-        assert!(
-            code(&diagnostics, "RY121").is_empty(),
-            "{header}: {diagnostics:?}"
+        ),
+        (
+            header(r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#),
+            0,
+            1,
+        ),
+        (
+            header(r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#),
+            0,
+            1,
+        ),
+        // Quoted keys are recognized; option names are case-sensitive.
+        (single("{r, eval=FALSE}"), 0, 0),
+        (single("{r}\n#| eval: false"), 0, 0),
+        (single("{r, \"eval\"=FALSE}"), 0, 0),
+        (single("{r}\n#| \"eval\": false"), 0, 0),
+        (single("{r, Eval=FALSE}"), 1, 0),
+        (single("{r}\n#| Eval: false"), 1, 0),
+        // Report-level execution settings; unrelated metadata stays inert.
+        (yaml("metadata:\n  eval: false"), 1, 0),
+        (yaml("  metadata:\n    eval: false"), 1, 0),
+        (
+            yaml("{title: \"test\", metadata: {execute: {eval: false}}}"),
+            1,
+            0,
+        ),
+        (yaml("\"execute\":\n  \"eval\": false"), 0, 1),
+        (
+            yaml("format:\n  html:\n    execute:\n      eval: false"),
+            0,
+            1,
+        ),
+        (yaml("  {execute: {eval: false}}"), 0, 1),
+        (yaml("  {format: {html: {execute: {eval: false}}}}"), 0, 1),
+        (yaml("  execute:\n    eval: false"), 0, 1),
+        (
+            yaml("  title: study\n  format:\n    html:\n      execute:\n        eval: false"),
+            0,
+            1,
+        ),
+        (yaml("  !!map {execute: {eval: false}}"), 0, 1),
+        (yaml("{execute: {eval: false}}"), 0, 1),
+        (yaml("{format: {html: {execute: {eval: false}}}}"), 0, 1),
+        (yaml("{\"exec\\u0075te\": {eval: false}}"), 0, 1),
+        (yaml("!!map {execute: {eval: false}}"), 0, 1),
+        (yaml("format: {html: {execute: {eval: false}}}"), 0, 1),
+        (
+            yaml("settings: &fmt\n  html:\n    execute:\n      eval: false\nformat: *fmt"),
+            0,
+            1,
+        ),
+        (
+            yaml("settings: &fmt\n  execute:\n    eval: false\nformat:\n  html:\n    <<: *fmt"),
+            0,
+            1,
+        ),
+    ];
+    for (source, ry040, ry121) in cases {
+        let diagnostics = check_reports(&[("report.Rmd", &source)]);
+        assert_eq!(
+            (
+                code(&diagnostics, "RY040").len(),
+                code(&diagnostics, "RY121").len()
+            ),
+            (ry040, ry121),
+            "{source}: {diagnostics:?}"
         );
     }
 }
@@ -369,51 +227,38 @@ fn report_input_is_disabled_by_default_and_r_files_remain_checked() {
 }
 
 #[test]
-fn split_r_syntax_reports_each_chunk_at_original_crlf_line() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(
-        root.path().join("broken.qmd"),
-        "😀 intro\r\n```{r}\r\nx <- (\r\n```\r\n```{r}\r\n1L)\r\n```\r\n",
-    )
-    .unwrap();
-    let diagnostics = check(root.path());
-    let errors = code(&diagnostics, "RY000");
-    assert_eq!(errors.len(), 2, "{diagnostics:?}");
-    assert_eq!(errors[0]["line"], 3);
-    assert_eq!(errors[0]["column"], 3);
-    assert_eq!(errors[1]["line"], 6);
-}
-
-#[test]
-fn chunk_options_do_not_shift_a_parse_error_into_metadata() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(
-        root.path().join("broken.qmd"),
-        "😀 prose\r\n```{r}\r\n#| eval: true\r\n#| echo: false\r\nx <- (\r\n```\r\n",
-    )
-    .unwrap();
-    let diagnostics = check(root.path());
-    let errors = code(&diagnostics, "RY000");
-    assert_eq!(errors.len(), 1, "{diagnostics:?}");
-    assert_eq!(errors[0]["line"], 5, "{diagnostics:?}");
-}
-
-#[test]
-fn indented_fences_keep_the_original_type_error_column() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(
-        root.path().join("indented.Rmd"),
-        "plain text\n  ```{r}\n  \"a\" + 1L\n  ```\n",
-    )
-    .unwrap();
-    let diagnostics = check(root.path());
-    let errors = code(&diagnostics, "RY040");
-    assert_eq!(errors.len(), 1, "{diagnostics:?}");
-    assert_eq!(errors[0]["line"], 3);
-    assert_eq!(errors[0]["column"], 3);
+fn findings_keep_original_report_coordinates() {
+    for (source, rule, expected) in [
+        // Each chunk parses on its own, at its CRLF line after multibyte prose.
+        (
+            "😀 intro\r\n```{r}\r\nx <- (\r\n```\r\n```{r}\r\n1L)\r\n```\r\n",
+            "RY000",
+            &[(3, 3), (6, 3)][..],
+        ),
+        // Cell options do not shift a parse error into metadata.
+        (
+            "😀 prose\r\n```{r}\r\n#| eval: true\r\n#| echo: false\r\nx <- (\r\n```\r\n",
+            "RY000",
+            &[(5, 3)],
+        ),
+        (
+            "plain text\n  ```{r}\n  \"a\" + 1L\n  ```\n",
+            "RY040",
+            &[(3, 3)],
+        ),
+    ] {
+        let diagnostics = check_reports(&[("report.qmd", source)]);
+        let positions: Vec<_> = code(&diagnostics, rule)
+            .iter()
+            .map(|diag| {
+                (
+                    diag["line"].as_u64().unwrap(),
+                    diag["column"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(positions, expected, "{source}: {diagnostics:?}");
+    }
 }
 
 #[test]
@@ -478,11 +323,10 @@ fn source_call_keeps_report_origin_without_executing_helper_file() {
 
 #[test]
 fn malformed_and_unclosed_r_fences_have_visible_status() {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("ry.toml"), "[reports]\nenabled = true\n").unwrap();
-    fs::write(root.path().join("unclosed.qmd"), "```{r}\nx <- 1L\n").unwrap();
-    fs::write(root.path().join("malformed.Rmd"), "```{r\nx <- 1L\n```\n").unwrap();
-    let diagnostics = check(root.path());
+    let diagnostics = check_reports(&[
+        ("unclosed.qmd", "```{r}\nx <- 1L\n"),
+        ("malformed.Rmd", "```{r\nx <- 1L\n```\n"),
+    ]);
     assert_eq!(code(&diagnostics, "RY120").len(), 2, "{diagnostics:?}");
     assert!(code(&diagnostics, "RY000").is_empty(), "{diagnostics:?}");
 }
@@ -498,13 +342,7 @@ fn oversized_report_is_visible_for_direct_and_directory_inputs() {
     )
     .unwrap();
 
-    let direct = Command::new(env!("CARGO_BIN_EXE_ry"))
-        .args(["check", "--output-format", "json"])
-        .arg(&path)
-        .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .output()
-        .unwrap();
-    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&direct.stdout).unwrap();
+    let diagnostics = check(&path);
     assert_eq!(code(&diagnostics, "RY120").len(), 1, "{diagnostics:?}");
 
     let discovered = Command::new(env!("CARGO_BIN_EXE_ry"))

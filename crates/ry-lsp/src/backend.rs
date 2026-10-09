@@ -837,6 +837,16 @@ impl State {
             .find(|ctx| path.starts_with(&ctx.root))
     }
 
+    /// Reports are analyzed only after the owning config opts in.
+    pub(super) fn report_disabled(&self, doc_path: &str) -> bool {
+        ry_workspace::reports::is_report_path(std::path::Path::new(doc_path))
+            && !self
+                .folder_context_for_path(doc_path)
+                .map_or(self.file_config.reports.enabled, |ctx| {
+                    ctx.config.reports.enabled
+                })
+    }
+
     /// Whether an indexed `disk_files` entry consumes `budget_root`'s
     /// `index.max-files` budget: entries attribute to their INNERMOST
     /// containing root (longest-prefix, the same ownership
@@ -881,10 +891,10 @@ impl State {
 
     fn eligibility_for_path_with_len(&self, doc_path: &str, content_len: Option<u64>) -> bool {
         let path = std::path::Path::new(doc_path);
+        if self.report_disabled(doc_path) {
+            return false;
+        }
         if let Some(ctx) = self.folder_context_for_path(doc_path) {
-            if ry_workspace::reports::is_report_path(path) && !ctx.config.reports.enabled {
-                return false;
-            }
             if ctx.folder_settings.enable == Some(false) {
                 return false;
             }
@@ -901,9 +911,6 @@ impl State {
             );
         }
         if self.folder_settings.enable == Some(false) {
-            return false;
-        }
-        if ry_workspace::reports::is_report_path(path) && !self.file_config.reports.enabled {
             return false;
         }
         // No folder owns the path. Fall back to the server root only
@@ -1275,13 +1282,13 @@ impl Backend {
             #[cfg(feature = "test-util")]
             let paused_parse = crate::test_seam::maybe_pause().await;
             let mut parser = RParser::new().ok()?;
-            let (parsed, new_tree) =
-                if ry_workspace::reports::is_report_path(std::path::Path::new(path)) {
-                    ry_workspace::reports::parse_report_with_tree(&mut parser, path, &text, None)
-                } else {
-                    parser.parse_with_tree(path, &text, old_tree.as_ref())
-                }
-                .ok()?;
+            let (parsed, new_tree) = ry_workspace::reports::parse_source_with_tree(
+                &mut parser,
+                path,
+                &text,
+                old_tree.as_ref(),
+            )
+            .ok()?;
             let file = Arc::new(parsed);
             let mut state = self.state.lock().await;
             // A different original URI can replace this display-keyed source
@@ -1292,12 +1299,8 @@ impl Backend {
             let stored = if state.versions.get(path).copied() == Some(version)
                 && state.docs.get(path) == Some(&text)
             {
-                if ry_workspace::reports::is_report_path(Path::new(path)) {
-                    // A masked report tree is never reused: an option edit
-                    // can mask or unmask text outside the edited range.
-                    state.trees.remove(path);
-                } else {
-                    state.store_tree(path, version, new_tree);
+                if let Some(tree) = new_tree {
+                    state.store_tree(path, version, tree);
                 }
                 state.record_parse(path, version, Arc::clone(&file))
             } else {
@@ -1594,18 +1597,7 @@ impl Backend {
                             continue;
                         }
                         let Some(file) = RParser::new().ok().and_then(|mut parser| {
-                            if ry_workspace::reports::is_report_path(Path::new(&path)) {
-                                ry_workspace::reports::parse_report_with_tree(
-                                    &mut parser,
-                                    &path,
-                                    &text,
-                                    None,
-                                )
-                                .ok()
-                                .map(|(file, _)| file)
-                            } else {
-                                parser.parse(&path, &text).ok()
-                            }
+                            ry_workspace::reports::parse_source(&mut parser, &path, &text).ok()
                         }) else {
                             continue;
                         };
@@ -2642,18 +2634,9 @@ impl Backend {
                 let decoded = ry_workspace::read_r_source_decoded(&read_path).ok()?;
                 let path_string = read_path.to_string_lossy().into_owned();
                 let mut parser = RParser::new().ok()?;
-                let mut file = if ry_workspace::reports::is_report_path(&read_path) {
-                    ry_workspace::reports::parse_report_with_tree(
-                        &mut parser,
-                        &path_string,
-                        &decoded.text,
-                        None,
-                    )
-                    .ok()?
-                    .0
-                } else {
-                    parser.parse(&path_string, &decoded.text).ok()?
-                };
+                let mut file =
+                    ry_workspace::reports::parse_source(&mut parser, &path_string, &decoded.text)
+                        .ok()?;
                 decoded.attach_boundary_findings(&mut file);
                 Some((path_string, Arc::new(file)))
             })

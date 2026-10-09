@@ -132,13 +132,7 @@ fn parse_with_worker_parser(path: &str, source: &str) -> Option<SourceFile> {
                 }
             },
         };
-        let parsed = if ry_workspace::reports::is_report_path(Path::new(path)) {
-            ry_workspace::reports::parse_report_with_tree(parser, path, source, None)
-                .map(|(file, _)| file)
-        } else {
-            parser.parse(path, source)
-        };
-        match parsed {
+        match ry_workspace::reports::parse_source(parser, path, source) {
             Ok(file) => Some(file),
             Err(error) => {
                 tracing::debug!(path, %error, "index parse failed; skipping file");

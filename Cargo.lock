@@ -1512,7 +1512,6 @@ dependencies = [
  "ry-typeshed",
  "tempfile",
  "thiserror",
- "tree-sitter",
 ]
 
 [[package]]

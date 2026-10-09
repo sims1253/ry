@@ -392,8 +392,8 @@ pub fn is_r_source_path(path: &Path) -> bool {
 fn is_source_path(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
-        Some("R" | "r" | "S" | "s" | "q" | "Rmd" | "rmd" | "qmd")
-    )
+        Some("R" | "r" | "S" | "s" | "q")
+    ) || crate::reports::is_report_path(path)
 }
 
 /// Result of a bounded directory discovery.

@@ -67,15 +67,21 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
 /// Reports have their own ordered R environment even when they share a
 /// package directory. Ordinary source files retain package grouping.
 pub fn analysis_group_key(path: &Path) -> Option<PathBuf> {
+    group_key(path, enclosing_package_root)
+}
+
+fn group_key(path: &Path, package_root: impl FnOnce(&Path) -> Option<PathBuf>) -> Option<PathBuf> {
     if reports::is_report_path(path) {
         Some(path.to_path_buf())
     } else {
-        enclosing_package_root(path)
+        package_root(path)
     }
 }
 
-/// A report's unique group key is its file path, not a filesystem root.
-pub fn resolution_root_for_group<'a>(group: Option<&'a Path>, fallback: &'a Path) -> PathBuf {
+/// The directory a group resolves against. A report's group key is its
+/// file path; it resolves against its enclosing package so package
+/// imports still apply while its bindings stay separate.
+pub fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathBuf {
     match group {
         Some(path) if reports::is_report_path(path) => {
             enclosing_package_root(path).unwrap_or_else(|| fallback.to_path_buf())
@@ -112,14 +118,12 @@ where
         } else {
             path.parent()
         };
-        let root = if reports::is_report_path(path) {
-            Some(path.to_path_buf())
-        } else {
+        let root = group_key(path, |path| {
             root_cache
                 .entry(key)
                 .or_insert_with(|| enclosing_package_root(path))
                 .clone()
-        };
+        });
         groups.entry(root).or_default().push(index);
     }
     groups

@@ -697,11 +697,7 @@ impl LanguageServer for Backend {
             let folder = state.folder_context_for_path(&path);
             let disabled = folder.is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
                 || (folder.is_none() && state.folder_settings.enable == Some(false));
-            let report_disabled = ry_workspace::reports::is_report_path(Path::new(&path))
-                && !folder
-                    .map(|ctx| ctx.config.reports.enabled)
-                    .unwrap_or(state.file_config.reports.enabled);
-            if disabled || report_disabled {
+            if disabled || state.report_disabled(&path) {
                 return Ok(None);
             }
         }

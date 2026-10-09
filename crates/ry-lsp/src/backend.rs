@@ -277,6 +277,88 @@ pub(super) struct FolderAnalysisContext {
     pub package_caches: HashMap<Option<PathBuf>, Arc<Mutex<ProjectCache>>>,
 }
 
+/// Publication settings of one workspace folder, or the root-level
+/// settings for files no folder owns.
+#[derive(Clone)]
+struct PublishPolicy {
+    filter: ry_checker::SeverityFilter,
+    scoped_policy: ry_checker::ScopedRulePolicy,
+    min_confidence: Option<ry_checker::Confidence>,
+    excludes: ry_config::Excludes,
+    baseline: Option<ry_config::Baseline>,
+    /// Config-relative exclude patterns and baseline keys anchor at the
+    /// originating `ry.toml`'s directory — the same `repo_root` `ry check`
+    /// derives from its discovered config (#493) — not at the folder root.
+    anchor: Option<PathBuf>,
+}
+
+impl PublishPolicy {
+    fn for_folder(ctx: &FolderAnalysisContext) -> Self {
+        PublishPolicy {
+            filter: ctx.filter.clone(),
+            scoped_policy: ctx.scoped_policy.clone(),
+            min_confidence: ctx.min_confidence,
+            excludes: ctx.excludes.clone(),
+            baseline: ctx.baseline.clone(),
+            anchor: ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
+        }
+    }
+
+    fn excludes(&self, path: &str) -> bool {
+        !self.excludes.is_empty()
+            && self
+                .excludes
+                .matches(&ry_config::diagnostic_path(path, self.anchor.as_deref()))
+    }
+
+    /// Post-process through the shared pipeline (`ry_checker::post_process`)
+    /// so the editor sees exactly what `ry check` reports: inline suppression
+    /// comments, then the severity filter, then path-based confidence
+    /// demotion, then baseline subtraction, then the min-confidence
+    /// threshold. Subtracting the baseline before the suppression filter let
+    /// a suppressed occurrence consume the count for its unsuppressed twin
+    /// (#491); skipping the demotion stage kept support-tree findings above
+    /// the threshold in the editor after `ry check` had dropped them (#492).
+    /// Scoped rule severities match `policy_path`; without one, the base
+    /// filter applies.
+    fn publish(
+        &self,
+        diagnostics: Vec<ry_checker::Diagnostic>,
+        path: &str,
+        policy_path: Option<&Path>,
+        file: Option<&SourceFile>,
+        origin: Option<serde_json::Value>,
+    ) -> Vec<LspDiagnostic> {
+        let filter = policy_path.map(|native| self.scoped_policy.filter_for(native, &self.filter));
+        let post = ry_checker::PostProcess {
+            filter: filter.as_deref().unwrap_or(&self.filter),
+            baseline: self.baseline.as_ref(),
+            min_confidence: self.min_confidence.unwrap_or(ry_checker::Confidence::Low),
+            repo_root: self.anchor.as_deref(),
+        };
+        let mut diagnostics = post.pre_demotion(
+            diagnostics,
+            file.map_or(&[], |file| file.comments.as_slice()),
+            file.map_or("", |file| file.source.as_str()),
+            path,
+            file,
+        );
+        post.demote_non_source_paths(&mut diagnostics);
+        post.post_demotion(&mut diagnostics);
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| {
+                let mut diagnostic = match file {
+                    Some(file) => diagnostic_to_lsp_with_source(&diagnostic, &file.source),
+                    None => diagnostic_to_lsp(diagnostic),
+                };
+                diagnostic.data = origin.clone();
+                diagnostic
+            })
+            .collect()
+    }
+}
+
 /// Compile the filter, min_confidence, and excludes for a folder from its
 /// config and settings. The folder config is both the exclude source and
 /// the severity fallback.
@@ -1461,27 +1543,18 @@ impl Backend {
         // ProjectCache, stubs, and workspace context. The root-level
         // filter, confidence, exclude, baseline, and root state rides
         // along for the files no folder owns.
-        let (
-            folder_contexts,
-            root_filter,
-            root_scoped_policy,
-            root_min_confidence,
-            root_excludes,
-            root_baseline,
-            root,
-            root_config_dir,
-            root_config,
-        ) = {
+        let (folder_contexts, root_policy, root_config) = {
             let state = self.state.lock().await;
             (
                 state.folder_contexts.clone(),
-                state.root_filter.clone(),
-                state.root_scoped_policy.clone(),
-                state.root_min_confidence,
-                state.root_excludes.clone(),
-                state.root_baseline.clone(),
-                state.root.clone(),
-                state.root_config_dir.clone(),
+                PublishPolicy {
+                    filter: state.root_filter.clone(),
+                    scoped_policy: state.root_scoped_policy.clone(),
+                    min_confidence: state.root_min_confidence,
+                    excludes: state.root_excludes.clone(),
+                    baseline: state.root_baseline.clone(),
+                    anchor: state.root_config_dir.clone().or(state.root.clone()),
+                },
                 state.file_config.clone(),
             )
         };
@@ -1498,28 +1571,8 @@ impl Backend {
                 .find(|ctx| Path::new(&path).starts_with(&ctx.root));
             let config = ctx.map_or(&root_config, |ctx| &ctx.config);
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
-                let (filter, min_confidence, excludes, baseline, config_anchor, policy) = match ctx
-                {
-                    Some(ctx) => (
-                        &ctx.filter,
-                        ctx.min_confidence,
-                        &ctx.excludes,
-                        ctx.baseline.as_ref(),
-                        ctx.config_root.as_deref().or(Some(ctx.root.as_path())),
-                        &ctx.scoped_policy,
-                    ),
-                    None => (
-                        &root_filter,
-                        root_min_confidence,
-                        &root_excludes,
-                        root_baseline.as_ref(),
-                        root_config_dir.as_deref().or(root.as_deref()),
-                        &root_scoped_policy,
-                    ),
-                };
-                let excluded = !excludes.is_empty()
-                    && excludes.matches(&ry_config::diagnostic_path(&path, config_anchor));
-                if !excluded {
+                let policy = ctx.map_or_else(|| root_policy.clone(), PublishPolicy::for_folder);
+                if !policy.excludes(&path) {
                     for (uri, (text, version)) in sources {
                         if !text.contains("#|") {
                             continue;
@@ -1533,37 +1586,15 @@ impl Backend {
                         if ry_checker::typehint::read_records(&file, &scope).is_empty() {
                             continue;
                         }
-                        let file_filter = uri
-                            .to_file_path()
-                            .ok()
-                            .map(|native| policy.filter_for(&native, filter));
-                        let post = ry_checker::PostProcess {
-                            filter: file_filter.as_deref().unwrap_or(filter),
-                            baseline,
-                            min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
-                            repo_root: config_anchor,
-                        };
-                        let mut warnings = post.pre_demotion(
+                        let native = uri.to_file_path().ok();
+                        let warnings = policy.publish(
                             vec![ambiguous_typehint_identity(&path)],
-                            &file.comments,
-                            &file.source,
-                            &file.path,
+                            &path,
+                            native.as_deref(),
                             Some(&file),
+                            supports_diagnostic_data
+                                .then(|| diagnostic_origin(&path, version, generation)),
                         );
-                        post.demote_non_source_paths(&mut warnings);
-                        post.post_demotion(&mut warnings);
-                        let warnings = warnings
-                            .iter()
-                            .map(|warning| {
-                                let mut diagnostic =
-                                    diagnostic_to_lsp_with_source(warning, &file.source);
-                                if supports_diagnostic_data {
-                                    diagnostic.data =
-                                        Some(diagnostic_origin(&path, version, generation));
-                                }
-                                diagnostic
-                            })
-                            .collect();
                         by_uri.insert(uri, warnings);
                     }
                 }
@@ -1769,85 +1800,23 @@ impl Backend {
                 diagnostics: per_file,
                 files: checked_files,
             } = result;
-            let (filter, min_confidence, excludes, baseline, config_anchor, policy) =
-                match ctx.as_ref() {
-                    Some(ctx) => (
-                        ctx.filter.clone(),
-                        ctx.min_confidence,
-                        ctx.excludes.clone(),
-                        ctx.baseline.clone(),
-                        // Config-relative exclude patterns and baseline keys
-                        // anchor at the originating `ry.toml`'s directory —
-                        // the same `repo_root` `ry check` derives from its
-                        // discovered config (#493) — not at the folder root.
-                        ctx.config_root.clone().or_else(|| Some(ctx.root.clone())),
-                        ctx.scoped_policy.clone(),
-                    ),
-                    None => (
-                        root_filter.clone(),
-                        root_min_confidence,
-                        root_excludes.clone(),
-                        root_baseline.clone(),
-                        root_config_dir.clone().or(root.clone()),
-                        root_scoped_policy.clone(),
-                    ),
-                };
+            let policy = ctx
+                .as_ref()
+                .map_or_else(|| root_policy.clone(), PublishPolicy::for_folder);
             for (diagnostic_path, diagnostics) in per_file {
-                if !excludes.is_empty() {
-                    let rel =
-                        ry_config::diagnostic_path(&diagnostic_path, config_anchor.as_deref());
-                    if excludes.matches(&rel) {
-                        continue;
-                    }
+                if policy.excludes(&diagnostic_path) {
+                    continue;
                 }
-
-                // Post-processing runs through the shared pipeline
-                // (`ry_checker::post_process`) so the editor sees exactly
-                // what `ry check` reports: inline suppression comments,
-                // then the severity filter, then path-based confidence
-                // demotion, then baseline subtraction, then the
-                // min-confidence threshold. Subtracting the baseline
-                // before the suppression filter let a suppressed
-                // occurrence consume the count for its unsuppressed twin
-                // (#491); skipping the demotion stage kept support-tree
-                // findings above the threshold in the editor after
-                // `ry check` had dropped them (#492).
-                let checked_file = checked_files.get(&diagnostic_path);
-                let source_text = checked_file.map(|file| file.source.as_str());
-                let comments: &[ry_core::ast::Comment] =
-                    checked_file.map_or(&[], |file| file.comments.as_slice());
-                let file_filter = policy.filter_for(Path::new(&diagnostic_path), &filter);
-                let post = ry_checker::PostProcess {
-                    filter: &file_filter,
-                    baseline: baseline.as_ref(),
-                    min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
-                    repo_root: config_anchor.as_deref(),
-                };
-                let mut diagnostics = post.pre_demotion(
+                let diagnostics = policy.publish(
                     diagnostics,
-                    comments,
-                    source_text.unwrap_or(""),
                     &diagnostic_path,
-                    checked_file.map(AsRef::as_ref),
+                    Some(Path::new(&diagnostic_path)),
+                    checked_files.get(&diagnostic_path).map(AsRef::as_ref),
+                    diagnostic_versions
+                        .get(&diagnostic_path)
+                        .filter(|_| supports_diagnostic_data)
+                        .map(|version| diagnostic_origin(&diagnostic_path, *version, generation)),
                 );
-                post.demote_non_source_paths(&mut diagnostics);
-                post.post_demotion(&mut diagnostics);
-                let diagnostics: Vec<LspDiagnostic> = diagnostics
-                    .into_iter()
-                    .map(|diagnostic| {
-                        let mut diagnostic = match source_text {
-                            Some(text) => diagnostic_to_lsp_with_source(&diagnostic, text),
-                            None => diagnostic_to_lsp(diagnostic),
-                        };
-                        if supports_diagnostic_data
-                            && let Some(version) = diagnostic_versions.get(&diagnostic_path)
-                        {
-                            diagnostic.data =
-                                Some(diagnostic_origin(&diagnostic_path, *version, generation));
-                        }
-                        diagnostic
-                    })
-                    .collect();
                 let uris = publication_uris(&diagnostic_path);
                 if uris.len() == 1 {
                     let uri = uris[0].clone();

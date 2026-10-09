@@ -294,11 +294,20 @@ fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The typehint release whose `check_types()` semantics ry has audited.
+pub const AUDITED_TYPEHINT_VERSION: &str = "0.1.0";
+
 impl TypehintConfig {
+    fn adoption_is_complete(&self) -> bool {
+        self.adopt
+            && self.version.as_deref() == Some(AUDITED_TYPEHINT_VERSION)
+            && !self.paths.is_empty()
+    }
+
     /// Compile the audited, explicitly adopted source scope once per
     /// analysis. Programmatically built invalid configs remain disabled.
     pub fn adopted_scope(&self) -> Option<ScopedPaths> {
-        if !self.adopt || self.version.as_deref() != Some("0.1.0") || self.paths.is_empty() {
+        if !self.adoption_is_complete() {
             return None;
         }
         ScopedPaths::new(self.root.as_deref()?, &self.paths).ok()
@@ -507,10 +516,7 @@ impl Config {
                 }
             })?;
         }
-        if cfg.annotations.typehint.adopt
-            && (cfg.annotations.typehint.version.as_deref() != Some("0.1.0")
-                || cfg.annotations.typehint.paths.is_empty())
-        {
+        if cfg.annotations.typehint.adopt && !cfg.annotations.typehint.adoption_is_complete() {
             return Err(ConfigError::InvalidTypehintAdoption {
                 path: path.to_path_buf(),
             });

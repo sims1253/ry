@@ -278,10 +278,11 @@ fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
         return clause;
     };
     if !valid_class(&raw[class_start..class_end]) {
+        let rest = raw[class_start..].trim_end();
         let start = span.start + class_start;
         clause.residual = Some(ResidualConstraint {
-            raw: raw[class_start..].into(),
-            span: Span::new(start, span.end, span.line, span.col + class_start),
+            raw: rest.into(),
+            span: Span::new(start, start + rest.len(), span.line, span.col + class_start),
             reason: "class spelling is outside the audited simple typehint subset".into(),
         });
         return clause;
@@ -417,7 +418,7 @@ fn build_record(
     DeclarationRecord {
         source: DeclarationSource {
             provider: "typehint".into(),
-            provider_version: Some("0.1.0".into()),
+            provider_version: Some(ry_config::config::AUDITED_TYPEHINT_VERSION.into()),
             path: file.path.clone(),
             span: source_span,
             raw: file.source[source_span.start..source_span.end].into(),
@@ -606,7 +607,7 @@ mod tests {
 
     #[test]
     fn unsupported_class_spelling_remains_a_source_residual() {
-        let source = "f <- function(x) {\n #| x some-class\n x\n}\n";
+        let source = "f <- function(x) {\n #| x some-class  \n x\n}\n";
         let records = read(source);
         let Translation::Unsupported { residuals } = &records[0].translation else {
             panic!("unsupported class must stay visible: {records:?}");

@@ -5,11 +5,15 @@
 
 use crate::span::Span;
 use crate::types::RType;
+use std::path::PathBuf;
 
 /// A top-level R source file is a sequence of statements.
 #[derive(Debug, Clone, Default)]
 pub struct SourceFile {
     pub path: String,
+    /// Native on-disk path, if read from disk. The lossy display `path` of
+    /// a non-UTF-8 filename can collide with a real U+FFFD filename.
+    pub native_path: Option<PathBuf>,
     /// Original UTF-8 text. The checker slices this string by AST spans
     /// rather than scraping diagnostic prose.
     pub source: String,

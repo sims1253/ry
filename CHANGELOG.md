@@ -6,6 +6,11 @@ All notable changes to ry are documented in this file.
 
 ### Added
 
+- Resolve static `box::use()` module and package imports in lexical scope,
+  including selected names, aliases, wildcard exports, package typeshed
+  signatures, and local module return types. RY118 warns when a complete
+  local module inventory proves a selected export or exact `$` member is
+  missing (#579).
 - Add RY119 for proven `as.integer()` range loss. The checker distinguishes
   a newly created integer `NA` from an input `NA`, retains that fact for
   condition analysis, and stays quiet for unknown inputs and immediately

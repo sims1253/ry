@@ -1310,6 +1310,28 @@ fn installed_package_exports(
         .unwrap_or_default()
 }
 
+/// Literal installed exports visible to a source file through the library
+/// root order used for ordinary package context. `None` means no readable
+/// NAMESPACE, or one whose `exportPattern()` the literal set cannot describe.
+/// Even a set does not prove that a package has no other dynamic exports.
+pub fn installed_exports_for_file(package: &str, file: &Path) -> Option<HashSet<String>> {
+    let roots = r_library_roots(&[file.to_path_buf()]);
+    let preferred_version = current_r_minor_version(&roots);
+    roots
+        .iter()
+        .find_map(|root| {
+            find_package_namespace(
+                &root.path,
+                package,
+                root.max_depth,
+                preferred_version.as_deref(),
+            )
+        })
+        .map(|namespace| read_namespace(&namespace))
+        .filter(|metadata| !metadata.export_patterns)
+        .map(|metadata| metadata.exports)
+}
+
 fn current_r_minor_version(roots: &[LibraryRoot]) -> Option<String> {
     let namespace = roots
         .iter()

@@ -12,6 +12,7 @@
 // higher_order.rs, and collect.rs.
 #![allow(clippy::collapsible_if)]
 
+mod box_imports;
 mod collect;
 mod declaration_check;
 pub mod diagnostics;
@@ -101,6 +102,7 @@ use ry_typeshed::{
     load_base_cached, load_package, package_has_injects, package_has_s3_methods,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 fn string_literals(expr: &Expr) -> Vec<String> {
@@ -410,6 +412,9 @@ pub struct Scope {
     /// Bare-identifier function aliases, keyed by the local binding name.
     /// The value is the ultimate semantic callee name used by call inference.
     pub function_aliases: FxMap<String, String>,
+    /// Module/package objects introduced by a lexical `box::use()` call.
+    /// The binding journal restores these with the value on branch exit.
+    pub(crate) box_objects: FxMap<String, box_imports::BoxObject>,
     /// Function literals defined in a nested lexical environment. These must
     /// not be resolved through the project-wide, name-only function table.
     pub(crate) lexical_functions: FxSet<String>,
@@ -446,6 +451,7 @@ impl Clone for Scope {
             list_origin_bindings: self.list_origin_bindings.clone(),
             default_parameter_bindings: self.default_parameter_bindings.clone(),
             function_aliases: self.function_aliases.clone(),
+            box_objects: self.box_objects.clone(),
             lexical_functions: self.lexical_functions.clone(),
             lexical_definitions: self.lexical_definitions.clone(),
             data_mask_unknown: self.data_mask_unknown,
@@ -545,6 +551,7 @@ impl Scope {
                 .chain(self.lexical_functions.iter())
                 .chain(self.lexical_definitions.keys())
                 .chain(self.function_aliases.keys())
+                .chain(self.box_objects.keys())
                 .cloned()
                 .collect();
             for name in names {
@@ -560,6 +567,7 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
+        self.keep_box_calls_after_writes();
         self.lexical_functions.clear();
         self.lexical_definitions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -583,6 +591,16 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        match self.box_call_after_write(&name, &t) {
+            None => self.insert_value(name, t),
+            Some(marker) => {
+                self.insert_value(name.clone(), t);
+                self.set_box_object(name, marker);
+            }
+        }
+    }
+
+    fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
@@ -601,6 +619,9 @@ impl Scope {
 
         if !self.function_aliases.is_empty() {
             self.function_aliases.remove(&name);
+        }
+        if !self.box_objects.is_empty() {
+            self.box_objects.remove(&name);
         }
         if !self.lexical_functions.is_empty() {
             self.lexical_functions.remove(&name);
@@ -634,6 +655,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.lexical_functions.remove(&name);
         self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
@@ -661,6 +683,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.narrowed_bindings.remove(&name);
         // A parameter default may install a different function value even
         // when the lexical-callable marker is deliberately retained.
@@ -693,6 +716,16 @@ impl Scope {
         let name = name.into();
         self.journal_alias(&name);
         self.function_aliases.insert(name, target);
+    }
+
+    pub(crate) fn set_box_object(
+        &mut self,
+        name: impl Into<String>,
+        object: box_imports::BoxObject,
+    ) {
+        let name = name.into();
+        self.journal_binding(&name);
+        self.box_objects.insert(name, object);
     }
 
     pub(crate) fn mark_lexical_function(&mut self, name: impl Into<String>, definition: Span) {
@@ -799,6 +832,9 @@ pub(crate) struct UserFn {
     /// Definition identity, independent of a same-spelled binding elsewhere.
     pub(crate) source_path: String,
     pub(crate) definition_span: Span,
+    /// Physical source identity for relative imports in functions defined
+    /// by an on-disk file whose diagnostic path may be lossy.
+    pub(crate) source_native_path: Option<PathBuf>,
     // The function body, shared via `Arc` so the per-fixpoint-iteration
     // clone in `refine_fn_return` is a cheap refcount bump rather than a
     // deep clone of every statement. The body is immutable after
@@ -1110,11 +1146,20 @@ pub struct Checker {
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Editor/project buffers take precedence over the disk copy of a
+    /// relative box module. Keys use the existing ancestor's identity.
+    box_sources: Arc<box_imports::BoxSources>,
+    box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
+    box_package_cache: HashMap<(PathBuf, String), Arc<box_imports::BoxInventory>>,
+    box_depth: u8,
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Explicitly adopted structured records. Empty unless a caller opts in.
     pub(crate) declarations: Arc<declaration_check::DeclarationSet>,
     pub(crate) declaration_findings: Vec<DeclarationFinding>,
     pub(crate) path: String,
+    /// Native path of the file currently being inferred or emitted. Keep
+    /// diagnostics on `path`, but resolve relative box modules from this.
+    pub(crate) native_path: Option<PathBuf>,
     /// Source text corresponding to `path`, set at every production check seam.
     /// Messages that quote source spelling slice this exact text by parser
     /// spans.
@@ -1297,7 +1342,10 @@ impl Checker {
     /// silent by design and the fixpoint forces discarding mode.
     fn run_passes(&mut self, file: &SourceFile) {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
+        self.box_module_cache.clear();
+        self.box_package_cache.clear();
         self.escaped_operator_bindings = self
             .external_bindings
             .iter()
@@ -1365,10 +1413,15 @@ impl Checker {
         Self {
             typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
+            box_sources: Arc::new(HashMap::new()),
+            box_module_cache: HashMap::new(),
+            box_package_cache: HashMap::new(),
+            box_depth: 0,
             diagnostics: Vec::new(),
             declarations: Arc::new(declaration_check::DeclarationSet::default()),
             declaration_findings: Vec::new(),
             path: path.to_string(),
+            native_path: None,
             source: String::new(),
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
@@ -1438,6 +1491,7 @@ impl Checker {
     // union across files.
     pub(crate) fn collect_file_fns(&mut self, file: &SourceFile) -> HashSet<String> {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.collect_fns(&file.stmts);
         self.harvest_attached_packages(&file.stmts)
     }
@@ -1524,6 +1578,7 @@ impl Checker {
     // top-level scope (also returned by `check_with_scope`).
     pub(crate) fn emit_diagnostics(&mut self, file: &SourceFile) -> Scope {
         self.path = file.path.clone();
+        self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
         self.declaration_findings.clear();
         self.escaped_operator_bindings = self
@@ -1763,6 +1818,12 @@ impl Checker {
             .map(Arc::new)
             .unwrap_or_else(embedded_base);
         self.user_stubs = stubs;
+    }
+
+    pub(crate) fn set_box_sources(&mut self, sources: Arc<box_imports::BoxSources>) {
+        self.box_sources = sources;
+        self.box_module_cache.clear();
+        self.box_package_cache.clear();
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {

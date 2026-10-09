@@ -496,7 +496,7 @@ impl Checker {
         visiting.remove(&key);
     }
 
-    fn infer_call_inner(
+    pub(crate) fn infer_call_inner(
         &mut self,
         func: &Expr,
         args: &[Arg],
@@ -508,6 +508,12 @@ impl Checker {
         // name-based stages below.
         if let Expr::Function { .. } = func {
             return self.infer_function_literal_call(func, args, scope);
+        }
+
+        if let Some(result) =
+            self.infer_box_call(func, args, scope, span, environment_known_before_call)
+        {
+            return result;
         }
 
         // Only model direct calls `name(...)`. Pipelines and indirect calls

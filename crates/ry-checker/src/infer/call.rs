@@ -1697,6 +1697,9 @@ impl Checker {
             for (index, argument) in args.iter().enumerate() {
                 if Some(index) == expression_index {
                     let mut exit_scope = scope.independent_execution_scope();
+                    // The exit code runs after the rest of the body, which
+                    // may replace a binding asserted scalar here.
+                    exit_scope.clear_scalar_assertions();
                     if let Some(assigned) = self.deferred_captures.last() {
                         for name in assigned {
                             if exit_scope.get(name).is_none() {

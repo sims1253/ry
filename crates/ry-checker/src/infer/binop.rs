@@ -903,9 +903,11 @@ impl Checker {
     }
 
     fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+        // A method name is a known generic, a dot, and a non-empty class that
+        // may itself contain dots (`length.foo.bar`, `is.na.foo`).
         let named = |name: &str| {
-            name.rsplit_once('.')
-                .is_some_and(|(prefix, class)| !class.is_empty() && generic(prefix))
+            name.match_indices('.')
+                .any(|(dot, _)| dot + 1 < name.len() && generic(&name[..dot]))
         };
         self.fn_table
             .s3_methods
@@ -970,35 +972,11 @@ impl Checker {
         !assigned.contains(parameter)
     }
 
-    /// Whether any `length.<class>` S3 method is registered, defined, or
+    /// Whether any `length.<class>` method is registered, defined, or
     /// imported by the project, so a value of unknown class could
     /// dispatch `length` away from base semantics.
     fn project_defines_length_method(&self) -> bool {
-        fn named_length_method(name: &str) -> bool {
-            name.strip_prefix("length.")
-                .is_some_and(|class| !class.is_empty())
-        }
-        self.fn_table
-            .s3_methods
-            .keys()
-            .any(|(generic, _)| generic == "length")
-            || self
-                .external_s3_methods
-                .iter()
-                .any(|(generic, _)| generic == "length")
-            || self
-                .fn_table
-                .fns
-                .keys()
-                .any(|name| named_length_method(name))
-            || self
-                .imported_from
-                .keys()
-                .any(|name| named_length_method(name))
-            || self
-                .external_bindings
-                .iter()
-                .any(|name| named_length_method(name))
+        self.project_defines_method(|generic| generic == "length")
     }
 }
 

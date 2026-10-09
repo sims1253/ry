@@ -6,6 +6,7 @@ impl Checker {
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        literal_cond: Option<bool>,
         then: &[Stmt],
         else_: Option<&[Stmt]>,
         mut returns: Option<&mut Vec<RType>>,
@@ -50,10 +51,10 @@ impl Checker {
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
         let mut loop_vectors_after = FxSet::default();
-        if !then_diverges {
+        if !then_diverges && literal_cond != Some(false) {
             loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
         }
-        if !else_diverges {
+        if !else_diverges && literal_cond != Some(true) {
             loop_vectors_after.extend(if has_else {
                 else_scope.loop_vector_bindings.iter().cloned()
             } else {

@@ -54,7 +54,9 @@ base identity for `stopifnot`, `is.null`, `length`, the comparison, `&&`,
 `||`, and `(`; a final predicate argument (not `local`, `exprs`, or
 `exprObject`); a known search path and data mask; enclosing formals that
 have no default or a literal one; and no project or imported S3/S4 method
-for `length`, `[`, `[[`, `$`, an operator, or a safe call below. The rest
+for `length`, `[`, `[[`, `$`, an operator, or a safe call below. An
+installed package's `length` method (such as grid's `length.arrow`) can
+still fake the proof for a value of unknown class. The rest
 of an `&&` assertion may use only literals, the subject, other local values,
 and base comparisons.
 

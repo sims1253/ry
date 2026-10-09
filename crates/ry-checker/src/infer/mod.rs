@@ -802,12 +802,30 @@ impl Checker {
                     scope,
                 );
                 let narrowing = self.extract_type_narrowing(cond, scope);
+                let literal_cond = match cond {
+                    Expr::Logical(value, _) => Some(*value),
+                    _ => None,
+                };
                 #[cfg(test)]
                 if !self.journal_branches {
-                    self.walk_cloned_if(scope, &narrowing, then, else_.as_deref(), returns);
+                    self.walk_cloned_if(
+                        scope,
+                        &narrowing,
+                        literal_cond,
+                        then,
+                        else_.as_deref(),
+                        returns,
+                    );
                     return;
                 }
-                self.walk_journal_if(scope, &narrowing, then, else_.as_deref(), returns);
+                self.walk_journal_if(
+                    scope,
+                    &narrowing,
+                    literal_cond,
+                    then,
+                    else_.as_deref(),
+                    returns,
+                );
             }
             Stmt::For {
                 name, iter, body, ..
@@ -1378,10 +1396,13 @@ impl Checker {
         }
     }
 
+    /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
+    /// the arm it never takes contributes no loop-vector alternative.
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
         narrowing: &Narrowing,
+        literal_cond: Option<bool>,
         then: &[Stmt],
         else_: Option<&[Stmt]>,
         mut returns: Option<&mut Vec<RType>>,
@@ -1497,7 +1518,8 @@ impl Checker {
                 } else {
                     original
                 };
-                (!then_diverges && then) || (!else_diverges && else_path)
+                (!then_diverges && literal_cond != Some(false) && then)
+                    || (!else_diverges && literal_cond != Some(true) && else_path)
             })
             .collect();
         let continuation = match (then_diverges, has_else, else_diverges) {

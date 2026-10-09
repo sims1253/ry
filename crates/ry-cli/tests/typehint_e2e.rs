@@ -83,34 +83,40 @@ fn adopted_contract_checks_and_exports_the_same_source_record() {
 }
 
 #[test]
-fn environment_guard_does_not_establish_or_erase_an_explicit_class() {
+fn class_guards_do_not_establish_or_erase_an_explicit_class() {
     let temp = project(Some(ADOPT));
     fs::write(
         temp.path().join("R/main.R"),
-        include_str!("../../ry-checker/testdata/oracle/typehint_environment_guard.R"),
+        include_str!("../../ry-checker/testdata/oracle/typehint_class_guards.R"),
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 0);
 
-    for (value, guard) in [
-        ("new.env()", "TRUE"),
-        ("new.env()", "is.environment(x)"),
-        ("1L", "is.integer(x)"),
+    for (value, guard, class, mismatches) in [
+        ("new.env()", "TRUE", "'foo'", 0),
+        ("new.env()", "TRUE", "'bar'", 1),
+        ("new.env()", "is.environment(x)", "'foo'", 0),
+        ("new.env()", "is.environment(x)", "'bar'", 1),
+        ("1L", "is.integer(x)", "'foo'", 0),
+        ("1L", "is.integer(x)", "'bar'", 1),
+        ("1L", "is.object(x)", "'foo'", 0),
+        ("1L", "is.object(x)", "'bar'", 1),
+        ("matrix(1L)", "is.matrix(x)", "'foo'", 0),
+        ("matrix(1L)", "is.matrix(x)", "'bar'", 1),
+        ("list()", "inherits(x, 'foo')", "c('foo', 'bar')", 1),
     ] {
-        for (class, mismatches) in [("foo", 0), ("bar", 1)] {
-            fs::write(
-                temp.path().join("R/main.R"),
-                format!(
-                    "g <- function() {{\n x <- structure({value}, class = '{class}')\n if ({guard}) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f(x)\n }}\n}}\ng()\n"
-                ),
-            )
-            .unwrap();
-            assert_eq!(
-                count(temp.path(), "RY114"),
-                mismatches,
-                "value: {value}, guard: {guard}, class: {class}"
-            );
-        }
+        fs::write(
+            temp.path().join("R/main.R"),
+            format!(
+                "g <- function() {{\n x <- structure({value}, class = {class})\n if ({guard}) {{\n  f <- function(y) {{\n   #| y foo\n   y\n  }}\n  f(x)\n }}\n}}\ng()\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            count(temp.path(), "RY114"),
+            mismatches,
+            "value: {value}, guard: {guard}, class: {class}"
+        );
     }
 }
 

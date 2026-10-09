@@ -67,7 +67,7 @@ fn predicate_call_target(name: &str, args: &[Arg]) -> Option<RType> {
     if name == "inherits" {
         args.get(1).and_then(|arg| match &arg.value {
             Expr::String(class, _) if !class.is_empty() => {
-                Some(RType::unknown().with_class(ClassVector::single(class)))
+                Some(RType::unknown().with_class(ClassVector::guard(class)))
             }
             _ => None,
         })
@@ -290,7 +290,7 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
         "is.function" => Some(RType::scalar(Mode::Function)),
         // Data frames are list-backed in the current type lattice.
         "is.data.frame" => {
-            Some(RType::scalar(Mode::List).with_class(ClassVector::single("data.frame")))
+            Some(RType::scalar(Mode::List).with_class(ClassVector::guard("data.frame")))
         }
         "is.null" => Some(RType::new(Mode::Null, Length::Zero)),
         "is.raw" => Some(RType::scalar(Mode::Raw)),
@@ -300,12 +300,35 @@ pub(crate) fn predicate_target(name: &str) -> Option<RType> {
 
 pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
     let class = name.strip_prefix("is.")?;
-    // is.environment() tests storage, and environments can have any class.
-    // The lattice has no environment mode to refine.
-    if class.is_empty() || class == "environment" {
+    if class.is_empty() {
         return None;
     }
-    Some(RType::unknown().with_class(ClassVector::single(class)))
+    Some(RType::unknown().with_class(ClassVector::guard(class)))
+}
+
+/// Mark a stub-declared predicate or assertion target's class as guard
+/// evidence, like the built-in class tests.
+pub(crate) fn guard_target(mut target: RType) -> RType {
+    target.class.guarded = target.class.has_known_class();
+    target
+}
+
+/// The type a passing guard installs. A guard filters paths without
+/// changing the value, so an exact known class outlives the guard's class
+/// evidence. A default parameter's type describes only the omitted call.
+fn guarded_type(scope: &Scope, var: &str, existing: &RType, target: &RType) -> RType {
+    let mut narrowed = RType {
+        mode: target.mode,
+        length: existing.length,
+        ..target.clone()
+    };
+    if existing.class.has_known_class()
+        && !existing.class.guarded
+        && !scope.is_default_parameter(var)
+    {
+        narrowed.class = existing.class.clone();
+    }
+    narrowed
 }
 
 /// Narrowing targets for `assert_*_scalar` calls. This map and the
@@ -506,14 +529,8 @@ fn apply_single_narrowing_branch<'a>(
                         || class_narrowing
                         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
                 {
-                    scope.insert_narrowed(
-                        var.clone(),
-                        RType {
-                            mode: target.mode,
-                            length: existing.length,
-                            ..target.clone()
-                        },
-                    );
+                    let narrowed = guarded_type(scope, var, &existing, target);
+                    scope.insert_narrowed(var.clone(), narrowed);
                     return Some(var.as_str());
                 }
             }
@@ -610,14 +627,8 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
         || class_narrowing
         || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union);
     if should_install {
-        scope.insert_narrowed(
-            var.to_string(),
-            RType {
-                mode: target.mode,
-                length: existing.length,
-                ..target.clone()
-            },
-        );
+        let narrowed = guarded_type(scope, var, &existing, target);
+        scope.insert_narrowed(var.to_string(), narrowed);
         return true;
     }
     false
@@ -758,7 +769,7 @@ impl Checker {
         };
         Narrowing::Positive {
             var: var.clone(),
-            target: json_rtype_to_rtype(&predicate.target),
+            target: guard_target(json_rtype_to_rtype(&predicate.target)),
         }
     }
 }

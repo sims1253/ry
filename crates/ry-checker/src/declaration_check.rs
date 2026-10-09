@@ -351,8 +351,9 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
     if let TypeExpr::ExactClass(expected) = constraint {
         // `RType::class` describes an explicit class attribute. An empty
         // attribute does not establish effective `class(x)`: dimensions and
-        // implicit atomic classes may still determine that result.
-        return if !ty.class.known || ty.class.len == 0 || ty.class.len >= 4 {
+        // implicit atomic classes may still determine that result. A class
+        // test proves only that the value passed it.
+        return if !ty.class.known || ty.class.guarded || ty.class.len == 0 || ty.class.len >= 4 {
             Evidence::Insufficient
         } else if ty.class.len == 1
             && ty.class.names[0]

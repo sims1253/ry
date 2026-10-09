@@ -2228,7 +2228,7 @@ impl Checker {
             && let Some(Expr::Ident { name: var, .. }) =
                 args.get(subject_index).map(|arg| &arg.value)
         {
-            let mut target = json_rtype_to_rtype(&assertion.target);
+            let mut target = guard_target(json_rtype_to_rtype(&assertion.target));
             // Non-literal opt-ins are conservatively treated like TRUE.
             for (param, null_target) in [
                 (

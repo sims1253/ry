@@ -32,7 +32,8 @@ The `typehint` adapter also supports `class["name"]`: one exact effective R
 explicit class attribute exists. A double or character value with an explicit
 `"integer"` class can satisfy `class["integer"]`; ordinary `1` does not, while
 ordinary `1L` does. Unknown, incomplete, or dimension-dependent class facts
-cannot prove a mismatch. A class clause does not seed a body-entry type.
+cannot prove a mismatch, and neither can a passing class test such as
+`inherits()` or `is.object()`. A class clause does not seed a body-entry type.
 
 An atomic constraint can omit length, specify an exact nonnegative length, or
 specify `1+` for nonempty. `null` can only have length zero. Unions contain

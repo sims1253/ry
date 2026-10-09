@@ -567,7 +567,7 @@ impl Scope {
         self.list_origin_bindings.clear();
         self.default_parameter_bindings.clear();
         self.function_aliases.clear();
-        self.box_objects.clear();
+        self.keep_box_calls_after_writes();
         self.lexical_functions.clear();
         self.lexical_definitions.clear();
         if let Some(provenance) = self.reference_provenance.as_mut() {
@@ -591,6 +591,16 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
+        match self.box_call_after_write(&name, &t) {
+            None => self.insert_value(name, t),
+            Some(marker) => {
+                self.insert_value(name.clone(), t);
+                self.set_box_object(name, marker);
+            }
+        }
+    }
+
+    fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
         if !self.has_escaped_slot_names {
             self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
@@ -645,7 +655,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
-        self.box_objects.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.lexical_functions.remove(&name);
         self.lexical_definitions.remove(&name);
         let previous = self.bindings.insert(name.clone(), t);
@@ -673,7 +683,7 @@ impl Scope {
             provenance.invalidate(&name);
         }
         self.function_aliases.remove(&name);
-        self.box_objects.remove(&name);
+        self.replace_box_call_after_write(&name, &t);
         self.narrowed_bindings.remove(&name);
         // A parameter default may install a different function value even
         // when the lexical-callable marker is deliberately retained.

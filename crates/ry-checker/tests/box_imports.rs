@@ -1079,3 +1079,26 @@ fn symlinked_modules_resolve_imports_beside_their_target() {
         result[1].1
     );
 }
+
+#[test]
+fn non_function_writes_keep_attached_calls_opaque() {
+    let root = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        "integer_paste.r",
+        "paste0 <- function(...) 1L\n",
+    );
+    let import = "paste0 <- 1L\nbox::use(./integer_paste[paste0])\n";
+    for write_back in [
+        "paste0 <- 2L\n",
+        "for (i in 1:2) {}\n",
+        "widen <- function() paste0 <<- 2L\nwiden()\n",
+    ] {
+        let source = format!("{import}{write_back}paste0('x') + 1L\n");
+        let diagnostics = codes_for(root.path(), &source);
+        assert!(!has(&diagnostics, "RY040"), "{source}: {diagnostics:#?}");
+    }
+    // An own function shadows the attachment again.
+    let source = format!("{import}paste0 <- function(...) 'x'\npaste0('x') + 1L\n");
+    assert!(has(&codes_for(root.path(), &source), "RY040"), "{source}");
+}

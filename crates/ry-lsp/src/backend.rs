@@ -1196,14 +1196,16 @@ impl Backend {
             serde_json::json!({"globPattern": "**/NAMESPACE"}),
             serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
             serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
-            // R source, so an edit/create/delete of an unopened file
-            // reaches `did_change_watched_files` instead of sitting stale
-            // in the disk index until an unrelated rescan (#486). The
-            // extension set mirrors `ry_workspace` discovery (conventional
-            // `.R`/`.r` plus the historical S-dialect spellings); per-file
-            // walk rules (excludes, fixtures, caps) are applied when the
-            // event is processed, not in the glob.
-            serde_json::json!({"globPattern": "**/*.{R,r,S,s,q}"}),
+            // R source and reports, so an edit/create/delete of an unopened
+            // file reaches `did_change_watched_files` instead of sitting
+            // stale in the disk index until an unrelated rescan (#486). The
+            // extension set is `ry_workspace` discovery's; per-file walk
+            // rules (excludes, fixtures, caps, the report opt-in) are
+            // applied when the event is processed, not in the glob.
+            serde_json::json!({"globPattern": format!(
+                "**/*.{{{}}}",
+                ry_workspace::source_extensions().collect::<Vec<_>>().join(",")
+            )}),
         ];
         for path in &paths {
             let pattern = if relative {

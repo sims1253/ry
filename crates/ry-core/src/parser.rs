@@ -811,10 +811,14 @@ fn strip_quotes_at_boundaries(raw: &str) -> &str {
 }
 
 /// Strip the delimiters of a raw string whose body starts after the
-/// leading `r`/`R` (so `body` begins with `"` and optional dashes).
+/// leading `r`/`R` (so `body` begins with `"` or `'` and optional dashes).
 /// Returns the literal content if the matching closing delimiter is present.
 fn try_unwrap_raw_string(body: &str) -> Option<String> {
-    let body = body.strip_prefix('"')?;
+    let quote = *body
+        .as_bytes()
+        .first()
+        .filter(|&&b| b == b'"' || b == b'\'')?;
+    let body = &body[1..];
     let bytes = body.as_bytes();
     let dashes = bytes.iter().take_while(|&&byte| byte == b'-').count();
     let close_bracket = match bytes.get(dashes)? {
@@ -828,7 +832,7 @@ fn try_unwrap_raw_string(body: &str) -> Option<String> {
     if close_idx < content_start
         || bytes[close_idx] != close_bracket
         || bytes[close_idx + 1..bytes.len() - 1] != bytes[..dashes]
-        || bytes.last() != Some(&b'"')
+        || bytes.last() != Some(&quote)
     {
         return None;
     }
@@ -1774,6 +1778,9 @@ mod tests {
             (r#"r"(knitr)"::opts_chunk"#, "knitr::opts_chunk"),
             (r#"R"--[knitr]--"::r"(opts_chunk)""#, "knitr::opts_chunk"),
             (r#"r"{knitr}"::R"--{opts_chunk}--""#, "knitr::opts_chunk"),
+            (r"r'(knitr)'::R'--[opts_chunk]--'", "knitr::opts_chunk"),
+            (r#"r'(it's)'::r"(a'b)""#, "it's::a'b"),
+            (r"knitr:::r'(opts_chunk)'", "knitr:::opts_chunk"),
             (r#"`knitr`::`opts_\x63hunk`"#, "knitr::opts_chunk"),
             (r#""r\"(knitr)\""::opts_chunk"#, "r\"(knitr)\"::opts_chunk"),
             (r#"knitr::"r\"(opts_chunk)\"""#, "knitr::r\"(opts_chunk)\""),
@@ -2063,6 +2070,10 @@ mod tests {
         assert_eq!(unquote_r_string(r#"r"-(a]b)-""#), "a]b");
         assert_eq!(unquote_r_string(r#"r"{knitr}""#), "knitr");
         assert_eq!(unquote_r_string(r#"R"--{knitr}--""#), "knitr");
+        // Either quote opens a raw string; the closing quote must match.
+        assert_eq!(unquote_r_string(r"r'(a\nb)'"), r"a\nb");
+        assert_eq!(unquote_r_string(r#"R'--[a"b]--'"#), "a\"b");
+        assert_ne!(unquote_r_string(r#"r'(knitr)""#), "knitr");
     }
 
     #[test]

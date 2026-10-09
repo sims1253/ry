@@ -21,12 +21,18 @@ enum HeaderError {
     Unsupported,
 }
 
-pub const REPORT_EXTENSIONS: &[&str] = &["Rmd", "rmd", "qmd"];
+/// Report extensions. Like knitr, matching ignores ASCII case, so
+/// `report.RMD` and `report.Qmd` are reports too.
+pub const REPORT_EXTENSIONS: &[&str] = &["rmd", "qmd"];
 
 pub fn is_report_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| REPORT_EXTENSIONS.contains(&ext))
+        .is_some_and(|ext| {
+            REPORT_EXTENSIONS
+                .iter()
+                .any(|report| ext.eq_ignore_ascii_case(report))
+        })
 }
 
 struct Line<'a> {
@@ -126,6 +132,30 @@ fn fence(text: &str) -> Option<(u8, usize, &str)> {
     }
     let count = rest.bytes().take_while(|byte| *byte == kind).count();
     (count >= 3).then_some((kind, count, &rest[count..]))
+}
+
+/// The header text after an `{r` engine name. knitr lowercases the engine,
+/// so `{R}` is an R chunk too. A missing `}` is kept so it can be refused.
+fn r_engine_tail(info: &str) -> Option<&str> {
+    let tail = info
+        .strip_prefix("{r")
+        .or_else(|| info.strip_prefix("{R"))?;
+    (tail.is_empty() || tail.starts_with(['}', ',', ' ', '\t'])).then_some(tail)
+}
+
+/// Whether a backtick fence's info string opens a knitr chunk of any
+/// engine, as knitr's `\{([a-zA-Z0-9_]+( *[ ,].*)?)\}` pattern reads it.
+fn knitr_chunk(info: &str) -> bool {
+    info.trim()
+        .strip_prefix('{')
+        .and_then(|info| info.strip_suffix('}'))
+        .is_some_and(|inner| {
+            let engine = inner
+                .bytes()
+                .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                .count();
+            engine > 0 && (engine == inner.len() || inner[engine..].starts_with([' ', ',']))
+        })
 }
 
 fn simple_key(key: &str) -> Result<&str, ()> {
@@ -248,8 +278,40 @@ fn execution_key(key: &str) -> bool {
     )
 }
 
-/// Split only at header commas outside ordinary quotes and nested R syntax.
-fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
+/// The end of an R raw string (`r"(...)"`, `R'--[...]--'`) opening at
+/// `pos`: `None` if no raw string opens there, `Some(None)` if it is never
+/// closed. An `r` that continues a name (`xr"(a)"`) opens nothing.
+fn raw_string_end(bytes: &[u8], pos: usize) -> Option<Option<usize>> {
+    let continues_name = pos.checked_sub(1).is_some_and(|before| {
+        let before = bytes[before];
+        before.is_ascii_alphanumeric() || matches!(before, b'.' | b'_') || !before.is_ascii()
+    });
+    if !matches!(bytes[pos], b'r' | b'R') || continues_name {
+        return None;
+    }
+    let quote = *bytes.get(pos + 1).filter(|&&b| b == b'"' || b == b'\'')?;
+    let dashes = bytes[pos + 2..].iter().take_while(|&&b| b == b'-').count();
+    let close = match bytes.get(pos + 2 + dashes)? {
+        b'(' => b')',
+        b'[' => b']',
+        b'{' => b'}',
+        _ => return None,
+    };
+    let mut terminator = vec![close];
+    terminator.extend(std::iter::repeat_n(b'-', dashes));
+    terminator.push(quote);
+    let content = pos + 3 + dashes;
+    Some(
+        bytes[content..]
+            .windows(terminator.len())
+            .position(|window| window == terminator)
+            .map(|offset| content + offset + terminator.len()),
+    )
+}
+
+/// Split only at header commas outside ordinary quotes and nested syntax.
+/// With `r_syntax`, R raw strings are single values as well.
+fn header_fields(inner: &str, r_syntax: bool) -> Result<Vec<&str>, HeaderError> {
     let bytes = inner.as_bytes();
     let mut fields = Vec::new();
     let mut start = 0;
@@ -258,6 +320,13 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
     let mut pos = 0;
     while pos < bytes.len() {
         let byte = bytes[pos];
+        if quote.is_none()
+            && r_syntax
+            && let Some(end) = raw_string_end(bytes, pos)
+        {
+            pos = end.ok_or(HeaderError::Unsupported)?;
+            continue;
+        }
         if let Some(delimiter) = quote {
             if byte == b'\\' {
                 pos = (pos + 2).min(bytes.len());
@@ -268,7 +337,19 @@ fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
             }
         } else {
             match byte {
-                b'\'' | b'"' | b'`' => quote = Some(byte),
+                b'\'' | b'"' | b'`' => {
+                    // A YAML quote opens only a whole scalar; inside a plain
+                    // scalar (`a"b`) it is text, so refuse to guess fields.
+                    let opens = r_syntax
+                        || matches!(
+                            inner[..pos].trim_end().bytes().next_back(),
+                            None | Some(b'{' | b'[' | b',' | b':')
+                        );
+                    if !opens {
+                        return Err(HeaderError::Unsupported);
+                    }
+                    quote = Some(byte);
+                }
                 b'(' | b'[' | b'{' => nesting.push(byte),
                 b')' | b']' | b'}' => {
                     let matches = matches!(
@@ -314,7 +395,7 @@ fn root_flow_execution(line: &str) -> Result<bool, ()> {
     if inner.len() > MAX_HEADER_BYTES {
         return Err(());
     }
-    for field in header_fields(inner).map_err(|_| ())? {
+    for field in header_fields(inner, false).map_err(|_| ())? {
         let (key, _) = yaml_key_value(field)?.ok_or(())?;
         if !plain_key(key) {
             return Err(());
@@ -335,14 +416,14 @@ fn header_options(
     rest: &str,
 ) -> Result<Option<bool>, HeaderError> {
     let header = rest.trim();
-    if !(header.starts_with("{r") && header.ends_with('}')) {
+    let Some(inner) = r_engine_tail(header).and_then(|tail| tail.strip_suffix('}')) else {
         return Err(HeaderError::Unsupported);
-    }
+    };
     if header.len() > MAX_HEADER_BYTES {
         return Err(HeaderError::Budget);
     }
-    let inner = &header[2..header.len() - 1];
-    if !inner.is_empty() && !inner.starts_with([',', ' ', '\t']) {
+    // knitr reads `{r<TAB>...}` as no chunk at all; refuse rather than run it.
+    if !inner.is_empty() && !inner.starts_with([',', ' ']) {
         return Err(HeaderError::Unsupported);
     }
     r_options(parser, path, inner, true)
@@ -357,7 +438,7 @@ fn r_options(
     header: bool,
 ) -> Result<Option<bool>, HeaderError> {
     let mut eval = None;
-    for field in header_fields(fields)? {
+    for field in header_fields(fields, true)? {
         let (words, value) = match field.split_once('=') {
             Some(pair) => pair,
             None if header || field.trim().is_empty() => continue,
@@ -494,7 +575,13 @@ fn parse_report(parser: &mut RParser, path: &str, source: &str) -> Result<Source
     let mut file = parser.parse(path, &masked)?;
     file.source = source.to_owned();
     file.input_issues.extend(issue);
-    file.parse_errors.extend(report.chunk_errors);
+    // Every admitted byte belongs to a chunk that parsed on its own, so a
+    // failed chunk's errors are the report's. The combined parse only
+    // echoes them, shifted: an unclosed string or bracket runs on through
+    // later chunks, to a clean chunk or the end of the document.
+    if !report.chunk_errors.is_empty() {
+        file.parse_errors = report.chunk_errors;
+    }
     file.parse_errors.sort_by_key(|span| (span.start, span.end));
     file.parse_errors.dedup();
     Ok(file)
@@ -523,6 +610,25 @@ impl Report<'_> {
         (from..self.rows.len()).find(|&row| {
             fence(self.rows[row].text).is_some_and(|(close_kind, close_width, tail)| {
                 close_kind == kind && close_width >= width && tail.trim().is_empty()
+            })
+        })
+    }
+
+    /// The first R chunk header among the skipped `rows` of a fence of
+    /// `width` backticks. knitr does not see fences that open no chunk
+    /// (tildes, plain info strings), and inside a chunk a header with the
+    /// same backtick count starts a new one, so such a header may run.
+    fn nested_r_chunk(
+        &self,
+        rows: std::ops::Range<usize>,
+        width: usize,
+        outer_chunk: bool,
+    ) -> Option<usize> {
+        rows.into_iter().find(|&row| {
+            fence(self.rows[row].text).is_some_and(|(kind, inner_width, rest)| {
+                kind == b'`'
+                    && r_engine_tail(rest.trim()).is_some()
+                    && (!outer_chunk || inner_width == width)
             })
         })
     }
@@ -657,10 +763,8 @@ impl Report<'_> {
                 row += 1;
                 continue;
             };
-            let r_chunk = rest
-                .trim()
-                .strip_prefix("{r")
-                .is_some_and(|tail| tail.is_empty() || tail.starts_with(['}', ',', ' ', '\t']));
+            // knitr and Quarto run backtick chunks only; `~~~{r}` is display.
+            let r_chunk = kind == b'`' && r_engine_tail(rest.trim()).is_some();
             let (enabled, body_row) = if r_chunk {
                 if r_chunks == MAX_CHUNKS {
                     return Ok(Some(self.issue(
@@ -677,7 +781,19 @@ impl Report<'_> {
             } else {
                 (false, row + 1)
             };
-            let Some(close) = self.closing_fence(body_row, kind, width) else {
+            let close = self.closing_fence(body_row, kind, width);
+            if !enabled {
+                let outer_chunk = kind == b'`' && knitr_chunk(rest);
+                let skipped = body_row..close.unwrap_or(self.rows.len());
+                if let Some(nested) = self.nested_r_chunk(skipped, width, outer_chunk) {
+                    return Ok(Some(self.issue(
+                        nested,
+                        "RY121",
+                        "an R chunk inside another fence may run; later chunks are not analyzed",
+                    )));
+                }
+            }
+            let Some(close) = close else {
                 return Ok(r_chunk.then(|| {
                     self.issue(
                         row,
@@ -748,7 +864,7 @@ impl Report<'_> {
         let options: Vec<&str> = self.rows[row + 1..]
             .iter()
             .map_while(|line| line.text.trim_start().strip_prefix("#|"))
-            .map(|option| option.trim_start_matches("#|").trim_end())
+            .map(str::trim_end)
             .collect();
         let body_row = row + 1 + options.len();
         let cell_eval = cell_options(parser, path, &options).map_err(|(index, error)| {
@@ -825,11 +941,67 @@ mod tests {
 
     #[test]
     fn quarto_options_and_outer_fences_do_not_invent_execution() {
-        let source = "~~~~~python\n```{r}\nforeign <- 1L\n```\n~~~~~\n```{{r}}\nexample <- 1L\n```\n```r\nexample2 <- 1L\n```\n```{r}\n#| eval: false\nremoved <- 1L\n```\n```{r}\n#| include: false\n#| echo: false\nretained <- 1L\n```\n";
+        let source = "````{verbatim}\n```{r}\nforeign <- 1L\n```\n````\n```{{r}}\nexample <- 1L\n```\n```r\nexample2 <- 1L\n```\n~~~{r}\ndisplayed <- 1L\n~~~\n```{r}\n#| eval: false\nremoved <- 1L\n```\n```{r}\n#| include: false\n#| echo: false\nretained <- 1L\n```\n";
         let file = parse(source);
         assert!(file.parse_errors.is_empty());
         assert!(file.comments.is_empty(), "cell options remain metadata");
         assert_report(source, 1, None);
+    }
+
+    #[test]
+    fn knitr_chunk_headers_follow_knitr_fence_rules() {
+        let later = "```{r}\nx + 1L\n```\n";
+        for (source, stmts, code) in [
+            // knitr lowercases the engine name.
+            (format!("```{{R}}\nx <- 'a'\n```\n{later}"), 2, None),
+            (
+                format!("```{{R, eval=FALSE}}\nx <- 1L\n```\n{later}"),
+                1,
+                None,
+            ),
+            ("```{Rcpp}\nint x;\n```\n".to_owned(), 0, None),
+            // knitr never runs a tilde fence, and `{r<TAB>` opens no chunk.
+            (format!("~~~{{r}}\nx <- 'a'\n~~~\n{later}"), 1, None),
+            (
+                format!("```{{r\tlabel}}\nx <- 'a'\n```\n{later}"),
+                0,
+                Some("RY121"),
+            ),
+            // knitr does not see fences that open no chunk, so an inner
+            // R chunk runs; inside a chunk only an equal fence starts one.
+            (
+                format!("~~~~python\n```{{r}}\nx <- 'a'\n```\n~~~~\n{later}"),
+                0,
+                Some("RY121"),
+            ),
+            (
+                format!("````markdown\n```{{R}}\nx <- 'a'\n```\n````\n{later}"),
+                0,
+                Some("RY121"),
+            ),
+            (
+                format!("```{{python}}\n```{{r}}\nx <- 'a'\n```\n{later}"),
+                0,
+                Some("RY121"),
+            ),
+            (
+                format!("```{{r, eval=FALSE}}\n```{{r}}\nx <- 'a'\n```\n{later}"),
+                0,
+                Some("RY121"),
+            ),
+            (
+                "~~~\nunclosed\n```{r}\nx <- 'a'\n```\n".to_owned(),
+                0,
+                Some("RY121"),
+            ),
+            (
+                format!("````{{python}}\n```{{r}}\nx <- 'a'\n```\n````\n{later}"),
+                1,
+                None,
+            ),
+        ] {
+            assert_report(&source, stmts, code);
+        }
     }
 
     #[test]
@@ -853,6 +1025,27 @@ mod tests {
                 line,
                 "offset and line describe the same row"
             );
+        }
+    }
+
+    #[test]
+    fn an_unclosed_chunk_reports_only_its_own_syntax_errors() {
+        for (source, lines) in [
+            (
+                "```{r}\nx <- \"abc\n```\nprose\n```{r}\ny <- 1L\n```\n",
+                &[2][..],
+            ),
+            ("```{r}\nx <- (\n```\n```{r}\ny <- 1L\n```\n", &[1]),
+            // A later chunk's own error is still reported.
+            ("```{r}\nx <- r\"(abc\n```\n```{r}\ny <- )\n```\n", &[1, 4]),
+        ] {
+            let mut errors: Vec<_> = parse(source)
+                .parse_errors
+                .iter()
+                .map(|span| span.line)
+                .collect();
+            errors.dedup();
+            assert_eq!(errors, lines, "{source}");
         }
     }
 
@@ -916,6 +1109,8 @@ mod tests {
             ("```{r}\n#| eval FALSE\nx <- 1L\n```\n", 0, Some("RY121")),
             ("```{r}\n#|   eval: false\nx <- 1L\n```\n", 0, Some("RY121")),
             ("```{r}\n#| {eval: false}\nx <- 1L\n```\n", 0, Some("RY121")),
+            // Only one `#|` marker is an option prefix.
+            ("```{r}\n#|#| eval: false\nx <- 1L\n```\n", 0, Some("RY121")),
             (
                 "```{r}\n#| echo: false\n#| eval = FALSE\nx <- 1L\n```\n",
                 0,
@@ -953,6 +1148,9 @@ mod tests {
             "{r, fig.cap=\"caption, eval=FALSE\"}",
             "{r, fig.cap=paste('a,b', c(1,2))}",
             "{r, fig.cap={\"caption\"}}",
+            // A raw string is one value, whatever quotes and commas it holds.
+            r#"{r, fig.cap=r"(a " caption, eval=FALSE)"}"#,
+            r#"{r, fig.cap=R'--[a ' b, eval=FALSE]--', echo=FALSE}"#,
         ] {
             assert_report(
                 &format!("```{header}\nx <- 'a'\n```\n```{{r}}\nx + 1L\n```\n"),
@@ -960,12 +1158,19 @@ mod tests {
                 None,
             );
         }
+        assert_report(
+            "```{r, fig.cap=r\"(a, b)\", eval=FALSE}\nx <- 'a'\n```\n",
+            0,
+            None,
+        );
         for header in [
             "{r, fig.cap={knitr::opts_chunk$set(eval=FALSE); \"caption\"}}",
             r#"{r, fig.cap={`knitr`::`opts_\x63hunk`$set(eval=FALSE); "caption"}}"#,
             r#"{r, fig.cap={r"(knitr)"::opts_chunk$set(eval=FALSE); "caption"}}"#,
             r#"{r, fig.cap={R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE); "caption"}}"#,
             r#"{r, fig.cap={r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE); "caption"}}"#,
+            r"{r, fig.cap={r'(knitr)'::opts_chunk$set(eval=FALSE); 'caption'}}",
+            r#"{r, fig.cap=r"(unterminated, eval=FALSE}"#,
         ] {
             assert_report(
                 &format!("```{header}\nNULL\n```\n```{{r}}\n'a' + 1L\n```\n"),
@@ -1013,6 +1218,10 @@ mod tests {
             r#"r"(knitr)"::opts_chunk$set(eval=FALSE)"#,
             r#"R"--[knitr]--"::r"(opts_chunk)"$set(eval=FALSE)"#,
             r#"r"{knitr}"::R"--{opts_chunk}--"$set(eval=FALSE)"#,
+            "knitr:::opts_chunk$set(eval=FALSE)",
+            "knitr:::`opts_chunk`$set(eval=FALSE)",
+            "r'(knitr)'::opts_chunk$set(eval=FALSE)",
+            "knitr:::R'-[opts_chunk]-'$set(eval=FALSE)",
         ] {
             assert_report(
                 &format!("```{{r}}\n{body}\n```\n```{{r}}\nx + 1L\n```\n"),
@@ -1050,6 +1259,8 @@ mod tests {
             "engine: markdown",
             "{engine: markdown}",
             "jupyter: python3",
+            // A quote inside a plain flow scalar is text, not a delimiter.
+            "{title: a\"b, execute: {eval: false}, note: c\"d}",
             // Explicit and empty keys are not read.
             "format:\n  html:\n    ? execute\n    : {eval: false}",
             "format:\n  html:\n    \"\": x",

@@ -80,11 +80,13 @@ language server. This is opt-in:
 enabled = true
 ```
 
-ry never renders or runs a report. It checks ordinary fenced R chunks
-(`` ```{r} `` or `~~~{r}`) in document order, so a chunk can use names
+ry never renders or runs a report. It checks backtick-fenced R chunks
+(`` ```{r} `` or `` ```{R} ``) in document order, so a chunk can use names
 defined by earlier active chunks in the same report; each report has its own
 environment. Findings use the report's original lines and columns. Prose,
-YAML, non-R fences, and `{{r}}` examples are ignored.
+YAML, non-R fences, tilde fences such as `~~~{r}` (knitr never runs them),
+and `{{r}}` examples are ignored. Report extensions match in any case
+(`.Rmd`, `.RMD`, `.qmd`, `.QMD`).
 
 - **Execution options.** Literal `eval = FALSE`, `#| eval: false`, or
   `#| eval = FALSE` disables a chunk; `include` and `echo` do not. R-style
@@ -95,8 +97,10 @@ YAML, non-R fences, and `{{r}}` examples are ignored.
   128 R chunks, or an R header over 16 KiB or 128 fields).
 - **RY121** marks execution ry cannot determine statically: computed,
   conflicting, unsupported, or unreadable chunk options (such as `child`, or
-  a `#|` line that is neither `key: value` nor `key = value`), and real
-  references to `knitr::opts_chunk` stop analysis at that chunk. Engine
+  a `#|` line that is neither `key: value` nor `key = value`), real
+  references to `knitr::opts_chunk`, and an R chunk header inside a fence
+  knitr does not treat as a chunk (such as `~~~` or ```` ````markdown ````)
+  stop analysis at that chunk. Engine
   selectors (`engine`, `jupyter`) and `execute`/`knitr` settings in any YAML
   metadata block, including under `format`, stop it for the whole report.
 - A syntax error inside a chunk is reported as RY000. Each chunk parses on its

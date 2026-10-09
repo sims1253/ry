@@ -1204,7 +1204,7 @@ impl Backend {
             // applied when the event is processed, not in the glob.
             serde_json::json!({"globPattern": format!(
                 "**/*.{{{}}}",
-                ry_workspace::source_extensions().collect::<Vec<_>>().join(",")
+                ry_workspace::source_extension_globs().collect::<Vec<_>>().join(",")
             )}),
         ];
         for path in &paths {

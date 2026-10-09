@@ -28,6 +28,7 @@ use rayon::prelude::*;
 use ry_core::SourceFile;
 use ry_typeshed::Typeshed;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 struct FileEmission {
@@ -91,6 +92,9 @@ pub struct Project {
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
+    /// Paths open in an editor. A box module at such a path that this
+    /// project does not check is opaque: its disk copy may be stale.
+    open_buffer_paths: HashSet<String>,
     /// Pass-1 output cached independently for each source path. Incremental
     /// checks invalidate only the entry updated through `update_file`.
     collected_files: HashMap<String, CollectedFile>,
@@ -352,6 +356,11 @@ impl Project {
         } else {
             self.files.push((path, file));
         }
+        // A module can supply exports to unchanged importers, which the
+        // function-name dependency graph does not describe.
+        if self.has_box_imports() {
+            self.mark_all_dirty();
+        }
     }
 
     /// Reinstall the project's files in the order given by `order`.
@@ -468,6 +477,22 @@ impl Project {
     pub fn set_bare_loaded(&mut self, loaded: HashMap<String, HashSet<String>>) {
         if set_if_changed(&mut self.bare_loaded, loaded) {
             self.mark_all_dirty();
+        }
+    }
+
+    fn has_box_imports(&self) -> bool {
+        self.files
+            .iter()
+            .any(|(_, file)| crate::box_imports::has_box_use(file))
+    }
+
+    /// Record the paths open in an editor; see `open_buffer_paths`.
+    pub fn set_open_buffer_paths(&mut self, paths: HashSet<String>) {
+        if self.open_buffer_paths != paths {
+            self.open_buffer_paths = paths;
+            if self.has_box_imports() {
+                self.mark_all_dirty();
+            }
         }
     }
 
@@ -950,6 +975,24 @@ impl Project {
         &mut self,
         mut trace: Option<TraceRecorder>,
     ) -> Vec<(String, Vec<Diagnostic>)> {
+        // Box overlays are keyed by physical identity. A native path keeps
+        // a lossy display path from colliding with a distinct Unicode module;
+        // unsaved buffers use their logical path.
+        let mut box_sources = HashMap::new();
+        if self.has_box_imports() {
+            for path in &self.open_buffer_paths {
+                if let Some(identity) = crate::box_imports::path_identity(Path::new(path)) {
+                    box_sources.insert(identity, None);
+                }
+            }
+            for (path, file) in &self.files {
+                let path = file.native_path.as_deref().unwrap_or(Path::new(path));
+                if let Some(identity) = crate::box_imports::path_identity(path) {
+                    box_sources.insert(identity, Some(Arc::clone(file)));
+                }
+            }
+        }
+        let box_sources = Arc::new(box_sources);
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -968,6 +1011,7 @@ impl Project {
         );
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.set_box_sources(Arc::clone(&box_sources));
         refiner.refinement_dependencies = Some(HashMap::new());
 
         // Scoping: refine only functions whose return type can have
@@ -1014,6 +1058,7 @@ impl Project {
             refiner = Checker::with_tables("__project_pass2__", table, slots);
             refiner.set_loaded(self.loaded.clone());
             refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+            refiner.set_box_sources(Arc::clone(&box_sources));
             refiner.refinement_dependencies = Some(HashMap::new());
             if let Some(trace) = &mut trace {
                 refiner.run_fixpoint_traced(trace);
@@ -1285,6 +1330,7 @@ impl Project {
                         .unwrap_or_else(|| loaded.as_ref().clone()),
                 );
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
+                emitter.set_box_sources(Arc::clone(&box_sources));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );

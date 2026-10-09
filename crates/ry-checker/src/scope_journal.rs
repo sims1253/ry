@@ -12,6 +12,7 @@ pub(crate) struct BindingState {
     lexical: bool,
     lexical_definition: Option<Span>,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -41,6 +42,7 @@ impl BindingState {
             lexical: scope.lexical_functions.contains(name),
             lexical_definition: scope.lexical_definition(name),
             alias: scope.function_aliases.get(name).cloned(),
+            box_object: scope.box_objects.get(name).cloned(),
             provenance: scope
                 .reference_provenance
                 .as_ref()
@@ -74,6 +76,11 @@ impl BindingState {
         } else {
             scope.function_aliases.remove(&name);
         }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
+        } else {
+            scope.box_objects.remove(&name);
+        }
         if let Some(p) = scope.reference_provenance.as_mut() {
             if let Some(value) = self.provenance {
                 p.bindings.insert(name.clone(), value);
@@ -97,6 +104,7 @@ pub(crate) struct AssignmentUndo {
     removed_markers: u8,
     lexical_definition: Option<Span>,
     alias: Option<String>,
+    box_object: Option<box_imports::BoxObject>,
     provenance: Option<BindingProvenance>,
 }
 
@@ -123,6 +131,9 @@ impl AssignmentUndo {
         debug_assert!(!scope.function_aliases.contains_key(&name));
         if let Some(alias) = self.alias {
             scope.function_aliases.insert(name.clone(), alias);
+        }
+        if let Some(object) = self.box_object {
+            scope.box_objects.insert(name.clone(), object);
         }
         if let Some(provenance) = self.provenance
             && let Some(table) = scope.reference_provenance.as_mut()
@@ -206,6 +217,24 @@ impl BranchDelta {
             || base.lexical_definition(name),
             |state| state.lexical_definition,
         )
+    }
+
+    pub(crate) fn box_object<'a>(
+        &'a self,
+        base: &'a Scope,
+        name: &str,
+    ) -> Option<&'a box_imports::BoxObject> {
+        self.changed.get(name).map_or_else(
+            || base.box_objects.get(name),
+            |state| state.box_object.as_ref(),
+        )
+    }
+
+    pub(crate) fn box_object_names(&self) -> impl Iterator<Item = &str> {
+        self.changed
+            .iter()
+            .filter(|(_, state)| state.box_object.is_some())
+            .map(|(name, _)| name.as_str())
     }
 
     pub fn binding<'a>(
@@ -304,6 +333,11 @@ impl Scope {
             self.function_aliases.remove(&name)
         };
         let lexical_definition = self.lexical_definitions.remove(&name);
+        let box_object = if self.box_objects.is_empty() {
+            None
+        } else {
+            self.box_objects.remove(&name)
+        };
         let provenance = self.reference_provenance.as_mut().and_then(|table| {
             if table.bindings.is_empty() {
                 None
@@ -316,6 +350,7 @@ impl Scope {
                 && removed_markers == 0
                 && lexical_definition.is_none()
                 && alias.is_none()
+                && box_object.is_none()
                 && provenance.is_none()
             {
                 return;
@@ -332,6 +367,7 @@ impl Scope {
                 removed_markers,
                 lexical_definition,
                 alias,
+                box_object,
                 provenance,
             },
         ));
@@ -749,6 +785,7 @@ mod tests {
         assert_eq!(left.lexical_functions, right.lexical_functions);
         assert_eq!(left.lexical_definitions, right.lexical_definitions);
         assert_eq!(left.function_aliases, right.function_aliases);
+        assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
         assert_eq!(left.literal_values_unknown, right.literal_values_unknown);

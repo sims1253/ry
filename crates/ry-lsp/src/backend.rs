@@ -485,7 +485,7 @@ impl ProjectCache {
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-        self.check_with_workspace(files, user_stubs, None, Vec::new())
+        self.check_with_workspace(files, user_stubs, None, Vec::new(), &HashSet::new())
             .diagnostics
     }
 
@@ -495,6 +495,7 @@ impl ProjectCache {
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
         workspace: Option<&ry_workspace::WorkspaceContext>,
         records: Vec<ry_core::declarations::DeclarationRecord>,
+        open_paths: &HashSet<String>,
     ) -> ProjectCheckResult {
         let checked_files = files
             .iter()
@@ -515,6 +516,7 @@ impl ProjectCache {
 
         self.project.set_user_stubs(user_stubs);
         self.project.set_declaration_records(records);
+        self.project.set_open_buffer_paths(open_paths.clone());
         let empty_workspace = ry_workspace::WorkspaceContext::default();
         let workspace = workspace.unwrap_or(&empty_workspace);
         self.project.set_loaded(workspace.attached_packages.clone());
@@ -1749,6 +1751,9 @@ impl Backend {
             }
         }
 
+        // Every open buffer, including ineligible ones and those owned by
+        // another partition, hides its possibly stale disk copy from box.
+        let open_paths: HashSet<String> = open_source_paths.keys().cloned().collect();
         let mut all_results: Vec<(Option<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
         for job in jobs {
             let config = job.ctx.as_ref().map_or(&root_config, |ctx| &ctx.config);
@@ -1782,8 +1787,13 @@ impl Backend {
                 }
             }
             let mut project = job.cache.lock().await;
-            let mut result =
-                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref(), records);
+            let mut result = project.check_with_workspace(
+                job.files,
+                job.stubs,
+                job.workspace.as_ref(),
+                records,
+                &open_paths,
+            );
             for diagnostic in declined {
                 if let Some((_, diagnostics)) = result
                     .diagnostics
@@ -2639,6 +2649,7 @@ impl Backend {
                 let mut file =
                     ry_workspace::reports::parse_source(&mut parser, &path_string, &decoded.text)
                         .ok()?;
+                file.native_path = Some(read_path);
                 decoded.attach_boundary_findings(&mut file);
                 Some((path_string, Arc::new(file)))
             })

@@ -30,11 +30,12 @@ struct Probe {
 /// rule, and a recovered tree is exactly how the checker sees broken input.
 fn run(src: &str) -> Vec<(&'static str, Severity)> {
     let mut parser = RParser::new().expect("parser init");
+    let path = format!("{}/testdata/oracle/probe.R", env!("CARGO_MANIFEST_DIR"));
     // tree-sitter recovers from broken syntax, so `parse` succeeds and
     // records the errors on the file; only a catastrophic init failure
     // (out of memory) would fail here.
-    let file = parser.parse("probe.R", src).expect("parse probe");
-    let mut checker = Checker::new("probe.R");
+    let file = parser.parse(&path, src).expect("parse probe");
+    let mut checker = Checker::new(&path);
     checker.check(&file);
     checker
         .take_diagnostics()
@@ -319,6 +320,12 @@ static PROBES: &[Probe] = &[
         note: "unknown native ignore code is rejected at its comment",
         positive: "x <- 1L # ry: ignore[RX040]\n",
         negative: "x <- 1L # noqa: E501\n",
+    },
+    Probe {
+        code: "RY118",
+        note: "a complete local box module proves a selected export is absent",
+        positive: "box::use(./box_module/hello[missing])\n",
+        negative: "box::use(./box_module/hello[foo])\n",
     },
     Probe {
         code: "RY119",

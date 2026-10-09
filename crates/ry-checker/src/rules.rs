@@ -306,6 +306,12 @@ pub const RULES: &[Rule] = &[
         summary: "An explicitly adopted source annotation is malformed or cannot be attached unambiguously to its lexical function; it is not used for checking.",
     },
     Rule {
+        code: "RY118",
+        name: "missing-box-export",
+        default_severity: Severity::Warning,
+        summary: "A statically resolved local box module has a complete export inventory, but a selected import or exact `$` access names no export. Missing modules, dynamic export declarations, and package inventories are not proof of absence and stay silent.",
+    },
+    Rule {
         code: "RY119",
         name: "integer-coercion-range-loss",
         default_severity: Severity::Warning,

@@ -89,6 +89,7 @@ impl RParser {
         Ok((
             SourceFile {
                 path: path.to_string(),
+                native_path: None,
                 source: src.to_string(),
                 stmts,
                 parse_errors,
@@ -779,6 +780,35 @@ pub fn unquote_r_string(raw: &str) -> String {
     // boundary-safe helper so the operation never panics.
     let inner = strip_quotes_at_boundaries(raw);
     process_r_escapes(inner)
+}
+
+/// Decode a quoted R argument name. `Arg::name` retains the source token,
+/// unlike `Expr::String`, so callers that use names as binding identities
+/// must not compare its raw backticks or escapes with runtime names.
+/// Return `None` when the tolerant escape decoder cannot prove the name.
+pub fn decode_r_quoted_name(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    if bytes.len() < 2
+        || !matches!(
+            (bytes[0], bytes[bytes.len() - 1]),
+            (b'`', b'`') | (b'\'', b'\'') | (b'"', b'"')
+        )
+    {
+        return None;
+    }
+    let inner = &raw[1..raw.len() - 1];
+    // R rejects Unicode escapes inside backticks, even though ordinary
+    // quoted strings accept them. An escaped backslash followed by `u`
+    // may be valid, but leaving it unresolved is safer than inventing a
+    // different import binding.
+    if bytes[0] == b'`' && (inner.contains("\\u") || inner.contains("\\U")) {
+        return None;
+    }
+    let decoded = unquote_r_string(raw);
+    if inner.contains('\\') && decoded == inner {
+        return None;
+    }
+    Some(decoded)
 }
 
 /// Strip the leading and trailing quote bytes from `raw`, walking back
@@ -1967,6 +1997,26 @@ mod tests {
         assert_eq!(unquote_r_string(r#""a\\b""#), "a\\b");
         // R rejects unknown escapes; preserve their text during tolerant recovery.
         assert_eq!(unquote_r_string(r#""\q""#), r#"\q"#);
+    }
+
+    #[test]
+    fn quoted_argument_names_decode_only_proven_r_bindings() {
+        use super::decode_r_quoted_name;
+        assert_eq!(
+            decode_r_quoted_name(r"`ren\x61med`"),
+            Some("renamed".into())
+        );
+        assert_eq!(
+            decode_r_quoted_name(r#""ren\u0061med""#),
+            Some("renamed".into())
+        );
+        assert_eq!(
+            decode_r_quoted_name(r"`ren\`amed`"),
+            Some("ren`amed".into())
+        );
+        assert_eq!(decode_r_quoted_name(r"`ren\u0061med`"), None);
+        assert_eq!(decode_r_quoted_name(r"`ren\qmed`"), None);
+        assert_eq!(decode_r_quoted_name("plain"), None);
     }
 
     #[test]

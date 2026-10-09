@@ -1385,6 +1385,16 @@ impl Checker {
                 scope.forget_lexical_definition(&name);
             }
         }
+        let mut box_paths = Vec::new();
+        if then_reaches {
+            box_paths.push(Some(&then_delta));
+        }
+        if !has_else {
+            box_paths.push(None);
+        } else if else_reaches {
+            box_paths.push(Some(&else_delta));
+        }
+        let box_provenance = box_imports::join_box_provenance(scope, &box_paths);
         let then_diverges_in_loop = scope.loop_frame.is_some() && then_delta.unreachable;
         let else_diverges_in_loop = scope.loop_frame.is_some() && else_delta.unreachable;
         // Continuation lookups may fall back to the original scope. Capture
@@ -1625,6 +1635,7 @@ impl Checker {
         for (name, refined) in union_guard_facts {
             scope.insert_narrowed(name, refined);
         }
+        scope.apply_box_provenance(box_provenance);
         if has_else && then_delta.unreachable && else_delta.unreachable {
             scope.unreachable = true;
         }
@@ -3131,6 +3142,10 @@ impl Checker {
                 args,
                 span,
             } => {
+                if let Some((base, object, member)) = box_imports::box_member(e, scope) {
+                    self.infer(base, scope);
+                    return self.infer_box_member(&object, &member, *span);
+                }
                 if *kind == IndexKind::Slot
                     && let Some(result) = self.infer_custom_slot_operator(false, scope)
                 {

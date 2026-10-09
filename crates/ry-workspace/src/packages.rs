@@ -43,6 +43,8 @@ pub struct NamespaceMetadata {
     pub imported_packages: HashSet<String>,
     /// Names made public by `export(name, ...)`.
     pub exports: HashSet<String>,
+    /// Whether `exportPattern()` may make names public beyond `exports`.
+    pub export_patterns: bool,
     /// Explicit `(generic, class)` registrations from `S3method()`.
     pub s3_methods: HashSet<(String, String)>,
 }
@@ -111,6 +113,7 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                     .exports
                     .extend(args.iter().filter_map(|arg| static_name(&arg.value)));
             }
+            "exportPattern" => metadata.export_patterns = true,
             "S3method" => {
                 let generic = args.first().and_then(|arg| static_name(&arg.value));
                 if let (Some(generic), Some(class)) = (

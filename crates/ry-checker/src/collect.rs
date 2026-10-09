@@ -1223,6 +1223,7 @@ impl Checker {
             params,
             source_params,
             source_path: self.path.clone(),
+            source_native_path: self.native_path.clone(),
             definition_span: span,
             body,
             outward_writes,
@@ -1281,6 +1282,10 @@ impl Checker {
         self.inferring.push(name.to_string());
         let body_clone = &function.body;
         let params = &function.params;
+        // Relative imports in the body resolve against the definition's file.
+        let previous_path = std::mem::replace(&mut self.path, function.source_path.clone());
+        let previous_native_path =
+            std::mem::replace(&mut self.native_path, function.source_native_path.clone());
 
         let mut scope = Scope::default();
         // Deferred execution can observe later syntax and constructor changes.
@@ -1330,6 +1335,8 @@ impl Checker {
         };
         self.deferred_captures.pop();
         self.inferring.pop();
+        self.path = previous_path;
+        self.native_path = previous_native_path;
         Some(joined)
     }
 }

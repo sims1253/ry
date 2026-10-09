@@ -5,6 +5,7 @@
 - [Checking files and CI](#checking-files-and-ci)
 - [R Markdown and Quarto inputs](#r-markdown-and-quarto-inputs)
 - [Package awareness](#package-awareness)
+- [Box imports](#box-imports)
 - [uvr project libraries](#uvr-project-libraries)
 - [Data masking and NSE](#data-masking-and-nse)
 - [Dumping inferred types](#dumping-inferred-types)
@@ -161,6 +162,38 @@ bad <- map_dbl(1:4, function(i) as.character(i))
 
 ry reports RY080 because the callback returns character values where `map_dbl`
 requires doubles. `in_parallel()` preserves the callback's inferred type.
+
+## Box imports
+
+ry reads static `box::use()` imports without loading a module or running R.
+`box::use(./mod/hello)` binds `hello`; `box::use(./mod/hello[say_hello])`
+binds only `say_hello`, plus the module object when the import has an
+explicit alias. `[...]` attaches the known exports except originals renamed
+in the same selection. Package imports such as `dplyr[filter]` use the
+installed `NAMESPACE` exports and ry's bundled stubs without attaching the
+package to the search path. Search-path modules such as `mod/hello` bind
+opaque names; ry does not resolve `box.path`, so their wildcards leave
+unenumerated names unknown.
+
+Relative modules resolve from the importing file, preferring open editor
+buffers, and try `.r`, `.R`, `__init__.r`, then `__init__.R` appended to the
+full module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file
+that cannot be analyzed stays opaque rather than falling back to a later
+candidate.
+
+Exports follow box 1.2.3. Literal `box::export()` declarations override
+roxygen `@export` tags. A tag applies when it ends its line in the comment
+region before a declaration; blank lines, ordinary comments, and multiple
+`#` prefixes may intervene. A tagged `box::use()` exports its module alias
+and selected names, while a tagged wildcard leaves the inventory
+incomplete. A module with neither exports its own non-dot top-level
+bindings, including module objects but not selectively attached names.
+
+RY118 reports a selected name or `$` member that a complete local inventory
+proves missing. Computed imports, dynamic exports, module-load calls that may
+write bindings, unreadable or deeply nested modules, and package metadata
+stay silent. Exported functions keep their formals; when a module imports
+names at top level, their return types stay unknown.
 
 ## uvr project libraries
 

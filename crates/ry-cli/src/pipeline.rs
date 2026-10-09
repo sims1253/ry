@@ -328,6 +328,7 @@ fn parse_one(
             .map_err(|message| message.to_string())
     });
     file.map(|mut file| {
+        file.native_path = Some(path.to_path_buf());
         // Record where the on-disk bytes were not valid UTF-8, and
         // whether they started with a BOM, so the checker can flag files
         // R's parser rejects (#376, #474).

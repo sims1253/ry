@@ -130,41 +130,34 @@ requires doubles. `in_parallel()` preserves the callback's inferred type.
 ## Box imports
 
 ry reads static `box::use()` imports without loading a module or running R.
-For example, `box::use(./mod/hello)` binds `hello`, while
-`box::use(./mod/hello[say_hello])` binds only `say_hello`. An explicit
-alias binds the module object as well as selected names. `[...]` attaches
-known exports; renaming an export removes its original spelling from the
-wildcard attachment. Bare package imports such as `dplyr[filter]` use that
-package's installed `NAMESPACE` exports and ry's bundled function stubs.
-The import does not attach the package to the ordinary search path.
+`box::use(./mod/hello)` binds `hello`; `box::use(./mod/hello[say_hello])`
+binds only `say_hello`, plus the module object when the import has an
+explicit alias. `[...]` attaches the known exports except originals renamed
+in the same selection. Package imports such as `dplyr[filter]` use the
+installed `NAMESPACE` exports and ry's bundled stubs without attaching the
+package to the search path. Search-path modules such as `mod/hello` bind
+opaque names; ry does not resolve `box.path`, so their wildcards leave
+unenumerated names unknown.
 
-Search-path module imports such as `mod/hello` bind opaque objects and
-selected names. Their wildcards leave unenumerated names unknown. ry does
-not resolve the configured `box.path`.
+Relative modules resolve from the importing file, preferring open editor
+buffers, and try `.r`, `.R`, `__init__.r`, then `__init__.R` appended to the
+full module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file
+that cannot be analyzed stays opaque rather than falling back to a later
+candidate.
 
-Local paths resolve from the file containing the import. ry checks `.r`,
-`.R`, `__init__.r`, then `__init__.R`, appending an extension to the full
-module name (`foo.bar` becomes `foo.bar.r`). An existing preferred file that
-cannot be analyzed stays opaque rather than making a lower-priority file
-stand in for it. ry uses open editor buffers when available. It recognizes
-roxygen `@export` tags and literal `box::export()` declarations; explicit
-declarations override tags. Comment regions follow box 1.2.3: blank lines,
-ordinary comments, and multiple `#` prefixes can precede a declaration;
-the `@export` tag must end its line. A tag on `box::use()` exports the
-module object alias and statically selected attachment aliases; a wildcard keeps the
-inventory incomplete. A module with neither exports its own non-dot
-top-level bindings, including module-object imports but not selectively
-attached names. ry can report RY118
-when a complete local inventory proves a selected name or `$` member is
-missing. Computed imports, dynamic exports, module-load calls that may write
-bindings, unreadable or deeply nested modules, and incomplete package
-metadata stay opaque, so an absent name
-there does not trigger RY118. This static model does not execute module
-initialization or evaluate arbitrary R expressions.
+Exports follow box 1.2.3. Literal `box::export()` declarations override
+roxygen `@export` tags. A tag applies when it ends its line in the comment
+region before a declaration; blank lines, ordinary comments, and multiple
+`#` prefixes may intervene. A tagged `box::use()` exports its module alias
+and selected names, while a tagged wildcard leaves the inventory
+incomplete. A module with neither exports its own non-dot top-level
+bindings, including module objects but not selectively attached names.
 
-Exported functions retain their static formals. When a module imports names
-outside its functions, ry leaves the return type of its own functions
-unknown because return refinement does not model that lexical environment.
+RY118 reports a selected name or `$` member that a complete local inventory
+proves missing. Computed imports, dynamic exports, module-load calls that may
+write bindings, unreadable or deeply nested modules, and package metadata
+stay silent. Exported functions keep their formals; when a module imports
+names at top level, their return types stay unknown.
 
 ## uvr project libraries
 

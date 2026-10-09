@@ -286,3 +286,56 @@ fn loop_vector_path_survives_aliases_and_joins() {
         assert!(!warns_ry032(source), "{source}");
     }
 }
+
+#[test]
+fn deferred_and_child_scopes_hold_no_stale_scalar_facts() {
+    let mut scope = Scope::default();
+    scope.insert("x", RType::scalar(Mode::Integer));
+    scope.mark_scalar_asserted("x");
+    scope.mark_loop_vector("x");
+    let child = scope.independent_execution_scope();
+    assert!(child.scalar_asserted_bindings.is_empty() && child.loop_vector_bindings.is_empty());
+    // Exit code neither keeps nor proves a fact while the body is unwalked.
+    assert!(warns_ry032(
+        "f <- function(x) { on.exit({ stopifnot(length(x) == 1L); if (is.null(x) || x == 1L) TRUE }); x[2L] <- 2L }"
+    ));
+    // A reachable child scope that lost a fact loses it for the parent.
+    for between in [
+        "if (TRUE && pkg::run()) NULL",
+        "y <- if (x > 0) pkg::run() else NULL",
+    ] {
+        assert!(warns_ry032(&asserted_then(between)), "{between}");
+    }
+}
+
+#[test]
+fn pre_assertion_exemption_needs_exported_calls_with_plain_values() {
+    let guard = "stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }";
+    for (formals, before) in [
+        ("g, x = 1L", "pkg::run(g)"),
+        ("x = 1L", "pkg:::run()"),
+        ("x = 1L", "h <- function() NULL; pkg::run(h)"),
+    ] {
+        let source = format!("f <- function({formals}) {{ {before}; {guard}");
+        assert!(warns_ry032(&source), "{before}");
+    }
+    let source = format!("f <- function(x = 1L) {{ n <- 1L; pkg::run(n); {guard}");
+    assert!(!warns_ry032(&source));
+}
+
+#[test]
+fn stopifnot_controls_and_comparison_methods() {
+    let consumer = "if (is.null(x) || x == 1L) TRUE else FALSE }";
+    // A trailing `local` control leaves the last predicate in charge.
+    assert!(!warns_ry032(&format!(
+        "f <- function(x) {{ stopifnot(is.null(x) || length(x) == 1L, local = TRUE); {consumer}"
+    )));
+    // `exprs` evaluates quoted code, so it proves nothing.
+    assert!(warns_ry032(&format!(
+        "f <- function(x) {{ stopifnot(exprs = {{ is.null(x) || length(x) == 1L }}); {consumer}"
+    )));
+    // A project comparison method may make the loop operand scalar.
+    assert!(!warns_ry032(
+        "`==.foo` <- function(e1, e2) TRUE\nf <- function(xs) { x <- c(1L, 2L); for (i in xs) x <- 1L; if (x == 1L && TRUE) x }"
+    ));
+}

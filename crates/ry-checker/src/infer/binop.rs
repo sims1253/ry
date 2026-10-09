@@ -494,11 +494,15 @@ impl Checker {
     }
 
     fn loop_vector_operand(&self, expr: &Expr, scope: &Scope) -> bool {
+        if scope.loop_vector_bindings.is_empty() {
+            return false;
+        }
         let subject = match expr {
             Expr::Ident { name, .. } => Some(name.as_str()),
             Expr::BinOp { op, lhs, rhs, .. }
                 if is_comparison(*op)
-                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope) =>
+                    && !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    && !self.project_defines_comparison_method() =>
             {
                 let numeric = |expr: &Expr| match expr {
                     Expr::UnaryOp {
@@ -684,6 +688,7 @@ impl Checker {
         // An earlier call outside the safe set may already have replaced the
         // subject with an active binding or a promise.
         if scope.dynamic_bindings_unknown
+            || stopifnot_evaluates_quoted(args)
             || !self.resolves_to_base_lenient("stopifnot", scope)
             || self.project_defines_scalar_proof_method()
         {
@@ -694,11 +699,14 @@ impl Checker {
         // or an arbitrary call that static assignment collection cannot see.
         // The final predicate is the only one whose fact cannot be spoiled
         // by another assertion argument after it.
-        // `local`, `exprs`, and `exprObject` are controls, not predicates.
-        // Other named arguments are assertions just like positional ones.
-        if let Some(last) = args.last().filter(|arg| stopifnot_predicate_arg(arg)) {
+        // `local` is a control, not a predicate; skip a trailing one. Other
+        // named arguments are assertions just like positional ones.
+        if let Some(index) = args.iter().rposition(stopifnot_predicate_arg) {
+            let last = &args[index];
             let mut assigned = HashSet::new();
-            collect_condition_assignment_names(&last.value, &mut assigned);
+            for arg in &args[index..] {
+                collect_condition_assignment_names(&arg.value, &mut assigned);
+            }
             if let Some(name) = self.scalar_assertion_subject(&last.value, scope)
                 && !assigned.contains(name.as_str())
             {
@@ -871,10 +879,18 @@ impl Checker {
         }
     }
 
-    fn project_defines_comparison_method(&self) -> bool {
-        self.project_defines_method(|generic| {
-            matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
+    fn method_screens(&self) -> MethodScreens {
+        *self.method_screens.get_or_init(|| MethodScreens {
+            comparison: self.project_defines_method(|generic| {
+                matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
+            }),
+            scalar_proof: self.scan_scalar_proof_methods(),
+            length_s3: self.project_defines_s3_method(|generic| generic == "length"),
         })
+    }
+
+    fn project_defines_comparison_method(&self) -> bool {
+        self.method_screens().comparison
     }
 
     /// A scalar fact relies on base `length`, comparisons, indexing, and the
@@ -882,6 +898,10 @@ impl Checker {
     /// method for any of them could lie about the length or run arbitrary
     /// code, so such a project gets no scalar facts at all.
     fn project_defines_scalar_proof_method(&self) -> bool {
+        self.method_screens().scalar_proof
+    }
+
+    fn scan_scalar_proof_methods(&self) -> bool {
         self.project_defines_method(|generic| {
             crate::semantic_lists::SCALAR_FACT_SAFE_CALLS.contains(&generic)
                 || crate::semantic_lists::OPERATORS.contains(&generic)
@@ -980,8 +1000,17 @@ impl Checker {
     /// dispatch `length` away from base semantics. S4 methods only gate the
     /// stricter `stopifnot` scalar facts, keeping this guard as on main.
     fn project_defines_length_method(&self) -> bool {
-        self.project_defines_s3_method(|generic| generic == "length")
+        self.method_screens().length_s3
     }
+}
+
+/// Whether the project or its imports define methods that the scalar
+/// proofs depend on. Computed once per collected table.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MethodScreens {
+    comparison: bool,
+    scalar_proof: bool,
+    length_s3: bool,
 }
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.
@@ -1053,6 +1082,8 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
     if evaluated.dynamic_bindings_unknown && !scope.dynamic_bindings_unknown {
         scope.invalidate_scalar_assertions();
     }
+    // A call allowed before an assertion drops facts without the flag.
+    scope.retain_scalar_assertions(|name| evaluated.scalar_asserted_bindings.contains(name));
     let mut names = HashSet::new();
     collect_condition_assignment_names(expr, &mut names);
     for name in names {

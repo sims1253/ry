@@ -43,6 +43,12 @@ pub(crate) fn stopifnot_predicate_arg(arg: &Arg) -> bool {
     !matches!(arg.name.as_deref(), Some("local" | "exprs" | "exprObject"))
 }
 
+/// `exprs` and `exprObject` make base `stopifnot` evaluate quoted code.
+pub(crate) fn stopifnot_evaluates_quoted(args: &[Arg]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.name.as_deref(), Some("exprs" | "exprObject")))
+}
+
 /// The diagnostic family appropriate for a known condition type. Opaque
 /// conditions deliberately remain silent: the runtime value may be logical.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1363,8 +1369,9 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
-        if binding_name(target).is_none()
-            || !ops_chooser::base_assignment(self, target, value, scope)
+        if !scope.dynamic_bindings_unknown
+            && (binding_name(target).is_none()
+                || !ops_chooser::base_assignment(self, target, value, scope))
         {
             scope.invalidate_scalar_assertions();
         }
@@ -1384,10 +1391,10 @@ impl Checker {
             // lexical function here, so preserve possible shadowing while
             // dropping its exact declaration identity.
             scope.insert(name.clone(), RType::unknown());
-            scope.mark_lexical_callable(name.clone());
             if vector_path {
                 scope.mark_loop_vector(&name);
             }
+            scope.mark_lexical_callable(name);
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.

@@ -50,6 +50,16 @@ impl Checker {
             || self.block_diverges_for_continuation(then);
         let else_diverges = (scope.loop_frame.is_some() && else_scope.unreachable)
             || else_.is_some_and(|statements| self.block_diverges_for_continuation(statements));
+        // Mirror the journal join: a continuing arm keeps a scalar fact only
+        // if it still holds it, and passes on its binding uncertainty.
+        scope.scalar_asserted_bindings.retain(|name| {
+            (then_diverges || then_scope.scalar_asserted_bindings.contains(name))
+                && (!has_else
+                    || else_diverges
+                    || else_scope.scalar_asserted_bindings.contains(name))
+        });
+        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
+            || (!else_diverges && else_scope.dynamic_bindings_unknown);
         let mut loop_vectors_after = FxSet::default();
         if !then_diverges && literal_cond != Some(false) {
             loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
@@ -145,20 +155,6 @@ impl Checker {
             then_scope.literal_values_unknown || else_scope.literal_values_unknown;
         scope.has_escaped_slot_names |=
             then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
-        let then_diverges =
-            self.block_diverges_for_continuation(branches.0) || then_scope.unreachable;
-        let else_diverges = branches
-            .1
-            .is_some_and(|body| self.block_diverges_for_continuation(body))
-            || else_scope.unreachable;
-        scope.scalar_asserted_bindings.retain(|name| {
-            (then_diverges || then_scope.scalar_asserted_bindings.contains(name))
-                && (!has_else
-                    || else_diverges
-                    || else_scope.scalar_asserted_bindings.contains(name))
-        });
-        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
-            || (!else_diverges && else_scope.dynamic_bindings_unknown);
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

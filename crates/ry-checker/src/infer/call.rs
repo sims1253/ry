@@ -127,7 +127,7 @@ impl Checker {
         crate::semantic_lists::SCALAR_FACT_SAFE_CALLS.contains(&bare)
             && self.resolves_to_base_lenient(&name, scope)
             // `exprs`/`exprObject` evaluate quoted code the walk never sees.
-            && (bare != "stopifnot" || args.iter().all(stopifnot_predicate_arg))
+            && (bare != "stopifnot" || !stopifnot_evaluates_quoted(args))
     }
 
     /// Calls that end current scalar facts but still let a later assertion
@@ -141,23 +141,27 @@ impl Checker {
         };
         let callee = if crate::semantic_lists::bare_name(&name) == "I" {
             self.resolves_to_base_lenient(&name, scope)
-        } else if let Some((package, member)) = name.rsplit_once("::") {
-            !matches!(
-                package.trim_end_matches(':'),
-                "base" | "methods" | "utils" | "stats"
-            ) && !self.fn_table.fns.contains_key(member)
+        } else if let Some((package, member)) = name.rsplit_once("::")
+            && !package.ends_with(':')
+        {
+            // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
+            !matches!(package, "base" | "methods" | "utils" | "stats")
+                && !self.fn_table.fns.contains_key(member)
                 && !self.known_vars.contains(member)
                 && !ops_chooser::operator_rebound(self, "::", scope)
         } else {
             false
         };
-        // Nested calls classify themselves; a closure argument may run later.
+        // Nested calls classify themselves. A closure, or a name that may
+        // hold one, could run later; only a value of known non-function
+        // mode is safe to pass.
         callee
             && args.iter().all(|arg| match &arg.value {
                 Expr::Function { .. } => false,
                 Expr::Ident { name, .. } => {
-                    !scope.get(name).is_some_and(|ty| ty.mode == Mode::Function)
-                        && !self.fn_table.fns.contains_key(name)
+                    scope.get(name).is_some_and(|ty| {
+                        !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+                    }) && !self.fn_table.fns.contains_key(name)
                 }
                 _ => true,
             })
@@ -1698,8 +1702,9 @@ impl Checker {
                 if Some(index) == expression_index {
                     let mut exit_scope = scope.independent_execution_scope();
                     // The exit code runs after the rest of the body, which
-                    // may replace a binding asserted scalar here.
-                    exit_scope.clear_scalar_assertions();
+                    // is not walked yet, so it neither keeps nor proves a
+                    // scalar fact.
+                    exit_scope.invalidate_scalar_assertions();
                     if let Some(assigned) = self.deferred_captures.last() {
                         for name in assigned {
                             if exit_scope.get(name).is_none() {

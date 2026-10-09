@@ -485,7 +485,11 @@ impl Scope {
     pub(crate) fn independent_execution_scope(&self) -> Self {
         let mut scope = self.clone();
         scope.loop_frame = None;
+        // Code here may run after the caller's binding changes, so it gets
+        // no scalar facts; it may prove its own.
         scope.dynamic_bindings_unknown = false;
+        scope.scalar_asserted_bindings.clear();
+        scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
         scope.unreachable = false;
         // The new frame's code is never the syntactic operand of the
@@ -500,9 +504,6 @@ impl Scope {
     /// Enter a fresh execution frame while retaining outward call-head evidence.
     pub(crate) fn function_execution_scope(&self) -> Self {
         let mut scope = self.independent_execution_scope();
-        // A closure may run after its enclosing binding changes.
-        scope.scalar_asserted_bindings.clear();
-        scope.loop_vector_bindings.clear();
         let possible_functions: FxSet<String> = self
             .bindings
             .iter()
@@ -772,7 +773,21 @@ impl Scope {
 
     /// Drop current scalar facts while still allowing later assertions.
     pub(crate) fn clear_scalar_assertions(&mut self) {
-        for binding in self.scalar_asserted_bindings.clone() {
+        self.retain_scalar_assertions(|_| false);
+    }
+
+    /// Keep only the scalar facts `keep` accepts, journaling each removal.
+    pub(crate) fn retain_scalar_assertions(&mut self, keep: impl Fn(&str) -> bool) {
+        if self.scalar_asserted_bindings.is_empty() {
+            return;
+        }
+        let lost: Vec<_> = self
+            .scalar_asserted_bindings
+            .iter()
+            .filter(|name| !keep(name))
+            .cloned()
+            .collect();
+        for binding in lost {
             self.clear_scalar_asserted(&binding);
         }
     }
@@ -1304,6 +1319,9 @@ pub struct Checker {
     pub(crate) native_registration: bool,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
+    /// Method screens derived from the collected and imported tables. They
+    /// cannot change during inference; collection and the setters reset it.
+    method_screens: std::sync::OnceLock<infer::binop::MethodScreens>,
     load_bindings: HashMap<usize, HashSet<String>>,
     // Names assigned anywhere in enclosing function bodies. They are added
     // only when checking a nested closure, matching R's deferred lexical
@@ -1527,6 +1545,7 @@ impl Checker {
             native_registration: false,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
+            method_screens: std::sync::OnceLock::new(),
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
@@ -1960,6 +1979,7 @@ impl Checker {
         self.native_registration =
             bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
         self.external_bindings = bindings;
+        self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();
     }
 
@@ -1973,11 +1993,13 @@ impl Checker {
 
     pub fn set_imported_from(&mut self, imports: HashMap<String, String>) {
         self.imported_from = imports;
+        self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();
     }
 
     pub fn set_external_s3_methods(&mut self, methods: HashSet<(String, String)>) {
         self.external_s3_methods = methods;
+        self.method_screens = std::sync::OnceLock::new();
     }
 
     pub fn set_load_bindings(&mut self, bindings: HashMap<usize, HashSet<String>>) {

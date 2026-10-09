@@ -903,6 +903,14 @@ impl Checker {
     }
 
     fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
+        self.fn_table
+            .s4_methods
+            .keys()
+            .any(|(name, _)| generic(name))
+            || self.project_defines_s3_method(generic)
+    }
+
+    fn project_defines_s3_method(&self, generic: impl Fn(&str) -> bool) -> bool {
         // A method name is a known generic, a dot, and a non-empty class that
         // may itself contain dots (`length.foo.bar`, `is.na.foo`).
         let named = |name: &str| {
@@ -913,11 +921,6 @@ impl Checker {
             .s3_methods
             .keys()
             .any(|(name, _)| generic(name))
-            || self
-                .fn_table
-                .s4_methods
-                .keys()
-                .any(|(name, _)| generic(name))
             || self
                 .external_s3_methods
                 .iter()
@@ -972,11 +975,12 @@ impl Checker {
         !assigned.contains(parameter)
     }
 
-    /// Whether any `length.<class>` method is registered, defined, or
+    /// Whether any `length.<class>` S3 method is registered, defined, or
     /// imported by the project, so a value of unknown class could
-    /// dispatch `length` away from base semantics.
+    /// dispatch `length` away from base semantics. S4 methods only gate the
+    /// stricter `stopifnot` scalar facts, keeping this guard as on main.
     fn project_defines_length_method(&self) -> bool {
-        self.project_defines_method(|generic| generic == "length")
+        self.project_defines_s3_method(|generic| generic == "length")
     }
 }
 

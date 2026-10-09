@@ -226,6 +226,16 @@ fn cross_file_helpers_drop_the_scalar_fact() {
 }
 
 #[test]
+fn s4_length_methods_gate_only_scalar_facts() {
+    // testthat's own tests define an S4 `length` method; that must not turn
+    // its `length(x) == 1 && is.na(x)` guard into a new RY032.
+    let s4 = "setMethod(\"length\", \"Thing\", function(x) 5L)\n";
+    let guard = format!("{s4}is_na <- function(x) length(x) == 1 && is.na(x)\n");
+    assert!(!warns_ry032(&guard));
+    assert!(warns_ry032(&format!("{s4}{}\n", asserted_then("NULL"))));
+}
+
+#[test]
 fn stopifnot_narrows_every_argument_not_rebound_later() {
     let (_, scope) = check_with_scope(
         "x <- if (runif(1) > 0.5) 1L else c(\"a\", \"b\")\n\

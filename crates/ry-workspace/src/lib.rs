@@ -11,7 +11,7 @@ pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible_with_limits, is_r_source_path, is_single_file_walk_admitted,
     is_test_fixture_path, is_within_depth, is_within_file_bytes, rbuildignore_pattern,
-    source_extensions,
+    source_extension_globs,
 };
 use discovery::{is_r_source_name, is_testthat_code_name};
 
@@ -98,7 +98,8 @@ pub fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathB
 /// top-level bindings and inferred functions leak between namespaces,
 /// which can both hide real RY010 findings and activate the wrong NSE
 /// model. Non-package scripts share the `None` group so ordinary
-/// multi-file workflows keep their source()-style visibility.
+/// multi-file workflows keep their source()-style visibility. Each report
+/// is its own group keyed by its path (see [`analysis_group_key`]).
 ///
 /// Inputs are file paths; a directory input is resolved from the
 /// directory itself (like [`enclosing_package_root`]) and keyed by

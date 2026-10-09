@@ -1206,7 +1206,7 @@ impl Backend {
             // applied when the event is processed, not in the glob.
             serde_json::json!({"globPattern": format!(
                 "**/*.{{{}}}",
-                ry_workspace::source_extensions().collect::<Vec<_>>().join(",")
+                ry_workspace::source_extension_globs().collect::<Vec<_>>().join(",")
             )}),
         ];
         for path in &paths {
@@ -3033,20 +3033,17 @@ impl Backend {
             };
             let package_root_clone = package_root.clone();
             let resolved = tokio::task::spawn_blocking(move || {
-                let mut files: Vec<&SourceFile> = Vec::new();
-                let mut root_cache: HashMap<Option<&std::path::Path>, Option<PathBuf>> =
-                    HashMap::new();
-                for (path, file) in &snapshot.candidates {
-                    let fs_path = std::path::Path::new(path);
-                    let key = fs_path.parent();
-                    let root = root_cache
-                        .entry(key)
-                        .or_insert_with(|| ry_workspace::enclosing_package_root(fs_path))
-                        .clone();
-                    if root == package_root_clone {
-                        files.push(file.as_ref());
-                    }
-                }
+                // The full scan's grouping, so a report is its own group
+                // and never joins its package's or the scripts' group.
+                let groups = ry_workspace::group_by_package_root(
+                    snapshot.candidates.iter().map(|(path, _)| path.as_str()),
+                );
+                let files: Vec<&SourceFile> = groups
+                    .get(&package_root_clone)
+                    .into_iter()
+                    .flatten()
+                    .map(|&index| snapshot.candidates[index].1.as_ref())
+                    .collect();
                 ry_workspace::resolve_workspace_context(
                     &snapshot.resolution_root,
                     &snapshot.config,

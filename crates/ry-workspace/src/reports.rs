@@ -15,16 +15,18 @@ const MAX_CHUNKS: usize = 128;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HEADER_FIELDS: usize = 128;
 
+#[derive(Clone, Copy)]
 enum HeaderError {
     Budget,
     Unsupported,
 }
 
+pub const REPORT_EXTENSIONS: &[&str] = &["Rmd", "rmd", "qmd"];
+
 pub fn is_report_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|s| s.to_str()),
-        Some("Rmd" | "rmd" | "qmd")
-    )
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| REPORT_EXTENSIONS.contains(&ext))
 }
 
 struct Line<'a> {
@@ -205,6 +207,22 @@ fn complex_format_value(value: &str) -> bool {
         .starts_with(['{', '[', '*', '&', '!', '|', '>'])
 }
 
+/// Whether this bounded reader can name `key`: it is non-empty and not an
+/// explicit (`?`), tagged, anchored, aliased, merge, collection, or
+/// sequence-entry form.
+fn plain_key(key: &str) -> bool {
+    !key.is_empty() && !key.starts_with(['?', '!', '&', '*', '[', '{', '<', '>', '|', '-'])
+}
+
+/// Document metadata keys that select or configure execution: the engine
+/// (`engine`, `jupyter`) and its options. YAML merges can inherit them.
+fn execution_key(key: &str) -> bool {
+    matches!(
+        key,
+        "execute" | "knitr" | "eval" | "engine" | "jupyter" | "<<"
+    )
+}
+
 /// Split only at header commas outside ordinary quotes and nested R syntax.
 fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
     let bytes = inner.as_bytes();
@@ -273,10 +291,10 @@ fn root_flow_execution(line: &str) -> Result<bool, ()> {
     }
     for field in header_fields(inner).map_err(|_| ())? {
         let (key, _) = yaml_key_value(field)?.ok_or(())?;
-        if key.is_empty() || key.starts_with(['?', '!', '&', '*', '[', '{', '<', '>']) {
+        if !plain_key(key) {
             return Err(());
         }
-        if matches!(key, "execute" | "knitr" | "eval" | "format" | "<<") {
+        if execution_key(key) || key == "format" {
             return Ok(true);
         }
     }
@@ -302,13 +320,30 @@ fn header_options(
     if !inner.is_empty() && !inner.starts_with([',', ' ', '\t']) {
         return Err(HeaderError::Unsupported);
     }
+    r_options(parser, path, inner, true)
+}
+
+/// Read comma-separated `key = value` R options. A header may carry a chunk
+/// label and bare fields; `#|` cell options must be plain assignments.
+fn r_options(
+    parser: &mut RParser,
+    path: &str,
+    fields: &str,
+    header: bool,
+) -> Result<Option<bool>, HeaderError> {
     let mut eval = None;
-    for part in header_fields(inner)? {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
+    for field in header_fields(fields)? {
+        let (words, value) = match field.split_once('=') {
+            Some(pair) => pair,
+            None if header || field.trim().is_empty() => continue,
+            None => return Err(HeaderError::Unsupported),
         };
-        // A leading label (`setup eval = FALSE`) is not part of the key.
-        let key = key.split_whitespace().last().unwrap_or("");
+        // A header's leading label (`setup eval = FALSE`) is not part of the key.
+        let mut words = words.split_whitespace();
+        let key = words.next_back().unwrap_or("");
+        if !header && words.next().is_some() {
+            return Err(HeaderError::Unsupported);
+        }
         if let Some(value) =
             execution_option(key, value, true).map_err(|()| HeaderError::Unsupported)?
             && eval.replace(value).is_some()
@@ -320,6 +355,54 @@ fn header_options(
             .map_err(|_| HeaderError::Unsupported)?;
         if !expression.parse_errors.is_empty() || has_runtime_chunk_options(&expression.stmts) {
             return Err(HeaderError::Unsupported);
+        }
+    }
+    Ok(eval)
+}
+
+/// Classify a cell's leading `#|` lines (without the `#|`) as knitr does:
+/// YAML when the first line looks like `key:`, otherwise comma-separated R
+/// options. Any line this reader cannot classify is an error at its index.
+fn cell_options(
+    parser: &mut RParser,
+    path: &str,
+    lines: &[&str],
+) -> Result<Option<bool>, (usize, HeaderError)> {
+    let Some(first) = lines.first() else {
+        return Ok(None);
+    };
+    let first = first.strip_prefix(' ').unwrap_or(first);
+    let yaml = first.split_once(':').is_some_and(|(key, rest)| {
+        !key.is_empty() && !key.contains(' ') && rest.chars().next().is_none_or(char::is_whitespace)
+    });
+    if !yaml {
+        let fields = lines.join(",");
+        if fields.len() > MAX_HEADER_BYTES {
+            return Err((0, HeaderError::Budget));
+        }
+        return r_options(parser, path, &fields, false).map_err(|error| (0, error));
+    }
+    let indent = |line: &str| line.len() - line.trim_start_matches(' ').len();
+    let base = indent(lines[0]);
+    let mut eval = None;
+    for (index, line) in lines.iter().enumerate() {
+        let content = line.trim();
+        // Deeper lines continue the previous value; only root keys select options.
+        if content.is_empty() || content.starts_with('#') || indent(line) > base {
+            continue;
+        }
+        let unsupported = (index, HeaderError::Unsupported);
+        let Ok(Some((key, value))) = yaml_key_value(content) else {
+            return Err(unsupported);
+        };
+        if indent(line) < base || line.trim_start_matches(' ').starts_with('\t') || !plain_key(key)
+        {
+            return Err(unsupported);
+        }
+        if let Some(value) = execution_option(key, value, false).map_err(|()| unsupported)?
+            && eval.replace(value).is_some()
+        {
+            return Err(unsupported);
         }
     }
     Ok(eval)
@@ -378,8 +461,8 @@ fn parse_report(parser: &mut RParser, path: &str, source: &str) -> Result<Source
             .collect(),
         chunk_errors: Vec::new(),
     };
-    let issue = match report.front_matter() {
-        Ok(first) => report.chunks(parser, path, first)?,
+    let issue = match report.metadata_blocks() {
+        Ok(blocks) => report.chunks(parser, path, &blocks)?,
         Err(issue) => Some(issue),
     };
     let masked = String::from_utf8(report.masked).expect("ASCII mask plus valid UTF-8 R chunks");
@@ -407,16 +490,48 @@ impl Report<'_> {
         source_issue(self.source, self.rows[row].offset, row, code, message)
     }
 
-    /// Return the first row after any YAML front matter. Global execution
-    /// settings can change the meaning of every chunk.
-    fn front_matter(&self) -> Result<usize, InputIssue> {
-        if !self
-            .rows
-            .first()
-            .is_some_and(|line| line.text.trim() == "---")
-        {
-            return Ok(0);
+    fn blank(&self, row: usize) -> bool {
+        self.rows[row].text.trim().is_empty()
+    }
+
+    fn closing_fence(&self, from: usize, kind: u8, width: usize) -> Option<usize> {
+        (from..self.rows.len()).find(|&row| {
+            fence(self.rows[row].text).is_some_and(|(close_kind, close_width, tail)| {
+                close_kind == kind && close_width >= width && tail.trim().is_empty()
+            })
+        })
+    }
+
+    /// Row ranges of the YAML metadata blocks outside code fences. Pandoc
+    /// reads every block, and each applies to the whole document, so all are
+    /// checked before any chunk is admitted. A `---` line after text is a
+    /// setext underline and one before a blank line is a horizontal rule.
+    fn metadata_blocks(&self) -> Result<Vec<(usize, usize)>, InputIssue> {
+        let mut blocks = Vec::new();
+        let mut row = 0;
+        while row < self.rows.len() {
+            if let Some((kind, width, _)) = fence(self.rows[row].text) {
+                row = self
+                    .closing_fence(row + 1, kind, width)
+                    .map_or(self.rows.len(), |close| close + 1);
+            } else if self.rows[row].text.trim() == "---"
+                && (row == 0 || self.blank(row - 1))
+                && row + 1 < self.rows.len()
+                && !self.blank(row + 1)
+            {
+                let end = self.metadata_block(row)?;
+                blocks.push((row, end));
+                row = end;
+            } else {
+                row += 1;
+            }
         }
+        Ok(blocks)
+    }
+
+    /// Check one metadata block opened at `open` and return the row after its
+    /// closing `---` or `...`. Execution settings change every chunk.
+    fn metadata_block(&self, open: usize) -> Result<usize, InputIssue> {
         let unclassified = |row, what: &str| {
             self.issue(
                 row,
@@ -426,11 +541,11 @@ impl Report<'_> {
         };
         let mut root_key = None;
         let mut root_indent = None;
-        for (row, line) in self.rows.iter().enumerate().skip(1) {
-            if line.text.trim() == "---" {
+        for (row, line) in self.rows.iter().enumerate().skip(open + 1) {
+            let raw = line.text.trim_end_matches(['\r', '\n']);
+            if matches!(raw.trim_end(), "---" | "...") {
                 return Ok(row + 1);
             }
-            let raw = line.text.trim_end_matches(['\r', '\n']);
             let content = raw.trim_start_matches(' ');
             if content.is_empty() || content.starts_with('#') {
                 continue;
@@ -447,22 +562,22 @@ impl Report<'_> {
                 }
                 return Err(unclassified(row, "root flow YAML execution settings"));
             }
-            if at_root && content.starts_with(['[', '-', '?', '!', '&', '*', '|', '>']) {
-                return Err(unclassified(row, "report YAML root syntax"));
-            }
-            let Some((key, value)) =
-                yaml_key_value(raw).map_err(|()| unclassified(row, "report YAML key"))?
-            else {
-                continue;
+            // Explicit (`?`) and empty keys are refused at any depth.
+            let (key, value) = match yaml_key_value(raw) {
+                _ if content.starts_with('?') => {
+                    return Err(unclassified(row, "report YAML key"));
+                }
+                Ok(Some(("", _))) | Err(()) => return Err(unclassified(row, "report YAML key")),
+                Ok(Some(entry)) if !at_root || plain_key(entry.0) => entry,
+                Ok(_) if at_root => return Err(unclassified(row, "report YAML root syntax")),
+                Ok(_) => continue,
             };
             if at_root {
                 root_key = Some(key);
             }
             let in_format = root_key == Some("format");
-            let execution_key = key == "execute" || key == "knitr";
-            if (at_root && (execution_key || key == "eval" || key == "<<"))
-                || (!at_root && in_format && execution_key)
-                || (in_format && (key == "<<" || complex_format_value(value)))
+            if ((at_root || in_format) && execution_key(key))
+                || (in_format && complex_format_value(value))
             {
                 return Err(self.issue(
                     row,
@@ -471,19 +586,24 @@ impl Report<'_> {
                 ));
             }
         }
-        Err(self.issue(0, "RY120", "unclosed report YAML front matter"))
+        Err(self.issue(open, "RY120", "unclosed report YAML front matter"))
     }
 
-    /// Admit enabled R chunks in document order from `row`, stopping at the
-    /// first boundary that makes later execution uncertain.
+    /// Admit enabled R chunks in document order, skipping metadata `blocks`,
+    /// and stop at the first boundary that makes later execution uncertain.
     fn chunks(
         &mut self,
         parser: &mut RParser,
         path: &str,
-        mut row: usize,
+        blocks: &[(usize, usize)],
     ) -> Result<Option<InputIssue>, ParseError> {
         let mut r_chunks = 0;
+        let mut row = 0;
         while row < self.rows.len() {
+            if let Some(&(_, end)) = blocks.iter().find(|(start, _)| *start == row) {
+                row = end;
+                continue;
+            }
             let Some((kind, width, rest)) = fence(self.rows[row].text) else {
                 row += 1;
                 continue;
@@ -508,12 +628,7 @@ impl Report<'_> {
             } else {
                 (false, row + 1)
             };
-            let close = (body_row..self.rows.len()).find(|&close| {
-                fence(self.rows[close].text).is_some_and(|(close_kind, close_width, tail)| {
-                    close_kind == kind && close_width >= width && tail.trim().is_empty()
-                })
-            });
-            let Some(close) = close else {
+            let Some(close) = self.closing_fence(body_row, kind, width) else {
                 return Ok(r_chunk.then(|| {
                     self.issue(
                         row,
@@ -581,31 +696,25 @@ impl Report<'_> {
                 ));
             }
         };
-        let mut cell_eval = None;
-        let mut body_row = row + 1;
-        while let Some(option) = self
-            .rows
-            .get(body_row)
-            .map(|line| line.text.trim_start())
-            .filter(|text| text.starts_with("#|"))
-        {
-            let option = option.trim_start_matches("#|").trim();
-            match option
-                .split_once(':')
-                .map_or(Ok(None), |(key, value)| execution_option(key, value, false))
-            {
-                Ok(None) => {}
-                Ok(Some(value)) if cell_eval.replace(value).is_none() => {}
-                _ => {
-                    return Err(self.issue(
-                        body_row,
-                        "RY121",
-                        "R chunk has dynamic or conflicting execution options; later chunks are not analyzed",
-                    ));
-                }
-            }
-            body_row += 1;
-        }
+        let options: Vec<&str> = self.rows[row + 1..]
+            .iter()
+            .map_while(|line| line.text.trim_start().strip_prefix("#|"))
+            .map(|option| option.trim_start_matches("#|").trim_end())
+            .collect();
+        let body_row = row + 1 + options.len();
+        let cell_eval = cell_options(parser, path, &options).map_err(|(index, error)| {
+            let (code, message) = match error {
+                HeaderError::Budget => (
+                    "RY120",
+                    "R chunk options exceed the 16 KiB or 128-field static input limit; later chunks are not analyzed",
+                ),
+                HeaderError::Unsupported => (
+                    "RY121",
+                    "R chunk has dynamic or conflicting execution options; later chunks are not analyzed",
+                ),
+            };
+            self.issue(row + 1 + index, code, message)
+        })?;
         match (header_eval, cell_eval) {
             (Some(header), Some(cell)) if header != cell => Err(self.issue(
                 row,
@@ -742,6 +851,32 @@ mod tests {
             ("```{r, echo=F}\nx <- 1L\n```\n", 0, Some("RY121")),
             ("```{r, include=f}\nx <- 1L\n```\n", 0, Some("RY121")),
             ("```{r}\n#| eval: TRUE\nx <- 1L\n```\n", 1, None),
+            // knitr also reads R-style `#|` options; anything else is refused.
+            ("```{r}\n#| eval = FALSE\nx <- 1L\n```\n", 0, None),
+            (
+                "```{r}\n#| echo = FALSE, eval = TRUE\nx <- 1L\n```\n",
+                1,
+                None,
+            ),
+            (
+                "```{r}\n#| eval = choose()\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            ("```{r}\n#| eval = F\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r}\n#| eval FALSE\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r}\n#|   eval: false\nx <- 1L\n```\n", 0, Some("RY121")),
+            ("```{r}\n#| {eval: false}\nx <- 1L\n```\n", 0, Some("RY121")),
+            (
+                "```{r}\n#| echo: false\n#| eval = FALSE\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
+            (
+                "```{r}\n#| fig-cap: |\n#|   A: caption\n#| eval: false\nx <- 1L\n```\n",
+                0,
+                None,
+            ),
         ] {
             assert_report(source, stmts, code);
         }
@@ -846,6 +981,14 @@ mod tests {
             "format: {html: {\"e\\u0078ecute\": {eval: false}}}",
             "'knitr':\n  opts_chunk:\n    eval: false",
             "<<: *execution_defaults",
+            // Engine selectors mean Quarto may run no R at all.
+            "engine: markdown",
+            "{engine: markdown}",
+            "jupyter: python3",
+            // Explicit and empty keys are not read.
+            "format:\n  html:\n    ? execute\n    : {eval: false}",
+            "format:\n  html:\n    \"\": x",
+            "title: x\n: y",
         ] {
             assert_report(
                 &format!("---\n{front_matter}\n---\n```{{r}}\n'a' + 1L\n```\n"),
@@ -867,6 +1010,31 @@ mod tests {
                 1,
                 None,
             );
+        }
+    }
+
+    #[test]
+    fn every_metadata_block_is_found_and_bounded() {
+        let chunk = "```{r}\n'a' + 1L\n```\n";
+        let execute = "---\nexecute:\n  eval: false\n---\n";
+        for (source, stmts, code) in [
+            // Leading blank lines and later blocks still configure the report.
+            (format!("\n{execute}{chunk}"), 0, Some("RY121")),
+            (format!("{chunk}\n{execute}"), 0, Some("RY121")),
+            (format!("{chunk}\n---\ntitle: x\n---\n"), 1, None),
+            (format!("---\ntitle: x\n...\n{chunk}"), 1, None),
+            // A horizontal rule or setext underline is not a metadata block.
+            (format!("---\n\n{chunk}"), 1, None),
+            (format!("Title\n---\n{chunk}"), 1, None),
+            // Only an unindented delimiter closes a block.
+            (
+                format!("---\ntitle: |\n  ---\n  ```{{r}}\n  x <- 1L\n  ```\n---\n{chunk}"),
+                1,
+                None,
+            ),
+            ("---\ntitle: x\n  ---\n".to_owned(), 0, Some("RY120")),
+        ] {
+            assert_report(&source, stmts, code);
         }
     }
 

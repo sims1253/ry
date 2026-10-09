@@ -131,6 +131,8 @@ fn chunk_execution_options_are_truthful_end_to_end() {
         (single("{r}\n#| \"eval\": false"), 0, 0),
         (single("{r, Eval=FALSE}"), 1, 0),
         (single("{r}\n#| Eval: false"), 1, 0),
+        (single("{r}\n#| eval = FALSE"), 0, 0),
+        (single("{r}\n#| eval = choose()"), 0, 1),
         // Report-level execution settings; unrelated metadata stays inert.
         (yaml("metadata:\n  eval: false"), 1, 0),
         (yaml("  metadata:\n    eval: false"), 1, 0),
@@ -166,6 +168,14 @@ fn chunk_execution_options_are_truthful_end_to_end() {
         ),
         (
             yaml("settings: &fmt\n  execute:\n    eval: false\nformat:\n  html:\n    <<: *fmt"),
+            0,
+            1,
+        ),
+        (yaml("engine: markdown"), 0, 1),
+        (yaml("jupyter: python3"), 0, 1),
+        (format!("\n{}", yaml("execute:\n  eval: false")), 0, 1),
+        (
+            format!("{later}\n{}", yaml("execute:\n  eval: false")),
             0,
             1,
         ),
@@ -285,17 +295,23 @@ fn fact_source_hash_tracks_original_prose_and_uncertain_reports_refuse_export() 
         first["files"][0]["source_hash"],
         second["files"][0]["source_hash"]
     );
-    fs::write(&path, "```{r, eval=choose()}\nx <- 1L\n```\n").unwrap();
-    let uncertain = dump();
-    assert!(!uncertain.status.success());
-    assert!(String::from_utf8_lossy(&uncertain.stderr).contains("uncertain input boundary"));
-    let types = Command::new(env!("CARGO_BIN_EXE_ry"))
-        .arg("dump-types")
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(!types.status.success());
-    assert!(String::from_utf8_lossy(&types.stderr).contains("uncertain input"));
+    for source in [
+        "```{r, eval=choose()}\nx <- 1L\n```\n",
+        "---\nengine: markdown\n---\n```{r}\nx <- 1L\n```\n",
+        "\n---\nexecute:\n  eval: false\n---\n```{r}\nx <- 1L\n```\n",
+    ] {
+        fs::write(&path, source).unwrap();
+        let uncertain = dump();
+        assert!(!uncertain.status.success(), "{source}");
+        assert!(String::from_utf8_lossy(&uncertain.stderr).contains("uncertain input boundary"));
+        let types = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .arg("dump-types")
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(!types.status.success(), "{source}");
+        assert!(String::from_utf8_lossy(&types.stderr).contains("uncertain input"));
+    }
 }
 
 #[test]

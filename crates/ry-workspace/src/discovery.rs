@@ -389,11 +389,17 @@ pub fn is_r_source_path(path: &Path) -> bool {
     is_source_path(path)
 }
 
+/// Every extension discovery admits: R, the S-dialect spellings, and reports.
+pub fn source_extensions() -> impl Iterator<Item = &'static str> {
+    ["R", "r", "S", "s", "q"]
+        .into_iter()
+        .chain(crate::reports::REPORT_EXTENSIONS.iter().copied())
+}
+
 fn is_source_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("R" | "r" | "S" | "s" | "q")
-    ) || crate::reports::is_report_path(path)
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| source_extensions().any(|source| source == ext))
 }
 
 /// Result of a bounded directory discovery.

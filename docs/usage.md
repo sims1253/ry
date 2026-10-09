@@ -86,18 +86,19 @@ defined by earlier active chunks in the same report; each report has its own
 environment. Findings use the report's original lines and columns. Prose,
 YAML, non-R fences, and `{{r}}` examples are ignored.
 
-- **Execution options.** Literal `eval = FALSE` or `#| eval: false` disables
-  a chunk; `include` and `echo` do not. R chunk headers must use uppercase
-  `TRUE`/`FALSE`; Quarto `#|` options accept YAML booleans. Option names are
-  case-sensitive.
+- **Execution options.** Literal `eval = FALSE`, `#| eval: false`, or
+  `#| eval = FALSE` disables a chunk; `include` and `echo` do not. R-style
+  options must use uppercase `TRUE`/`FALSE`; YAML `#|` options accept YAML
+  booleans. Option names are case-sensitive.
 - **RY120** marks input ry cannot extract: a malformed or unclosed R fence,
-  unclosed YAML front matter, or a report over the static limits (2 MiB,
+  unclosed YAML metadata block, or a report over the static limits (2 MiB,
   128 R chunks, or an R header over 16 KiB or 128 fields).
 - **RY121** marks execution ry cannot determine statically: computed,
-  conflicting, or unsupported chunk options (such as `child` or `ref.label`),
-  report-level `execute`/`knitr` settings in the front matter or under
-  `format`, and real references to `knitr::opts_chunk`. Analysis stops at
-  that point; earlier chunks are still checked.
+  conflicting, unsupported, or unreadable chunk options (such as `child`, or
+  a `#|` line that is neither `key: value` nor `key = value`), and real
+  references to `knitr::opts_chunk` stop analysis at that chunk. Engine
+  selectors (`engine`, `jupyter`) and `execute`/`knitr` settings in any YAML
+  metadata block, including under `format`, stop it for the whole report.
 - A syntax error inside a chunk is reported as RY000. Each chunk parses on its
   own, so one chunk cannot complete another's expression.
 - Inline R, child documents, notebooks, knitr hooks, and project-level

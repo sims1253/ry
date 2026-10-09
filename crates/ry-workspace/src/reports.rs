@@ -563,7 +563,7 @@ pub fn parse_report_with_tree(
                             // static execution certificate.
                             issues.push(issue(
                                 line.offset,
-                                row.saturating_sub(1),
+                                start_row,
                                 "RY121",
                                 "R chunk execution options conflict; later chunks are not analyzed",
                             ));
@@ -663,6 +663,20 @@ mod tests {
         assert_eq!(file.input_issues.len(), 1);
         assert_eq!(file.input_issues[0].code, "RY121");
         assert_eq!(file.input_issues[0].span.line, 3);
+
+        // A header/cell conflict is anchored to the fence row by both offset
+        // and line.
+        let source = "```{r, eval=TRUE}\n#| echo: false\n#| eval: false\nx <- 1L\n```\n";
+        let (file, _) =
+            parse_report_with_tree(&mut RParser::new().unwrap(), "a.qmd", source, None).unwrap();
+        assert_eq!(file.input_issues[0].code, "RY121");
+        assert_eq!(
+            (
+                file.input_issues[0].span.start,
+                file.input_issues[0].span.line
+            ),
+            (0, 0)
+        );
     }
 
     #[test]

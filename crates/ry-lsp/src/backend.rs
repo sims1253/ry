@@ -1277,12 +1277,7 @@ impl Backend {
             let mut parser = RParser::new().ok()?;
             let (parsed, new_tree) =
                 if ry_workspace::reports::is_report_path(std::path::Path::new(path)) {
-                    ry_workspace::reports::parse_report_with_tree(
-                        &mut parser,
-                        path,
-                        &text,
-                        old_tree.as_ref(),
-                    )
+                    ry_workspace::reports::parse_report_with_tree(&mut parser, path, &text, None)
                 } else {
                     parser.parse_with_tree(path, &text, old_tree.as_ref())
                 }
@@ -1297,12 +1292,9 @@ impl Backend {
             let stored = if state.versions.get(path).copied() == Some(version)
                 && state.docs.get(path) == Some(&text)
             {
-                if ry_workspace::reports::is_report_path(Path::new(path))
-                    && text.len() > ry_workspace::reports::MAX_REPORT_BYTES
-                {
-                    // The adapter returned an empty refusal tree. It does
-                    // not have the source's byte coordinates, so no later
-                    // InputEdit may reuse it when the report shrinks.
+                if ry_workspace::reports::is_report_path(Path::new(path)) {
+                    // A masked report tree is never reused: an option edit
+                    // can mask or unmask text outside the edited range.
                     state.trees.remove(path);
                 } else {
                     state.store_tree(path, version, new_tree);

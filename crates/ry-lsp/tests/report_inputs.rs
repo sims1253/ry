@@ -332,3 +332,35 @@ fn two_open_reports_keep_independent_r_bindings() {
             join_session(session, server).await;
         });
 }
+
+/// A range edit that disables a chunk masks text outside the edited range.
+/// Reusing the previous masked tree would keep that chunk's stale nodes.
+#[tokio::test]
+async fn range_edit_that_disables_a_chunk_reparses_the_whole_report() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "[reports]\nenabled = true\n")
+        .unwrap();
+    let source = "```{r, eval=TRUE}\nf <- function(x) x\n\"a\" + 1L\n```\n";
+    let uri = file_uri(&fixture.write_file("memo.qmd", source).unwrap()).unwrap();
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let mark = session.publication_mark();
+    session.open(&uri, 1, source).await.unwrap();
+    let active = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert!(finding(&active, "RY040").is_some(), "{active}");
+    let mark = session.publication_mark();
+    let edit = json!([{"range": {
+        "start": {"line": 0, "character": 12},
+        "end": {"line": 0, "character": 16}
+    }, "text": "FALSE"}]);
+    session.change(&uri, 2, edit).await.unwrap();
+    let disabled = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert_eq!(disabled["params"]["diagnostics"], json!([]), "{disabled}");
+    join_session(session, server).await;
+}

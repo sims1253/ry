@@ -353,6 +353,19 @@ fn report_input_is_disabled_by_default_and_r_files_remain_checked() {
     let diagnostics = check(root.path());
     assert_eq!(code(&diagnostics, "RY040").len(), 1, "{diagnostics:?}");
     assert!(diagnostics.iter().all(|d| !d.to_string().contains("a.qmd")));
+
+    // An explicitly named report explains why it was not checked.
+    let explained = Command::new(env!("CARGO_BIN_EXE_ry"))
+        .args(["check", "--explain-files"])
+        .arg(root.path().join("a.qmd"))
+        .env("RY_NO_INSTALLED_LIBRARIES", "1")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&explained.stderr);
+    assert!(
+        stderr.contains("a.qmd (reports.enabled = false)"),
+        "{stderr}"
+    );
 }
 
 #[test]

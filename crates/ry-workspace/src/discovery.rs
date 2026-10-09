@@ -430,17 +430,19 @@ pub fn discover_r_files(
     config: &ry_config::Config,
     check_test_fixtures: bool,
 ) -> DiscoveryResult {
-    // A single file passed directly is always included regardless of
-    // package rules: it is the explicit subject of the analysis.
+    // A single file passed directly is included regardless of package
+    // rules: it is the explicit subject of the analysis. Only a report
+    // still needs the explicit opt-in.
     if walk_root.is_file() {
-        return DiscoveryResult {
-            files: if !crate::reports::is_report_path(walk_root) || config.reports.enabled {
-                vec![walk_root.to_path_buf()]
-            } else {
-                Vec::new()
-            },
-            ..Default::default()
-        };
+        let mut result = DiscoveryResult::default();
+        if crate::reports::is_report_path(walk_root) && !config.reports.enabled {
+            result
+                .skipped
+                .record(walk_root, false, "reports.enabled = false", usize::MAX);
+        } else {
+            result.files.push(walk_root.to_path_buf());
+        }
+        return result;
     }
     let limits = DiscoveryLimits::from_config(config);
     let excludes = ry_config::Excludes::from_config(config);

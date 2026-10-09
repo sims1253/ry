@@ -318,10 +318,12 @@ pub(crate) fn run_dump_facts(
     let mut sources = BTreeMap::new();
     let mut canonical_files = BTreeSet::new();
     for file in &parsed {
-        if !file.input_issues.is_empty() {
+        if let Some(issue) = file.input_issues.first() {
             return Err(miette::miette!(
-                "{}: dump-facts cannot export a report after an uncertain input boundary",
-                file.path
+                "{}: dump-facts cannot export a report after an uncertain input boundary ({}: {})",
+                file.path,
+                issue.code,
+                issue.message
             ));
         }
         // Deliberately keyed on `parse_errors` only: a recovered tree's

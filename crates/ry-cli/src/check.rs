@@ -1303,11 +1303,7 @@ fn run_check_once(
             .filter(|record| group_paths.contains(record.source.path.as_str()))
             .cloned()
             .collect::<Vec<_>>();
-        let checked = if records.is_empty() {
-            check_project(group.check_input)
-        } else {
-            pipeline::check_project_with_records(group.check_input, records)
-        };
+        let checked = check_project(group.check_input, records);
         debug_assert_eq!(group.source_indices.len(), checked.len());
         per_file_diagnostics.extend(
             group
@@ -2387,7 +2383,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         // A clean file should produce no diagnostics.
         let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert_eq!(total, 0, "clean file should have no diagnostics");
@@ -2402,7 +2398,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         let total: usize = output.iter().map(|(_, d)| d.len()).sum();
         assert!(total > 0, "undefined variable should produce diagnostics");
     }
@@ -2419,11 +2415,14 @@ mod tests {
         let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
             let mut parser = ry_core::RParser::new().unwrap();
             let file = parser.parse("test.R", src).unwrap();
-            let output = check_project(CheckInput {
-                files: vec![("test.R".to_string(), Arc::new(file))],
-                user_stubs: Arc::new(BTreeMap::new()),
-                workspace,
-            });
+            let output = check_project(
+                CheckInput {
+                    files: vec![("test.R".to_string(), Arc::new(file))],
+                    user_stubs: Arc::new(BTreeMap::new()),
+                    workspace,
+                },
+                Vec::new(),
+            );
             output
                 .iter()
                 .flat_map(|(_, diags)| diags.iter())
@@ -2459,7 +2458,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let output = check_project(input);
+        let output = check_project(input, Vec::new());
         // shared_fn is defined in a.R and called in b.R — should resolve.
         let b_diags: usize = output
             .iter()

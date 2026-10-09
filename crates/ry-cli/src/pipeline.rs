@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use ry_config as config;
+use ry_core::declarations::DeclarationRecord;
 
 /// Input for a unified diagnostics check.
 pub(crate) struct CheckInput {
@@ -19,14 +20,7 @@ pub(crate) struct CheckInput {
 }
 
 impl CheckInput {
-    fn into_project(self) -> ry_checker::Project {
-        self.into_project_with_records(Vec::new())
-    }
-
-    fn into_project_with_records(
-        self,
-        records: Vec<ry_core::declarations::DeclarationRecord>,
-    ) -> ry_checker::Project {
+    fn into_project(self, records: Vec<DeclarationRecord>) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
         project.set_declaration_records(records);
         let workspace = self.workspace;
@@ -87,30 +81,27 @@ pub(crate) fn adopted_records(
 
 #[derive(Default)]
 pub(crate) struct AdoptedRecords {
-    pub records: Vec<ry_core::declarations::DeclarationRecord>,
+    pub records: Vec<DeclarationRecord>,
     pub diagnostics: Vec<ry_checker::Diagnostic>,
 }
 
-pub(crate) fn check_project_with_records(
+/// Run a one-shot project check with workspace metadata and adopted
+/// declaration records.
+pub(crate) fn check_project(
     input: CheckInput,
-    records: Vec<ry_core::declarations::DeclarationRecord>,
+    records: Vec<DeclarationRecord>,
 ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    let mut project = input.into_project_with_records(records);
+    let mut project = input.into_project(records);
     let mut diagnostics = project.check();
     ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
     diagnostics
-}
-
-/// Run a one-shot project check with workspace metadata.
-pub(crate) fn check_project(input: CheckInput) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-    input.into_project().check()
 }
 
 /// Capture each file's lexical scopes in input order. Diagnostics are discarded.
 pub(crate) fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    check_project_with_facts_capture(input, false).scopes
+    check_project_with_facts_capture(input, false, Vec::new()).scopes
 }
 
 pub(crate) struct CapturedFacts {
@@ -122,16 +113,9 @@ pub(crate) struct CapturedFacts {
 pub(crate) fn check_project_with_facts_capture(
     input: CheckInput,
     references: bool,
+    records: Vec<DeclarationRecord>,
 ) -> CapturedFacts {
-    check_project_with_facts_and_records(input, references, Vec::new())
-}
-
-pub(crate) fn check_project_with_facts_and_records(
-    input: CheckInput,
-    references: bool,
-    records: Vec<ry_core::declarations::DeclarationRecord>,
-) -> CapturedFacts {
-    let mut project = input.into_project_with_records(records);
+    let mut project = input.into_project(records);
     project.enable_scope_capture();
     if references {
         project.enable_reference_capture();

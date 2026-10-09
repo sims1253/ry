@@ -67,11 +67,33 @@ struct OpenSource {
     shadow: Option<(String, i32)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CollisionChangeResult {
-    NotCollision,
-    Applied,
-    Rejected,
+/// RY117 for a display-keyed source whose native identity cannot be
+/// established, so no typehint contract is attached to it.
+fn ambiguous_typehint_identity(path: &str) -> ry_checker::Diagnostic {
+    ry_checker::Diagnostic::new(
+        ry_checker::Severity::Warning,
+        ry_core::Span::new(0, 1, 0, 0),
+        path,
+        "RY117",
+        "Native source identity is ambiguous; typehint attachment was skipped.",
+    )
+}
+
+/// The original URIs open at a display path, in a stable order. A path
+/// without open buffers publishes at its display URI.
+fn source_uris(
+    open_source_paths: &HashMap<String, HashMap<Url, OpenSource>>,
+    path: &str,
+) -> Vec<Url> {
+    let mut uris: Vec<Url> = open_source_paths
+        .get(path)
+        .map(|open| open.keys().cloned().collect())
+        .unwrap_or_default();
+    if uris.is_empty() {
+        return vec![path_to_uri(path)];
+    }
+    uris.sort();
+    uris
 }
 
 #[derive(Default)]
@@ -381,20 +403,11 @@ impl ProjectCache {
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
     ) -> Vec<(String, Vec<ry_checker::Diagnostic>)> {
-        self.check_with_workspace(files, user_stubs, None)
+        self.check_with_workspace(files, user_stubs, None, Vec::new())
             .diagnostics
     }
 
     pub(super) fn check_with_workspace(
-        &mut self,
-        files: Vec<(String, i32, Arc<SourceFile>)>,
-        user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-        workspace: Option<&ry_workspace::WorkspaceContext>,
-    ) -> ProjectCheckResult {
-        self.check_with_workspace_and_records(files, user_stubs, workspace, Vec::new())
-    }
-
-    pub(super) fn check_with_workspace_and_records(
         &mut self,
         files: Vec<(String, i32, Arc<SourceFile>)>,
         user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -477,147 +490,108 @@ fn serialized_inventory_notice(path: &Path, reason: ry_workspace::InventoryFailu
 }
 
 impl State {
-    /// Classify the original URI and commit its complete edit batch under
-    /// one lock. `didOpen`/`didClose` cannot change display-key ownership
-    /// between classification and a ranged splice or tree-cache update.
+    /// Replace the display-keyed source and invalidate its cached parse
+    /// and hints; the next read repopulates them.
+    fn update_doc(&mut self, path: &str, text: String, version: i32) {
+        self.docs.insert(path.to_string(), text);
+        self.versions.insert(path.to_string(), version);
+        self.parsed.remove(path);
+        self.hints.remove(path);
+    }
+
+    /// Apply a whole `didChange` batch for one original URI under one lock,
+    /// so `didOpen`/`didClose` cannot change display-key ownership midway.
+    /// Returns whether any change was applied.
     fn apply_document_changes(
         &mut self,
         path: &str,
         uri: &Url,
-        changes: &mut Vec<TextDocumentContentChangeEvent>,
+        changes: Vec<TextDocumentContentChangeEvent>,
         version: i32,
-    ) -> CollisionChangeResult {
-        let Some(open) = self.open_source_paths.get(path) else {
+    ) -> bool {
+        let Some(open) = self
+            .open_source_paths
+            .get(path)
+            .filter(|open| open.contains_key(uri))
+        else {
             tracing::warn!(%uri, "ignoring change for a closed URI");
-            return CollisionChangeResult::Rejected;
+            return false;
         };
-        if open.len() > 1 {
-            return self.apply_colliding_changes(path, uri, changes, version);
-        }
-        if !open.contains_key(uri) {
-            tracing::warn!(%uri, "ignoring change for a closed URI");
-            return CollisionChangeResult::Rejected;
-        }
+        // A colliding URI edits its own snapshot: the display-keyed text and
+        // incremental tree may describe another native source.
+        let colliding = open.len() > 1;
+        let (mut text, mut tree) = if colliding {
+            let Some((text, _)) = open[uri].shadow.clone() else {
+                tracing::warn!(%uri, "missing colliding URI buffer snapshot");
+                return false;
+            };
+            (Some(text), None)
+        } else {
+            (self.docs.get(path).cloned(), self.tree_for(path))
+        };
 
         // An invalid UTF-16 range stops the batch. Prior valid edits remain
-        // committed, as before; later ranges refer to text we could not
-        // produce and must not be applied independently.
+        // committed; later ranges refer to text we could not produce.
         let mut applied = false;
-        for change in changes.drain(..) {
-            if let Some(range) = change.range
-                && let Some(old_text) = self.docs.get(path).cloned()
-            {
-                let Some((start_byte, end_byte)) = range_byte_span(&old_text, range) else {
-                    tracing::error!(
-                        ?range,
-                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
-                    );
-                    tracing::error!(
-                        "aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
-                    );
-                    break;
-                };
-                let mut new_text = String::with_capacity(old_text.len() + change.text.len());
-                new_text.push_str(&old_text[..start_byte]);
-                new_text.push_str(&change.text);
-                new_text.push_str(&old_text[end_byte..]);
-                let edit =
-                    build_input_edit_from_span(&old_text, start_byte, end_byte, &change.text);
-                let mut tree = self.tree_for(path);
-                self.docs.insert(path.to_string(), new_text);
-                self.versions.insert(path.to_string(), version);
-                self.parsed.remove(path);
-                self.hints.remove(path);
-                if let Some(ref mut tree) = tree {
-                    tree.edit(&edit);
+        for change in changes {
+            match (change.range, text.as_mut()) {
+                (Some(range), Some(current)) => {
+                    let Some((start, end)) = range_byte_span(current, range) else {
+                        tracing::error!(
+                            ?range,
+                            "invalid UTF-16 range in document change; aborting remaining changes in didChange batch for {path}; server and client text will desynchronize until a full sync is received"
+                        );
+                        break;
+                    };
+                    if let Some(tree) = &mut tree {
+                        tree.edit(&build_input_edit_from_span(
+                            current,
+                            start,
+                            end,
+                            &change.text,
+                        ));
+                    }
+                    current.replace_range(start..end, &change.text);
                 }
-                if let Some(tree) = tree {
-                    self.store_tree(path, version, tree);
-                } else {
-                    self.trees.remove(path);
+                // Full replacement, or a ranged edit without old text: the
+                // protocol's fallback replaces the whole document.
+                _ => {
+                    text = Some(change.text);
+                    tree = None;
                 }
-                applied = true;
-            } else {
-                // Full replacement, or a ranged edit without old text:
-                // the protocol's fallback replaces the whole document.
-                self.docs.insert(path.to_string(), change.text);
-                self.versions.insert(path.to_string(), version);
-                self.parsed.remove(path);
-                self.hints.remove(path);
-                self.trees.remove(path);
-                applied = true;
             }
-        }
-        if applied {
-            CollisionChangeResult::Applied
-        } else {
-            CollisionChangeResult::Rejected
-        }
-    }
-
-    /// Apply a whole `didChange` batch to one original URI while holding the
-    /// state lock. Reading its shadow, splicing UTF-16 ranges, and replacing
-    /// the active display-keyed source form one transaction. A second URI's
-    /// notification can acquire the lock before or after it, never midway.
-    fn apply_colliding_changes(
-        &mut self,
-        path: &str,
-        uri: &Url,
-        changes: &mut Vec<TextDocumentContentChangeEvent>,
-        version: i32,
-    ) -> CollisionChangeResult {
-        let Some(open) = self.open_source_paths.get(path) else {
-            return CollisionChangeResult::NotCollision;
-        };
-        if !open.contains_key(uri) {
-            tracing::warn!(%uri, "ignoring change for a closed colliding URI");
-            return CollisionChangeResult::Rejected;
-        }
-        if open.len() == 1 {
-            return CollisionChangeResult::NotCollision;
-        }
-        let Some((mut text, mut installed_version)) =
-            open.get(uri).and_then(|source| source.shadow.clone())
-        else {
-            tracing::warn!(%uri, "missing colliding URI buffer snapshot");
-            return CollisionChangeResult::Rejected;
-        };
-        let mut applied = false;
-        for change in changes.drain(..) {
-            if let Some(range) = change.range {
-                let Some((start, end)) = range_byte_span(&text, range) else {
-                    tracing::error!(
-                        ?range,
-                        "invalid UTF-16 range in document change; server and client text will desynchronize until a full sync is received"
-                    );
-                    break;
-                };
-                text.replace_range(start..end, &change.text);
-            } else {
-                text = change.text;
-            }
-            installed_version = version;
             applied = true;
         }
-        if !applied {
-            // Neither an empty notification nor a batch rejected at its
-            // first range transfers ownership from the active URI.
-            return CollisionChangeResult::Rejected;
+        // An empty or immediately rejected batch changes nothing, including
+        // which colliding URI is active.
+        let Some(text) = text.filter(|_| applied) else {
+            return false;
+        };
+        if colliding {
+            self.active_collision_uri
+                .insert(path.to_string(), uri.clone());
+            if let Some(source) = self
+                .open_source_paths
+                .get_mut(path)
+                .and_then(|open| open.get_mut(uri))
+            {
+                source.shadow = Some((text.clone(), version));
+            }
         }
-        // The one-key incremental tree may describe another native source.
-        self.docs.insert(path.to_string(), text.clone());
-        self.versions.insert(path.to_string(), installed_version);
-        self.parsed.remove(path);
-        self.hints.remove(path);
-        self.trees.remove(path);
-        self.active_collision_uri
-            .insert(path.to_string(), uri.clone());
+        self.update_doc(path, text, version);
+        match tree {
+            Some(tree) => self.store_tree(path, version, tree),
+            None => {
+                self.trees.remove(path);
+            }
+        }
+        true
+    }
+
+    fn has_collision(&self, path: &str) -> bool {
         self.open_source_paths
-            .get_mut(path)
-            .and_then(|open| open.get_mut(uri))
-            .expect("colliding source still open under lock")
-            .shadow = Some((text, installed_version));
-        CollisionChangeResult::Applied
+            .get(path)
+            .is_some_and(|open| open.len() > 1)
     }
 
     /// Remove one original URI from a display-keyed document. If another
@@ -645,10 +619,7 @@ impl State {
                 .insert(path.to_string(), survivor.clone());
         }
         if closing_active && let Some((text, version)) = shadow {
-            self.docs.insert(path.to_string(), text);
-            self.versions.insert(path.to_string(), version);
-            self.parsed.remove(path);
-            self.hints.remove(path);
+            self.update_doc(path, text, version);
             self.trees.remove(path);
         }
         Some(survivor)
@@ -730,7 +701,7 @@ impl State {
     }
 
     /// Drop the cached parse and hints for `path`, mirroring the
-    /// cache-invalidation half of `Backend::update_doc`. Test-only;
+    /// cache-invalidation half of `State::update_doc`. Test-only;
     /// lets the cache acceptance test simulate a `did_change` on a bare
     /// `State` without a `tower_lsp::Client`.
     #[cfg(test)]
@@ -917,11 +888,8 @@ mod colliding_change_tests {
             range_length: None,
             text: text.to_string(),
         };
-        let mut changes = vec![edit(0, 5, 7, "\"😀\""), edit(1, 5, 7, "3L")];
-        assert_eq!(
-            state.apply_document_changes(&path, &uri, &mut changes, 2),
-            CollisionChangeResult::Applied
-        );
+        let changes = vec![edit(0, 5, 7, "\"😀\""), edit(1, 5, 7, "3L")];
+        assert!(state.apply_document_changes(&path, &uri, changes, 2));
         let expected = "x <- \"😀\"\ny <- 3L\n";
         assert_eq!(state.docs[&path], expected);
         assert_eq!(state.versions[&path], 2);
@@ -941,7 +909,7 @@ mod colliding_change_tests {
 
         // UTF-16 column 7 lands inside the astral character. The following
         // full replacement must not run after this malformed ranged edit.
-        let mut invalid = vec![
+        let invalid = vec![
             edit(0, 7, 7, "bad"),
             TextDocumentContentChangeEvent {
                 range: None,
@@ -949,10 +917,7 @@ mod colliding_change_tests {
                 text: "stale <- TRUE\n".to_string(),
             },
         ];
-        assert_eq!(
-            state.apply_document_changes(&path, &uri, &mut invalid, 3),
-            CollisionChangeResult::Rejected
-        );
+        assert!(!state.apply_document_changes(&path, &uri, invalid, 3));
         assert_eq!(state.docs[&path], expected);
         assert_eq!(state.versions[&path], 2);
         assert!(state.tree_for(&path).is_some());
@@ -999,7 +964,7 @@ mod colliding_change_tests {
             let path = path.clone();
             tokio::spawn(async move {
                 barrier.wait().await;
-                let mut changes = vec![TextDocumentContentChangeEvent {
+                let changes = vec![TextDocumentContentChangeEvent {
                     range: Some(Range {
                         start: Position::new(0, 0),
                         end: Position::new(0, end),
@@ -1007,12 +972,11 @@ mod colliding_change_tests {
                     range_length: None,
                     text: replacement.to_string(),
                 }];
-                let result =
-                    shared
-                        .lock()
-                        .await
-                        .apply_colliding_changes(&path, &uri, &mut changes, 7);
-                assert_eq!(result, CollisionChangeResult::Applied);
+                let applied = shared
+                    .lock()
+                    .await
+                    .apply_document_changes(&path, &uri, changes, 7);
+                assert!(applied);
             })
         };
         let (a, b) = tokio::join!(
@@ -1429,15 +1393,7 @@ impl Backend {
                     .collect::<HashMap<String, HashMap<Url, (String, i32)>>>(),
             )
         };
-        let publication_uris = |path: &str| {
-            let mut uris = open_source_paths
-                .get(path)
-                .map(|open| open.keys().cloned().collect::<Vec<_>>())
-                .filter(|uris| !uris.is_empty())
-                .unwrap_or_else(|| vec![path_to_uri(path)]);
-            uris.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-            uris
-        };
+        let publication_uris = |path: &str| source_uris(&open_source_paths, path);
         if !requested_ineligible.is_empty() {
             let uris_to_clear = {
                 let mut state = self.state.lock().await;
@@ -1587,15 +1543,8 @@ impl Backend {
                             min_confidence: min_confidence.unwrap_or(ry_checker::Confidence::Low),
                             repo_root: config_anchor,
                         };
-                        let warning = ry_checker::Diagnostic::new(
-                            ry_checker::Severity::Warning,
-                            ry_core::Span::new(0, 1, 0, 0),
-                            &path,
-                            "RY117",
-                            "Native source identity is ambiguous; typehint attachment was skipped.",
-                        );
                         let mut warnings = post.pre_demotion(
-                            vec![warning],
+                            vec![ambiguous_typehint_identity(&path)],
                             &file.comments,
                             &file.source,
                             &file.path,
@@ -1756,21 +1705,15 @@ impl Backend {
             let mut declined = Vec::new();
             if let Some(scope) = config.annotations.typehint.adopted_scope() {
                 for (path, _, file) in &job.files {
-                    if open_source_paths
-                        .get(path)
-                        .is_some_and(|open| open.len() > 1)
-                    {
+                    let native = match open_source_paths.get(path) {
                         // Colliding snapshots are handled by the per-URI
                         // annotation pass above. No contract may be adopted
                         // from a display-keyed source here.
-                        continue;
-                    }
-                    let native = match open_source_paths.get(path) {
-                        Some(open) if open.len() == 1 => open
+                        Some(open) if open.len() > 1 => continue,
+                        Some(open) => open
                             .values()
                             .next()
                             .and_then(|source| source.native.clone()),
-                        Some(_) => None,
                         None if open_document_paths.contains(path.as_str()) => None,
                         None => {
                             let candidate = PathBuf::from(path);
@@ -1783,27 +1726,13 @@ impl Backend {
                     {
                         records.extend(ry_checker::typehint::read_records_at(file, native, &scope));
                     } else if !ry_checker::typehint::read_records(file, &scope).is_empty() {
-                        declined.push(ry_checker::Diagnostic::new(
-                            ry_checker::Severity::Warning,
-                            ry_core::Span::new(0, 1, 0, 0),
-                            path,
-                            "RY117",
-                            "Native source identity is ambiguous; typehint attachment was skipped.",
-                        ));
+                        declined.push(ambiguous_typehint_identity(path));
                     }
                 }
             }
             let mut project = job.cache.lock().await;
-            let mut result = if records.is_empty() {
-                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref())
-            } else {
-                project.check_with_workspace_and_records(
-                    job.files,
-                    job.stubs,
-                    job.workspace.as_ref(),
-                    records,
-                )
-            };
+            let mut result =
+                project.check_with_workspace(job.files, job.stubs, job.workspace.as_ref(), records);
             for diagnostic in declined {
                 if let Some((_, diagnostics)) = result
                     .diagnostics

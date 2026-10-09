@@ -214,10 +214,7 @@ impl LanguageServer for Backend {
             if collides {
                 state.active_collision_uri.insert(path.clone(), uri.clone());
             }
-            state.docs.insert(path.clone(), text);
-            state.versions.insert(path.clone(), version);
-            state.parsed.remove(&path);
-            state.hints.remove(&path);
+            state.update_doc(&path, text, version);
         }
         self.schedule_diagnostics(uri).await;
     }
@@ -226,19 +223,19 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
-        let mut changes = params.content_changes;
         #[cfg(feature = "test-util")]
         let paused_transition = crate::test_seam::maybe_pause_change_transition().await;
-        let result =
-            self.state
-                .lock()
-                .await
-                .apply_document_changes(&path, &uri, &mut changes, version);
+        let applied = self.state.lock().await.apply_document_changes(
+            &path,
+            &uri,
+            params.content_changes,
+            version,
+        );
         #[cfg(feature = "test-util")]
         if paused_transition {
             crate::test_seam::note_change_transition_landed();
         }
-        if result == CollisionChangeResult::Rejected {
+        if !applied {
             return;
         }
         self.schedule_diagnostics(uri).await;
@@ -307,14 +304,7 @@ impl LanguageServer for Backend {
             let state = self.state.lock().await;
             let (keep, clear): (Vec<&String>, Vec<&String>) =
                 state.docs.keys().partition(|p| !under_removed_root(p));
-            let source_uris = |path: &str| {
-                state
-                    .open_source_paths
-                    .get(path)
-                    .map(|open| open.keys().cloned().collect::<Vec<_>>())
-                    .filter(|uris| !uris.is_empty())
-                    .unwrap_or_else(|| vec![path_to_uri(path)])
-            };
+            let source_uris = |path: &str| source_uris(&state.open_source_paths, path);
             let mut docs_to_clear: std::collections::HashSet<Url> =
                 clear.into_iter().flat_map(|p| source_uris(p)).collect();
             // Mirror the `did_close` pattern: publish empty now, then
@@ -570,23 +560,20 @@ impl LanguageServer for Backend {
         let (remaining_open_paths, survivor) = {
             let mut state = self.state.lock().await;
             let survivor = state.close_open_source(&path, &uri);
+            // The empty publication below clears this URI, so it must
+            // leave the tracked set too (#489).
             if survivor.is_none() {
                 state.docs.remove(&path);
                 state.versions.remove(&path);
                 state.parsed.remove(&path);
                 state.hints.remove(&path);
                 state.trees.remove(&path);
-            }
-            // The empty publication below clears this URI, so it must
-            // leave the tracked set too (#489).
-            if let Some(uris) = state.published_uris.get_mut(&path) {
+                state.published_uris.remove(&path);
+            } else if let Some(uris) = state.published_uris.get_mut(&path) {
                 uris.remove(&uri);
                 if uris.is_empty() {
                     state.published_uris.remove(&path);
                 }
-            }
-            if survivor.is_none() {
-                state.published_uris.remove(&path);
             }
             // Invalidate any in-flight debounced publish for this file.
             state.diag_generation = state.diag_generation.wrapping_add(1);
@@ -756,12 +743,7 @@ impl LanguageServer for Backend {
 
         {
             let state = self.state.lock().await;
-            if !state.eligibility_for_path(&path)
-                || state
-                    .open_source_paths
-                    .get(&path)
-                    .is_some_and(|open| open.len() > 1)
-            {
+            if !state.eligibility_for_path(&path) || state.has_collision(&path) {
                 // A display-keyed parse can belong to another native URI.
                 // Even matching document version numbers do not prove that
                 // an edit uses the requesting buffer's source text.
@@ -780,10 +762,7 @@ impl LanguageServer for Backend {
             if !Arc::ptr_eq(cached, &file)
                 || state.versions.get(&path) != Some(version)
                 || !state.eligibility_for_path(&path)
-                || state
-                    .open_source_paths
-                    .get(&path)
-                    .is_some_and(|open| open.len() > 1)
+                || state.has_collision(&path)
             {
                 return Ok(None);
             }

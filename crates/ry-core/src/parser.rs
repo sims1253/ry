@@ -1055,19 +1055,12 @@ fn collect_function_bodies(root: Node<'_>) -> Vec<FunctionBody> {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         if node.kind() == "function_definition" {
-            let function_position = node.start_position();
-            let body = node
-                .child_by_field_name("body")
-                .filter(|body| body.kind() == "braced_expression")
-                .map(self_span);
             bodies.push(FunctionBody {
-                function: Span::new(
-                    node.start_byte(),
-                    node.end_byte(),
-                    function_position.row,
-                    function_position.column,
-                ),
-                body,
+                function: self_span(node),
+                body: node
+                    .child_by_field_name("body")
+                    .filter(|body| body.kind() == "braced_expression")
+                    .map(self_span),
             });
         }
         let mut cursor = node.walk();

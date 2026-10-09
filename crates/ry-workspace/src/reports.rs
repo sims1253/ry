@@ -519,9 +519,20 @@ impl Report<'_> {
                 && row + 1 < self.rows.len()
                 && !self.blank(row + 1)
             {
-                let end = self.metadata_block(row)?;
-                blocks.push((row, end));
-                row = end;
+                // Like Pandoc, an unclosed `---` after the start is a rule.
+                let close = (row + 1..self.rows.len())
+                    .find(|&close| matches!(self.rows[close].text.trim_end(), "---" | "..."));
+                match close {
+                    Some(close) => {
+                        self.metadata_block(row, close)?;
+                        blocks.push((row, close + 1));
+                        row = close + 1;
+                    }
+                    None if (0..row).all(|row| self.blank(row)) => {
+                        return Err(self.issue(row, "RY120", "unclosed report YAML front matter"));
+                    }
+                    None => row += 1,
+                }
             } else {
                 row += 1;
             }
@@ -529,9 +540,9 @@ impl Report<'_> {
         Ok(blocks)
     }
 
-    /// Check one metadata block opened at `open` and return the row after its
-    /// closing `---` or `...`. Execution settings change every chunk.
-    fn metadata_block(&self, open: usize) -> Result<usize, InputIssue> {
+    /// Check the metadata block between `open` and its unindented `---` or
+    /// `...` at `close`. Execution settings change every chunk.
+    fn metadata_block(&self, open: usize, close: usize) -> Result<(), InputIssue> {
         let unclassified = |row, what: &str| {
             self.issue(
                 row,
@@ -541,11 +552,8 @@ impl Report<'_> {
         };
         let mut root_key = None;
         let mut root_indent = None;
-        for (row, line) in self.rows.iter().enumerate().skip(open + 1) {
+        for (row, line) in self.rows.iter().enumerate().take(close).skip(open + 1) {
             let raw = line.text.trim_end_matches(['\r', '\n']);
-            if matches!(raw.trim_end(), "---" | "...") {
-                return Ok(row + 1);
-            }
             let content = raw.trim_start_matches(' ');
             if content.is_empty() || content.starts_with('#') {
                 continue;
@@ -586,7 +594,7 @@ impl Report<'_> {
                 ));
             }
         }
-        Err(self.issue(open, "RY120", "unclosed report YAML front matter"))
+        Ok(())
     }
 
     /// Admit enabled R chunks in document order, skipping metadata `blocks`,
@@ -1026,6 +1034,7 @@ mod tests {
             // A horizontal rule or setext underline is not a metadata block.
             (format!("---\n\n{chunk}"), 1, None),
             (format!("Title\n---\n{chunk}"), 1, None),
+            (format!("Intro\n\n---\nMore prose\n{chunk}"), 1, None),
             // Only an unindented delimiter closes a block.
             (
                 format!("---\ntitle: |\n  ---\n  ```{{r}}\n  x <- 1L\n  ```\n---\n{chunk}"),

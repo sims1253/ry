@@ -106,12 +106,13 @@ reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
 Records without a selected adopted contract retain their provenance and
 findings without activating declaration effects on ordinary inference.
-Attachment requires an exact native file identity. A native path that is not
-exactly representable, or distinct native filenames that collapse to one
-display path, supply no contract: CLI checking reports RY117 once for that
-path, and the editor reports RY117 at each opened URI with a clause while
-keeping each URI's own buffer. A sole, genuine Unicode replacement-character
-filename remains eligible. Backtick quoting of an AST formal is equivalent to
+Attachment requires an exact native file identity. Distinct native filenames
+that collapse to one display path supply no contract: CLI checking reports
+RY117 once for that path, and the editor reports RY117 at each opened URI with
+a clause while keeping each URI's own buffer. A native path that is not exactly
+representable also supplies no contract. CLI scope matching excludes it
+without a diagnostic; the editor reports RY117 at its opened URI. A sole,
+genuine Unicode replacement-character filename remains eligible. Backtick quoting of an AST formal is equivalent to
 the same unquoted R name; structured declaration-record names are literal
 semantic names. The simple clause grammar does not decode encoded or escaped
 formal spellings; such attachments are reported as ambiguous.

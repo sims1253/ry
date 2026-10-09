@@ -105,20 +105,15 @@ reinstall records after an annotation-only edit or a configuration change.
 Project rechecks affected files when its record set changes.
 Records without a selected adopted contract retain their provenance and
 findings without activating declaration effects on ordinary inference.
-If distinct native filenames collapse to one display path, CLI checking
-declines their source-record attachment and reports RY117 once for that
-ambiguous path. It does not attach the scoped file's claim to its neighbor.
-The editor retains each opened file URI and native path when checking this
-identity. A native path that cannot be represented exactly, or a real Unicode
-replacement-character path with a colliding native neighbor, cannot supply
-an adopted contract; the editor reports RY117 at the opened URI. A sole,
-genuine Unicode replacement-character filename remains eligible.
-When several open native URIs share a display key, each annotated buffer gets
-its own RY117; closing one clears that URI and keeps the survivor's source.
-Backtick quoting of an AST formal is equivalent to the same unquoted R name;
-structured declaration-record names are literal semantic names. The reader's
-bounded simple clause grammar does not decode encoded or escaped source
-spellings; unsupported attachment stays ambiguous rather than guessing.
+Attachment requires an exact native file identity. A native path that is not
+exactly representable, or distinct native filenames that collapse to one
+display path, supply no contract: CLI checking reports RY117 once for that
+path, and the editor reports RY117 at each opened URI with a clause while
+keeping each URI's own buffer. A sole, genuine Unicode replacement-character
+filename remains eligible. Backtick quoting of an AST formal is equivalent to
+the same unquoted R name; structured declaration-record names are literal
+semantic names. The simple clause grammar does not decode encoded or escaped
+formal spellings; such attachments are reported as ambiguous.
 
 Only an explicitly adopted, exact `entry_only` signature can supply a body
 entry type. Its declared parameters must be an ordered subset of the R formals,

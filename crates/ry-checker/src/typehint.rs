@@ -402,7 +402,7 @@ fn build_record(
         Translation::InvalidSyntax(reason)
     } else if let Some(reason) = ambiguous {
         Translation::AmbiguousAttachment(reason)
-    } else if let Err(error) = signature.validate() {
+    } else if let Err(error) = signature.canonical() {
         Translation::InvalidSyntax(error.to_string())
     } else if residuals.is_empty() {
         Translation::Exact(signature)
@@ -720,6 +720,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn canonical_signature_budget_decides_the_record_status() {
+        // 64 clauses fit the reader budget but not the canonical signature,
+        // which both checking and schema-3 export consume.
+        let names: Vec<_> = (0..64)
+            .map(|index| format!("p{index:02}{}", "x".repeat(29)))
+            .collect();
+        let clauses: String = names
+            .iter()
+            .map(|name| format!(" #| {name} integer\n"))
+            .collect();
+        assert!(clauses.len() <= MAX_ANNOTATION_BYTES);
+        let records = read(&format!(
+            "f <- function({}) {{\n{clauses}}}\n",
+            names.join(", ")
+        ));
+        let [record] = &records[..] else {
+            panic!("expected one record, got {}", records.len());
+        };
+        let Translation::InvalidSyntax(reason) = &record.translation else {
+            panic!("an unrepresentable signature must not be adopted");
+        };
+        assert!(reason.contains("signature exceeds"), "{reason}");
     }
 
     #[test]

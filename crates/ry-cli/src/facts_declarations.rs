@@ -82,21 +82,17 @@ pub(crate) fn export_records(file: &SourceFile, records: &[DeclarationRecord]) -
                 return Err(miette!("stale annotation source text in {}", file.path));
             }
         }
-        let target = match &record.source.target {
-            DeclarationTarget::LocalFunction {
-                path,
-                definition,
-                display_name,
-            } => json!({
-                "kind": "local_function",
-                "path": path,
-                "definition_span": if path == &file.path { source_span(&file.source, *definition) } else { Value::Null },
-                "display_name": display_name,
-            }),
-            DeclarationTarget::PackageFunction { package, name } => json!({
-                "kind": "package_function", "package": package, "name": name,
-            }),
-        };
+        let DeclarationTarget::LocalFunction {
+            path,
+            definition,
+            display_name,
+        } = &record.source.target;
+        let target = json!({
+            "kind": "local_function",
+            "path": path,
+            "definition_span": if path == &file.path { source_span(&file.source, *definition) } else { Value::Null },
+            "display_name": display_name,
+        });
         let translation = match &record.translation {
             Translation::Exact(supported) => json!({
                 "kind": "exact", "supported": signature(supported)?, "residuals": [],
@@ -255,9 +251,8 @@ mod tests {
 
         let mut external = record.clone();
         external.source.path = "upstream.R".into();
-        if let DeclarationTarget::LocalFunction { path, .. } = &mut external.source.target {
-            *path = "upstream.R".into();
-        }
+        let DeclarationTarget::LocalFunction { path, .. } = &mut external.source.target;
+        *path = "upstream.R".into();
         let external_value = export_records(&file, &[external]).unwrap();
         assert!(external_value[0]["source"]["span"].is_null());
         assert!(external_value[0]["target"]["definition_span"].is_null());

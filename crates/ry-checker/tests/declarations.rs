@@ -228,9 +228,8 @@ outer()
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    if let DeclarationTarget::LocalFunction { definition, .. } = &mut declaration.source.target {
-        *definition = nested_function_span(&file, "outer", "f");
-    }
+    let DeclarationTarget::LocalFunction { definition, .. } = &mut declaration.source.target;
+    *definition = nested_function_span(&file, "outer", "f");
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![declaration]);
     checker.check(&file);
@@ -2789,8 +2788,11 @@ fn normalized_union_equivalence_and_uncheckable_statuses_keep_provenance() {
     let mut flat = nested.clone();
     flat.source.provider = "flat-provider".into();
     if let Translation::Exact(signature) = &mut flat.translation {
-        signature.parameters[0].constraint =
-            Some(TypeExpr::parse("union[character, double, integer]").unwrap());
+        signature.parameters[0].constraint = Some(TypeExpr::Union(vec![
+            TypeExpr::atomic(AtomicMode::Character),
+            TypeExpr::atomic(AtomicMode::Double),
+            TypeExpr::atomic(AtomicMode::Integer),
+        ]));
     }
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![nested.clone(), flat]);
@@ -2976,7 +2978,17 @@ fn flattened_wide_union_stays_out_of_body_in_any_form_or_order() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    let five = TypeExpr::parse("union[character, complex, double, integer, raw]").unwrap();
+    let five = TypeExpr::Union(
+        [
+            AtomicMode::Character,
+            AtomicMode::Complex,
+            AtomicMode::Double,
+            AtomicMode::Integer,
+            AtomicMode::Raw,
+        ]
+        .map(TypeExpr::atomic)
+        .into(),
+    );
     if let Translation::Exact(signature) = &mut flat.translation {
         signature.parameters[0].constraint = Some(five);
     }

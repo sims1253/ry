@@ -121,10 +121,7 @@ impl DeclarationSet {
         for record in &records {
             let DeclarationTarget::LocalFunction {
                 path, definition, ..
-            } = &record.source.target
-            else {
-                continue;
-            };
+            } = &record.source.target;
             grouped
                 .entry(TargetKey::new(path, *definition))
                 .or_default()
@@ -133,11 +130,8 @@ impl DeclarationSet {
         let targets = grouped
             .into_iter()
             .map(|(key, records)| {
-                let span = match &records[0].source.target {
-                    DeclarationTarget::LocalFunction { definition, .. } => *definition,
-                    DeclarationTarget::PackageFunction { .. } => unreachable!(),
-                };
-                (key, decide_target(span, &records))
+                let DeclarationTarget::LocalFunction { definition, .. } = records[0].source.target;
+                (key, decide_target(definition, &records))
             })
             .collect();
         Self { records, targets }
@@ -200,9 +194,10 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                         // Canonical spelling is also the checking identity. Keep the
                         // authored record untouched for provenance, but never let
                         // record order choose a differently shaped equivalent tree.
-                        exact.entry(canonical.clone()).or_insert_with(|| {
-                            DeclaredSignature::parse(&canonical)
-                                .expect("canonical signature parses within validated budgets")
+                        exact.entry(canonical).or_insert_with(|| {
+                            signature
+                                .normalized()
+                                .expect("canonical signature normalizes")
                         });
                     }
                 }

@@ -575,12 +575,11 @@ mod tests {
             signature.parameters[0].supplied,
             SupplyStatus::DefaultedSuppliedOnly
         );
-        assert_eq!(
-            DeclaredSignature::parse(&signature.canonical().unwrap())
+        assert!(
+            signature
+                .canonical()
                 .unwrap()
-                .parameters[0]
-                .supplied,
-            SupplyStatus::DefaultedSuppliedOnly
+                .contains("defaulted_supplied_only/")
         );
         let invalid = read("f <- function(x) {\n #| x\n}\n");
         assert!(matches!(

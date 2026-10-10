@@ -99,22 +99,19 @@ impl Reconciliation {
         Some(refresh_epoch)
     }
 
-    pub(super) fn note_refresh_exit(&mut self, path: &str) -> bool {
+    pub(super) fn note_refresh_exit(&mut self, path: &str) {
         if let Some(in_flight) = self.refreshes_in_flight.get_mut(path) {
             *in_flight = in_flight.saturating_sub(1);
             if *in_flight == 0 {
                 self.refreshes_in_flight.remove(path);
             }
         }
-        self.pending_refreshes.contains_key(path) && !self.refreshes_in_flight.contains_key(path)
     }
 
     fn has_drivable_obligation(&self) -> bool {
-        !self.shutting_down
-            && self
-                .pending_refreshes
-                .iter()
-                .any(|(path, _)| !self.refreshes_in_flight.contains_key(path))
+        self.pending_refreshes
+            .keys()
+            .any(|path| !self.refreshes_in_flight.contains_key(path))
     }
 
     pub(super) fn reconcile_round_progress(
@@ -148,6 +145,8 @@ impl Reconciliation {
         }
     }
 
+    /// Shutdown clears every obligation and refuses new claims, so no
+    /// driver check needs to test `shutting_down` again.
     pub(super) fn shutdown(&mut self) {
         self.shutting_down = true;
         self.pending_refreshes.clear();
@@ -170,7 +169,7 @@ impl Reconciliation {
     }
 
     pub(super) fn start_driver(&mut self) -> bool {
-        if self.reconcile_driver_active || self.shutting_down || self.pending_refreshes.is_empty() {
+        if self.reconcile_driver_active || self.pending_refreshes.is_empty() {
             return false;
         }
         self.reconcile_driver_active = true;
@@ -183,7 +182,7 @@ impl Reconciliation {
     }
 
     pub(super) fn begin_round(&mut self) -> Option<(Vec<String>, u64)> {
-        if self.pending_refreshes.is_empty() || self.shutting_down {
+        if self.pending_refreshes.is_empty() {
             self.idle();
             return None;
         }
@@ -195,7 +194,7 @@ impl Reconciliation {
     }
 
     pub(super) fn drivable_duty(&self, path: &str) -> Option<(RefreshDuty, u64)> {
-        if self.shutting_down || self.refreshes_in_flight.contains_key(path) {
+        if self.refreshes_in_flight.contains_key(path) {
             return None;
         }
         self.pending_refreshes
@@ -220,7 +219,8 @@ mod reconcile_accounting_tests {
     fn pacing_counts_retirements_not_map_shrinkage() {
         let mut state = Reconciliation::default();
         let epoch = state.claim_refresh_epoch("/a.R").unwrap();
-        assert!(state.note_refresh_exit("/a.R"));
+        state.note_refresh_exit("/a.R");
+        assert!(state.drivable_duty("/a.R").is_some());
 
         // Eight rounds that each retire one obligation while one
         // arrival lands mid-round: the map size is constant throughout,
@@ -348,7 +348,8 @@ mod reconcile_accounting_tests {
         // Refresh A claims, exits, lands its bytes, and settles its
         // context — everything but the final acknowledgement.
         let epoch_a = state.claim_refresh_epoch("/a.R").unwrap();
-        assert!(state.note_refresh_exit("/a.R"));
+        state.note_refresh_exit("/a.R");
+        assert!(state.drivable_duty("/a.R").is_some());
         state.settle_pending_refresh("/a.R", epoch_a, true);
         // Before A acknowledges, refresh B claims (re-arming the entry
         // at a higher epoch with a FULL duty) and lands ITS bytes: the
@@ -357,7 +358,8 @@ mod reconcile_accounting_tests {
         // mistake for A's completed phase.
         let epoch_b = state.claim_refresh_epoch("/a.R").unwrap();
         assert!(epoch_b > epoch_a);
-        assert!(state.note_refresh_exit("/a.R"));
+        state.note_refresh_exit("/a.R");
+        assert!(state.drivable_duty("/a.R").is_some());
         state.settle_pending_refresh("/a.R", epoch_b, true);
 
         let retired_before = state.retired_refreshes;
@@ -425,16 +427,18 @@ mod reconcile_accounting_tests {
             Some(&rearm_epoch),
             "the fresh claim owns the path"
         );
+        state.note_refresh_exit("/a.R");
         assert!(
-            !state.note_refresh_exit("/a.R"),
+            state.drivable_duty("/a.R").is_none(),
             "the old refresh's exit must not report the new obligation drivable"
         );
         assert!(
             !state.has_drivable_obligation(),
             "the driver must not preempt the re-armed refresh that is still in flight"
         );
+        state.note_refresh_exit("/a.R");
         assert!(
-            state.note_refresh_exit("/a.R"),
+            state.drivable_duty("/a.R").is_some(),
             "the owning refresh's exit is what makes the obligation drivable"
         );
         assert!(state.has_drivable_obligation());

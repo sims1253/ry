@@ -2248,7 +2248,7 @@ impl Backend {
             // A pending initial index would make every refresh lose its
             // generation race to the completing pass and gate the
             // publications below; settle that duty first, exactly like
-            // the watched handler's respawn step.
+            // `refresh_package_contexts`.
             if self.state.lock().await.initial_index_pending {
                 self.spawn_background_index().await;
             }
@@ -2306,25 +2306,11 @@ impl Backend {
                 if self.state.lock().await.reconciliation.is_shutting_down() {
                     continue;
                 }
-                // Same order as the watched handler: respawn a retired
-                // initial pass, advance the contexts, then publish.
-                let index_pending = { self.state.lock().await.initial_index_pending };
-                if index_pending {
-                    self.spawn_background_index().await;
-                }
+                // Same order as the watched handler: advance the contexts,
+                // then publish, then acknowledge.
                 let ctx_settled = self.refresh_package_contexts(&follow_up).await;
                 self.publish_landed_paths(&follow_up).await;
-                // Test seam: park between the context/publication
-                // settlement and the obligation acknowledgement (see
-                // `test_seam`).
-                #[cfg(feature = "test-util")]
-                crate::test_seam::maybe_pause_publication_ack().await;
-                let mut state = self.state.lock().await;
-                for (path, epoch) in &ctx_settled {
-                    state
-                        .reconciliation
-                        .complete_pending_publication(path, *epoch);
-                }
+                self.acknowledge_publications(&ctx_settled).await;
             }
             let paced = {
                 let mut state = self.state.lock().await;
@@ -2402,92 +2388,32 @@ impl Backend {
     /// folder's eligibility and the walk's per-file admission rules with
     /// the same bounded decoder the background indexer parses through
     /// (#486). A missing, ineligible, oversized, or unreadable file is
-    /// dropped from the index, so a watched-file deletion corrupts
-    /// nothing and a rescan cannot disagree about membership. Returns
-    /// the refresh's CLAIM EPOCH when it LANDED and `None` otherwise:
-    /// the epoch is the completion token the caller's follow-up must
-    /// acknowledge the obligation with (`complete_pending_publication`)
-    /// — it came from the claim snapshotted before this call's read,
-    /// so it names the revision whose bytes, context, and publication
-    /// the follow-up demonstrably covered, never whatever entry happens
-    /// to be current at acknowledgement time. Retries keep the original
-    /// claim, so one call reports one epoch. A landed refresh claims
-    /// the next `index_generation` atomically with its map write inside
-    /// the commit critical section — the check, the write, and the
-    /// bump share one lock hold — so no scan can commit between the
-    /// insert and the retirement, and the caller must not bump again
-    /// (#526). Landing also retires any in-flight background pass (its
-    /// commit check fails), which is why the caller respawns the
-    /// initial pass when the landed refresh retired it. The commit
-    /// lands only when BOTH of the refresh's snapshots are still
-    /// current: the snapshot generation (a newer scan, folder change,
-    /// or landed refresh owns the fresher bytes or the fresher map, so
-    /// a delayed commit must not install older source over them) and
-    /// the per-path refresh epoch claimed at start, before the blocking
-    /// read — watched-file handlers dispatch concurrently, so two
-    /// refreshes for one path can snapshot the same generation, and
-    /// without the epoch the older read would win whenever it commits
-    /// first: it lands stale bytes, bumps the generation, and the newer
-    /// read's commit then fails the generation check (#538). With the
-    /// epoch, only the most recently started refresh for a path can
-    /// commit, whichever commit reaches the lock first. The `did_open`
-    /// guard below is a separate authority rule, not a freshness check:
-    /// an open buffer shadows its disk twin regardless of generation. A
-    /// refresh that loses the EPOCH race returns `None` — a newer
-    /// same-path refresh owns the entry — so the caller neither
-    /// republishes nor respawns scans for it. A refresh that loses the
-    /// GENERATION race is different: a per-file refresh carries only
-    /// its own path, and watched-file handlers dispatch concurrently,
-    /// so the generation can move on an unrelated refresh (a close-time
-    /// re-read, another path's event) whose landing says nothing about
-    /// THIS path's bytes. Dropping the update outright would strand the
-    /// watched event — with no open document nothing else republishes
-    /// the path, so its fix or creation never reaches the client (#551)
-    /// — so the refresh retries once from current state, and a second
-    /// loss falls back to a full background scan, the same ladder
-    /// [`Backend::refresh_one_package_context`] uses for the
-    /// resolution maps. The retry re-reads from current disk, so its
-    /// bytes postdate every writer that beat the previous attempt and
-    /// installing them is always safe. The returned verdict is terminal
-    /// for this event, never a retry signal: `None` means someone else
-    /// owns the publication (a newer same-path refresh, an open buffer
-    /// shadowing the disk bytes, a cap refusal, a backstop that did not
-    /// land) — the retry ladder and the backstop live INSIDE this
-    /// function, so a caller-side retry on `None` could only loop
-    /// against a persistent owner.
+    /// dropped from the index, so a rescan cannot disagree about
+    /// membership.
+    ///
+    /// Returns the refresh's claim epoch when it landed and `None`
+    /// otherwise. The epoch was claimed before the read, so the caller's
+    /// context and publication follow-up acknowledges exactly the revision
+    /// it covered. A landing claims the next `index_generation` in its
+    /// commit critical section, retiring in-flight background passes, and
+    /// the caller must not bump again (#526). Only the most recently started
+    /// refresh for a path can commit (#538), and a lost generation race
+    /// retries once before falling back to a full scan (#551); see the
+    /// commit checks in [`Self::refresh_disk_entry_claimed`]. `None` is
+    /// terminal for this event, never a retry signal: a newer same-path
+    /// refresh, an open buffer, a cap refusal, or an unlanded backstop owns
+    /// the publication.
     async fn refresh_disk_entry(&self, path: PathBuf) -> Option<u64> {
         let path_string = path.to_string_lossy().into_owned();
-        // Claim the path's refresh epoch once, before the first
-        // snapshot and read: the claim orders same-path refreshes by
-        // START, and the commit below refuses any refresh a newer one
-        // superseded, whichever commit lines up on the state lock
-        // first (#538). Retries keep the original claim — re-claiming
-        // would leapfrog a newer same-path refresh that started during
-        // this call, inverting the start-order rule. The entry is
-        // reclaimed only on commit arms that already passed the epoch
-        // check (landed removal, cap refusal) — there the reclaimer
-        // provably holds the path's LATEST claim, so nothing newer is
-        // in flight to clobber. The early returns below the read
-        // (open-document guard, generation-race exhaustion) run
-        // before/outside the epoch check and deliberately keep the
-        // claim: removing it there could delete a newer in-flight
-        // refresh's entry and wrongly discard the freshest bytes, so
-        // those slots persist until the path's next claim or a landed
-        // removal — one per distinct refreshed path, never per event.
-        // The claim also enqueues the reconciliation obligation BEFORE
-        // the read that might lose its races (P1): the entry rides the
-        // same claim, so a newer event's claim overwrites it with a
-        // fresher full duty and this refresh can only ever settle the
-        // revision it covers. Without the entry, a ladder that loses
-        // both generation races AND its backstop scan returned while
-        // forgetting the path — the watched event's whole duty
-        // stranded with no open document and no future event to
-        // rescue it. The in-flight slot pairs with the exit-side
-        // decrement in the wrapper below, so the driver can tell a
-        // path waiting for work from one whose refresh is merely
-        // still running. A shutting-down session claims nothing: the
-        // caller's whole follow-up (context, publication) belongs to
-        // the ended session.
+        // Claim once, before the first snapshot and read: the claim orders
+        // same-path refreshes by start, so retries keep it. Only commit arms
+        // that already passed the epoch check (landed removal, cap refusal)
+        // reclaim the entry; the other early returns keep it, since removing
+        // it could delete a newer in-flight refresh's claim. The claim also
+        // enqueues the reconciliation obligation before the read can lose
+        // its races (P1), and its in-flight slot pairs with the exit below
+        // so the driver can tell waiting work from a running refresh. A
+        // shutting-down session claims nothing.
         let refresh_epoch = self
             .state
             .lock()
@@ -2497,20 +2423,16 @@ impl Backend {
         let landed = self.refresh_disk_entry_claimed(path, refresh_epoch).await;
         let retained_idle = {
             let mut state = self.state.lock().await;
-            let driver_may_take_over = state.reconciliation.note_refresh_exit(&path_string);
+            state.reconciliation.note_refresh_exit(&path_string);
             // Landed refreshes leave context/publication to their caller.
-            driver_may_take_over
-                && matches!(
-                    state.reconciliation.drivable_duty(&path_string),
-                    Some((RefreshDuty::BytesContextPublication, _))
-                )
+            matches!(
+                state.reconciliation.drivable_duty(&path_string),
+                Some((RefreshDuty::BytesContextPublication, _))
+            )
         };
         if retained_idle {
             self.wake_reconciliation().await;
         }
-        // The claim epoch is the completion token: the caller's context
-        // refresh and publication follow-up retire the obligation only
-        // against the revision this refresh demonstrably covered.
         landed.then_some(refresh_epoch)
     }
 
@@ -2607,7 +2529,7 @@ impl Backend {
             // blocking read now avoids a parse the verdict discards.
             // The authoritative check stays at the commit (the epoch can
             // still move during the read), and this early exit keeps the
-            // claim, per the reclamation policy above.
+            // claim, per the reclamation policy in `refresh_disk_entry`.
             if superseded {
                 tracing::debug!(
                     path = %path_string,
@@ -2821,62 +2743,49 @@ impl Backend {
                 }
             }
         } // retry loop
-        // Two lost generation races in a row — a commit landed inside
-        // each of two consecutive snapshot-to-commit windows — so the
-        // session is under sustained index churn. Converge the whole
-        // index through the generation-guarded full scan, the same
-        // backstop `refresh_one_package_context` uses for the
-        // resolution maps: the scan re-reads every path from current
-        // disk and installs only when it is the newest writer. The
-        // scan's verdict is threaded through: a LANDED scan installed
-        // this path's current disk bytes, so returning true hands the
-        // caller the publication duty — the watched handler pushes the
-        // path onto its landed list and `schedule_closed_file_publish`
-        // drives the republish, the #528 convention every other
-        // no-open-document scan call site already follows (the callers'
-        // `refresh_package_contexts` is redundant-but-harmless after
-        // the scan's wholesale context rebuild). A superseded or
-        // settled-without-install scan returns false and the path's
-        // obligation stays RETAINED for the reconciliation driver (P1):
-        // "converges on its own next event" was the residual the
-        // no-rescue-event invariant forbids — with no open document and
-        // silence, nothing else would ever re-drive the path. Only the
-        // landed arm carries the published-immediately guarantee. The
-        // churn bound
-        // is the double-loss precondition itself — two commits inside
-        // two consecutive sub-millisecond snapshot-to-commit windows per
-        // escalated refresh — plus each spawned pass stays
-        // generation-guarded, so superseded walks discard without
-        // writing. Only [`BackgroundIndexOutcome::Installed`] counts as
-        // this path's landing: the scan's bool-compatible contract is
-        // broader (a pass that settled without installing — an errored
-        // walk, or empty roots, generation still held — also returns
-        // true there, because it settles `initial_index_pending`
-        // while leaving the map untouched), and treating that as a
-        // landing would republish stale bytes under a success verdict.
-        // A settled-without-install or superseded backstop leaves the
-        // path to converge on its own next event, like the superseded
-        // arm above.
+        // Two lost generation races in a row: the session is under sustained
+        // index churn. Converge through the generation-guarded full scan,
+        // the same backstop `refresh_one_package_context` uses: it re-reads
+        // every path from current disk and installs only as the newest
+        // writer. Only [`BackgroundIndexOutcome::Installed`] counts as this
+        // path's landing and hands the caller the publication duty (#528);
+        // a pass that settled without installing (an errored walk or empty
+        // roots) also clears `initial_index_pending`, and treating it as a
+        // landing would republish stale bytes. A superseded or
+        // settled-without-install scan returns false and the obligation
+        // stays retained for the reconciliation driver (P1), since with no
+        // open document nothing else would re-drive the path.
         let landed = matches!(
             self.background_index_outcome().await,
             BackgroundIndexOutcome::Installed
         );
         if landed {
-            // The scan fence-covers this claim: the walk re-read the
-            // path after the scan started (which is after the claim),
-            // and the write the event carries predates the claim, so
-            // the installed bytes include it — and the scan's wholesale
-            // commit rebuilt every package context in the same critical
-            // section. Only the caller's publication follow-up remains
-            // owed. A superseded or settled-without-install scan
-            // settles nothing: the obligation stays retained, and the
-            // reconciliation driver re-drives the path.
+            // The scan started after the claim, so its re-read includes the
+            // event's write, and its wholesale commit rebuilt every package
+            // context. Only the caller's publication follow-up remains owed.
             let mut state = self.state.lock().await;
             state
                 .reconciliation
                 .settle_pending_refresh(&path_string, refresh_epoch, true);
         }
         landed
+    }
+
+    /// Retire the obligations whose context and publication settled, each
+    /// against its landing's own epoch, so an older refresh completing late
+    /// cannot retire a newer event's re-armed obligation. Unsettled paths
+    /// stay for the reconciliation driver.
+    async fn acknowledge_publications(&self, settled: &[(String, u64)]) {
+        // Test seam: park between the context/publication settlement and
+        // the obligation acknowledgement (see `test_seam`).
+        #[cfg(feature = "test-util")]
+        crate::test_seam::maybe_pause_publication_ack().await;
+        let mut state = self.state.lock().await;
+        for (path, epoch) in settled {
+            state
+                .reconciliation
+                .complete_pending_publication(path, *epoch);
+        }
     }
 
     /// Re-resolve the owning package group's resolution context after
@@ -2906,8 +2815,18 @@ impl Backend {
     /// through the context phase, and the returned settled pairs keep
     /// it, so the caller's acknowledgement retires only the revision
     /// the completed context-and-publication work demonstrably covered
-    /// (see [`State::complete_pending_publication`]).
+    /// (see [`Self::acknowledge_publications`]).
+    ///
+    /// A landed refresh claimed the next index generation, retiring any
+    /// stale in-flight background pass. When that pass was the initial
+    /// index, its completion can no longer clear `initial_index_pending`,
+    /// so a fresh pass takes over first; otherwise publications would stay
+    /// gated for the rest of the session.
     async fn refresh_package_contexts(&self, landed: &[(String, u64)]) -> Vec<(String, u64)> {
+        let index_pending = { self.state.lock().await.initial_index_pending };
+        if index_pending {
+            self.spawn_background_index().await;
+        }
         // At most one group install per owning folder per package root.
         // Returns the paths whose context duty is settled — a landed
         // group install, a vanished owning folder (the removal path

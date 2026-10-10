@@ -459,15 +459,6 @@
       "severity": "warning",
       "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
     },
-    "dplyr::RY010::R/conditions.R:310:14": {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/conditions.R",
-      "line": 310,
-      "column": 14,
-      "severity": "warning",
-      "message": "variable `error_call_forced` is not bound in this scope"
-    },
     "dplyr::RY010::R/summarise.R:342:34": {
       "package": "dplyr",
       "code": "RY010",
@@ -1575,123 +1566,6 @@
       "severity": "warning",
       "message": "parameter `call` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
-    "keras3::RY010::R/model-training.R:596:35": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/model-training.R",
-      "line": 596,
-      "column": 35,
-      "severity": "warning",
-      "message": "variable `dtype` is not bound in this scope"
-    },
-    "keras3::RY010::R/model-training.R:605:40": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/model-training.R",
-      "line": 605,
-      "column": 40,
-      "severity": "warning",
-      "message": "variable `dtype` is not bound in this scope"
-    },
-    "keras3::RY010::R/model-training.R:606:39": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/model-training.R",
-      "line": 606,
-      "column": 39,
-      "severity": "warning",
-      "message": "variable `dtype` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:110:52": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 110,
-      "column": 52,
-      "severity": "warning",
-      "message": "variable `x_rank` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:123:55": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 123,
-      "column": 55,
-      "severity": "warning",
-      "message": "variable `x_rank` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:199:30": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 199,
-      "column": 30,
-      "severity": "warning",
-      "message": "variable `x_shape` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:209:43": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 209,
-      "column": 43,
-      "severity": "warning",
-      "message": "variable `x_shape` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:211:44": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 211,
-      "column": 44,
-      "severity": "warning",
-      "message": "variable `x_shape` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:81:39": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 81,
-      "column": 39,
-      "severity": "warning",
-      "message": "variable `x_rank` is not bound in this scope"
-    },
-    "keras3::RY010::R/op-subset.R:94:42": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/op-subset.R",
-      "line": 94,
-      "column": 42,
-      "severity": "warning",
-      "message": "variable `x_rank` is not bound in this scope"
-    },
-    "keras3::RY010::R/py-classes.R:220:5": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/py-classes.R",
-      "line": 220,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `class_privates` is not bound in this scope"
-    },
-    "keras3::RY010::R/py-classes.R:245:5": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/py-classes.R",
-      "line": 245,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `class_privates` is not bound in this scope"
-    },
-    "keras3::RY010::R/py-classes.R:249:5": {
-      "package": "keras3",
-      "code": "RY010",
-      "path": "R/py-classes.R",
-      "line": 249,
-      "column": 5,
-      "severity": "warning",
-      "message": "variable `class_privates` is not bound in this scope"
-    },
     "keras3::RY032::R/install.R:315:7": {
       "package": "keras3",
       "code": "RY032",
@@ -1817,42 +1691,6 @@
       "column": 14,
       "severity": "warning",
       "message": "variable `.Generic` is not bound in this scope"
-    },
-    "lubridate::RY010::R/vctrs.R:107:3": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/vctrs.R",
-      "line": 107,
-      "column": 3,
-      "severity": "warning",
-      "message": "variable `lubridate_shared_empty_duration` is not bound in this scope"
-    },
-    "lubridate::RY010::R/vctrs.R:112:3": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/vctrs.R",
-      "line": 112,
-      "column": 3,
-      "severity": "warning",
-      "message": "variable `lubridate_shared_empty_duration` is not bound in this scope"
-    },
-    "lubridate::RY010::R/vctrs.R:117:3": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/vctrs.R",
-      "line": 117,
-      "column": 3,
-      "severity": "warning",
-      "message": "variable `lubridate_shared_empty_duration` is not bound in this scope"
-    },
-    "lubridate::RY010::R/vctrs.R:64:3": {
-      "package": "lubridate",
-      "code": "RY010",
-      "path": "R/vctrs.R",
-      "line": 64,
-      "column": 3,
-      "severity": "warning",
-      "message": "variable `lubridate_shared_empty_period` is not bound in this scope"
     },
     "lubridate::RY109::R/guess.r:265:64": {
       "package": "lubridate",
@@ -2168,24 +2006,6 @@
       "column": 82,
       "severity": "warning",
       "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "purrr::RY080::tests/testthat/test-map.R:82:20": {
-      "package": "purrr",
-      "code": "RY080",
-      "path": "tests/testthat/test-map.R",
-      "line": 82,
-      "column": 20,
-      "severity": "error",
-      "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
-    },
-    "purrr::RY080::tests/testthat/test-parallel.R:120:20": {
-      "package": "purrr",
-      "code": "RY080",
-      "path": "tests/testthat/test-parallel.R",
-      "line": 120,
-      "column": 20,
-      "severity": "error",
-      "message": "`map_chr` requires a scalar `character` callback result, but the callback returns `logical<len=1>`; R rejects this result"
     },
     "purrr::RY109::R/progress-bars.R:56:16": {
       "package": "purrr",

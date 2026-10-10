@@ -296,8 +296,10 @@ impl DeclaredSignature {
     }
 
     /// The signature `canonical` spells, with each constraint's unions
-    /// flattened, sorted, and deduplicated.
+    /// flattened, sorted, and deduplicated. It obeys the same budgets, which
+    /// apply to the original tree before flattening.
     pub fn normalized(&self) -> Result<Self, DeclarationError> {
+        self.canonical()?;
         let mut signature = self.clone();
         for parameter in &mut signature.parameters {
             parameter.constraint = parameter
@@ -603,6 +605,8 @@ mod tests {
         let many_duplicates =
             TypeExpr::Union((0..4).map(|_| TypeExpr::Union(vec![atom(1); 16])).collect());
         assert!(is_resource_limit(many_duplicates.canonical()));
+        let signature = entry_only(vec![parameter("x", Some(many_duplicates))]);
+        assert!(is_resource_limit(signature.normalized()));
         let mut deep = atomic(AtomicMode::Integer);
         for _ in 0..MAX_DECLARATION_DEPTH {
             deep = TypeExpr::Union(vec![deep]);

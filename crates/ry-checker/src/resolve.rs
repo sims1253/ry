@@ -457,8 +457,9 @@ impl Checker {
     }
 
     /// Whether an attached package may supply a bare name ahead of base.
-    /// Package code finds base first, so only an unknown search path can
-    /// (#568). Known exports are checked separately as external bindings.
+    /// Import-free package code finds base first (#568), so there only an
+    /// unknown search path can. Known exports are checked separately as
+    /// external bindings.
     pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
         scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
     }
@@ -485,8 +486,8 @@ impl Checker {
     /// 5. A project `fn_table` definition of `name` → shadowed.
     /// 6. `importFrom(base, name)` → resolves to base.
     /// 7. Any other external binding or `importFrom` source → shadowed.
-    /// 8. A non-empty search path (`bare_loaded` or `search_path_unknown`)
-    ///    → cannot prove base resolution.
+    /// 8. A search path that may mask base (see
+    ///    [`Self::search_path_may_mask_base`]) → cannot prove base resolution.
     /// 9. Otherwise the bare name falls through to base.
     pub(crate) fn resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
         self.resolves_to_base_impl(name, scope, true)
@@ -494,8 +495,8 @@ impl Checker {
 
     /// Shared body of the two base-resolution predicates. `guard_search_path`
     /// toggles step 8 of the documented lookup order: the strict variant
-    /// refuses to conclude base resolution while any package may be
-    /// attached, the lenient one allows it.
+    /// refuses to conclude base resolution while an attached package may
+    /// mask base, the lenient one allows it.
     fn resolves_to_base_impl(&self, name: &str, scope: &Scope, guard_search_path: bool) -> bool {
         // (a) Explicit base:: qualification.
         if name.rsplit_once("::").is_some() {
@@ -531,7 +532,7 @@ impl Checker {
             return false;
         }
 
-        // (e) search_path_unknown or bare-loaded packages may shadow.
+        // (e) An attached or unknown package may shadow.
         if guard_search_path && self.search_path_may_mask_base(scope) {
             return false;
         }

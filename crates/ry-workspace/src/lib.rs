@@ -487,12 +487,10 @@ pub fn resolve_workspace_context<'a>(
             // package context makes them meaningful.
             let package_path = package_relative_path(Path::new(&file.path), &root);
             let relative = package_path.as_deref();
-            if relative.is_some_and(is_package_r_file)
-                || relative.is_some_and(is_testthat_runner_file)
-            {
+            let package_r_file = relative.is_some_and(is_package_r_file);
+            if package_r_file || relative.is_some_and(is_testthat_runner_file) {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
-                if relative.is_some_and(is_package_r_file) && metadata.imported_packages.is_empty()
-                {
+                if package_r_file && metadata.imported_packages.is_empty() {
                     file_bindings.insert(packages::BASE_BEFORE_SEARCH_PATH_SENTINEL.to_string());
                 }
                 // Packages that rely on DESCRIPTION Depends may omit a

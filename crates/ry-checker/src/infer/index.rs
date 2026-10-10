@@ -266,6 +266,9 @@ impl Checker {
                     Some(mask) => mask,
                     None => scope,
                 };
+                // A row index may select only part of each column.
+                let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
+                let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
                 // `df[i, j]` selects a column when `j` is scalar and the
                 // default `drop = TRUE` is in effect.  A data frame's own
                 // length is its number of columns, not its row count, so
@@ -274,14 +277,6 @@ impl Checker {
                 // which `infer_data_frame` has already widened to the frame
                 // row count.
                 if bt.class.contains("data.frame") && args.len() >= 2 {
-                    // A row index may select only part of each column.
-                    let subset = |ty: RType| {
-                        if matches!(args[0].value, Expr::Missing(_)) {
-                            ty
-                        } else {
-                            subset_facts(ty)
-                        }
-                    };
                     let column_arg = &args[1];
                     let drop_false = args.iter().any(|arg| {
                         arg.name.as_deref() == Some("drop")
@@ -326,11 +321,7 @@ impl Checker {
                     if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
-                    return if matches!(args[0].value, Expr::Missing(_)) {
-                        bt
-                    } else {
-                        subset_rows(bt)
-                    };
+                    return if rows_selected { subset_rows(bt) } else { bt };
                 }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {
@@ -340,7 +331,7 @@ impl Checker {
                         let _ = self.infer_table_index_args(args, &bt, index_scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
-                                return subset_facts(column_type);
+                                return subset(column_type);
                             }
                             if !schema.complete {
                                 return RType::unknown();

@@ -41,6 +41,12 @@ All notable changes to ry are documented in this file.
 ### Fixed
 
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
+- Bind the target of a base `delayedAssign()` without evaluating its promise,
+  removing false RY010 reports for lazily bound values (#349).
+- Accept a logical `NA` callback result in purrr's typed maps, which widen it
+  to the target's `NA` (#352).
+- End quietly instead of panicking when stdout closes early, as in
+  `ry check | head` (#626).
 
 ## [0.11.0] - 2026-09-22
 

@@ -1468,3 +1468,63 @@ fn testthat_block_environment_oracle() {
     let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
     assert_eq!(codes, vec!["RY070", "RY040"], "{diagnostics:?}");
 }
+
+#[test]
+fn delayed_assign_binds_an_unforced_promise() {
+    // #349: dplyr and lubridate bind shared values lazily. The promise
+    // expression is not evaluated, so `later` is not read before it exists.
+    let source = "delayedAssign('shared_empty', later)\n\
+                  later <- numeric()\n\
+                  f <- function() shared_empty\n\
+                  g <- function() {\n  delayedAssign('forced', 2)\n  function() forced\n}\n\
+                  h <- function() not_bound\n";
+    let unbound: Vec<_> = check(source)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    assert_eq!(unbound.len(), 1, "{unbound:?}");
+    assert!(unbound[0].contains("not_bound"), "{unbound:?}");
+    // Named, reordered, and qualified calls bind the `x` target without
+    // evaluating the promise.
+    for call in [
+        "delayedAssign(value = later, x = 'held')",
+        "delayedAssign(x = 'held', later)",
+        "base::delayedAssign('held', later)",
+        "delayedAssign(val = later, x = 'held')",
+        "delayedAssign('held', later, eval.env = environment())",
+    ] {
+        let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
+        assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
+    }
+    let diagnostics = check("delayedAssign(value = 'wrong', x = 'held')\nwrong\n");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("wrong")),
+        "{diagnostics:?}"
+    );
+    // R rejects a repeated target before binding anything.
+    let call = "delayedAssign(x = 'held', value = 1, x = 'other')";
+    let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("held")),
+        "{diagnostics:?}"
+    );
+    // A project definition is an ordinary call.
+    let diagnostics = check(
+        "delayedAssign <- function(x, value) 1L\ny <- delayedAssign('unused', 0)\nif (y) TRUE\nunused\n",
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY001"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("unused")),
+        "{diagnostics:?}"
+    );
+}

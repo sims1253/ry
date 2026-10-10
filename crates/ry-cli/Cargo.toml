@@ -35,6 +35,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "io-std"] }
 rayon = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# Restores the default SIGPIPE action for batch commands.
+libc = "0.2"
+
 [dev-dependencies]
 ry-testkit = { path = "../ry-testkit" }
 tempfile = { workspace = true }

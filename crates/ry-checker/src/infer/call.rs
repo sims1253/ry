@@ -788,9 +788,11 @@ impl Checker {
             return t;
         }
 
-        // The default two-argument `assign` rebinds in the current
-        // environment.
-        if let Some(t) = self.infer_local_assign_call(&semantic_name, args, scope) {
+        // `assign`/`delayedAssign` into the current frame bind the target name.
+        if let Some(t) = self
+            .infer_local_assign_call(&semantic_name, args, scope)
+            .or_else(|| self.infer_local_delayed_assign_call(&semantic_name, args, scope))
+        {
             return t;
         }
 
@@ -1547,16 +1549,7 @@ impl Checker {
         // A failed match, duplicate formal, or missing required input means
         // R does not produce a positional result at all. Keep the exemption
         // out of those calls instead of proving a shape for an invalid call.
-        if !bindings.unmatched_named.is_empty()
-            || bindings.param_for_arg.iter().any(Option::is_none)
-            || bindings
-                .param_for_arg
-                .iter()
-                .enumerate()
-                .any(|(index, param)| {
-                    param
-                        .is_some_and(|param| bindings.param_for_arg[..index].contains(&Some(param)))
-                })
+        if !bindings.is_one_to_one()
             || (0..=1).any(|formal| {
                 bindings
                     .arg_for_param(formal)
@@ -1910,6 +1903,38 @@ impl Checker {
             scope.insert(name, value.clone());
         }
         Some(value)
+    }
+
+    /// Base `delayedAssign` binds an unforced promise in this frame, so the
+    /// target becomes an unknown-typed binding and `value` is never inferred.
+    fn infer_local_delayed_assign_call(
+        &mut self,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        if crate::semantic_lists::bare_name(semantic_name) != "delayedAssign"
+            || !self.resolves_to_base_lenient(semantic_name, scope)
+        {
+            return None;
+        }
+        // R rejects unmatched or repeated arguments; `assign.env` binds elsewhere.
+        let bindings = match_arguments(&["x", "value", "eval.env", "assign.env"], args);
+        if !bindings.is_one_to_one()
+            || bindings.arg_for_param(1).is_none()
+            || bindings.arg_for_param(3).is_some()
+        {
+            return None;
+        }
+        let target = &args[bindings.arg_for_param(0)?];
+        let _ = self.infer(&target.value, scope);
+        if let Some(environment) = bindings.arg_for_param(2) {
+            let _ = self.infer(&args[environment].value, scope);
+        }
+        if let Expr::String(name, _) = &target.value {
+            scope.insert(name.clone(), RType::unknown());
+        }
+        Some(RType::new(Mode::Null, Length::Zero))
     }
 
     /// The argument-inference stage: resolves the call's signatures

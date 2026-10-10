@@ -267,6 +267,13 @@ impl ArgumentMatch {
             .iter()
             .position(|bound| *bound == Some(formal_index))
     }
+
+    /// Whether every actual bound to its own formal, as R requires before
+    /// it evaluates a call.
+    pub(crate) fn is_one_to_one(&self) -> bool {
+        self.param_for_arg.iter().all(Option::is_some)
+            && self.bound_params.iter().filter(|bound| **bound).count() == self.param_for_arg.len()
+    }
 }
 
 /// Match R call arguments in the same three passes as `match.call`: exact

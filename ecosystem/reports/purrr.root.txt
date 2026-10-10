@@ -1,3 +1,1 @@
 R/progress-bars.R:56:16 RY109
-tests/testthat/test-map.R:82:20 RY080
-tests/testthat/test-parallel.R:120:20 RY080

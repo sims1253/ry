@@ -199,6 +199,8 @@ impl Checker {
             && let Some(actual) = &callback_return
             && (!modes_compatible(&actual.mode, &target)
                 || matches!(actual.length, Length::Zero | Length::Known(0 | 2..)))
+            // purrr widens a logical `NA` result to the target's `NA` (#352).
+            && !(actual.mode == Mode::Logical && actual.is_scalar_na())
         {
             let bare_name = crate::semantic_lists::bare_name(name);
             self.emit(

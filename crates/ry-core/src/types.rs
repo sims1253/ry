@@ -617,6 +617,13 @@ impl RType {
         self
     }
 
+    /// A length-one value whose only element is a proven `NA` or `NaN`.
+    pub fn is_scalar_na(&self) -> bool {
+        matches!(self.length, Length::One | Length::Known(1))
+            && self.value_facts.all_values_known
+            && self.value_facts.prior_na
+    }
+
     pub fn coercion_new_na(&self) -> NewNaProvenance {
         if let Some(members) = &self.members {
             let mut facts = members.iter().map(RType::coercion_new_na);
@@ -914,12 +921,11 @@ impl RType {
                     }
                     NewNaProvenance::None => NewNaProvenance::None,
                 };
+                // The only element of a fully known scalar, including `NA`.
                 if matches!(self.length, Length::One | Length::Known(1))
                     && self.value_facts.all_values_known
-                    && let Some((low, high)) = self.value_facts.numeric_bounds
-                    && low == high
                 {
-                    element.value_facts.numeric_bounds = Some((low, high));
+                    element.value_facts.numeric_bounds = self.value_facts.numeric_bounds;
                     element.value_facts.all_values_known = true;
                 }
                 element

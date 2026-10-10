@@ -491,7 +491,7 @@ pub(crate) fn run_dump_types(
 
     // Parsing goes through the same path as `ry check`; see
     // `pipeline::parse_files`.
-    let parsed = match pipeline::parse_files(&all_paths, dump_parse_failure) {
+    let parsed = match pipeline::parse_files(&all_paths, None, dump_parse_failure) {
         Ok(parsed) => parsed,
         Err(failure) => {
             eprintln!("ry: {}: {}", failure.path.display(), failure.error);
@@ -536,7 +536,9 @@ pub(crate) fn run_dump_types(
                 reason.description()
             );
         }
-        for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {
+        for (path, records) in
+            pipeline::check_project_with_facts_capture(group.check_input, false, Vec::new()).scopes
+        {
             records_by_path.insert(path, records);
         }
     }

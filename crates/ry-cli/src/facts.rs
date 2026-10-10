@@ -313,7 +313,7 @@ pub(crate) fn run_dump_facts(
     for path in &paths {
         utf8_path(path)?;
     }
-    let parsed = pipeline::parse_files(&paths, |_, _| pipeline::FailureAction::Abort)
+    let parsed = pipeline::parse_files(&paths, None, |_, _| pipeline::FailureAction::Abort)
         .map_err(|failure| miette::miette!("{}: {}", failure.path.display(), failure.error))?;
     let mut sources = BTreeMap::new();
     let mut canonical_files = BTreeSet::new();
@@ -417,11 +417,11 @@ pub(crate) fn run_dump_facts(
         let imported = workspace.imported_bindings.clone();
         let group_files = input.files.clone();
         let records = if annotations {
-            let native_files = group_files
+            let files = group_files
                 .iter()
-                .map(|(path, file)| (PathBuf::from(path), Arc::clone(file)))
+                .map(|(_, file)| Arc::clone(file))
                 .collect::<Vec<_>>();
-            let adopted = pipeline::adopted_records(&native_files, &cfg);
+            let adopted = pipeline::adopted_records(&files, &cfg);
             if let Some(diagnostic) = adopted.diagnostics.first() {
                 // A declined attachment must not look like a complete, empty
                 // annotation snapshot. Records with invalid or unsupported

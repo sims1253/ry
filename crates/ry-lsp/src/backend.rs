@@ -336,13 +336,7 @@ impl PublishPolicy {
             min_confidence: self.min_confidence.unwrap_or(ry_checker::Confidence::Low),
             repo_root: self.anchor.as_deref(),
         };
-        let mut diagnostics = post.pre_demotion(
-            diagnostics,
-            file.map_or(&[], |file| file.comments.as_slice()),
-            file.map_or("", |file| file.source.as_str()),
-            path,
-            file,
-        );
+        let mut diagnostics = post.pre_demotion(diagnostics, path, file);
         post.demote_non_source_paths(&mut diagnostics);
         post.post_demotion(&mut diagnostics);
         diagnostics

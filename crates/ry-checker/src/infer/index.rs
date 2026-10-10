@@ -297,8 +297,10 @@ impl Checker {
                     };
                     let _ = self.infer_table_index_args(args, &bt, index_scope);
                     // The row index may select only part of the column.
-                    let column =
-                        column.map(|ty| ty.clone().with_value_facts(ty.value_facts.for_subset()));
+                    let column = column.map(|ty| {
+                        let facts = ty.value_facts.for_subset();
+                        ty.with_value_facts(facts)
+                    });
                     if let Some(column) = column {
                         if !drop_false {
                             return column;

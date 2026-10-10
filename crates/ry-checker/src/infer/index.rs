@@ -296,11 +296,8 @@ impl Checker {
                         _ => None,
                     };
                     let _ = self.infer_table_index_args(args, &bt, index_scope);
-                    // The row index may select only part of the column.
-                    let column = column.map(|ty| {
-                        let facts = ty.value_facts.for_subset();
-                        ty.with_value_facts(facts)
-                    });
+                    // The row index may select only part of a column.
+                    let column = column.map(subset_facts);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -322,7 +319,7 @@ impl Checker {
                     if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
-                    return bt;
+                    return subset_rows(bt);
                 }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {
@@ -332,7 +329,7 @@ impl Checker {
                         let _ = self.infer_table_index_args(args, &bt, index_scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
-                                return column_type;
+                                return subset_facts(column_type);
                             }
                             if !schema.complete {
                                 return RType::unknown();
@@ -606,6 +603,24 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
         value_facts: base.value_facts.for_subset(),
         ..base.clone()
     })
+}
+
+/// A part of `ty` keeps only the facts that hold for any subset.
+fn subset_facts(ty: RType) -> RType {
+    let facts = ty.value_facts.for_subset();
+    ty.with_value_facts(facts)
+}
+
+/// A data frame whose rows may be subset: no column keeps exact facts.
+fn subset_rows(mut frame: RType) -> RType {
+    if let Some(schema) = &frame.columns {
+        let mut schema = (**schema).clone();
+        for (_, ty) in &mut schema.columns {
+            ty.value_facts = ty.value_facts.for_subset();
+        }
+        frame.columns = Some(Arc::new(schema));
+    }
+    frame
 }
 
 /// Whether an index expression is a scalar element selector, rather than a

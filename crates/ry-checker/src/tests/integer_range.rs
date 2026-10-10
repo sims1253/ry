@@ -253,6 +253,7 @@ fn subsets_do_not_keep_whole_vector_extremes() {
         "x <- c(1e10, 1)\nas.integer(x[-1])\n",
         "x <- c(1e10, 1)\nas.integer(x[[2]])\n",
         "d <- data.frame(x = c(1e10, 1))\nas.integer(d[2, 1])\n",
+        "d <- data.frame(x = c(1e10, 1))\nas.integer(d[2, , drop = FALSE]$x)\n",
     ] {
         assert_eq!(range_warnings(source), 0, "{source}");
     }

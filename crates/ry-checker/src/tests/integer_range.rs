@@ -244,3 +244,22 @@ fn immediate_repair_suppresses_only_the_direct_cast() {
         2
     );
 }
+
+#[test]
+fn subsets_do_not_keep_whole_vector_extremes() {
+    // `x[2]` is 1, which `as.integer()` keeps, although `x` holds 1e10.
+    for source in [
+        "x <- c(1e10, 1)\nas.integer(x[2])\n",
+        "x <- c(1e10, 1)\nas.integer(x[-1])\n",
+        "x <- c(1e10, 1)\nas.integer(x[[2]])\n",
+        "d <- data.frame(x = c(1e10, 1))\nas.integer(d[2, 1])\n",
+        "d <- data.frame(x = c(1e10, 1))\nas.integer(d[2, , drop = FALSE]$x)\n",
+    ] {
+        assert_eq!(range_warnings(source), 0, "{source}");
+    }
+    // An empty row index keeps every row.
+    assert_eq!(
+        range_warnings("d <- data.frame(x = c(1e10, 1e11))\nas.integer(d[, 1])\n"),
+        1
+    );
+}

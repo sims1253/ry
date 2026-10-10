@@ -266,6 +266,9 @@ impl Checker {
                     Some(mask) => mask,
                     None => scope,
                 };
+                // A row index may select only part of each column.
+                let rows_selected = args.len() >= 2 && !matches!(args[0].value, Expr::Missing(_));
+                let subset = |ty: RType| if rows_selected { subset_facts(ty) } else { ty };
                 // `df[i, j]` selects a column when `j` is scalar and the
                 // default `drop = TRUE` is in effect.  A data frame's own
                 // length is its number of columns, not its row count, so
@@ -296,6 +299,7 @@ impl Checker {
                         _ => None,
                     };
                     let _ = self.infer_table_index_args(args, &bt, index_scope);
+                    let column = column.map(subset);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -317,7 +321,7 @@ impl Checker {
                     if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
-                    return bt;
+                    return subset(bt);
                 }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {
@@ -327,7 +331,7 @@ impl Checker {
                         let _ = self.infer_table_index_args(args, &bt, index_scope);
                         if let Some(schema) = &bt.columns {
                             if let Some(column_type) = schema.get(column) {
-                                return column_type;
+                                return subset(column_type);
                             }
                             if !schema.complete {
                                 return RType::unknown();
@@ -598,8 +602,20 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
     Some(RType {
         length,
         columns: None,
+        value_facts: base.value_facts.for_subset(),
         ..base.clone()
     })
+}
+
+/// Facts that survive selecting only some elements or rows of `ty`.
+fn subset_facts(mut ty: RType) -> RType {
+    ty.value_facts = ty.value_facts.for_subset();
+    if let Some(schema) = &mut ty.columns {
+        for (_, column) in &mut Arc::make_mut(schema).columns {
+            column.value_facts = column.value_facts.for_subset();
+        }
+    }
+    ty
 }
 
 /// Whether an index expression is a scalar element selector, rather than a

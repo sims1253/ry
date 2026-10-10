@@ -454,6 +454,22 @@ pub struct ValueFacts {
 }
 
 impl ValueFacts {
+    /// The facts that still hold for an element or subset of a value: which
+    /// NAs it may hold, but not the whole value's exact extremes.
+    pub fn for_subset(self) -> Self {
+        Self {
+            prior_na: self.prior_na,
+            new_na: match self.new_na {
+                NewNaProvenance::ProvenOnly => NewNaProvenance::ProvenOnly,
+                NewNaProvenance::ProvenContains | NewNaProvenance::Possible => {
+                    NewNaProvenance::Possible
+                }
+                NewNaProvenance::None => NewNaProvenance::None,
+            },
+            ..Self::default()
+        }
+    }
+
     pub fn exact_number(value: f64) -> Self {
         Self {
             numeric_bounds: (!value.is_nan()).then_some((value.to_bits(), value.to_bits())),
@@ -912,15 +928,8 @@ impl RType {
                 None => RType::unknown(),
             },
             _ => {
-                let mut element = RType::new(self.mode, Length::One);
-                element.value_facts.prior_na = self.value_facts.prior_na;
-                element.value_facts.new_na = match self.value_facts.new_na {
-                    NewNaProvenance::ProvenOnly => NewNaProvenance::ProvenOnly,
-                    NewNaProvenance::ProvenContains | NewNaProvenance::Possible => {
-                        NewNaProvenance::Possible
-                    }
-                    NewNaProvenance::None => NewNaProvenance::None,
-                };
+                let mut element = RType::new(self.mode, Length::One)
+                    .with_value_facts(self.value_facts.for_subset());
                 // The only element of a fully known scalar, including `NA`.
                 if matches!(self.length, Length::One | Length::Known(1))
                     && self.value_facts.all_values_known

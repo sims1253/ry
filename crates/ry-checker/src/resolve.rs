@@ -107,7 +107,7 @@ impl Checker {
                 .get(semantic_name)
                 .is_some_and(|pkg| pkg == package);
             if scope.data_mask_unknown
-                || (!explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()))
+                || (!explicit_import && self.search_path_may_mask_base(scope))
             {
                 return SpecialCallProvenance::AmbientUncertainty;
             }
@@ -456,6 +456,13 @@ impl Checker {
         })
     }
 
+    /// Whether an attached package may supply a bare name ahead of base.
+    /// Package `R/` code without whole-package imports looks up base before
+    /// the search path, so there only an unknown search path can.
+    pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
+        scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
+    }
+
     /// Lenient variant of [`Self::resolves_to_base`]: same resolution
     /// order minus the search-path guard, because a loaded package rarely
     /// redefines `list` or `length`.
@@ -478,8 +485,8 @@ impl Checker {
     /// 5. A project `fn_table` definition of `name` → shadowed.
     /// 6. `importFrom(base, name)` → resolves to base.
     /// 7. Any other external binding or `importFrom` source → shadowed.
-    /// 8. A non-empty search path (`bare_loaded` or `search_path_unknown`)
-    ///    → cannot prove base resolution.
+    /// 8. A search path that may mask base (see
+    ///    [`Self::search_path_may_mask_base`]) → cannot prove base resolution.
     /// 9. Otherwise the bare name falls through to base.
     pub(crate) fn resolves_to_base(&self, name: &str, scope: &Scope) -> bool {
         self.resolves_to_base_impl(name, scope, true)
@@ -487,8 +494,8 @@ impl Checker {
 
     /// Shared body of the two base-resolution predicates. `guard_search_path`
     /// toggles step 8 of the documented lookup order: the strict variant
-    /// refuses to conclude base resolution while any package may be
-    /// attached, the lenient one allows it.
+    /// refuses to conclude base resolution while an attached package may
+    /// mask base, the lenient one allows it.
     fn resolves_to_base_impl(&self, name: &str, scope: &Scope, guard_search_path: bool) -> bool {
         // (a) Explicit base:: qualification.
         if name.rsplit_once("::").is_some() {
@@ -524,8 +531,8 @@ impl Checker {
             return false;
         }
 
-        // (e) search_path_unknown or bare-loaded packages may shadow.
-        if guard_search_path && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
+        // (e) An attached or unknown package may shadow.
+        if guard_search_path && self.search_path_may_mask_base(scope) {
             return false;
         }
 

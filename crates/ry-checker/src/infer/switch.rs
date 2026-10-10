@@ -76,7 +76,7 @@ impl Checker {
                     scope,
                 )
                 || (!self.imported_from.contains_key(semantic)
-                    && (scope.search_path_unknown || !self.bare_loaded.is_empty()))
+                    && self.search_path_may_mask_base(scope))
             {
                 return unknown(scope);
             }
@@ -227,9 +227,7 @@ impl Checker {
         match name {
             "base::list" | "base:::list" => true,
             "list" => {
-                !scope.search_path_unknown
-                    && self.bare_loaded.is_empty()
-                    && self.resolves_to_base(name, scope)
+                self.resolves_to_base(name, scope)
                     && !self.literal_bindings_may_be_shadowed(
                         ["list", "`list`"],
                         &HashSet::new(),

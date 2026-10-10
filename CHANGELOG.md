@@ -47,6 +47,12 @@ All notable changes to ry are documented in this file.
   to the target's `NA` (#352).
 - End quietly instead of panicking when stdout closes early, as in
   `ry check | head` (#626).
+- Resolve base functions in package `R/` code without whole-package imports,
+  where R finds base before attached packages. The `switch` EXPR check now
+  reports a NULL selector inside such packages, as it already did in
+  scripts (#568).
+- Let closures in a `local()` block read helpers the block assigns later,
+  removing RY010 false positives in cli, pak, and rlang.
 
 ## [0.11.0] - 2026-09-22
 

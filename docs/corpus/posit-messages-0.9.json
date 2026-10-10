@@ -145,69 +145,6 @@
       "severity": "warning",
       "message": "variable `sass_file` is not bound in this scope"
     },
-    "cli::RY010::R/defer.R:92:25": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/defer.R",
-      "line": 92,
-      "column": 25,
-      "severity": "warning",
-      "message": "variable `execute_handlers` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:1083:34": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1083,
-      "column": 34,
-      "severity": "warning",
-      "message": "variable `format_srcref_plain` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:1090:27": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1090,
-      "column": 27,
-      "severity": "warning",
-      "message": "variable `format_trace_call_plain` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:545:40": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 545,
-      "column": 40,
-      "severity": "warning",
-      "message": "variable `invisible_frames` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:547:20": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 547,
-      "column": 20,
-      "severity": "warning",
-      "message": "variable `invisible_frames` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:627:30": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 627,
-      "column": 30,
-      "severity": "warning",
-      "message": "variable `err_env` is not bound in this scope"
-    },
-    "cli::RY010::R/errors.R:671:24": {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 671,
-      "column": 24,
-      "severity": "warning",
-      "message": "variable `err_env` is not bound in this scope"
-    },
     "cli::RY032::R/ansi-hyperlink.R:165:7": {
       "package": "cli",
       "code": "RY032",
@@ -1710,105 +1647,6 @@
       "severity": "warning",
       "message": "parameter `tz` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
-    "pak::RY010::R/compat-vctrs.R:231:16": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 231,
-      "column": 16,
-      "severity": "warning",
-      "message": "variable `vec_cast` is not bound in this scope"
-    },
-    "pak::RY010::R/compat-vctrs.R:382:21": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 382,
-      "column": 21,
-      "severity": "warning",
-      "message": "variable `vec_ptype` is not bound in this scope"
-    },
-    "pak::RY010::R/compat-vctrs.R:383:21": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 383,
-      "column": 21,
-      "severity": "warning",
-      "message": "variable `vec_ptype2` is not bound in this scope"
-    },
-    "pak::RY010::R/config.R:288:46": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/config.R",
-      "line": 288,
-      "column": 46,
-      "severity": "warning",
-      "message": "variable `print_config` is not bound in this scope"
-    },
-    "pak::RY010::R/config.R:289:43": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/config.R",
-      "line": 289,
-      "column": 43,
-      "severity": "warning",
-      "message": "variable `print_config` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:1068:34": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1068,
-      "column": 34,
-      "severity": "warning",
-      "message": "variable `format_srcref_plain` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:1075:27": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1075,
-      "column": 27,
-      "severity": "warning",
-      "message": "variable `format_trace_call_plain` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:541:40": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 541,
-      "column": 40,
-      "severity": "warning",
-      "message": "variable `invisible_frames` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:543:20": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 543,
-      "column": 20,
-      "severity": "warning",
-      "message": "variable `invisible_frames` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:620:30": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 620,
-      "column": 30,
-      "severity": "warning",
-      "message": "variable `err_env` is not bound in this scope"
-    },
-    "pak::RY010::R/errors.R:664:24": {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 664,
-      "column": 24,
-      "severity": "warning",
-      "message": "variable `err_env` is not bound in this scope"
-    },
     "pak::RY010::R/pak-sitrep-data.R:27:20": {
       "package": "pak",
       "code": "RY010",
@@ -2600,15 +2438,6 @@
       "column": 16,
       "severity": "warning",
       "message": "variable `base_pkg_env` is not bound in this scope"
-    },
-    "rlang::RY010::R/import-standalone-defer.R:91:23": {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/import-standalone-defer.R",
-      "line": 91,
-      "column": 23,
-      "severity": "warning",
-      "message": "variable `execute_handlers` is not bound in this scope"
     },
     "rlang::RY010::R/trace.R:1125:8": {
       "package": "rlang",

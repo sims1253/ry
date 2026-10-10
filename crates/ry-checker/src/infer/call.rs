@@ -1929,14 +1929,23 @@ impl Checker {
         {
             return None;
         }
-        // Without `eval.env`/`assign.env`, the promise binds in this frame.
-        let bindings = match_arguments(&["x", "value"], args);
-        if bindings.param_for_arg.iter().any(Option::is_none) {
+        // The promise binds here unless `assign.env` names another frame.
+        // R rejects unmatched and repeated arguments before binding.
+        let bindings = match_arguments(&["x", "value", "eval.env", "assign.env"], args);
+        let mut params = bindings.param_for_arg.clone();
+        params.sort_unstable();
+        if params.iter().any(Option::is_none)
+            || params.windows(2).any(|pair| pair[0] == pair[1])
+            || bindings.arg_for_param(1).is_none()
+            || bindings.arg_for_param(3).is_some()
+        {
             return None;
         }
         let target = &args[bindings.arg_for_param(0)?];
-        bindings.arg_for_param(1)?;
         let _ = self.infer(&target.value, scope);
+        if let Some(environment) = bindings.arg_for_param(2) {
+            let _ = self.infer(&args[environment].value, scope);
+        }
         if let Expr::String(name, _) = &target.value {
             scope.insert(name.clone(), RType::unknown());
         }

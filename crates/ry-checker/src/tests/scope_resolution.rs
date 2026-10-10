@@ -1492,6 +1492,7 @@ fn delayed_assign_binds_an_unforced_promise() {
         "delayedAssign(x = 'held', later)",
         "base::delayedAssign('held', later)",
         "delayedAssign(val = later, x = 'held')",
+        "delayedAssign('held', later, eval.env = environment())",
     ] {
         let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
         assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
@@ -1501,6 +1502,15 @@ fn delayed_assign_binds_an_unforced_promise() {
         diagnostics
             .iter()
             .any(|d| d.code == "RY010" && d.message.contains("wrong")),
+        "{diagnostics:?}"
+    );
+    // R rejects a repeated target before binding anything.
+    let call = "delayedAssign(x = 'held', value = 1, x = 'other')";
+    let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "RY010" && d.message.contains("held")),
         "{diagnostics:?}"
     );
     // A project definition is an ordinary call.

@@ -735,6 +735,33 @@ fn purrr_map_dbl_type_mismatch_fires_ry080() {
 }
 
 #[test]
+fn purrr_typed_maps_accept_a_logical_na_result() {
+    // #352: purrr widens a logical `NA` callback result to the target's
+    // `NA`. Other logical results are still rejected.
+    for source in [
+        "library(purrr)\nmap_chr(NA, identity)\n",
+        "library(purrr)\nx <- map_chr(list(1, 2), function(v) NA)\n",
+        "library(purrr)\nx <- map_int(list(1, 2), function(v) NA)\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().all(|d| d.code != "RY080"),
+            "{source}: {diags:?}"
+        );
+    }
+    for source in [
+        "library(purrr)\nx <- map_chr(list(1, 2), function(v) TRUE)\n",
+        "library(purrr)\nx <- map_chr(list(1, 2), function(v) c(NA, NA))\n",
+    ] {
+        let diags = check(source);
+        assert!(
+            diags.iter().any(|d| d.code == "RY080"),
+            "{source}: {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn purrr_in_parallel_is_transparent() {
     // in_parallel(.f) is type-transparent. map(sims,
     // in_parallel(f)) must walk `f`'s body identically to

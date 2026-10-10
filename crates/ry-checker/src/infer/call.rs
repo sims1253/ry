@@ -788,9 +788,12 @@ impl Checker {
             return t;
         }
 
-        // The default two-argument `assign` rebinds in the current
-        // environment.
-        if let Some(t) = self.infer_local_assign_call(&semantic_name, args, scope) {
+        // The default two-argument `assign`/`delayedAssign` rebinds in the
+        // current environment.
+        if let Some(t) = self
+            .infer_local_assign_call(&semantic_name, args, scope)
+            .or_else(|| self.infer_local_delayed_assign_call(&semantic_name, args, scope))
+        {
             return t;
         }
 
@@ -1910,6 +1913,34 @@ impl Checker {
             scope.insert(name, value.clone());
         }
         Some(value)
+    }
+
+    /// Base `delayedAssign(x, value)` binds an unforced promise in the
+    /// current environment (#349). The promise is never evaluated here, so
+    /// only the target name matters and its value stays unknown.
+    fn infer_local_delayed_assign_call(
+        &mut self,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &mut Scope,
+    ) -> Option<RType> {
+        if crate::semantic_lists::bare_name(semantic_name) != "delayedAssign"
+            || !self.resolves_to_base_lenient(semantic_name, scope)
+        {
+            return None;
+        }
+        // Without `eval.env`/`assign.env`, the promise binds in this frame.
+        let bindings = match_arguments(&["x", "value"], args);
+        if bindings.param_for_arg.iter().any(Option::is_none) {
+            return None;
+        }
+        let target = &args[bindings.arg_for_param(0)?];
+        bindings.arg_for_param(1)?;
+        let _ = self.infer(&target.value, scope);
+        if let Expr::String(name, _) = &target.value {
+            scope.insert(name.clone(), RType::unknown());
+        }
+        Some(RType::new(Mode::Null, Length::Zero))
     }
 
     /// The argument-inference stage: resolves the call's signatures

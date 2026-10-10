@@ -311,6 +311,14 @@ fn main() -> Result<ExitCode> {
         Some(c) => c,
         None => Cmd::Check(CheckArgs::default()),
     };
+    // A batch command whose reader goes away (`ry check | head`) should end
+    // quietly like other Unix tools, not panic in `println!`. The language
+    // server keeps the ignored signal and handles a closed client itself.
+    #[cfg(unix)]
+    if !matches!(cmd, Cmd::Server { .. }) {
+        // SAFETY: runs on the main thread before any other thread starts.
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    }
 
     // Kept only for `check`: detecting explicit CLI overrides of scalar
     // fields the config file can also set.

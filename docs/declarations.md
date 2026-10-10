@@ -51,8 +51,8 @@ unknown
 A signature includes assignment behavior, parameter identity, ordinary or
 variadic form, supplied/defaulted status, evaluation behavior, and an optional
 return constraint. Names use JSON string quoting. A variadic formal must be
-named `...` and has unknown supplied status. The canonical spelling is
-parseable and normalizes whitespace and union order:
+named `...` and has unknown supplied status. The canonical spelling is a
+stable rendering that normalizes union order:
 
 ```text
 fn[entry_only](required/promise "x": integer, variadic/unknown "...": none) -> none
@@ -69,18 +69,19 @@ uses this status because its pinned `check_types()` implementation iterates
 supplied actuals. A contrary authored default is therefore not a mismatch
 unless the caller explicitly supplies that value.
 
-Parsing and formatting cap a declaration at 4096 bytes, 16 type nesting
-levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
+Canonical formatting caps the spelling at 4096 bytes; validation caps 16 type
+nesting levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
 parameter name. The node limit applies to the original tree before union
 flattening. Each union allows at most 16 direct members, and the flattened,
 distinct union also allows at most 16 alternatives.
-Exceeding a limit returns a resource-limit error. Invalid
-syntax is a separate error; neither becomes an accepted `unknown` type.
+Exceeding a limit returns a resource-limit error. An invalid tree or formal
+list (an empty union, `unknown` in a union, duplicate formals) is a separate
+error; neither becomes an accepted `unknown` type.
 
 ## Provenance and translation
 
 Each record retains provider and version, source path/span/raw text, and a
-target identified by local source definition or qualified package function.
+target identified by its local source definition.
 Translation status is independent of whether the user adopted the claim:
 
 | Translation | Meaning |
@@ -158,22 +159,6 @@ source records to RY117. Recognition and translation fidelity remain separate
 from how much static checking is possible.
 
 ## Export boundary
-
-`convert_inferred` returns `exact`, `proposed` with reasons, or `refused` with
-reasons. Exact means faithful to the *available inferred fact*, not proof of
-an author's intended input domain. Scope-exit values become proposals;
-default-derived parameter types and scope-exit function-entry/return evidence
-are refused. Partial callable signatures, unknown storage modes, and possibly
-truncated class vectors are refused. Unknown class facts, represented classes,
-and schemas outside the initial vocabulary require an explicit proposal or
-refusal, with uncertainty retained.
-
-Conversion inspects at most 64 inferred type nodes and checks the final
-constraint against the canonical grammar before reporting success. A narrowed
-union whose outer length is not carried by its members becomes a proposal
-with that loss stated explicitly. Conversion does not inspect schema fields.
-It omits schema constraints and field identity and states that loss in the
-proposal.
 
 The annotation serializer validates same-file source and residual spans.
 `dump-facts --annotations` exports real adopted records in schema 3 with

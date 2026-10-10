@@ -22,7 +22,7 @@ causes.
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
 | [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 90 | 36 / 36 / 0 (+18 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 410 | 85 / 325 / 0 | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 391 | 85 / 306 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.
@@ -107,7 +107,7 @@ non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
 entries — while the index’s “24 Packages” counts ledger packages-block
 entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
 testthat, withr) have no block entry. Three of their reports (cli, rlang,
-testthat) contain 44 unowned findings in total; four of the remaining five
+testthat) contain 36 unowned findings in total; four of the remaining five
 (curl, fs, scales, withr) are empty — scales since #459, curl since the
 #374 superassignment modeling — and jsonlite carries the single unowned
 RY111 at R/stop.R:2, the deliberate `call. = FALSE` wrapper explained in

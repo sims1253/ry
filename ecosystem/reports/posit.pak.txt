@@ -1,16 +1,5 @@
-R/compat-vctrs.R:231:16 RY010
-R/compat-vctrs.R:382:21 RY010
-R/compat-vctrs.R:383:21 RY010
-R/config.R:288:46 RY010
-R/config.R:289:43 RY010
 R/confirmation.R:42:14 RY105
 R/deps-explain.R:30:20 RY093
-R/errors.R:1068:34 RY010
-R/errors.R:1075:27 RY010
-R/errors.R:541:40 RY010
-R/errors.R:543:20 RY010
-R/errors.R:620:30 RY010
-R/errors.R:664:24 RY010
 R/package.R:176:20 RY093
 R/package.R:293:20 RY093
 R/pak-sitrep-data.R:27:20 RY010

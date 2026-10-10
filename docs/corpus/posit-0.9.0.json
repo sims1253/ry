@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "25370a4449d0bda358e9fb180b404d3bd3fca2653d723685d992465b500cdabb",
-  "ry_commit": "d8d8b551fb1d5586f775b8404b121e39441a8825",
+  "source_sha256": "70e5df4434a8531665d0bcb0317df84e254fce3ff3a07a4f8a5588ddde0033f9",
+  "ry_commit": "1d63029d108b7f5520afe1dfa94f35b025f31005",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -145,7 +145,7 @@
       "repo": "r-lib/pak",
       "stars": 817,
       "commit": "cdbd4ceb07f5a7eb2b317c57237dad561e5fb4e7",
-      "diagnostics": 22
+      "diagnostics": 11
     },
     {
       "name": "lubridate",
@@ -187,7 +187,7 @@
       "repo": "r-lib/cli",
       "stars": 719,
       "commit": "86bdefe1eb23399499b40884f7fab84194283bc1",
-      "diagnostics": 16
+      "diagnostics": 9
     },
     {
       "name": "parsnip",
@@ -229,7 +229,7 @@
       "repo": "r-lib/rlang",
       "stars": 581,
       "commit": "1d0e00659b628c07c93c362687550727597ef09f",
-      "diagnostics": 15
+      "diagnostics": 14
     },
     {
       "name": "torch",
@@ -595,69 +595,6 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/defer.R",
-      "line": 92,
-      "column": 25,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 545,
-      "column": 40,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 547,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 627,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 671,
-      "column": 24,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1083,
-      "column": 34,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "cli",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1090,
-      "column": 27,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
     },
     {
       "package": "cli",
@@ -2047,51 +1984,6 @@
     },
     {
       "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 231,
-      "column": 16,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 382,
-      "column": 21,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/compat-vctrs.R",
-      "line": 383,
-      "column": 21,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/config.R",
-      "line": 288,
-      "column": 46,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/config.R",
-      "line": 289,
-      "column": 43,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
       "code": "RY105",
       "path": "R/confirmation.R",
       "line": 42,
@@ -2107,60 +1999,6 @@
       "column": 20,
       "label": "true_positive",
       "audit_group": "upstream-package"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 541,
-      "column": 40,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 543,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 620,
-      "column": 30,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 664,
-      "column": 24,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1068,
-      "column": 34,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
-    },
-    {
-      "package": "pak",
-      "code": "RY010",
-      "path": "R/errors.R",
-      "line": 1075,
-      "column": 27,
-      "label": "false_positive",
-      "audit_group": "local-closure-forward-ref"
     },
     {
       "package": "pak",
@@ -2872,15 +2710,6 @@
       "column": 16,
       "label": "false_positive",
       "audit_group": "namespace-on-load"
-    },
-    {
-      "package": "rlang",
-      "code": "RY010",
-      "path": "R/import-standalone-defer.R",
-      "line": 91,
-      "column": 23,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "rlang",
@@ -4135,15 +3964,15 @@
     }
   ],
   "classification": {
-    "false_positive": 325,
+    "false_positive": 306,
     "true_positive": 85
   },
   "audit_group_counts": {
     "reassign-scope": 4,
-    "type-narrowing": 42,
+    "type-narrowing": 41,
     "manual-audit": 138,
     "data-masking-nse": 1,
-    "local-closure-forward-ref": 19,
+    "local-closure-forward-ref": 1,
     "test-fixture": 74,
     "s3-method-dispatch": 3,
     "delayed-assign": 1,
@@ -4190,6 +4019,7 @@
     "RY111 (constant-argument-shadowing, issue #361) adds 20 reviewed findings: 17 true positives and 3 false positives. The true positives are the dbplyr sql_render.*_query family (own `subquery` formal never read while the generic forwards the caller's flag into the method), reticulate's r_to_py.POSIXt (the method POSIXct/POSIXlt dispatch to) and r_convert_dataframe_column (their `convert` contract parameter is never read; every internal import/r_to_py_impl call is pinned `convert = FALSE`), shiny's observeEvent (`autoDestroy = TRUE` pinned while label/suspended/priority/domain are all forwarded), and torch's nnf_rrelu_ (`training = TRUE` forced against the method's own `training = FALSE` default). The false positives are deliberate compat surfaces: gt's testthat helpers expose `all = TRUE` signatures that mirror expect_match while always matching all fragments, and sparklyr's stream_read_socket exposes the stream_read_* family's `columns` argument that the socket source cannot use. The dead-formal gate silences the deliberate idioms the ungated name-match would flag (forwarded `subquery`/`quiet`, guarded `ignore_case`/`recursive`, read `inherit`).",
     "Dplyr schema effects (#353) remove the two reviewed RY060 false positives at pinned dplyr d5e94e7 tests/testthat/test-group-by.R:26:16 and :40:16: group_by(big = <expression>) creates big before out$big is read. Literal verb effects and conservative unknown/custom S3 fallbacks were checked against the full pinned hermetic corpus; no identity was added and all reviewed true positives remain.",
     "RY032 scalar-flow correction (#351, PR #605): the sole Posit identity removed is purrr@481e829 R/deprec-prepend.R:34:7 (reviewed false_positive, historical manual-audit group). Its earlier base stopifnot rejects vector before values before the later || can run. The exact source and R witnesses justify this one-row removal; all 85 reviewed true positives and every other identity remain. The 62 hermetic Posit root reports were hashed in filename order after removing this line from posit.purrr.root.txt; the matching message-ledger entry is removed.",
-    "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): 20 reviewed false positives are removed and no identity is added. The whole delayed-assign RY010 group except renv's RY001 disappears (dplyr R/conditions.R:310 and keras3's 13 lazily bound helpers), base delayedAssign() now binding its target with an unevaluated promise. lubridate R/vctrs.R:64/107/112/117 (manual-audit) read namespace-level delayedAssign() bindings. purrr tests/testthat/test-map.R:82 and test-parallel.R:120 (type-narrowing) are map_chr(NA, ...) calls, which purrr's coerce layer widens to NA_character_. Every true positive remains."
+    "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): 20 reviewed false positives are removed and no identity is added. The whole delayed-assign RY010 group except renv's RY001 disappears (dplyr R/conditions.R:310 and keras3's 13 lazily bound helpers), base delayedAssign() now binding its target with an unevaluated promise. lubridate R/vctrs.R:64/107/112/117 (manual-audit) read namespace-level delayedAssign() bindings. purrr tests/testthat/test-map.R:82 and test-parallel.R:120 (type-narrowing) are map_chr(NA, ...) calls, which purrr's coerce layer widens to NA_character_. Every true positive remains.",
+    "local() deferred captures and package base lookup (#568, PR stacked on #628): the whole local-closure-forward-ref group (19 reviewed false positives in cli R/defer.R and R/errors.R, pak R/compat-vctrs.R, R/config.R and R/errors.R, and rlang R/import-standalone-defer.R) disappears. Each closure is defined inside a local() block and reads a helper the block assigns later; local() blocks now give their assignments to nested closures as deferred captures, as function bodies do. Resolving base switch() in import-free package R/ code adds no identity. Every true positive remains."
   ]
 }

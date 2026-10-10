@@ -1163,7 +1163,7 @@ impl Checker {
         // so their `<<-` targets reach the caller too -- except the
         // writes an intervening frame's formal intercepts, which the
         // collector prunes.
-        index::superassignment_writes_in_expr(&args[expression].value).apply(scope);
+        index::superassignment_writes_in_expr(block).apply(scope);
         Some(result)
     }
 

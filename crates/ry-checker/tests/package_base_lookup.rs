@@ -1,13 +1,11 @@
-//! Issue #568: package code finds base before the search path, so the
-//! package itself and its Depends cannot mask a base special such as
-//! `switch`. The reprex audit sites pass a package-local NULL return into
-//! `switch`. A whole-package `import()` may supply any name ahead of base,
-//! so such packages keep the conservative search-path guard.
+//! Package `R/` code finds base before the search path; a whole-package
+//! `import()`, or R's default one when NAMESPACE is missing, keeps the
+//! conservative guard.
 use ry_checker::Project;
 use ry_config::Config;
 use ry_core::RParser;
 
-fn check_package(namespace: &str, files: &[(&str, &str)]) -> Vec<String> {
+fn check_package(namespace: Option<&str>, files: &[(&str, &str)]) -> Vec<String> {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("R")).unwrap();
     std::fs::write(
@@ -15,7 +13,9 @@ fn check_package(namespace: &str, files: &[(&str, &str)]) -> Vec<String> {
         "Package: fixture\nVersion: 0.0.0\nDepends: R (>= 4.1)\n",
     )
     .unwrap();
-    std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+    if let Some(namespace) = namespace {
+        std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+    }
     let mut parser = RParser::new().unwrap();
     let parsed: Vec<_> = files
         .iter()
@@ -59,27 +59,33 @@ const LOCATE: &str = "locate <- function(x) if (is.null(x)) NULL else \"path\"\n
 fn package_local_null_return_reaches_switch() {
     let consume = "consume <- function(x = NULL) {\n  where <- locate(x)\n  switch(where, path = \"ok\")\n}\n";
     let codes = check_package(
-        "export(consume)\nimportFrom(glue, glue)\n",
+        Some("export(consume)\nimportFrom(glue, glue)\n"),
         &[("locate.R", LOCATE), ("consume.R", consume)],
     );
     assert_eq!(codes, ["RY001"]);
-    let codes = check_package("", &[("f.R", "f <- function() switch(NULL, a = 1)\n")]);
+    let codes = check_package(
+        Some(""),
+        &[("f.R", "f <- function() switch(NULL, a = 1)\n")],
+    );
     assert_eq!(codes, ["RY001"]);
 }
 
 #[test]
 fn guarded_or_masked_switch_stays_silent() {
     let guarded = "consume <- function(x = NULL) {\n  where <- locate(x)\n  if (is.null(where)) return(NULL)\n  switch(where, path = \"ok\")\n}\n";
-    let codes = check_package("", &[("locate.R", LOCATE), ("consume.R", guarded)]);
+    let codes = check_package(Some(""), &[("locate.R", LOCATE), ("consume.R", guarded)]);
     assert!(codes.is_empty(), "{codes:?}");
     // A package-local definition masks base.
     let local = "switch <- function(EXPR, ...) NULL\nf <- function() switch(NULL, a = 1)\n";
-    let codes = check_package("", &[("f.R", local)]);
+    let codes = check_package(Some(""), &[("f.R", local)]);
     assert!(!codes.contains(&"RY001".to_string()), "{codes:?}");
     // A whole-package import may supply `switch` first.
     let codes = check_package(
-        "import(notInstalledFixturePkg)\n",
+        Some("import(notInstalledFixturePkg)\n"),
         &[("f.R", "f <- function() switch(NULL, a = 1)\n")],
     );
+    assert!(!codes.contains(&"RY001".to_string()), "{codes:?}");
+    // Without a NAMESPACE, R imports every Imports/Depends package.
+    let codes = check_package(None, &[("f.R", "f <- function() switch(NULL, a = 1)\n")]);
     assert!(!codes.contains(&"RY001".to_string()), "{codes:?}");
 }

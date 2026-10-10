@@ -658,22 +658,24 @@ mod tests {
                     constraint: None,
                 },
             ],
-            return_constraint: Some(TypeExpr::Unknown),
+            return_constraint: Some(TypeExpr::Union(vec![
+                atomic(AtomicMode::Null),
+                TypeExpr::Union(vec![atomic(AtomicMode::Integer), atomic(AtomicMode::Null)]),
+            ])),
             assignment: AssignmentSemantics::PersistentBinding,
         };
         let canonical = signature.canonical().unwrap();
         assert_eq!(
             canonical,
-            r#"fn[persistent_binding](defaulted/promise "an odd \"name\"": union[integer, null], variadic/unknown "...": none) -> unknown"#
+            r#"fn[persistent_binding](defaulted/promise "an odd \"name\"": union[integer, null], variadic/unknown "...": none) -> union[integer, null]"#
         );
         let normalized = signature.normalized().unwrap();
-        assert_eq!(
-            normalized.parameters[0].constraint,
-            Some(TypeExpr::Union(vec![
-                atomic(AtomicMode::Integer),
-                atomic(AtomicMode::Null),
-            ]))
-        );
+        let flat = Some(TypeExpr::Union(vec![
+            atomic(AtomicMode::Integer),
+            atomic(AtomicMode::Null),
+        ]));
+        assert_eq!(normalized.parameters[0].constraint, flat);
+        assert_eq!(normalized.return_constraint, flat);
         assert_eq!(normalized.canonical().unwrap(), canonical);
     }
 

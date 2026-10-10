@@ -2789,42 +2789,25 @@ impl Backend {
     }
 
     /// Re-resolve the owning package group's resolution context after
-    /// per-file disk refreshes landed (#527). A refreshed file's parse
-    /// reaches `disk_files` but its per-file resolution entries (configured
-    /// globals, `library()` attachments, imports, load bindings) are
-    /// otherwise rebuilt only by a full background scan, so a watched
-    /// addition checks against an empty context until the next scan. Each
-    /// affected group re-runs the same `resolve_workspace_context` pass
-    /// the scan uses, over the current disk index scoped to the owning
-    /// folder, and installs the result when no newer writer landed
-    /// meanwhile. Disk-only inputs mirror the scan exactly (open buffers
-    /// keep shadowing at publish time), so an incremental install can
-    /// never disagree with a fresh scan over the same tree.
+    /// per-file disk refreshes landed. A refreshed parse reaches
+    /// `disk_files`, but its per-file resolution entries are otherwise
+    /// rebuilt only by a full background scan. Each affected group re-runs
+    /// the scan's `resolve_workspace_context` pass over the current disk
+    /// index, so an incremental install never disagrees with a fresh scan.
     ///
-    /// Convergence: the install is generation-guarded like every other
-    /// index writer (#526). On a lost race a single retry re-snapshots
-    /// from current state; a second loss falls back to a full background
-    /// scan, which resolves every group. Group-keyed installs commute
-    /// (disjoint per-file keys), and same-path concurrent refreshes
-    /// stay ordered by the per-path refresh epoch (#538), so this
-    /// adds no interleave left to untangle: only landed refreshes
-    /// reach this function, and the landing refresh for a path is
-    /// always its most recently started one.
+    /// Installs are generation-guarded like every other index writer: a lost
+    /// race retries once from a fresh snapshot, then falls back to a full
+    /// background scan.
     ///
-    /// The `(path, epoch)` pairs carry each landing's completion token
-    /// through the context phase, and the returned settled pairs keep
-    /// it, so the caller's acknowledgement retires only the revision
-    /// the completed context-and-publication work demonstrably covered
-    /// (see [`Self::acknowledge_publications`]).
+    /// Each `(path, epoch)` pair carries its landing's completion token, and
+    /// the returned settled pairs keep it, so the caller acknowledges only
+    /// the revision this work covered (see [`Self::acknowledge_publications`]).
     ///
-    /// A landed refresh claimed the next index generation, retiring any
-    /// stale in-flight background pass. When that pass was the initial
-    /// index, its completion can no longer clear `initial_index_pending`,
-    /// so a fresh pass takes over first; otherwise publications would stay
-    /// gated for the rest of the session.
+    /// A landed refresh retires any stale in-flight background pass. If that
+    /// was the initial index, a fresh pass takes over first; otherwise
+    /// publications would stay gated for the rest of the session.
     async fn refresh_package_contexts(&self, landed: &[(String, u64)]) -> Vec<(String, u64)> {
-        let index_pending = { self.state.lock().await.initial_index_pending };
-        if index_pending {
+        if self.state.lock().await.initial_index_pending {
             self.spawn_background_index().await;
         }
         // At most one group install per owning folder per package root.

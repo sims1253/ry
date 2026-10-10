@@ -1,6 +1,6 @@
 use super::*;
 use crate::infer::*;
-use crate::semantic_lists::bare_name;
+use crate::semantic_lists::{bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
@@ -138,13 +138,6 @@ fn collect_rm_targets(args: &[Arg], writes: &mut FxSet<String>) {
     }
 }
 
-/// `name` without its `package::` or `package:::` prefix, or `None` when it
-/// is not qualified by exactly that package.
-fn strip_package<'a>(name: &'a str, package: &str) -> Option<&'a str> {
-    let (prefix, bare) = name.rsplit_once("::")?;
-    (prefix.strip_suffix(':').unwrap_or(prefix) == package).then_some(bare)
-}
-
 /// Whether `func` names `base::bare` explicitly; a bare spelling can be
 /// masked.
 fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
@@ -234,7 +227,8 @@ pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> b
     };
     let name = semantic_argument_name(name);
     match strip_package(name, "base").unwrap_or(name) {
-        "quote" => is_base_qualified_call(func, "quote"),
+        // A bare `quote` can be masked.
+        "quote" => name != "quote",
         "eval" => {
             let expression = named_or_first_positional(args, "expr");
             args.iter().all(|argument| {

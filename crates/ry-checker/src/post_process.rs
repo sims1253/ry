@@ -112,7 +112,9 @@ impl PostProcess<'_> {
         let (comments, src) = file.map_or((&[][..], ""), |file| {
             (file.comments.as_slice(), file.source.as_str())
         });
-        let audit = self.unused_ignore_diagnostics(&diagnostics, comments, src, path, file);
+        let audit = file.map_or_else(Vec::new, |file| {
+            self.unused_ignore_diagnostics(&diagnostics, path, file)
+        });
         let mut diagnostics = crate::filter_suppressed_with_comments(diagnostics, comments, src);
         diagnostics.extend(audit);
         crate::apply_filter_to_diagnostics(&mut diagnostics, self.filter);
@@ -122,11 +124,10 @@ impl PostProcess<'_> {
     fn unused_ignore_diagnostics(
         &self,
         raw: &[Diagnostic],
-        comments: &[ry_core::ast::Comment],
-        src: &str,
         path: &str,
-        file: Option<&SourceFile>,
+        file: &SourceFile,
     ) -> Vec<Diagnostic> {
+        let (comments, src) = (file.comments.as_slice(), file.source.as_str());
         if self
             .filter
             .effective("RY113", crate::Severity::Warning)
@@ -148,9 +149,6 @@ impl PostProcess<'_> {
         // traversed for their return signatures with emissions discarded;
         // direct assigned functions and bare function definitions receive
         // a separate diagnostic walk. Unknown AST nodes are also opaque.
-        let Some(file) = file else {
-            return Vec::new();
-        };
         let uncovered = unchecked_audit_regions(file);
         let line_starts = crate::diagnostics::line_starts(src);
         let mut unchecked_lines = vec![false; line_starts.len()];

@@ -252,8 +252,9 @@ fn size_rayon_pool() {
 /// `Abort` is returned in `Err` — and is the only one the caller must
 /// report, because the callback stays silent for files it aborts on.
 ///
-/// Each file keeps its native path alongside the parser's display path (see
-/// [`native_path`]); `overlay` substitutes one in-memory source.
+/// Each file's native path is on
+/// [`ry_core::SourceFile::native_or_display_path`]; `overlay` substitutes one
+/// in-memory source.
 pub(crate) fn parse_files(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,

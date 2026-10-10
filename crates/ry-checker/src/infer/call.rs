@@ -788,8 +788,7 @@ impl Checker {
             return t;
         }
 
-        // The default two-argument `assign`/`delayedAssign` rebinds in the
-        // current environment.
+        // `assign`/`delayedAssign` into the current frame bind the target name.
         if let Some(t) = self
             .infer_local_assign_call(&semantic_name, args, scope)
             .or_else(|| self.infer_local_delayed_assign_call(&semantic_name, args, scope))
@@ -1163,7 +1162,7 @@ impl Checker {
         // so their `<<-` targets reach the caller too -- except the
         // writes an intervening frame's formal intercepts, which the
         // collector prunes.
-        index::superassignment_writes_in_expr(&args[expression].value).apply(scope);
+        index::superassignment_writes_in_expr(block).apply(scope);
         Some(result)
     }
 
@@ -1562,16 +1561,7 @@ impl Checker {
         // A failed match, duplicate formal, or missing required input means
         // R does not produce a positional result at all. Keep the exemption
         // out of those calls instead of proving a shape for an invalid call.
-        if !bindings.unmatched_named.is_empty()
-            || bindings.param_for_arg.iter().any(Option::is_none)
-            || bindings
-                .param_for_arg
-                .iter()
-                .enumerate()
-                .any(|(index, param)| {
-                    param
-                        .is_some_and(|param| bindings.param_for_arg[..index].contains(&Some(param)))
-                })
+        if !bindings.is_one_to_one()
             || (0..=1).any(|formal| {
                 bindings
                     .arg_for_param(formal)
@@ -1927,9 +1917,8 @@ impl Checker {
         Some(value)
     }
 
-    /// Base `delayedAssign(x, value)` binds an unforced promise in the
-    /// current environment (#349). The promise is never evaluated here, so
-    /// only the target name matters and its value stays unknown.
+    /// Base `delayedAssign` binds an unforced promise in this frame, so the
+    /// target becomes an unknown-typed binding and `value` is never inferred.
     fn infer_local_delayed_assign_call(
         &mut self,
         semantic_name: &str,
@@ -1941,13 +1930,9 @@ impl Checker {
         {
             return None;
         }
-        // The promise binds here unless `assign.env` names another frame.
-        // R rejects unmatched and repeated arguments before binding.
+        // R rejects unmatched or repeated arguments; `assign.env` binds elsewhere.
         let bindings = match_arguments(&["x", "value", "eval.env", "assign.env"], args);
-        let mut params = bindings.param_for_arg.clone();
-        params.sort_unstable();
-        if params.iter().any(Option::is_none)
-            || params.windows(2).any(|pair| pair[0] == pair[1])
+        if !bindings.is_one_to_one()
             || bindings.arg_for_param(1).is_none()
             || bindings.arg_for_param(3).is_some()
         {

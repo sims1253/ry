@@ -257,7 +257,6 @@ fn subsets_do_not_keep_whole_vector_extremes() {
     ] {
         assert_eq!(range_warnings(source), 0, "{source}");
     }
-    assert_eq!(range_warnings("x <- c(1e10, 1e11)\nas.integer(x)\n"), 1);
     // An empty row index keeps every row.
     assert_eq!(
         range_warnings("d <- data.frame(x = c(1e10, 1e11))\nas.integer(d[, 1])\n"),

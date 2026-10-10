@@ -457,9 +457,8 @@ impl Checker {
     }
 
     /// Whether an attached package may supply a bare name ahead of base.
-    /// Import-free package code finds base first (#568), so there only an
-    /// unknown search path can. Known exports are checked separately as
-    /// external bindings.
+    /// Package `R/` code without whole-package imports looks up base before
+    /// the search path, so there only an unknown search path can.
     pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
         scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
     }

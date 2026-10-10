@@ -7,12 +7,12 @@ use std::fmt;
 
 use crate::Span;
 
-pub const MAX_DECLARATION_BYTES: usize = 4096;
-pub const MAX_DECLARATION_DEPTH: usize = 16;
-pub const MAX_DECLARATION_NODES: usize = 64;
-pub const MAX_UNION_ALTERNATIVES: usize = 16;
-pub const MAX_SIGNATURE_PARAMETERS: usize = 64;
-pub const MAX_PARAMETER_NAME_BYTES: usize = 256;
+const MAX_DECLARATION_BYTES: usize = 4096;
+const MAX_DECLARATION_DEPTH: usize = 16;
+const MAX_DECLARATION_NODES: usize = 64;
+const MAX_UNION_ALTERNATIVES: usize = 16;
+const MAX_SIGNATURE_PARAMETERS: usize = 64;
+const MAX_PARAMETER_NAME_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclarationError {

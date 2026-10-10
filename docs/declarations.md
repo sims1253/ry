@@ -69,13 +69,14 @@ uses this status because its pinned `check_types()` implementation iterates
 supplied actuals. A contrary authored default is therefore not a mismatch
 unless the caller explicitly supplies that value.
 
-Formatting and validation cap a declaration at 4096 bytes, 16 type nesting
-levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
+Canonical formatting caps the spelling at 4096 bytes; validation caps 16 type
+nesting levels, 64 type nodes, 16 union alternatives, 64 parameters, and 256 bytes per
 parameter name. The node limit applies to the original tree before union
 flattening. Each union allows at most 16 direct members, and the flattened,
 distinct union also allows at most 16 alternatives.
-Exceeding a limit returns a resource-limit error. Invalid
-syntax is a separate error; neither becomes an accepted `unknown` type.
+Exceeding a limit returns a resource-limit error. An invalid tree or formal
+list (an empty union, `unknown` in a union, duplicate formals) is a separate
+error; neither becomes an accepted `unknown` type.
 
 ## Provenance and translation
 

@@ -490,7 +490,12 @@ pub fn resolve_workspace_context<'a>(
             let package_r_file = relative.is_some_and(is_package_r_file);
             if package_r_file || relative.is_some_and(is_testthat_runner_file) {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
-                if package_r_file && metadata.imported_packages.is_empty() {
+                // Without a NAMESPACE, R installs one that imports every
+                // Imports/Depends package.
+                if package_r_file
+                    && metadata.imported_packages.is_empty()
+                    && root.join("NAMESPACE").is_file()
+                {
                     file_bindings.insert(packages::BASE_BEFORE_SEARCH_PATH_SENTINEL.to_string());
                 }
                 // Packages that rely on DESCRIPTION Depends may omit a

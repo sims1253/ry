@@ -1528,3 +1528,24 @@ fn delayed_assign_binds_an_unforced_promise() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn local_block_closures_read_later_helpers() {
+    // rlang/cli `standalone-sizes.R`: a closure in a `local()` block reads
+    // helpers the block assigns after it, as a function body would allow.
+    let source = "format_bytes <- local({\n\
+                  pretty <- function(style) {\n\
+                  style <- switch(style, a = helper_a, b = not_bound)\n\
+                  if (is.null(style)) helper_a else style\n\
+                  }\n\
+                  helper_a <- function(x) x\n\
+                  pretty\n\
+                  })\n";
+    let unbound: Vec<_> = check(source)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == "RY010")
+        .map(|diagnostic| diagnostic.message)
+        .collect();
+    assert_eq!(unbound.len(), 1, "{unbound:?}");
+    assert!(unbound[0].contains("not_bound"), "{unbound:?}");
+}

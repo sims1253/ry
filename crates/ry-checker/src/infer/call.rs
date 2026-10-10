@@ -1141,7 +1141,16 @@ impl Checker {
             child.invalidate_unknown_effects();
         }
         let effects_were_unknown = child.effects_unknown;
-        let result = self.infer(&args[expression].value, &mut child);
+        // The block runs in a new frame, so closures defined in it may read
+        // helpers the block assigns later, as in a function body.
+        let block = &args[expression].value;
+        let mut captures = self.deferred_captures.last().cloned().unwrap_or_default();
+        if let Expr::Block { body, .. } = block {
+            captures.extend(index::assigned_names_in_body(body));
+        }
+        self.deferred_captures.push(captures);
+        let result = self.infer(block, &mut child);
+        self.deferred_captures.pop();
         if child.effects_unknown && !effects_were_unknown {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();

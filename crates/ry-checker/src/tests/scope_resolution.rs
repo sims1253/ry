@@ -1548,4 +1548,16 @@ fn local_block_closures_read_later_helpers() {
         .collect();
     assert_eq!(unbound.len(), 1, "{unbound:?}");
     assert!(unbound[0].contains("not_bound"), "{unbound:?}");
+    // A block evaluated in the caller's frame gives its closures the same view.
+    let source = "f <- function() {\n\
+                  local({\n\
+                  pretty <- function() helper_a\n\
+                  helper_a <- function(x) x\n\
+                  }, environment())\n\
+                  }\n";
+    let diagnostics = check(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY010"),
+        "{diagnostics:?}"
+    );
 }

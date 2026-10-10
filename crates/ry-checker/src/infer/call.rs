@@ -1126,6 +1126,13 @@ impl Checker {
             return None;
         }
         let expression = bindings.arg_for_param(0)?;
+        // Closures defined in the block may read helpers the block assigns
+        // later, as in a function body, whichever frame the block runs in.
+        let block = &args[expression].value;
+        let mut captures = self.deferred_captures.last().cloned().unwrap_or_default();
+        if let Expr::Block { body, .. } = block {
+            captures.extend(index::assigned_names_in_body(body));
+        }
         let mut child = scope.function_execution_scope();
         if let Some(environment) = bindings.arg_for_param(1) {
             let value = &args[environment].value;
@@ -1135,19 +1142,15 @@ impl Checker {
                     && self.resolves_to_base(&name, scope)));
             self.infer(value, scope);
             if caller_environment {
-                return Some(self.infer(&args[expression].value, scope));
+                self.deferred_captures.push(captures);
+                let result = self.infer(block, scope);
+                self.deferred_captures.pop();
+                return Some(result);
             }
             // An explicit environment can have unrelated bindings and parents.
             child.invalidate_unknown_effects();
         }
         let effects_were_unknown = child.effects_unknown;
-        // The block runs in a new frame, so closures defined in it may read
-        // helpers the block assigns later, as in a function body.
-        let block = &args[expression].value;
-        let mut captures = self.deferred_captures.last().cloned().unwrap_or_default();
-        if let Expr::Block { body, .. } = block {
-            captures.extend(index::assigned_names_in_body(body));
-        }
         self.deferred_captures.push(captures);
         let result = self.infer(block, &mut child);
         self.deferred_captures.pop();

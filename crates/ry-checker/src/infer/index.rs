@@ -274,6 +274,14 @@ impl Checker {
                 // which `infer_data_frame` has already widened to the frame
                 // row count.
                 if bt.class.contains("data.frame") && args.len() >= 2 {
+                    // A row index may select only part of each column.
+                    let subset = |ty: RType| {
+                        if matches!(args[0].value, Expr::Missing(_)) {
+                            ty
+                        } else {
+                            subset_facts(ty)
+                        }
+                    };
                     let column_arg = &args[1];
                     let drop_false = args.iter().any(|arg| {
                         arg.name.as_deref() == Some("drop")
@@ -296,8 +304,7 @@ impl Checker {
                         _ => None,
                     };
                     let _ = self.infer_table_index_args(args, &bt, index_scope);
-                    // The row index may select only part of a column.
-                    let column = column.map(subset_facts);
+                    let column = column.map(subset);
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -319,7 +326,11 @@ impl Checker {
                     if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
-                    return subset_rows(bt);
+                    return if matches!(args[0].value, Expr::Missing(_)) {
+                        bt
+                    } else {
+                        subset_rows(bt)
+                    };
                 }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {

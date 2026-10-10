@@ -58,75 +58,42 @@ fn note_capture_write(
 /// call chain. Exhaustion makes captured identity uncertain.
 pub(crate) const MAX_DEFAULT_HELPER_CALLS: usize = 64;
 
-fn called_names_in_expr(expr: &Expr) -> FxSet<String> {
-    let mut called = FxSet::default();
-    let _ = walk_expr(
-        expr,
-        Walk {
-            fn_bodies: false,
-            dollar_args: false,
-            ..Walk::ALL
-        },
-        |node, _| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Call { func, .. }) = node
-                && let Expr::Ident { name, .. } = func.as_ref()
-            {
-                called.insert(semantic_argument_name(name).to_string());
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
-    called
-}
+/// Code that runs in the walked frame: nested function bodies run in their
+/// own frame and `$`/`@` field names are never evaluated.
+const FRAME_WALK: Walk = Walk {
+    fn_bodies: false,
+    dollar_args: false,
+    ..Walk::ALL
+};
 
-fn called_names_in_stmts(stmts: &[Stmt]) -> FxSet<String> {
-    let mut called = FxSet::default();
-    let _ = walk_stmts(
-        stmts,
-        Walk {
-            fn_bodies: false,
-            dollar_args: false,
-            ..Walk::ALL
-        },
-        |node, _| -> ControlFlow<(), Descend> {
-            if let AstNode::Expr(Expr::Call { func, .. }) = node
-                && let Expr::Ident { name, .. } = func.as_ref()
-            {
-                called.insert(semantic_argument_name(name).to_string());
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
-    called
+fn note_called_name(node: AstNode<'_>, called: &mut FxSet<String>) -> ControlFlow<(), Descend> {
+    if let AstNode::Expr(Expr::Call { func, .. }) = node
+        && let Expr::Ident { name, .. } = func.as_ref()
+    {
+        called.insert(semantic_argument_name(name).to_string());
+    }
+    ControlFlow::Continue(Descend::Into)
 }
 
 fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
-    let _ = walk_expr(
-        expr,
-        Walk {
-            fn_bodies: false,
-            dollar_args: false,
-            ..Walk::ALL
-        },
-        |node, _| -> ControlFlow<(), Descend> {
-            match node {
-                AstNode::Stmt(Stmt::Assign { target, .. }) => {
-                    if binding_name(target).is_some() {
-                        writes.insert(capture_binding_name(target).to_string());
-                    }
+    let _ = walk_expr(expr, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+        match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => {
+                if binding_name(target).is_some() {
+                    writes.insert(capture_binding_name(target).to_string());
                 }
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign | BinOpKind::SuperAssign,
-                    lhs,
-                    ..
-                }) if binding_name(lhs).is_some() => {
-                    writes.insert(capture_binding_name(lhs).to_string());
-                }
-                _ => {}
             }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) if binding_name(lhs).is_some() => {
+                writes.insert(capture_binding_name(lhs).to_string());
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
 }
 
 fn collect_rm_list(expr: &Expr, writes: &mut FxSet<String>, remaining: usize) {
@@ -140,7 +107,7 @@ fn collect_rm_list(expr: &Expr, writes: &mut FxSet<String>, remaining: usize) {
         }
         // Bare `c` can be masked and return a different name; only the
         // namespace-qualified constructor justifies inspecting its literals.
-        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::c" | "base:::c")) => {
+        Expr::Call { func, args, .. } if is_base_qualified_call(func, "c") => {
             for argument in args {
                 collect_rm_list(&argument.value, writes, remaining - 1);
             }
@@ -171,6 +138,26 @@ fn collect_rm_targets(args: &[Arg], writes: &mut FxSet<String>) {
     }
 }
 
+/// `name` without its `package::` or `package:::` prefix, or `None` when it
+/// is not qualified by exactly that package.
+fn strip_package<'a>(name: &'a str, package: &str) -> Option<&'a str> {
+    let (prefix, bare) = name.rsplit_once("::")?;
+    (prefix.strip_suffix(':').unwrap_or(prefix) == package).then_some(bare)
+}
+
+/// Whether `func` names `base::bare` explicitly; a bare spelling can be
+/// masked.
+fn is_base_qualified_call(func: &Expr, bare: &str) -> bool {
+    matches!(func, Expr::Ident { name, .. } if strip_package(semantic_argument_name(name), "base") == Some(bare))
+}
+
+/// The argument named `formal`, else the first positional one.
+fn named_or_first_positional<'a>(args: &'a [Arg], formal: &str) -> Option<&'a Arg> {
+    args.iter()
+        .find(|argument| argument.name.as_deref().map(semantic_argument_name) == Some(formal))
+        .or_else(|| args.iter().find(|argument| argument.name.is_none()))
+}
+
 pub(crate) fn collect_callable_binding_write(
     func: &Expr,
     args: &[Arg],
@@ -180,55 +167,35 @@ pub(crate) fn collect_callable_binding_write(
         return;
     };
     let target_name = |formal: &str| {
-        args.iter()
-            .find(|argument| argument.name.as_deref().map(semantic_argument_name) == Some(formal))
-            .or_else(|| args.iter().find(|argument| argument.name.is_none()))
+        named_or_first_positional(args, formal)
             .and_then(|argument| string_literal(&argument.value))
             .unwrap_or(UNKNOWN_CAPTURE_BINDING)
     };
-    match semantic_argument_name(name) {
-        "assign" | "base::assign" | "base:::assign" => {
+    let name = semantic_argument_name(name);
+    match strip_package(name, "base").unwrap_or(name) {
+        "assign" | "delayedAssign" => {
             // `pos`, an environment alias, and omitted `envir` can all
             // reach a captured frame. Even a `new.env()` spelling is not
-            // proof of freshness when that name can be masked.
+            // proof of freshness when that name can be masked. A delayed
+            // promise replaces the binding before its value is forced, and
+            // its assign.env can identify a captured/global frame.
             writes.insert(target_name("x").to_string());
         }
-        "delayedAssign" | "base::delayedAssign" | "base:::delayedAssign" => {
-            // A delayed promise replaces the binding before its value is
-            // forced. Its assign.env can identify a captured/global frame.
-            writes.insert(target_name("x").to_string());
-        }
-        "makeActiveBinding" | "base::makeActiveBinding" | "base:::makeActiveBinding" => {
+        "makeActiveBinding" => {
             writes.insert(target_name("sym").to_string());
         }
-        "rm" | "base::rm" | "base:::rm" | "remove" | "base::remove" | "base:::remove" => {
+        "rm" | "remove" => {
             collect_rm_targets(args, writes);
         }
-        "setGeneric" | "methods::setGeneric" | "methods:::setGeneric" => {
-            // Installing a generic can replace an ordinary binding in the
-            // current/global environment. The method table can also change
-            // an existing callable's behavior without an R assignment.
-            writes.insert(target_name("name").to_string());
-        }
-        "setMethod" | "methods::setMethod" | "methods:::setMethod" => {
-            writes.insert(target_name("f").to_string());
-        }
-        "eval" | "base::eval" | "base:::eval" => {
-            let expression = args
-                .iter()
-                .find(|argument| {
-                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
-                })
-                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+        "eval" => {
             // Bare `quote` can be masked to return an unrelated mutating
             // expression, so only a base-qualified quote is inspected.
-            if let Some(expression) = expression
-                && let Expr::Call {
-                    func,
-                    args: quote_args,
-                    ..
-                } = &expression.value
-                && matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::quote" | "base:::quote"))
+            if let Some(Expr::Call {
+                func,
+                args: quote_args,
+                ..
+            }) = named_or_first_positional(args, "expr").map(|argument| &argument.value)
+                && is_base_qualified_call(func, "quote")
                 && let Some(quoted) = quote_args.first()
             {
                 collect_quoted_global_writes(&quoted.value, writes);
@@ -236,20 +203,25 @@ pub(crate) fn collect_callable_binding_write(
                 writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
             }
         }
-        "evalq" | "base::evalq" | "base:::evalq" => {
-            let expression = args
-                .iter()
-                .find(|argument| {
-                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
-                })
-                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
-            if let Some(expression) = expression {
+        "evalq" => {
+            if let Some(expression) = named_or_first_positional(args, "expr") {
                 collect_quoted_global_writes(&expression.value, writes);
             } else {
                 writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
             }
         }
-        _ => {}
+        _ => match strip_package(name, "methods").unwrap_or(name) {
+            "setGeneric" => {
+                // Installing a generic can replace an ordinary binding in the
+                // current/global environment. The method table can also change
+                // an existing callable's behavior without an R assignment.
+                writes.insert(target_name("name").to_string());
+            }
+            "setMethod" => {
+                writes.insert(target_name("f").to_string());
+            }
+            _ => {}
+        },
     }
 }
 
@@ -260,26 +232,22 @@ pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> b
     let Expr::Ident { name, .. } = func else {
         return false;
     };
-    match semantic_argument_name(name) {
-        "base::quote" | "base:::quote" => true,
-        "eval" | "base::eval" | "base:::eval" => {
-            let expression = args
-                .iter()
-                .find(|argument| {
-                    argument.name.as_deref().map(semantic_argument_name) == Some("expr")
-                })
-                .or_else(|| args.iter().find(|argument| argument.name.is_none()));
+    let name = semantic_argument_name(name);
+    match strip_package(name, "base").unwrap_or(name) {
+        "quote" => is_base_qualified_call(func, "quote"),
+        "eval" => {
+            let expression = named_or_first_positional(args, "expr");
             args.iter().all(|argument| {
                 std::ptr::eq(argument, expression.unwrap_or(argument))
                     || closed_literal_value(&argument.value)
             }) && matches!(
                 expression.map(|argument| &argument.value),
                 Some(Expr::Call { func, args, .. })
-                    if matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(semantic_argument_name(name), "base::quote" | "base:::quote"))
+                    if is_base_qualified_call(func, "quote")
                         && args.first().is_some_and(|arg| closed_literal_value(&arg.value))
             )
         }
-        "evalq" | "base::evalq" | "base:::evalq" => {
+        "evalq" => {
             args.first()
                 .is_some_and(|arg| closed_literal_value(&arg.value))
                 && args
@@ -308,78 +276,72 @@ fn collect_immediate_outward_writes(
     outward: &mut FxSet<String>,
     remaining: &mut usize,
 ) {
-    let called = called_names_in_stmts(body);
+    let mut called = FxSet::default();
+    let _ = walk_stmts(body, FRAME_WALK, |node, _| {
+        note_called_name(node, &mut called)
+    });
     let mut scanned = FxSet::<(usize, usize)>::default();
-    let _ = walk_stmts(
-        body,
-        Walk {
-            fn_bodies: false,
-            dollar_args: false,
-            ..Walk::ALL
-        },
-        |node, _| -> ControlFlow<(), Descend> {
-            match node {
-                AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
-                    if let Expr::Function { params, body, span } = value
-                        && binding_name(target).is_some()
-                        && called.contains(capture_binding_name(target))
-                        && scanned.insert((span.start, span.end))
-                    {
-                        if *remaining == 0 {
-                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                        } else {
-                            *remaining -= 1;
-                            outward.extend(collect_default_writes_bounded(params, remaining).1);
-                            collect_immediate_outward_writes(body, outward, remaining);
-                        }
-                    }
+    let _ = walk_stmts(body, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+        match node {
+            AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
+                if let Expr::Function { params, body, span } = value
+                    && binding_name(target).is_some()
+                    && called.contains(capture_binding_name(target))
+                    && scanned.insert((span.start, span.end))
+                {
+                    collect_helper_outward_writes(params, body, outward, remaining);
                 }
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::SuperAssign,
-                    lhs,
-                    ..
-                }) => {
-                    if binding_name(lhs).is_some() {
-                        outward.insert(capture_binding_name(lhs).to_string());
-                    }
-                }
-                AstNode::Expr(Expr::BinOp {
-                    op: BinOpKind::Assign,
-                    lhs,
-                    rhs,
-                    ..
-                }) => {
-                    if let Expr::Function { params, body, span } = rhs.as_ref()
-                        && binding_name(lhs).is_some()
-                        && called.contains(capture_binding_name(lhs))
-                        && scanned.insert((span.start, span.end))
-                    {
-                        if *remaining == 0 {
-                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                        } else {
-                            *remaining -= 1;
-                            outward.extend(collect_default_writes_bounded(params, remaining).1);
-                            collect_immediate_outward_writes(body, outward, remaining);
-                        }
-                    }
-                }
-                AstNode::Expr(Expr::Call { func, args, .. }) => {
-                    collect_callable_binding_write(func, args, outward);
-                    if let Expr::Function { params, body, .. } = func.as_ref() {
-                        if *remaining == 0 {
-                            outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                        } else {
-                            *remaining -= 1;
-                            outward.extend(collect_default_writes_bounded(params, remaining).1);
-                            collect_immediate_outward_writes(body, outward, remaining);
-                        }
-                    }
-                }
-                _ => {}
             }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) => {
+                if binding_name(lhs).is_some() {
+                    outward.insert(capture_binding_name(lhs).to_string());
+                }
+            }
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign,
+                lhs,
+                rhs,
+                ..
+            }) => {
+                if let Expr::Function { params, body, span } = rhs.as_ref()
+                    && binding_name(lhs).is_some()
+                    && called.contains(capture_binding_name(lhs))
+                    && scanned.insert((span.start, span.end))
+                {
+                    collect_helper_outward_writes(params, body, outward, remaining);
+                }
+            }
+            AstNode::Expr(Expr::Call { func, args, .. }) => {
+                collect_callable_binding_write(func, args, outward);
+                if let Expr::Function { params, body, .. } = func.as_ref() {
+                    collect_helper_outward_writes(params, body, outward, remaining);
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(Descend::Into)
+    });
+}
+
+/// Outward writes of a helper literal that runs here, charged to the shared
+/// helper budget. Exhaustion makes the written names unknown.
+fn collect_helper_outward_writes(
+    params: &[Param],
+    body: &[Stmt],
+    outward: &mut FxSet<String>,
+    remaining: &mut usize,
+) {
+    if *remaining == 0 {
+        outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+        return;
+    }
+    *remaining -= 1;
+    outward.extend(collect_default_writes_bounded(params, remaining).1);
+    collect_immediate_outward_writes(body, outward, remaining);
 }
 
 /// Writes that executing a known function can make outside its own frame.
@@ -578,22 +540,15 @@ fn scan_possible_helper_calls(
         calls.unknown_bindings.insert(name.clone());
         calls.formals.insert(name);
     }
-    let walk = Walk {
-        assign_targets: true,
-        assign_operands: true,
-        fn_bodies: false,
-        dollar_args: false,
-        ..Walk::ALL
-    };
     for parameter in params {
         if let Some(default) = &parameter.default {
-            let _ = walk_expr(default, walk, |node, _| -> ControlFlow<(), Descend> {
+            let _ = walk_expr(default, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
                 scan_possible_helper_node(node, calls, remaining);
                 ControlFlow::Continue(Descend::Into)
             });
         }
     }
-    let _ = walk_stmts(body, walk, |node, _| -> ControlFlow<(), Descend> {
+    let _ = walk_stmts(body, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
         scan_possible_helper_node(node, calls, remaining);
         ControlFlow::Continue(Descend::Into)
     });
@@ -628,106 +583,75 @@ fn collect_default_writes_bounded(
     let mut outward = FxSet::default();
     for parameter in params {
         if let Some(default) = &parameter.default {
-            let called = called_names_in_expr(default);
+            let mut called = FxSet::default();
+            let _ = walk_expr(default, FRAME_WALK, |node, _| {
+                note_called_name(node, &mut called)
+            });
             let mut scanned = FxSet::<(usize, usize)>::default();
-            let _ = walk_expr(
-                default,
-                Walk {
-                    fn_bodies: false,
-                    dollar_args: false,
-                    ..Walk::ALL
-                },
-                |node, _| -> ControlFlow<(), Descend> {
-                    match node {
-                        AstNode::Stmt(Stmt::Assign {
-                            target,
+            let _ = walk_expr(default, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+                match node {
+                    AstNode::Stmt(Stmt::Assign {
+                        target,
+                        value,
+                        span,
+                    }) => {
+                        let wrapped_superassign = matches!(
                             value,
-                            span,
-                        }) => {
-                            let wrapped_superassign = matches!(
-                                value,
-                                Expr::BinOp {
-                                    op: BinOpKind::SuperAssign,
-                                    span: operation_span,
-                                    ..
-                                } if operation_span == span
-                            );
-                            if !wrapped_superassign && binding_name(target).is_some() {
-                                local.insert(capture_binding_name(target).to_string());
-                            }
-                            if let Expr::Function { params, body, span } = value
-                                && binding_name(target).is_some()
-                                && called.contains(capture_binding_name(target))
-                                && scanned.insert((span.start, span.end))
-                            {
-                                if *remaining == 0 {
-                                    outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                                } else {
-                                    *remaining -= 1;
-                                    outward.extend(
-                                        collect_default_writes_bounded(params, remaining).1,
-                                    );
-                                    collect_immediate_outward_writes(body, &mut outward, remaining);
-                                }
-                            }
+                            Expr::BinOp {
+                                op: BinOpKind::SuperAssign,
+                                span: operation_span,
+                                ..
+                            } if operation_span == span
+                        );
+                        if !wrapped_superassign && binding_name(target).is_some() {
+                            local.insert(capture_binding_name(target).to_string());
                         }
-                        AstNode::Stmt(Stmt::For { name, .. }) => {
-                            local.insert(capture_identifier_name(name).to_string());
+                        if let Expr::Function { params, body, span } = value
+                            && binding_name(target).is_some()
+                            && called.contains(capture_binding_name(target))
+                            && scanned.insert((span.start, span.end))
+                        {
+                            collect_helper_outward_writes(params, body, &mut outward, remaining);
                         }
-                        AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
-                            if binding_name(lhs).is_some() {
-                                let name = capture_binding_name(lhs);
-                                match op {
-                                    BinOpKind::Assign => {
-                                        local.insert(name.to_string());
-                                        if let Expr::Function { params, body, span } = rhs.as_ref()
-                                            && called.contains(name)
-                                            && scanned.insert((span.start, span.end))
-                                        {
-                                            if *remaining == 0 {
-                                                outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                                            } else {
-                                                *remaining -= 1;
-                                                outward.extend(
-                                                    collect_default_writes_bounded(
-                                                        params, remaining,
-                                                    )
-                                                    .1,
-                                                );
-                                                collect_immediate_outward_writes(
-                                                    body,
-                                                    &mut outward,
-                                                    remaining,
-                                                );
-                                            }
-                                        }
-                                    }
-                                    BinOpKind::SuperAssign => {
-                                        outward.insert(name.to_string());
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        AstNode::Expr(Expr::Call { func, args, .. }) => {
-                            collect_callable_binding_write(func, args, &mut outward);
-                            if let Expr::Function { params, body, .. } = func.as_ref() {
-                                if *remaining == 0 {
-                                    outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                                } else {
-                                    *remaining -= 1;
-                                    outward.extend(
-                                        collect_default_writes_bounded(params, remaining).1,
-                                    );
-                                    collect_immediate_outward_writes(body, &mut outward, remaining);
-                                }
-                            }
-                        }
-                        _ => {}
                     }
-                    ControlFlow::Continue(Descend::Into)
-                },
-            );
+                    AstNode::Stmt(Stmt::For { name, .. }) => {
+                        local.insert(capture_identifier_name(name).to_string());
+                    }
+                    AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
+                        if binding_name(lhs).is_some() {
+                            let name = capture_binding_name(lhs);
+                            match op {
+                                BinOpKind::Assign => {
+                                    local.insert(name.to_string());
+                                    if let Expr::Function { params, body, span } = rhs.as_ref()
+                                        && called.contains(name)
+                                        && scanned.insert((span.start, span.end))
+                                    {
+                                        collect_helper_outward_writes(
+                                            params,
+                                            body,
+                                            &mut outward,
+                                            remaining,
+                                        );
+                                    }
+                                }
+                                BinOpKind::SuperAssign => {
+                                    outward.insert(name.to_string());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        collect_callable_binding_write(func, args, &mut outward);
+                        if let Expr::Function { params, body, .. } = func.as_ref() {
+                            collect_helper_outward_writes(params, body, &mut outward, remaining);
+                        }
+                    }
+                    _ => {}
+                }
+                ControlFlow::Continue(Descend::Into)
+            });
         }
     }
     (local, outward)

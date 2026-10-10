@@ -1241,7 +1241,7 @@ fn run_check_once(
     for parsed_file in all_parsed {
         file_count += 1;
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
-        let native_path = pipeline::native_path(&parsed_file);
+        let native_path = parsed_file.native_or_display_path();
         if !ry_workspace::reports::is_report_path(native_path)
             && is_probably_not_r_source(&parsed_file)
         {
@@ -1320,7 +1320,7 @@ fn run_check_once(
         let file = &parsed[*index];
         let filter = ctx
             .scoped_policy
-            .filter_for(pipeline::native_path(file), ctx.filter);
+            .filter_for(file.native_or_display_path(), ctx.filter);
         let post = ry_checker::PostProcess {
             filter: &filter,
             baseline: ctx.baseline,
@@ -1624,7 +1624,7 @@ fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::Syste
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{CheckInput, check_project_with_facts_capture};
+    use crate::pipeline::{CheckInput, check_project_with_scope_capture};
     use ry_core::Span;
 
     fn diag(path: &str, line: usize, col: usize, code: &'static str) -> ry_checker::Diagnostic {
@@ -2453,7 +2453,7 @@ mod tests {
     }
 
     #[test]
-    fn check_project_with_facts_capture_returns_scope_records_per_file() {
+    fn check_project_with_scope_capture_returns_records_per_file() {
         let mut parser = ry_core::RParser::new().unwrap();
         let file = parser
             .parse("a.R", "f <- function(x = 1L) { y <- x\n y }\n")
@@ -2463,7 +2463,7 @@ mod tests {
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
         };
-        let records = check_project_with_facts_capture(input, false, Vec::new()).scopes;
+        let records = check_project_with_scope_capture(input);
         assert_eq!(records.len(), 1);
         let (path, file_records) = &records[0];
         assert_eq!(path, "a.R");

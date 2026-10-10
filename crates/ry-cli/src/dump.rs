@@ -536,9 +536,7 @@ pub(crate) fn run_dump_types(
                 reason.description()
             );
         }
-        for (path, records) in
-            pipeline::check_project_with_facts_capture(group.check_input, false, Vec::new()).scopes
-        {
+        for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {
             records_by_path.insert(path, records);
         }
     }

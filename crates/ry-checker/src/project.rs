@@ -894,8 +894,18 @@ impl Project {
                 .any(|name| !self.prev_fn_returns.contains_key(name))
     }
 
-    /// Select an actual changed dependency from a file's read and call sets.
-    /// Lexical order makes multi-cause traces stable.
+    /// Whether a file reads or calls any affected function.
+    fn file_depends_on(&self, path: &str, affected: &HashSet<String>) -> bool {
+        self.file_called_fns
+            .get(path)
+            .into_iter()
+            .chain(self.file_read_fns.get(path))
+            .flatten()
+            .any(|callee| affected.contains(callee))
+    }
+
+    /// Select an actual changed dependency from the same read/call sets used
+    /// by `file_depends_on`. Lexical order makes multi-cause traces stable.
     fn first_changed_file_dependency<'a>(
         &'a self,
         path: &str,
@@ -920,10 +930,7 @@ impl Project {
         while changed {
             changed = false;
             for (path, collected) in &self.collected_files {
-                if self
-                    .first_changed_file_dependency(path, &affected)
-                    .is_none()
-                {
+                if !self.file_depends_on(path, &affected) {
                     continue;
                 }
                 for caller in collected.fn_table.fns.keys() {
@@ -1165,9 +1172,12 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(dependency) = self.first_changed_file_dependency(path, &changed_fns) {
+                if self.file_depends_on(path, &changed_fns) {
                     dirty.insert(path.as_str());
-                    if let Some(trace) = &mut trace {
+                    if let Some(trace) = &mut trace
+                        && let Some(dependency) =
+                            self.first_changed_file_dependency(path, &changed_fns)
+                    {
                         let trigger = trace.function_trigger(dependency);
                         trace.file_event_with_trigger(
                             path,

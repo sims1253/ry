@@ -52,7 +52,7 @@ pub(crate) fn adopted_records(
     let mut result = AdoptedRecords::default();
     let mut ambiguous = std::collections::BTreeSet::new();
     for file in files {
-        let native = native_path(file);
+        let native = file.native_or_display_path();
         let records = ry_checker::typehint::read_records_at(file, native, &scope);
         if display_counts[file.path.as_str()] == 1
             && config::unambiguous_native_display_path(native, &file.path)
@@ -101,6 +101,13 @@ pub(crate) fn check_project(
 pub(crate) struct CapturedFacts {
     pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
     pub references: Vec<(String, ry_checker::ReferenceFacts)>,
+}
+
+/// Capture scope snapshots without reference evidence or declarations.
+pub(crate) fn check_project_with_scope_capture(
+    input: CheckInput,
+) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
+    check_project_with_facts_capture(input, false, Vec::new()).scopes
 }
 
 /// Capture scope snapshots and optional reference evidence in one project check.
@@ -265,12 +272,6 @@ pub(crate) fn parse_files(
         })
         .collect();
     outcomes.into_iter().flatten().collect()
-}
-
-/// The native path of a parsed file. It differs from the display path for
-/// non-UTF-8 filenames, and source adoption must use native identity.
-pub(crate) fn native_path(file: &ry_core::SourceFile) -> &Path {
-    file.native_path.as_deref().unwrap_or(Path::new(&file.path))
 }
 
 /// One in-memory source substituted at its logical path. The same parser,

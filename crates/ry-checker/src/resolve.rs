@@ -107,7 +107,7 @@ impl Checker {
                 .get(semantic_name)
                 .is_some_and(|pkg| pkg == package);
             if scope.data_mask_unknown
-                || (!explicit_import && (scope.search_path_unknown || !self.bare_loaded.is_empty()))
+                || (!explicit_import && self.search_path_may_mask_base(scope))
             {
                 return SpecialCallProvenance::AmbientUncertainty;
             }
@@ -456,6 +456,13 @@ impl Checker {
         })
     }
 
+    /// Whether an attached package may supply a bare name ahead of base.
+    /// Package code finds base first, so only an unknown search path can
+    /// (#568). Known exports are checked separately as external bindings.
+    pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
+        scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
+    }
+
     /// Lenient variant of [`Self::resolves_to_base`]: same resolution
     /// order minus the search-path guard, because a loaded package rarely
     /// redefines `list` or `length`.
@@ -525,7 +532,7 @@ impl Checker {
         }
 
         // (e) search_path_unknown or bare-loaded packages may shadow.
-        if guard_search_path && (scope.search_path_unknown || !self.bare_loaded.is_empty()) {
+        if guard_search_path && self.search_path_may_mask_base(scope) {
             return false;
         }
 

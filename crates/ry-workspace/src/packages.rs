@@ -21,6 +21,13 @@ pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
 /// cannot be enumerated.
 pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
 
+/// External-binding sentinel for package `R/` code, which looks up its
+/// namespace, its imports, then base, and only then the search path, so
+/// attached packages cannot mask base there. Set only without whole-package
+/// `import()`s: an installed export list does not prove an import lacks a
+/// base name.
+pub const BASE_BEFORE_SEARCH_PATH_SENTINEL: &str = "\0baseBeforeSearchPath";
+
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct NamespaceMetadata {

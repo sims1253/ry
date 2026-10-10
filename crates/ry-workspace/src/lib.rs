@@ -491,6 +491,10 @@ pub fn resolve_workspace_context<'a>(
                 || relative.is_some_and(is_testthat_runner_file)
             {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
+                if relative.is_some_and(is_package_r_file) && metadata.imported_packages.is_empty()
+                {
+                    file_bindings.insert(packages::BASE_BEFORE_SEARCH_PATH_SENTINEL.to_string());
+                }
                 // Packages that rely on DESCRIPTION Depends may omit a
                 // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
                 // attached before package code runs, unlike Imports.

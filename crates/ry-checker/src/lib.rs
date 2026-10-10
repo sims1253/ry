@@ -1317,6 +1317,9 @@ pub struct Checker {
     // Whether this file's package declares `useDynLib(..., .registration =
     // TRUE)`. Derived from `external_bindings` in `set_external_bindings`.
     pub(crate) native_registration: bool,
+    // Whether this file is package code that finds base before the search
+    // path. Derived from `external_bindings` in `set_external_bindings`.
+    base_before_search_path: bool,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     /// Method screens derived from the collected and imported tables. They
@@ -1543,6 +1546,7 @@ impl Checker {
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
             native_registration: false,
+            base_before_search_path: false,
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             method_screens: std::sync::OnceLock::new(),
@@ -1978,6 +1982,8 @@ impl Checker {
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
         self.native_registration =
             bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
+        self.base_before_search_path =
+            bindings.contains(ry_workspace::packages::BASE_BEFORE_SEARCH_PATH_SENTINEL);
         self.external_bindings = bindings;
         self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();

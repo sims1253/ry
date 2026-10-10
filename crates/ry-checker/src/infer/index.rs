@@ -296,6 +296,9 @@ impl Checker {
                         _ => None,
                     };
                     let _ = self.infer_table_index_args(args, &bt, index_scope);
+                    // The row index may select only part of the column.
+                    let column =
+                        column.map(|ty| ty.clone().with_value_facts(ty.value_facts.for_subset()));
                     if let Some(column) = column {
                         if !drop_false {
                             return column;
@@ -598,6 +601,7 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
     Some(RType {
         length,
         columns: None,
+        value_facts: base.value_facts.for_subset(),
         ..base.clone()
     })
 }

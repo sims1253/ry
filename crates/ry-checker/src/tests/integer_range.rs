@@ -244,3 +244,17 @@ fn immediate_repair_suppresses_only_the_direct_cast() {
         2
     );
 }
+
+#[test]
+fn subsets_do_not_keep_whole_vector_extremes() {
+    // `x[2]` is 1, which `as.integer()` keeps, although `x` holds 1e10.
+    for source in [
+        "x <- c(1e10, 1)\nas.integer(x[2])\n",
+        "x <- c(1e10, 1)\nas.integer(x[-1])\n",
+        "x <- c(1e10, 1)\nas.integer(x[[2]])\n",
+        "d <- data.frame(x = c(1e10, 1))\nas.integer(d[2, 1])\n",
+    ] {
+        assert_eq!(range_warnings(source), 0, "{source}");
+    }
+    assert_eq!(range_warnings("x <- c(1e10, 1e11)\nas.integer(x)\n"), 1);
+}

@@ -321,7 +321,7 @@ impl Checker {
                     if !drop_false && is_non_negative_scalar_index(&column_arg.value) {
                         return RType::unknown();
                     }
-                    return if rows_selected { subset_rows(bt) } else { bt };
+                    return subset(bt);
                 }
                 if matches!(bt.mode, Mode::List) && args.len() >= 2 {
                     if let Some(column) = args.iter().find_map(|arg| match &arg.value {
@@ -607,22 +607,15 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
     })
 }
 
-/// A part of `ty` keeps only the facts that hold for any subset.
-fn subset_facts(ty: RType) -> RType {
-    let facts = ty.value_facts.for_subset();
-    ty.with_value_facts(facts)
-}
-
-/// A data frame whose rows may be subset: no column keeps exact facts.
-fn subset_rows(mut frame: RType) -> RType {
-    if let Some(schema) = &frame.columns {
-        let mut schema = (**schema).clone();
-        for (_, ty) in &mut schema.columns {
-            ty.value_facts = ty.value_facts.for_subset();
+/// Facts that survive selecting only some elements or rows of `ty`.
+fn subset_facts(mut ty: RType) -> RType {
+    ty.value_facts = ty.value_facts.for_subset();
+    if let Some(schema) = &mut ty.columns {
+        for (_, column) in &mut Arc::make_mut(schema).columns {
+            column.value_facts = column.value_facts.for_subset();
         }
-        frame.columns = Some(Arc::new(schema));
     }
-    frame
+    ty
 }
 
 /// Whether an index expression is a scalar element selector, rather than a

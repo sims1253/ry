@@ -26,6 +26,17 @@ pub(super) enum InventoryStatus {
     Unavailable(InventoryFailure),
 }
 
+impl InventoryStatus {
+    /// The degradation to report; a missing file reads as a read failure.
+    pub(super) fn failure(self) -> Option<InventoryFailure> {
+        match self {
+            Self::Complete => None,
+            Self::Missing => Some(InventoryFailure::ReadFailure),
+            Self::Unavailable(reason) => Some(reason),
+        }
+    }
+}
+
 /// Bounded cause of an unavailable serialized inventory. Adding a cause
 /// requires choosing its user message and whether a file-stem fallback is
 /// justified in `description` and `uses_file_stem` below.

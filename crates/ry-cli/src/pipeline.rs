@@ -39,19 +39,20 @@ impl CheckInput {
 }
 
 pub(crate) fn adopted_records(
-    files: &[(PathBuf, Arc<ry_core::SourceFile>)],
+    files: &[Arc<ry_core::SourceFile>],
     cfg: &config::Config,
 ) -> AdoptedRecords {
     let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
         return AdoptedRecords::default();
     };
     let mut display_counts = std::collections::HashMap::new();
-    for (_, file) in files {
+    for file in files {
         *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
     }
     let mut result = AdoptedRecords::default();
     let mut ambiguous = std::collections::BTreeSet::new();
-    for (native, file) in files {
+    for file in files {
+        let native = file.native_or_display_path();
         let records = ry_checker::typehint::read_records_at(file, native, &scope);
         if display_counts[file.path.as_str()] == 1
             && config::unambiguous_native_display_path(native, &file.path)
@@ -97,16 +98,16 @@ pub(crate) fn check_project(
     diagnostics
 }
 
-/// Capture each file's lexical scopes in input order. Diagnostics are discarded.
+pub(crate) struct CapturedFacts {
+    pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
+    pub references: Vec<(String, ry_checker::ReferenceFacts)>,
+}
+
+/// Capture scope snapshots without reference evidence or declarations.
 pub(crate) fn check_project_with_scope_capture(
     input: CheckInput,
 ) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
     check_project_with_facts_capture(input, false, Vec::new()).scopes
-}
-
-pub(crate) struct CapturedFacts {
-    pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
-    pub references: Vec<(String, ry_checker::ReferenceFacts)>,
 }
 
 /// Capture scope snapshots and optional reference evidence in one project check.
@@ -250,34 +251,21 @@ fn size_rayon_pool() {
 /// the result. The first failure (in input order) whose action is
 /// `Abort` is returned in `Err` — and is the only one the caller must
 /// report, because the callback stays silent for files it aborts on.
+///
+/// Each file's native path is on
+/// [`ry_core::SourceFile::native_or_display_path`]; `overlay` substitutes one
+/// in-memory source.
 pub(crate) fn parse_files(
-    paths: &[PathBuf],
-    on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
-) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
-    parse_files_with_native_paths(paths, None, on_failure)
-        .map(|files| files.into_iter().map(|(_, file)| file).collect())
-}
-
-/// One in-memory source substituted at its logical path. The same parser,
-/// decoder, and downstream project analysis are used as for disk sources.
-pub(crate) struct SourceOverlay {
-    pub path: PathBuf,
-    pub bytes: Vec<u8>,
-}
-
-/// Keep the native path alongside the parser's display path. These can differ
-/// for non-UTF-8 filenames, and source adoption must use native identity.
-pub(crate) fn parse_files_with_native_paths(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,
     on_failure: impl Fn(&Path, &ParseError) -> FailureAction + Sync,
-) -> Result<Vec<(PathBuf, Arc<ry_core::SourceFile>)>, ParseFailure> {
+) -> Result<Vec<Arc<ry_core::SourceFile>>, ParseFailure> {
     use rayon::prelude::*;
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
         .map(|path| match parse_one(path, overlay) {
-            Ok(file) => Some(Ok((path.clone(), file))),
+            Ok(file) => Some(Ok(file)),
             Err(failure) => match on_failure(&failure.path, &failure.error) {
                 FailureAction::Skip => None,
                 FailureAction::Abort => Some(Err(failure)),
@@ -285,6 +273,13 @@ pub(crate) fn parse_files_with_native_paths(
         })
         .collect();
     outcomes.into_iter().flatten().collect()
+}
+
+/// One in-memory source substituted at its logical path. The same parser,
+/// decoder, and downstream project analysis are used as for disk sources.
+pub(crate) struct SourceOverlay {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
 }
 
 /// Read and parse one file on the calling thread, using that thread's
@@ -439,7 +434,7 @@ mod tests {
         }
         for action in [FailureAction::Skip, FailureAction::Abort] {
             let failures = AtomicUsize::new(0);
-            let result = parse_files(&paths, |_, error| {
+            let result = parse_files(&paths, None, |_, error| {
                 assert!(matches!(error, ParseError::Read(_)));
                 failures.fetch_add(1, Ordering::Relaxed);
                 action

@@ -90,12 +90,7 @@ pub fn read_records_at(
         ControlFlow::<(), Descend>::Continue(Descend::Into)
     });
 
-    let mut line_starts = vec![0];
-    for (offset, byte) in file.source.bytes().enumerate() {
-        if byte == b'\n' {
-            line_starts.push(offset + 1);
-        }
-    }
+    let line_starts = crate::diagnostics::line_starts(&file.source);
     let mut grouped: BTreeMap<(usize, usize), Vec<Clause<'_>>> = BTreeMap::new();
     let mut comments = file
         .comments

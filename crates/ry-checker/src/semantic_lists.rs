@@ -377,8 +377,14 @@ pub(crate) fn bare_name(name: &str) -> &str {
     name.rsplit_once("::").map(|(_, bare)| bare).unwrap_or(name)
 }
 
+/// `name` without its `package::` or `package:::` prefix, or `None` when it
+/// is not qualified by exactly that package.
+pub(crate) fn strip_package<'a>(name: &'a str, package: &str) -> Option<&'a str> {
+    let (prefix, bare) = name.rsplit_once("::")?;
+    (prefix.strip_suffix(':').unwrap_or(prefix) == package).then_some(bare)
+}
+
 /// Whether a `pkg::` or `pkg:::` prefix on `name` denotes the `base` package.
 pub(crate) fn is_base_qualified(name: &str) -> bool {
-    name.rsplit_once("::")
-        .is_some_and(|(pkg, _)| pkg.trim_end_matches(':') == "base")
+    strip_package(name, "base").is_some()
 }

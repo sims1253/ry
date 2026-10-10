@@ -765,89 +765,58 @@ impl Project {
                 );
             }
         }
-        // First call → refine everything.
-        if !self.has_prev_emit {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: true,
-                    size: self.fn_table.fns.len(),
-                    reason: TraceReason::ColdStart,
-                });
+        let (scope, reason) = 'scope: {
+            // First call → refine everything.
+            if !self.has_prev_emit {
+                break 'scope (None, TraceReason::ColdStart);
             }
-            return None;
-        }
-        if self.refinement_discovered_attachments {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: true,
-                    size: self.fn_table.fns.len(),
-                    reason: TraceReason::PriorAttachmentDiscovery,
-                });
+            if self.refinement_discovered_attachments {
+                break 'scope (None, TraceReason::PriorAttachmentDiscovery);
             }
-            return None;
-        }
-        // If loaded changed (library() calls appeared/disappeared), the stub
-        // environment changed — full refinement is needed because package
-        // signatures affect return types.
-        if self
-            .prev_loaded
-            .as_ref()
-            .is_some_and(|prev| prev != &self.loaded)
-        {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: true,
-                    size: self.fn_table.fns.len(),
-                    reason: TraceReason::PackageSetChanged,
-                });
+            // If loaded changed (library() calls appeared/disappeared), the
+            // stub environment changed — full refinement is needed because
+            // package signatures affect return types.
+            if self
+                .prev_loaded
+                .as_ref()
+                .is_some_and(|prev| prev != &self.loaded)
+            {
+                break 'scope (None, TraceReason::PackageSetChanged);
             }
-            return None;
-        }
-        // A new callable can resolve a previously unknown callback or alias;
-        // no observed dependency exists for that earlier lookup miss.
-        if self.callable_names_changed()
-            || self.prev_callable_vars != self.fn_table.callable_vars
-            || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
-            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
-        {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: true,
-                    size: self.fn_table.fns.len(),
-                    reason: TraceReason::CallableContextChanged,
-                });
+            // A new callable can resolve a previously unknown callback or
+            // alias; no observed dependency exists for that earlier lookup miss.
+            if self.callable_names_changed()
+                || self.prev_callable_vars != self.fn_table.callable_vars
+                || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
+                || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+            {
+                break 'scope (None, TraceReason::CallableContextChanged);
             }
-            return None;
-        }
-        // Nothing changed → nothing to refine.
-        if self.dirty_paths.is_empty() {
-            if let Some(trace) = trace.as_deref_mut() {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: false,
-                    size: 0,
-                    reason: TraceReason::NoDirtyWork,
-                });
+            // Nothing changed → nothing to refine.
+            if self.dirty_paths.is_empty() {
+                break 'scope (Some(HashSet::new()), TraceReason::NoDirtyWork);
             }
-            return Some(HashSet::new());
-        }
-
-        // Functions defined in dirty files, plus definitions removed or
-        // renamed by those edits, seed the affected set.
-        let mut affected = self.invalidated_fns.clone();
-        for dirty_path in &self.dirty_paths {
-            if let Some(collected) = self.collected_files.get(dirty_path) {
-                affected.extend(collected.fn_table.fns.keys().cloned());
+            // Functions defined in dirty files, plus definitions removed or
+            // renamed by those edits, seed the affected set.
+            let mut affected = self.invalidated_fns.clone();
+            for dirty_path in &self.dirty_paths {
+                if let Some(collected) = self.collected_files.get(dirty_path) {
+                    affected.extend(collected.fn_table.fns.keys().cloned());
+                }
             }
-        }
-        let affected = self.with_refinement_callers(affected, trace.as_deref_mut());
+            (
+                Some(self.with_refinement_callers(affected, trace.as_deref_mut())),
+                TraceReason::DirtySource,
+            )
+        };
         if let Some(trace) = trace {
             trace.global_event(TraceEventKind::RefinementScope {
-                full: false,
-                size: affected.len(),
-                reason: TraceReason::DirtySource,
+                full: scope.is_none(),
+                size: scope.as_ref().map_or(self.fn_table.fns.len(), HashSet::len),
+                reason,
             });
         }
-        Some(affected)
+        scope
     }
 
     fn with_refinement_callers(
@@ -925,6 +894,7 @@ impl Project {
                 .any(|name| !self.prev_fn_returns.contains_key(name))
     }
 
+    /// Whether a file reads or calls any affected function.
     fn file_depends_on(&self, path: &str, affected: &HashSet<String>) -> bool {
         self.file_called_fns
             .get(path)
@@ -1016,25 +986,15 @@ impl Project {
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
-        // when `loaded` changed, fall back to refining everything.
+        // when `loaded` changed, fall back to refining everything. Full
+        // invalidation starts from fresh collection, like a cold check: old
+        // metadata can belong to a replaced or shadowed definition, and
+        // recursive returns can preserve an old seed.
         if let Some(ref scope) = fixpoint_scope {
             refiner.seed_return_types(&self.prev_fn_returns, scope);
             refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, scope);
-            if let Some(trace) = &mut trace {
-                refiner.run_fixpoint_scoped_traced(scope, trace);
-            } else {
-                refiner.run_fixpoint_scoped(scope);
-            }
-        } else {
-            // Full invalidation starts from fresh collection, like a cold
-            // check. Old metadata can belong to a replaced or shadowed
-            // definition, and recursive returns can preserve an old seed.
-            if let Some(trace) = &mut trace {
-                refiner.run_fixpoint_traced(trace);
-            } else {
-                refiner.run_fixpoint();
-            }
         }
+        refiner.run_fixpoint_scoped(fixpoint_scope.as_ref(), trace.as_mut());
         if fixpoint_scope.is_some() && *refiner.loaded != self.loaded {
             if let Some(trace) = &mut trace {
                 trace.global_event(TraceEventKind::RefinementScope {
@@ -1060,11 +1020,7 @@ impl Project {
             refiner.set_user_stubs(Arc::clone(&self.user_stubs));
             refiner.set_box_sources(Arc::clone(&box_sources));
             refiner.refinement_dependencies = Some(HashMap::new());
-            if let Some(trace) = &mut trace {
-                refiner.run_fixpoint_traced(trace);
-            } else {
-                refiner.run_fixpoint();
-            }
+            refiner.run_fixpoint_scoped(None, trace.as_mut());
             #[cfg(test)]
             for (name, count) in attempted_counts {
                 *refiner.refinement_counts.entry(name).or_default() += count;
@@ -1216,10 +1172,12 @@ impl Project {
                     continue;
                 }
                 // Does this file call any function whose return type changed?
-                if let Some(trace) = &mut trace {
-                    if let Some(dependency) = self.first_changed_file_dependency(path, &changed_fns)
+                if self.file_depends_on(path, &changed_fns) {
+                    dirty.insert(path.as_str());
+                    if let Some(trace) = &mut trace
+                        && let Some(dependency) =
+                            self.first_changed_file_dependency(path, &changed_fns)
                     {
-                        dirty.insert(path.as_str());
                         let trigger = trace.function_trigger(dependency);
                         trace.file_event_with_trigger(
                             path,
@@ -1229,8 +1187,6 @@ impl Project {
                             Some(trigger),
                         );
                     }
-                } else if self.file_depends_on(path, &changed_fns) {
-                    dirty.insert(path.as_str());
                 }
                 // Conservatively: if any S3/S4 method slot changed, emit
                 // this file. S3 dispatch is dynamic; we cannot cheaply

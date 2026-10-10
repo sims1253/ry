@@ -85,12 +85,6 @@ fn unchecked_audit_regions(file: &SourceFile) -> Vec<Span> {
     unchecked
 }
 
-fn line_starts(src: &str) -> Vec<usize> {
-    std::iter::once(0)
-        .chain(src.match_indices('\n').map(|(index, _)| index + 1))
-        .collect()
-}
-
 /// The post-processing configuration shared by the CLI and the LSP.
 pub struct PostProcess<'a> {
     pub filter: &'a SeverityFilter,
@@ -107,18 +101,20 @@ impl PostProcess<'_> {
     /// severity filter. Suppression runs FIRST so a suppressed
     /// occurrence never reaches baseline subtraction (step 4) to
     /// consume a count its unsuppressed twin — the same
-    /// `(path, code, message)` key — needs. `comments` and `src` come
-    /// from the parsed/checked file; pass empty slices for diagnostics
-    /// with no source (they simply skip the suppression step).
+    /// `(path, code, message)` key — needs. Diagnostics with no source
+    /// `file` simply skip the suppression step.
     pub fn pre_demotion(
         &self,
         diagnostics: Vec<Diagnostic>,
-        comments: &[ry_core::ast::Comment],
-        src: &str,
         path: &str,
         file: Option<&SourceFile>,
     ) -> Vec<Diagnostic> {
-        let audit = self.unused_ignore_diagnostics(&diagnostics, comments, src, path, file);
+        let (comments, src) = file.map_or((&[][..], ""), |file| {
+            (file.comments.as_slice(), file.source.as_str())
+        });
+        let audit = file.map_or_else(Vec::new, |file| {
+            self.unused_ignore_diagnostics(&diagnostics, path, file)
+        });
         let mut diagnostics = crate::filter_suppressed_with_comments(diagnostics, comments, src);
         diagnostics.extend(audit);
         crate::apply_filter_to_diagnostics(&mut diagnostics, self.filter);
@@ -128,11 +124,10 @@ impl PostProcess<'_> {
     fn unused_ignore_diagnostics(
         &self,
         raw: &[Diagnostic],
-        comments: &[ry_core::ast::Comment],
-        src: &str,
         path: &str,
-        file: Option<&SourceFile>,
+        file: &SourceFile,
     ) -> Vec<Diagnostic> {
+        let (comments, src) = (file.comments.as_slice(), file.source.as_str());
         if self
             .filter
             .effective("RY113", crate::Severity::Warning)
@@ -154,11 +149,8 @@ impl PostProcess<'_> {
         // traversed for their return signatures with emissions discarded;
         // direct assigned functions and bare function definitions receive
         // a separate diagnostic walk. Unknown AST nodes are also opaque.
-        let Some(file) = file else {
-            return Vec::new();
-        };
         let uncovered = unchecked_audit_regions(file);
-        let line_starts = line_starts(src);
+        let line_starts = crate::diagnostics::line_starts(src);
         let mut unchecked_lines = vec![false; line_starts.len()];
         for region in uncovered {
             let first = line_starts
@@ -329,35 +321,22 @@ mod tests {
         }
     }
 
-    fn run(
-        diagnostics: Vec<Diagnostic>,
-        comments: &[ry_core::ast::Comment],
-        src: &str,
-        post: &PostProcess<'_>,
-    ) -> Vec<Diagnostic> {
+    fn run(diagnostics: Vec<Diagnostic>, src: &str, post: &PostProcess<'_>) -> Vec<Diagnostic> {
         let path = diagnostics
             .first()
             .map_or("a.R", |d| d.path.as_str())
             .to_string();
         let file = ry_core::RParser::new().unwrap().parse(&path, src).unwrap();
-        let mut diagnostics = post.pre_demotion(diagnostics, comments, src, &path, Some(&file));
+        let mut diagnostics = post.pre_demotion(diagnostics, &path, Some(&file));
         post.post_demotion(&mut diagnostics);
         diagnostics
     }
 
-    fn scan_comments(src: &str) -> Vec<ry_core::ast::Comment> {
-        ry_core::RParser::new()
-            .unwrap()
-            .parse("test.R", src)
-            .unwrap()
-            .comments
-    }
-
-    fn checked(src: &str) -> (Vec<Diagnostic>, Vec<ry_core::ast::Comment>) {
+    fn checked(src: &str) -> Vec<Diagnostic> {
         let file = ry_core::RParser::new().unwrap().parse("a.R", src).unwrap();
         let mut checker = crate::Checker::new("a.R");
         checker.check(&file);
-        (checker.take_diagnostics(), file.comments)
+        checker.take_diagnostics()
     }
 
     fn audit_filter() -> SeverityFilter {
@@ -369,11 +348,10 @@ mod tests {
     #[test]
     fn unused_ignore_is_opt_in_and_points_to_the_comment() {
         let src = "1L == 1L # ry: ignore[RY034]\n";
-        let (raw, comments) = checked(src);
+        let raw = checked(src);
         assert!(
             run(
                 raw.clone(),
-                &comments,
                 src,
                 &pipeline(&SeverityFilter::default(), None, Confidence::Low)
             )
@@ -381,12 +359,7 @@ mod tests {
         );
 
         let filter = audit_filter();
-        let findings = run(
-            raw,
-            &comments,
-            src,
-            &pipeline(&filter, None, Confidence::Low),
-        );
+        let findings = run(raw, src, &pipeline(&filter, None, Confidence::Low));
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].code, "RY113");
         assert!(findings[0].message.contains("RY034"));
@@ -397,14 +370,9 @@ mod tests {
     fn mixed_codes_and_duplicate_standalone_directives_use_raw_facts_independently() {
         let filter = audit_filter();
         let src = "1L == NA # ry: ignore[RY034, RY102]\n";
-        let (raw, comments) = checked(src);
+        let raw = checked(src);
         assert!(raw.iter().any(|d| d.code == "RY034"));
-        let findings = run(
-            raw,
-            &comments,
-            src,
-            &pipeline(&filter, None, Confidence::Low),
-        );
+        let findings = run(raw, src, &pipeline(&filter, None, Confidence::Low));
         assert_eq!(
             findings.iter().filter(|d| d.code == "RY113").count(),
             1,
@@ -414,13 +382,8 @@ mod tests {
 
         for (expression, expected_unused) in [("1L == NA", 0), ("1L == 1L", 2)] {
             let src = format!("# ry: ignore[RY034]\n# ry: ignore[RY034]\n\n{expression}\n");
-            let (raw, comments) = checked(&src);
-            let findings = run(
-                raw,
-                &comments,
-                &src,
-                &pipeline(&filter, None, Confidence::Low),
-            );
+            let raw = checked(&src);
+            let findings = run(raw, &src, &pipeline(&filter, None, Confidence::Low));
             assert_eq!(
                 findings.iter().filter(|d| d.code == "RY113").count(),
                 expected_unused,
@@ -439,17 +402,12 @@ mod tests {
             for expression in [used, corrected] {
                 let src =
                     format!("identity(function() {{\n  {expression} # ry: ignore[{code}]\n}})\n");
-                let (raw, comments) = checked(&src);
+                let raw = checked(&src);
                 assert!(
                     !raw.iter().any(|d| d.code == code),
                     "anonymous body is visited only in discarding mode: {raw:?}"
                 );
-                let findings = run(
-                    raw,
-                    &comments,
-                    &src,
-                    &pipeline(&filter, None, Confidence::Low),
-                );
+                let findings = run(raw, &src, &pipeline(&filter, None, Confidence::Low));
                 assert!(
                     !findings.iter().any(|d| d.code == "RY113"),
                     "{src}: {findings:?}"
@@ -457,22 +415,16 @@ mod tests {
             }
 
             let named_used = format!("f <- function() {{\n  {used} # ry: ignore[{code}]\n}}\n");
-            let (raw, comments) = checked(&named_used);
+            let raw = checked(&named_used);
             assert!(raw.iter().any(|d| d.code == code), "{named_used}: {raw:?}");
-            let findings = run(
-                raw,
-                &comments,
-                &named_used,
-                &pipeline(&filter, None, Confidence::Low),
-            );
+            let findings = run(raw, &named_used, &pipeline(&filter, None, Confidence::Low));
             assert!(!findings.iter().any(|d| d.code == "RY113"));
 
             let named_corrected =
                 format!("f <- function() {{\n  {corrected} # ry: ignore[{code}]\n}}\n");
-            let (raw, comments) = checked(&named_corrected);
+            let raw = checked(&named_corrected);
             let findings = run(
                 raw,
-                &comments,
                 &named_corrected,
                 &pipeline(&filter, None, Confidence::Low),
             );
@@ -486,7 +438,7 @@ mod tests {
     #[test]
     fn baseline_confidence_and_disabled_rules_do_not_invent_unused_facts() {
         let src = "1L == NA # ry: ignore[RY034]\n";
-        let (raw, comments) = checked(src);
+        let raw = checked(src);
         let original = raw.iter().find(|d| d.code == "RY034").unwrap();
         let baseline = Baseline {
             version: 1,
@@ -495,7 +447,7 @@ mod tests {
         let filter = audit_filter();
         let post = pipeline(&filter, Some(&baseline), Confidence::High);
         let file = ry_core::RParser::new().unwrap().parse("a.R", src).unwrap();
-        let pre = post.pre_demotion(raw, &comments, src, "a.R", Some(&file));
+        let pre = post.pre_demotion(raw, "a.R", Some(&file));
         assert!(!pre.iter().any(|d| d.code == "RY113"), "{pre:?}");
         let mut kept = pre;
         post.post_demotion(&mut kept);
@@ -504,16 +456,8 @@ mod tests {
         let mut disabled = audit_filter();
         disabled.add_ignore("RY034");
         let corrected = "1L == 1L # ry: ignore[RY034]\n";
-        let (raw, comments) = checked(corrected);
-        assert!(
-            run(
-                raw,
-                &comments,
-                corrected,
-                &pipeline(&disabled, None, Confidence::Low)
-            )
-            .is_empty()
-        );
+        let raw = checked(corrected);
+        assert!(run(raw, corrected, &pipeline(&disabled, None, Confidence::Low)).is_empty());
     }
 
     #[test]
@@ -526,13 +470,8 @@ mod tests {
             "1L == 1L # ry: ignore\n",
             "# ry: ignore-file\n1L == 1L # ry: ignore[RY034]\n",
         ] {
-            let (raw, comments) = checked(src);
-            let findings = run(
-                raw,
-                &comments,
-                src,
-                &pipeline(&filter, None, Confidence::Low),
-            );
+            let raw = checked(src);
+            let findings = run(raw, src, &pipeline(&filter, None, Confidence::Low));
             assert!(
                 !findings.iter().any(|d| d.code == "RY113"),
                 "{src}: {findings:?}"
@@ -543,28 +482,15 @@ mod tests {
     #[test]
     fn bare_ignore_cannot_hide_audit_and_severity_override_can_disable_it() {
         let src = "# ry: ignore\n1L == 1L # ry: ignore[RY034, RY113]\n";
-        let (raw, comments) = checked(src);
+        let raw = checked(src);
         let filter = audit_filter();
-        let findings = run(
-            raw,
-            &comments,
-            src,
-            &pipeline(&filter, None, Confidence::Low),
-        );
+        let findings = run(raw, src, &pipeline(&filter, None, Confidence::Low));
         assert!(findings.iter().any(|d| d.code == "RY113"), "{findings:?}");
 
         let mut disabled = filter;
         disabled.add_ignore("RY113");
-        let (raw, comments) = checked(src);
-        assert!(
-            run(
-                raw,
-                &comments,
-                src,
-                &pipeline(&disabled, None, Confidence::Low)
-            )
-            .is_empty()
-        );
+        let raw = checked(src);
+        assert!(run(raw, src, &pipeline(&disabled, None, Confidence::Low)).is_empty());
     }
 
     /// The #491 scenario: two identical `(path, code, message)`
@@ -584,7 +510,7 @@ mod tests {
             diag("a.R", Confidence::Medium, 0),
             diag("a.R", Confidence::Medium, 1),
         ];
-        let kept = run(diagnostics, &scan_comments(src), src, &post);
+        let kept = run(diagnostics, src, &post);
         assert!(
             kept.is_empty(),
             "the baseline count must absorb the unsuppressed twin, got {kept:?}"
@@ -604,7 +530,7 @@ mod tests {
             diag("a.R", Confidence::Medium, 0),
             diag("a.R", Confidence::High, 1),
         ];
-        let kept = run(diagnostics, &[], "", &post);
+        let kept = run(diagnostics, "", &post);
         // Threshold-first would drop the Medium before subtraction, the
         // High would eat the count, and nothing would survive.
         assert_eq!(kept.len(), 1);
@@ -624,7 +550,7 @@ mod tests {
         let filter = SeverityFilter::default();
         let post = pipeline(&filter, None, Confidence::High);
         let before = vec![diag("a.R", Confidence::High, 0)];
-        let mut diagnostics = post.pre_demotion(before, &[], "", "a.R", None);
+        let mut diagnostics = post.pre_demotion(before, "a.R", None);
         for diagnostic in &mut diagnostics {
             diagnostic.confidence = diagnostic.confidence.demote();
         }
@@ -643,12 +569,7 @@ mod tests {
         let src = "# ry: ignore-file\nbad\n";
         let filter = SeverityFilter::default();
         let post = pipeline(&filter, None, Confidence::Low);
-        let kept = run(
-            vec![diag("a.R", Confidence::Medium, 0)],
-            &scan_comments(src),
-            src,
-            &post,
-        );
+        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], src, &post);
         assert!(
             kept.is_empty(),
             "file-level suppression must drop everything"
@@ -657,18 +578,18 @@ mod tests {
         let mut ignoring = SeverityFilter::default();
         ignoring.add_ignore("RY010");
         let post = pipeline(&ignoring, None, Confidence::Low);
-        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], &[], "", &post);
+        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], "", &post);
         assert!(kept.is_empty(), "ignored rule must not survive the filter");
 
         let filter = SeverityFilter::default();
         let base = baseline(1);
         let post = pipeline(&filter, Some(&base), Confidence::Medium);
-        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], &[], "", &post);
+        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], "", &post);
         assert!(kept.is_empty(), "baseline must absorb the occurrence");
 
         let filter = SeverityFilter::default();
         let post = pipeline(&filter, None, Confidence::High);
-        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], &[], "", &post);
+        let kept = run(vec![diag("a.R", Confidence::Medium, 0)], "", &post);
         assert!(kept.is_empty(), "below-threshold must be dropped");
     }
 
@@ -691,7 +612,6 @@ mod tests {
         let absolute = temp.path().join("R/a.R");
         let kept = run(
             vec![diag(absolute.to_str().unwrap(), Confidence::Medium, 0)],
-            &[],
             "",
             &post,
         );

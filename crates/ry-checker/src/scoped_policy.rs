@@ -224,13 +224,7 @@ mod tests {
                 min_confidence: crate::Confidence::Low,
                 repo_root: Some(root),
             };
-            let result = post.pre_demotion(
-                checker.take_diagnostics(),
-                &file.comments,
-                src,
-                path_str,
-                Some(&file),
-            );
+            let result = post.pre_demotion(checker.take_diagnostics(), path_str, Some(&file));
             assert_eq!(
                 result.iter().any(|finding| finding.code == "RY113"),
                 audit_expected,

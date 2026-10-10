@@ -174,12 +174,7 @@ pub fn parse_suppressions_from_comments(
     src: &str,
 ) -> Vec<Suppression> {
     let src_lines: Vec<&str> = src.lines().collect();
-    let mut line_starts = Vec::with_capacity(src_lines.len());
-    let mut offset = 0;
-    for line in src.split_inclusive('\n') {
-        line_starts.push(offset);
-        offset += line.len();
-    }
+    let line_starts = line_starts(src);
     let mut suppressions = Vec::new();
     for c in comments {
         let Some(ParsedDirective::Line(kind, origin)) = parse_ignore_comment_body(&c.body) else {
@@ -449,6 +444,13 @@ fn looks_like_rule_code(token: &str) -> bool {
 fn bracket_suffix_is_prose(suffix: &str) -> bool {
     suffix.is_empty()
         || (suffix.starts_with(char::is_whitespace) && !suffix.trim_start().starts_with(['[', ']']))
+}
+
+/// Byte offset of each line start, including one past a final newline.
+pub(crate) fn line_starts(src: &str) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(src.match_indices('\n').map(|(index, _)| index + 1))
+        .collect()
 }
 
 fn comment_span(comment: &ry_core::ast::Comment, src: &str, line_starts: &[usize]) -> Span {

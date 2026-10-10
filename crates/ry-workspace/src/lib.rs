@@ -968,12 +968,8 @@ fn source_package_datasets(
                 } else {
                     out.bindings.extend(inventory.bindings);
                 }
-                match inventory.status {
-                    InventoryStatus::Missing => {
-                        out.degraded.push((path, InventoryFailure::ReadFailure));
-                    }
-                    InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
-                    InventoryStatus::Complete => {}
+                if let Some(reason) = inventory.status.failure() {
+                    out.degraded.push((path, reason));
                 }
             }
             "rds" => {
@@ -1098,12 +1094,8 @@ fn loaded_serialized_bindings(
             )
         }) {
             let inventory = serialized_inventory(&path, max_serialized_bytes);
-            match inventory.status {
-                InventoryStatus::Missing => {
-                    out.degraded.push((path, InventoryFailure::ReadFailure));
-                }
-                InventoryStatus::Unavailable(reason) => out.degraded.push((path, reason)),
-                InventoryStatus::Complete => {}
+            if let Some(reason) = inventory.status.failure() {
+                out.degraded.push((path, reason));
             }
             out.per_span.insert(span.start, inventory.bindings);
         }

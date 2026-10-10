@@ -53,38 +53,20 @@ impl Checker {
     // iterating `fns` refines their bodies alongside regular
     // functions; dispatch reads the refined slot via `s3_methods`.
     pub(crate) fn run_fixpoint(&mut self) {
-        self.run_fixpoint_inner(None, None);
+        self.run_fixpoint_scoped(None, None);
     }
 
-    pub(crate) fn run_fixpoint_traced(&mut self, trace: &mut TraceRecorder) {
-        self.run_fixpoint_inner(None, Some(trace));
-    }
-
-    /// Run the fixpoint, but only refine functions in `scope`. Functions
-    /// outside the scope keep their current (seeded) return type. Used by
-    /// `Project` for incremental checks where only a subset of functions
-    /// can have changed.
+    /// Run the fixpoint, but only refine functions in `scope` when given.
+    /// Functions outside the scope keep their current (seeded) return type.
+    /// Used by `Project` for incremental checks where only a subset of
+    /// functions can have changed.
     ///
     /// The set must include every function whose definition or callees
     /// changed; functions outside the set are assumed stable. The fixpoint
     /// still iterates until convergence *within the scope* — a scoped
     /// function whose return type changes can still affect other scoped
     /// functions that call it.
-    pub(crate) fn run_fixpoint_scoped(&mut self, scope: &HashSet<String>) {
-        self.run_fixpoint_inner(Some(scope), None);
-    }
-
-    pub(crate) fn run_fixpoint_scoped_traced(
-        &mut self,
-        scope: &HashSet<String>,
-        trace: &mut TraceRecorder,
-    ) {
-        self.run_fixpoint_inner(Some(scope), Some(trace));
-    }
-
-    /// Shared fixpoint loop. When `scope` is `None`, refines all functions;
-    /// when `Some`, only functions in the scope set.
-    fn run_fixpoint_inner(
+    pub(crate) fn run_fixpoint_scoped(
         &mut self,
         scope: Option<&HashSet<String>>,
         mut trace: Option<&mut TraceRecorder>,
@@ -568,7 +550,7 @@ mod tests {
         let mut checker = collected(
             "a <- function(x) b(x)\nb <- function(x) cc(x)\ncc <- function(x) substitute(x)\nstable <- function() 1L",
         );
-        checker.run_fixpoint_scoped(&HashSet::from(["stable".to_string()]));
+        checker.run_fixpoint_scoped(Some(&HashSet::from(["stable".to_string()])), None);
         assert!(checker.fn_table.fns["a"].params[0].quoting);
         assert!(!checker.refinement_counts.contains_key("a"));
     }

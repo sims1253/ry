@@ -72,6 +72,16 @@ pub struct SourceFile {
     pub function_bodies: Vec<FunctionBody>,
 }
 
+impl SourceFile {
+    /// The native path, which differs from the display path for non-UTF-8
+    /// filenames; falls back to the display path for unsaved sources.
+    pub fn native_or_display_path(&self) -> &std::path::Path {
+        self.native_path
+            .as_deref()
+            .unwrap_or(std::path::Path::new(&self.path))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputIssue {
     pub span: Span,

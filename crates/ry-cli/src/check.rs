@@ -73,10 +73,8 @@ pub(crate) fn run_check(
         .map(|path| {
             if path.as_os_str() == "-" {
                 stdin_path
-                    .as_ref()
-                    .and_then(|path| path.parent())
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .as_deref()
+                    .map_or(std::path::Path::new("."), source_parent)
                     .to_path_buf()
             } else {
                 path.clone()
@@ -144,6 +142,13 @@ pub(crate) fn run_check(
     })?;
     let color_choice = color;
     let color = color.enabled(format);
+    // An early exit still needs a complete machine-readable report.
+    let print_empty_report = || {
+        print!(
+            "{}",
+            render_diagnostics(&[], format, &HashMap::new(), color)
+        )
+    };
     let filter = ry_checker::filter_from_config(&cfg);
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
@@ -193,12 +198,7 @@ pub(crate) fn run_check(
         for root in &missing {
             eprintln!("ry: {}: no such file or directory", root.display());
         }
-        // Keep the machine-readable stream well-formed: an empty report,
-        // same as the empty-discovery branch below.
-        print!(
-            "{}",
-            render_diagnostics(&[], format, &HashMap::new(), color)
-        );
+        print_empty_report();
         return Ok(discovery_exit_code(&cfg));
     }
 
@@ -226,10 +226,7 @@ pub(crate) fn run_check(
             .read_to_end(&mut bytes);
         if let Err(error) = read_result {
             eprintln!("ry: stdin for {}: {error}", path.display());
-            print!(
-                "{}",
-                render_diagnostics(&[], format, &HashMap::new(), color)
-            );
+            print_empty_report();
             return Ok(discovery_exit_code(&cfg));
         }
         if bytes.len() as u64 > limit {
@@ -237,10 +234,7 @@ pub(crate) fn run_check(
                 "ry: stdin for {} exceeds index.max-file-bytes ({limit} bytes)",
                 path.display()
             );
-            print!(
-                "{}",
-                render_diagnostics(&[], format, &HashMap::new(), color)
-            );
+            print_empty_report();
             return Ok(discovery_exit_code(&cfg));
         }
         let identity = overlay_identity.expect("stdin path has an identity");
@@ -280,11 +274,7 @@ pub(crate) fn run_check(
     // in watch mode (#485): an unreadable root is a discovery failure,
     // not a quiet empty set. Non-watch behavior is unchanged.
     if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
-        // An empty discovery result still needs a complete machine-readable report.
-        print!(
-            "{}",
-            render_diagnostics(&[], format, &HashMap::new(), color)
-        );
+        print_empty_report();
         if scan.read_errors.is_empty() {
             let roots = search_roots
                 .iter()
@@ -1244,20 +1234,19 @@ fn run_check_once(
     let mut degraded: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     // Parallel parsing through the shared thread-local parser pool.
-    let parsed_with_paths =
-        pipeline::parse_files_with_native_paths(paths, overlay, report_check_parse_failure)
-            .expect("check's parse-failure policy never aborts");
-    parse_errors += paths.len() - parsed_with_paths.len();
-    let mut parsed = Vec::with_capacity(parsed_with_paths.len());
-    let mut native_files = Vec::with_capacity(parsed_with_paths.len());
-    for (native_path, parsed_file) in parsed_with_paths {
+    let all_parsed = pipeline::parse_files(paths, overlay, report_check_parse_failure)
+        .expect("check's parse-failure policy never aborts");
+    parse_errors += paths.len() - all_parsed.len();
+    let mut parsed = Vec::with_capacity(all_parsed.len());
+    for parsed_file in all_parsed {
         file_count += 1;
         srcs.insert(parsed_file.path.clone(), parsed_file.source.clone());
-        if !ry_workspace::reports::is_report_path(&native_path)
+        let native_path = parsed_file.native_or_display_path();
+        if !ry_workspace::reports::is_report_path(native_path)
             && is_probably_not_r_source(&parsed_file)
         {
             synthetic_diagnostics.push((
-                native_path,
+                native_path.to_path_buf(),
                 ry_checker::Diagnostic::new(
                     ry_checker::Severity::Info,
                     ry_core::Span::new(0, 1, 0, 0),
@@ -1267,7 +1256,6 @@ fn run_check_once(
                 ),
             ));
         } else {
-            native_files.push((native_path, Arc::clone(&parsed_file)));
             parsed.push(parsed_file);
         }
     }
@@ -1282,7 +1270,7 @@ fn run_check_once(
         &[ctx.repo_root],
     )?;
 
-    let adopted = pipeline::adopted_records(&native_files, ctx.resolution_config);
+    let adopted = pipeline::adopted_records(&parsed, ctx.resolution_config);
     // Declined records originate from scoped UTF-8 native paths, so these
     // synthesized paths preserve their authored file identity.
     synthetic_diagnostics.extend(
@@ -1332,20 +1320,14 @@ fn run_check_once(
         let file = &parsed[*index];
         let filter = ctx
             .scoped_policy
-            .filter_for(&native_files[*index].0, ctx.filter);
+            .filter_for(file.native_or_display_path(), ctx.filter);
         let post = ry_checker::PostProcess {
             filter: &filter,
             baseline: ctx.baseline,
             min_confidence: ctx.min_confidence,
             repo_root: ctx.repo_root,
         };
-        *diags = post.pre_demotion(
-            std::mem::take(diags),
-            &file.comments,
-            &file.source,
-            path.as_str(),
-            Some(file.as_ref()),
-        );
+        *diags = post.pre_demotion(std::mem::take(diags), path.as_str(), Some(file.as_ref()));
     }
     // File-level synthetic findings have no unambiguous source comment to
     // honor, so they enter the pipeline at the severity filter.
@@ -2476,11 +2458,12 @@ mod tests {
         let file = parser
             .parse("a.R", "f <- function(x = 1L) { y <- x\n y }\n")
             .unwrap();
-        let records = check_project_with_scope_capture(CheckInput {
+        let input = CheckInput {
             files: vec![("a.R".to_string(), Arc::new(file))],
             user_stubs: Arc::new(BTreeMap::new()),
             workspace: Default::default(),
-        });
+        };
+        let records = check_project_with_scope_capture(input);
         assert_eq!(records.len(), 1);
         let (path, file_records) = &records[0];
         assert_eq!(path, "a.R");

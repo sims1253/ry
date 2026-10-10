@@ -129,7 +129,7 @@ pub fn is_single_file_walk_admitted(
     limits: &DiscoveryLimits,
     check_test_fixtures: bool,
 ) -> bool {
-    if !is_source_path(path) {
+    if !is_r_source_path(path) {
         return false;
     }
     // The walk never follows symlinks; classify the entry itself.
@@ -345,7 +345,7 @@ pub struct SkippedPaths {
 
 impl SkippedPaths {
     fn record(&mut self, path: &Path, directory: bool, reason: &'static str, limit: usize) {
-        if !directory && !is_source_path(path) {
+        if !directory && !is_r_source_path(path) {
             return;
         }
         if self.entries.len() < limit {
@@ -388,7 +388,11 @@ impl BuildIgnoredIncludes {
 /// checks that cannot afford a full walk (watched-file events, close-time
 /// refresh) classify through this; callers apply `reports.enabled`.
 pub fn is_r_source_path(path: &Path) -> bool {
-    is_source_path(path)
+    crate::reports::is_report_path(path)
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| R_EXTENSIONS.contains(&ext))
 }
 
 const R_EXTENSIONS: [&str; 5] = ["R", "r", "S", "s", "q"];
@@ -405,14 +409,6 @@ pub fn source_extension_globs() -> impl Iterator<Item = String> {
                 .map(|letter| format!("[{}{letter}]", letter.to_ascii_uppercase()))
                 .collect()
         }))
-}
-
-fn is_source_path(path: &Path) -> bool {
-    crate::reports::is_report_path(path)
-        || path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| R_EXTENSIONS.contains(&ext))
 }
 
 /// Result of a bounded directory discovery.
@@ -700,7 +696,7 @@ fn discover_recursive(
                 has_excludes,
                 exclude_root,
             );
-        } else if is_source_path(&path) {
+        } else if is_r_source_path(&path) {
             if crate::reports::is_report_path(&path) && !reports_enabled {
                 skipped.record(&path, false, "reports.enabled = false", limits.max_files);
                 continue;

@@ -495,21 +495,6 @@ impl LanguageServer for Backend {
                 self.wake_reconciliation().await;
                 return;
             }
-            // A landed refresh already claimed the next generation inside
-            // its commit critical section, retiring any stale in-flight
-            // background pass (the pass checks the generation before
-            // writing); what remains here is the respawn duty. A newer
-            // pass started afterwards still wins, as usual. Nothing bumps
-            // when no refresh landed — an event for an open document
-            // (e.g. every save) retires nothing. When the retired pass
-            // was the initial index, its completion can no longer clear
-            // `initial_index_pending`, so a fresh pass takes over that
-            // duty; without it publications would stay gated for the rest
-            // of the session.
-            let index_pending = { self.state.lock().await.initial_index_pending };
-            if index_pending {
-                self.spawn_background_index().await;
-            }
             // A landed refresh updates the parse but not the resolution
             // context: advance the owning package groups through the same
             // resolution pass the scan uses before publishing, so a
@@ -528,23 +513,7 @@ impl LanguageServer for Backend {
                 landed.iter().map(|(path, _)| path.clone()).collect(),
             )
             .await;
-            // Test seam: park between the context/publication settlement
-            // and the obligation acknowledgement (see `test_seam`).
-            #[cfg(feature = "test-util")]
-            crate::test_seam::maybe_pause_publication_ack().await;
-            // Publication scheduled and context settled: the landed
-            // obligations are complete — acknowledged with the landing's
-            // own epoch, so an older refresh completing late cannot
-            // retire a newer event's re-armed obligation. Unsettled ones
-            // stay for the driver.
-            {
-                let mut state = self.state.lock().await;
-                for (path, epoch) in &ctx_settled {
-                    state
-                        .reconciliation
-                        .complete_pending_publication(path, *epoch);
-                }
-            }
+            self.acknowledge_publications(&ctx_settled).await;
         }
 
         self.republish_all_open_documents().await;
@@ -618,41 +587,15 @@ impl LanguageServer for Backend {
             .refresh_disk_entry(std::path::PathBuf::from(&path))
             .await;
         if let Some(epoch) = refreshed_epoch {
-            // The same retirement the watched-file path relies on: the
-            // close-time refresh already claimed the next generation
-            // inside its commit critical section, so a still-current
-            // in-flight background pass — whose walk may have read this
-            // file before the save — cannot replace the whole map with
-            // its older snapshot when it commits (#526). When the
-            // retired pass was the initial index, a fresh pass takes
-            // over clearing `initial_index_pending` so publications
-            // never strand.
-            let index_pending = { self.state.lock().await.initial_index_pending };
-            if index_pending {
-                self.spawn_background_index().await;
-            }
-            // Same staleness as the watched path: the saved bytes are
-            // indexed but their resolution entries are not (#527). The
-            // close's own publications (the empty clear below plus the
-            // remaining documents' reschedule) carry the publication
-            // duty for a settled group; an unsettled group keeps the
-            // obligation for the reconciliation driver.
-            // The close's `path` is done — moved into the pairs below —
-            // because every later step keys on `uri`.
+            // The close-time refresh already claimed the next generation, so
+            // a still-current background pass whose walk may have read this
+            // file before the save cannot replace the map with its older
+            // snapshot (#526). The saved bytes still need their resolution
+            // entries (#527); the close's own publications (the empty clear
+            // below plus the remaining documents' reschedule) carry the
+            // publication duty for a settled group.
             let ctx_settled = self.refresh_package_contexts(&[(path, epoch)]).await;
-            // Test seam: park between the context/publication
-            // settlement and the obligation acknowledgement (see
-            // `test_seam`).
-            #[cfg(feature = "test-util")]
-            crate::test_seam::maybe_pause_publication_ack().await;
-            {
-                let mut state = self.state.lock().await;
-                for (settled, settled_epoch) in ctx_settled {
-                    state
-                        .reconciliation
-                        .complete_pending_publication(&settled, settled_epoch);
-                }
-            }
+            self.acknowledge_publications(&ctx_settled).await;
         }
         // Clear diagnostics for the closed document so stale squiggles
         // don't linger after the user closes the file.

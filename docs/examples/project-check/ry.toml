@@ -1,3 +1,0 @@
-# Optional: commit a reviewed baseline and uncomment the next line.
-# baseline = "ry-baseline.json"
-error-on-warning = true

@@ -68,8 +68,23 @@ can run:
 - run: ry check --output-format github .
 ```
 
-For a pinned release install, a project-wide pre-commit/prek hook, and a
-complete workflow, see the [project-check example](examples/project-check/README.md).
+To pin a release in CI, install it with that release's installer
+(`https://github.com/sims1253/ry/releases/download/v<version>/ry-cli-installer.sh`).
+
+For a pre-commit or prek hook, run ry once over the whole project rather than
+per file, so a change to `ry.toml`, a baseline, or `NAMESPACE` is also checked:
+
+``` yaml
+repos:
+  - repo: local
+    hooks:
+      - id: ry-project
+        name: ry project check
+        entry: ry check .
+        language: system
+        pass_filenames: false
+        always_run: true
+```
 
 ## R Markdown and Quarto inputs
 

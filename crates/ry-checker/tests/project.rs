@@ -1633,3 +1633,177 @@ fn scalar_fact_follows_project_method_edits_warm_and_cold() {
         }
     }
 }
+
+type Files<'a> = &'a [(&'a str, &'a str)];
+
+enum Edit {
+    Update(&'static str, &'static str),
+    Remove(&'static str),
+    Reorder(&'static [&'static str]),
+}
+
+/// Every check mode transition must agree with a fresh cold project after
+/// removals, renames, shadowing flips, reorders, and bounded fixpoints.
+/// Reference capture also forces every file through emission, so the
+/// facts are compared in full.
+#[test]
+fn check_mode_transitions_match_fresh_projects() {
+    const PAIR: Files<'static> = &[
+        ("leaf.R", "leaf <- function() 1L"),
+        ("caller.R", "caller <- function() leaf()\nx <- caller()"),
+    ];
+    const GONE: Files<'static> = &[
+        ("gone.R", "f <- function() 1L"),
+        ("keep.R", "g <- function() 2L"),
+    ];
+    let chain: String = (0..12)
+        .map(|index| match index {
+            11 => "f11 <- function() 1L\n".to_string(),
+            _ => format!("f{index:02} <- function() f{:02}()\n", index + 1),
+        })
+        .collect();
+    let cases: &[(Files<'_>, &[Edit])] = &[
+        (
+            PAIR,
+            &[
+                Edit::Update("leaf.R", "leaf <- function() 2L"),
+                Edit::Update("leaf.R", "leaf <- function() 'changed'"),
+                Edit::Update("leaf.R", "renamed <- function() 2L"),
+            ],
+        ),
+        (
+            PAIR,
+            &[Edit::Update(
+                "leaf.R",
+                "library(stats)\nleaf <- function() 1L",
+            )],
+        ),
+        (
+            &[
+                ("leaf.R", "leaf <- function(x) x"),
+                ("caller.R", "caller <- function() leaf(x = 1L)"),
+            ],
+            &[
+                Edit::Update("leaf.R", "leaf <- function(y) y"),
+                Edit::Update("leaf.R", "other <- function() 1L"),
+            ],
+        ),
+        (GONE, &[Edit::Remove("gone.R")]),
+        (GONE, &[Edit::Update("gone.R", "renamed <- function() 3L")]),
+        (
+            &[
+                ("early.R", "f <- function() 1L"),
+                ("late.R", "f <- function() 2L"),
+                ("use.R", "x <- f() + 1L"),
+            ],
+            &[Edit::Remove("late.R")],
+        ),
+        (
+            &[
+                ("use.R", "x <- f() + 1L"),
+                ("z.R", "f <- function() 1L"),
+                ("a.R", "f <- function() 'str'"),
+            ],
+            &[Edit::Reorder(&["a.R", "use.R", "z.R"])],
+        ),
+        (
+            &[("a.R", "f <- function() 1L"), ("b.R", "g <- function() 2L")],
+            &[Edit::Reorder(&["b.R", "a.R"])],
+        ),
+        (
+            &[
+                ("leaves.R", "b <- function() 1L\nc <- function() 2L"),
+                ("caller.R", "a <- function() b() + c()"),
+            ],
+            &[Edit::Update(
+                "leaves.R",
+                "b <- function() 'new'\nc <- function() 'value'",
+            )],
+        ),
+        (
+            &[("chain.R", chain.as_str())],
+            &[Edit::Update("chain.R", "f11 <- function() 'x'")],
+        ),
+    ];
+
+    fn checked(project: &mut Project, cold: bool, capture: bool) -> String {
+        let diagnostics = if cold {
+            project.check()
+        } else {
+            project.check_incremental()
+        };
+        if capture {
+            format!("{diagnostics:?}\n{:?}", project.take_reference_facts())
+        } else {
+            format!("{diagnostics:?}")
+        }
+    }
+
+    fn fresh(files: &[(String, String)], capture: bool) -> String {
+        let mut project = Project::new();
+        if capture {
+            project.enable_reference_capture();
+        }
+        for (path, source) in files {
+            project.add_file(path.clone(), parse(path, source));
+        }
+        checked(&mut project, true, capture)
+    }
+
+    for (index, (initial, edits)) in cases.iter().enumerate() {
+        for initial_cold in [false, true] {
+            for next_cold in [false, true] {
+                for capture in [false, true] {
+                    let context =
+                        format!("case {index}, cold {initial_cold}/{next_cold}, capture {capture}");
+                    let mut files: Vec<(String, String)> = initial
+                        .iter()
+                        .map(|(path, source)| (path.to_string(), source.to_string()))
+                        .collect();
+                    let mut project = Project::new();
+                    if capture {
+                        project.enable_reference_capture();
+                    }
+                    for (path, source) in &files {
+                        project.add_file(path.clone(), parse(path, source));
+                    }
+                    assert_eq!(
+                        checked(&mut project, initial_cold, capture),
+                        fresh(&files, capture),
+                        "{context}: initial"
+                    );
+                    for edit in *edits {
+                        match edit {
+                            Edit::Update(path, source) => {
+                                project
+                                    .update_file(path.to_string(), Arc::new(parse(path, source)));
+                                files.iter_mut().find(|(p, _)| p == path).unwrap().1 =
+                                    source.to_string();
+                            }
+                            Edit::Remove(path) => {
+                                project.remove_file(path);
+                                files.retain(|(p, _)| p != path);
+                            }
+                            Edit::Reorder(_) if initial_cold => {
+                                // `check()` keeps no pass-1 cache, so a later
+                                // reorder cannot find the flipped winner.
+                                continue;
+                            }
+                            Edit::Reorder(order) => {
+                                let order: Vec<String> =
+                                    order.iter().map(|path| path.to_string()).collect();
+                                project.reorder_files(&order);
+                                files.sort_by_key(|(p, _)| order.iter().position(|o| o == p));
+                            }
+                        }
+                        assert_eq!(
+                            checked(&mut project, next_cold, capture),
+                            fresh(&files, capture),
+                            "{context}: after edit"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

@@ -35,16 +35,11 @@ pub mod rules;
 mod scoped_policy;
 pub use scoped_policy::ScopedRulePolicy;
 pub mod semantic_lists;
-pub mod trace;
 pub mod typehint;
 
 pub use declaration_check::append_diagnostics as append_declaration_diagnostics;
 pub use declaration_check::{DeclarationFinding, DeclarationFindingKind};
 pub use project::Project;
-pub use trace::{
-    ProjectTrace, TraceCompletion, TraceEvent, TraceEventKind, TraceFileId, TraceFunctionId,
-    TraceOptions, TraceReason, TraceTrigger,
-};
 // Re-export the diagnostic data types and suppression helpers at the
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).

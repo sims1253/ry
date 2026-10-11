@@ -289,6 +289,15 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
         assert!(stderr.contains("bad�.R"), "{stderr}");
     }
 
+    // Exports without annotations do not attach records, so they succeed.
+    for flags in [&[][..], &["--references"][..]] {
+        let output = invoke(
+            temp.path(),
+            &[&["dump-facts", "R/bad�.R"][..], flags].concat(),
+        );
+        assert!(output.success(), "{flags:?}: {output:?}");
+    }
+
     fs::write(
         temp.path().join("ry.toml"),
         ADOPT.replace("adopt = true", "adopt = false"),

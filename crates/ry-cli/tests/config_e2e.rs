@@ -141,20 +141,36 @@ fn scoped_severity_matches_native_filenames() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
+    // Each source yields one RY040 whose message names its operand order.
+    let text_first = ("\"text\" + 1L\n", "`character` and `integer`");
+    let integer_first = ("1L + \"text\"\n", "`integer` and `character`");
+    let backslash = OsString::from("back\\slash.R");
     let mut cases = vec![
-        ("back\\slash.R", OsString::from("back\\slash.R"), "error"),
-        ("back\\slash.R", OsString::from("back/slash.R"), "warning"),
+        ("back\\slash.R", vec![(backslash, text_first, "error")]),
+        (
+            "back\\slash.R",
+            vec![(OsString::from("back/slash.R"), text_first, "warning")],
+        ),
     ];
     // APFS requires valid UTF-8 filenames.
     if cfg!(not(target_os = "macos")) {
-        cases.push(("bad\u{fffd}.R", OsString::from("bad\u{fffd}.R"), "error"));
+        let unicode = OsString::from("bad\u{fffd}.R");
+        let raw = OsString::from_vec(b"bad\xff.R".to_vec());
         cases.push((
             "bad\u{fffd}.R",
-            OsString::from_vec(b"bad\xff.R".to_vec()),
-            "warning",
+            vec![(unicode.clone(), text_first, "error")],
+        ));
+        cases.push(("bad\u{fffd}.R", vec![(raw.clone(), text_first, "warning")]));
+        // Both display as `bad\u{fffd}.R` in one run yet keep their own policy.
+        cases.push((
+            "bad\u{fffd}.R",
+            vec![
+                (raw, text_first, "warning"),
+                (unicode, integer_first, "error"),
+            ],
         ));
     }
-    for (pattern, file, severity) in cases {
+    for (pattern, files) in cases {
         let temp = tempfile::tempdir().unwrap();
         fs::write(
             temp.path().join("ry.toml"),
@@ -163,16 +179,25 @@ fn scoped_severity_matches_native_filenames() {
             ),
         )
         .unwrap();
-        let path = temp.path().join(&file);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "\"text\" + 1L\n").unwrap();
-        let output = ry!()
-            .args(["check", "--output-format", "json"])
-            .arg(&path)
-            .run();
-        let findings = output.findings();
-        assert_eq!(findings.len(), 1, "{file:?}: {output:?}");
-        assert_eq!(findings[0][1..], ["RY040", severity], "{file:?}");
+        let mut process = ry!().args(["check", "--output-format", "json"]);
+        for (file, (source, _), _) in &files {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, source).unwrap();
+            process = process.arg(path);
+        }
+        let output = process.run();
+        let findings = output.json();
+        let findings = findings.as_array().unwrap();
+        assert_eq!(findings.len(), files.len(), "{output:?}");
+        for (file, (_, operands), severity) in &files {
+            let finding = findings
+                .iter()
+                .find(|finding| finding["message"].as_str().unwrap().contains(operands))
+                .unwrap_or_else(|| panic!("{file:?}: {output:?}"));
+            assert_eq!(finding["code"], "RY040");
+            assert_eq!(finding["severity"], *severity, "{file:?}");
+        }
     }
 }
 
@@ -1154,26 +1179,30 @@ fn project_renv_library_precedes_global_libraries() {
     );
 }
 
-/// A missing `R_LIBS` root falls back to the user and then the site library,
-/// and a `%v` placeholder searches below its prefix. A package consumer
-/// reports every name its import does not supply.
+/// Library selection seen through a package import: `R_LIBS` roots keep
+/// their order, a project renv library precedes them, a missing root falls
+/// back to the user and then the site library, and a `%v` placeholder picks
+/// the current R version below its prefix. The consumer reports every name
+/// its import does not supply.
 #[test]
 fn library_environment_selects_the_installed_namespace() {
     let tmp = tempfile::tempdir().unwrap();
     let path = |name: &str| tmp.path().join(name);
-    install_fixture_package_with_export(&path("user library"), "user_export");
-    install_fixture_package_with_export(&path("site library"), "site_export");
-    install_fixture_package_with_export(&path("versioned"), "direct_export");
-    install_fixture_package_with_export(&path("versioned/4.3"), "old_export");
-    install_fixture_package_with_export(&path("versioned/4.4"), "new_export");
-    let names = [
-        "user_export",
-        "site_export",
-        "direct_export",
-        "old_export",
-        "new_export",
-    ];
     let package = path("consumer");
+    let libraries = [
+        ("user library", "user_export"),
+        ("site library", "site_export"),
+        ("unversioned", "direct_export"),
+        ("versioned/4.3", "old_export"),
+        ("versioned/4.4", "new_export"),
+        ("consumer/renv/library", "renv_export"),
+    ];
+    for (library, export) in libraries {
+        install_fixture_package_with_export(&path(library), export);
+    }
+    for version in ["4.3", "4.4"] {
+        install_fixture_r_home(&path(&format!("r-home-{version}")), &format!("{version}.1"));
+    }
     fs::create_dir_all(package.join("R")).unwrap();
     fs::write(
         package.join("DESCRIPTION"),
@@ -1181,27 +1210,82 @@ fn library_environment_selects_the_installed_namespace() {
     )
     .unwrap();
     fs::write(package.join("NAMESPACE"), "import(fixturepkg)\n").unwrap();
-    let source: String = names.iter().map(|name| format!("x <- {name}\n")).collect();
+    let source: String = libraries
+        .iter()
+        .map(|(_, name)| format!("x <- {name}\n"))
+        .collect();
     fs::write(package.join("R/use.R"), source).unwrap();
 
-    let missing = path("missing library");
-    let placeholder = path("versioned/%v");
-    let cases: [(&[(&str, &Path)], &str); 3] = [
+    let missing = path("missing library").into_os_string();
+    let roots = |names: &[&str]| std::env::join_paths(names.iter().map(|name| path(name))).unwrap();
+    let placeholder = path("versioned/%v").into_os_string();
+    // (environment, whether the project renv library exists, supplied export)
+    let cases = [
         (
-            &[("R_LIBS", &missing), ("R_LIBS_USER", &path("user library"))],
+            vec![("R_LIBS", roots(&["user library", "site library"]))],
+            false,
             "user_export",
         ),
         (
-            &[
-                ("R_LIBS", &missing),
-                ("R_LIBS_USER", &missing),
-                ("R_LIBS_SITE", &path("site library")),
-            ],
+            vec![("R_LIBS", roots(&["site library", "user library"]))],
+            false,
             "site_export",
         ),
-        (&[("R_LIBS", &placeholder)], "direct_export"),
+        (
+            vec![("R_LIBS", roots(&["user library"]))],
+            true,
+            "renv_export",
+        ),
+        (
+            vec![
+                ("R_LIBS", missing.clone()),
+                ("R_LIBS_USER", roots(&["user library"])),
+            ],
+            false,
+            "user_export",
+        ),
+        (
+            vec![
+                ("R_LIBS", missing.clone()),
+                ("R_LIBS_USER", missing.clone()),
+                ("R_LIBS_SITE", roots(&["site library"])),
+            ],
+            false,
+            "site_export",
+        ),
+        (
+            vec![("R_LIBS", path("unversioned/%v").into_os_string())],
+            false,
+            "direct_export",
+        ),
+        (
+            vec![
+                ("R_LIBS", placeholder.clone()),
+                ("R_HOME", roots(&["r-home-4.3"])),
+            ],
+            false,
+            "old_export",
+        ),
+        (
+            vec![
+                ("R_LIBS", placeholder.clone()),
+                ("R_HOME", roots(&["r-home-4.4"])),
+            ],
+            false,
+            "new_export",
+        ),
     ];
-    for (env, supplied) in cases {
+    let renv = package.join("renv");
+    for (env, with_renv, supplied) in cases {
+        let renv_backup = path("renv-backup");
+        if with_renv != renv.exists() {
+            let (from, to) = if with_renv {
+                (&renv_backup, &renv)
+            } else {
+                (&renv, &renv_backup)
+            };
+            fs::rename(from, to).unwrap();
+        }
         // Only the child's environment is isolated, and only to these roots.
         let mut process = ry!()
             .args(["check", "--output-format", "json"])
@@ -1219,12 +1303,16 @@ fn library_environment_selects_the_installed_namespace() {
         ] {
             process = process.env_remove(key);
         }
-        for (key, value) in env {
+        for (key, value) in &env {
             process = process.env(key, value);
         }
         let output = process.run();
         assert!(output.success(), "{output:?}");
-        let expected: Vec<_> = names.into_iter().filter(|name| *name != supplied).collect();
+        let expected: Vec<_> = libraries
+            .iter()
+            .map(|(_, name)| *name)
+            .filter(|name| *name != supplied)
+            .collect();
         assert_eq!(unbound_names(&output), expected, "{env:?}");
     }
 }

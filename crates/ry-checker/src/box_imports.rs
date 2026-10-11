@@ -1051,24 +1051,17 @@ impl Checker {
             .collect();
         let matches = infer::match_arguments(&names, args);
         if self.validate_user_call_arguments {
-            self.check_box_call_arguments(name, &function.params, args, &matches, span);
+            self.check_call_arity(name, &function.params, args, &matches, true, span);
         }
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index]
                 .or(matches.dots)
                 .and_then(|index| function.params.get(index));
-            match parameter {
-                Some(parameter) if parameter.quoting => {
-                    let mut quoted = scope.independent_execution_scope();
-                    self.infer_discarding(&argument.value, &mut quoted);
-                }
-                Some(parameter) if parameter.defused => {
-                    let mut masked = scope.clone().with_unknown_data_mask();
-                    self.infer(&argument.value, &mut masked);
-                }
-                _ => {
-                    self.infer(&argument.value, scope);
-                }
+            if parameter
+                .and_then(|parameter| self.infer_user_param_arg(parameter, &argument.value, scope))
+                .is_none()
+            {
+                self.infer(&argument.value, scope);
             }
         }
         function.return_type.clone()

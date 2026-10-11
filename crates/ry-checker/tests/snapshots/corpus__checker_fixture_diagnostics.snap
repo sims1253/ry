@@ -1605,9 +1605,17 @@ expression: snapshots
       severity: warning
       span:
         column: 0
-        end: 82
+        end: 89
         line: 2
-        start: 64
+        start: 71
+    - code: RY091
+      message: "missing required argument `x` in call to `vec_cast`"
+      severity: warning
+      span:
+        column: 0
+        end: 120
+        line: 3
+        start: 90
   fixture: err_vctrs_vec_cast_missing_to.R
 - diagnostics: []
   fixture: ok_ambient_globals.R

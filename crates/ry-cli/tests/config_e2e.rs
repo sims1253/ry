@@ -626,7 +626,12 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
         std::path::Path::new("."),
         std::path::Path::new("./fixtures"),
     ] {
-        let output = ry_check_in(tmp.path(), root);
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(tmp.path())
+            .arg("check")
+            .arg(root)
+            .output()
+            .unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),

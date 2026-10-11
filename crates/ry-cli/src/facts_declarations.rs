@@ -1,5 +1,4 @@
 //! Annotation-record serializer for the existing `dump-facts` export.
-//! The public schema selector is enabled in #594, with real source records.
 
 use miette::{Result, miette};
 use ry_core::SourceFile;

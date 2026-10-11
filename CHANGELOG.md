@@ -20,6 +20,17 @@ All notable changes to ry are documented in this file.
 - Check a source buffer with `ry check - --stdin-filename PATH`. The buffer
   replaces its disk source and uses the same project context and diagnostics
   as a saved file (#582).
+- Check the R chunks of R Markdown and Quarto reports when
+  `[reports] enabled = true`. RY120 marks report input ry cannot extract;
+  RY121 marks chunk execution it cannot determine statically (#587).
+- Adopt `typehint` 0.1.0 class comments in files selected by
+  `[annotations.typehint]`. RY114-RY117 report declaration mismatches,
+  incomplete, conflicting, and invalid declarations;
+  `dump-facts --annotations` exports them as fact schema 3 (#599, #603, #614).
+- Add the default-off RY113 unused-ignore audit for selective `ry: ignore[...]`
+  comments on RY034 and RY102; enable it with `--warn RY113` (#600).
+- Document checking against a uvr project library through `R_LIBS` (#615)
+  and the Arch Linux AUR packages (#590).
 
 ### Changed
 
@@ -37,6 +48,10 @@ All notable changes to ry are documented in this file.
   call or replacement assignment, before or after the assertion, drops it.
   Preserve a proven vector alternative through simple aliases and loop joins
   so RY032 reports a reachable first-iteration or empty-iterator error.
+- Report malformed, unreadable, or parser-limited serialized data files as
+  degraded scopes instead of silently treating them as empty (#598).
+- `--exit-zero` now also covers file read and discovery failures during a
+  check; usage errors still exit nonzero (#604).
 
 ### Fixed
 

@@ -1315,11 +1315,14 @@ pub struct Checker {
     // same invocation.
     external_bindings: HashSet<String>,
     // Whether this file's package declares `useDynLib(..., .registration =
-    // TRUE)`. Derived from `external_bindings` in `set_external_bindings`.
+    // TRUE)`.
     pub(crate) native_registration: bool,
     // Whether this file is package code that finds base before the search
-    // path. Derived from `external_bindings` in `set_external_bindings`.
+    // path.
     base_before_search_path: bool,
+    // `useDynLib(..., .fixes = "prefix")` prefixes: any longer name starting
+    // with one resolves to a native routine.
+    pub(crate) native_routine_prefixes: Vec<String>,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     /// Method screens derived from the collected and imported tables. They
@@ -1547,6 +1550,7 @@ impl Checker {
             external_bindings: HashSet::new(),
             native_registration: false,
             base_before_search_path: false,
+            native_routine_prefixes: Vec::new(),
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             method_screens: std::sync::OnceLock::new(),
@@ -1979,11 +1983,19 @@ impl Checker {
     }
 
     // Seed opaque bindings established by metadata for this source file.
-    pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
-        self.native_registration =
-            bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
-        self.base_before_search_path =
-            bindings.contains(ry_workspace::packages::BASE_BEFORE_SEARCH_PATH_SENTINEL);
+    // The workspace encodes package facts as `\0`-prefixed entries; decode
+    // them here so name lookups only ever see R identifiers.
+    pub fn set_external_bindings(&mut self, mut bindings: HashSet<String>) {
+        use ry_workspace::packages::{
+            BASE_BEFORE_SEARCH_PATH_SENTINEL, NATIVE_REGISTRATION_SENTINEL,
+            NATIVE_ROUTINE_PREFIX_SENTINEL,
+        };
+        self.native_registration = bindings.remove(NATIVE_REGISTRATION_SENTINEL);
+        self.base_before_search_path = bindings.remove(BASE_BEFORE_SEARCH_PATH_SENTINEL);
+        self.native_routine_prefixes = bindings
+            .extract_if(|binding| binding.starts_with(NATIVE_ROUTINE_PREFIX_SENTINEL))
+            .map(|binding| binding[NATIVE_ROUTINE_PREFIX_SENTINEL.len()..].to_owned())
+            .collect();
         self.external_bindings = bindings;
         self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();

@@ -11,8 +11,6 @@ use std::path::{Path, PathBuf};
 
 const MAX_MODULE_BYTES: u64 = 1_048_576;
 const MAX_MODULE_DEPTH: u8 = 4;
-/// Function-alias prefix of a callable imported from a package.
-const IMPORT_ALIAS: &str = "__ry_box_import::";
 
 /// Project buffers by physical identity. `None` marks an open buffer that
 /// this check does not read, whose disk copy may be stale.
@@ -567,7 +565,7 @@ impl Scope {
     fn set_box_attachment(&mut self, name: &str, callable: Option<BoxCallable>) {
         // Other call stages see a package function through its alias.
         if let Some(BoxCallable::Package(target)) = &callable {
-            self.set_function_alias(name, format!("{IMPORT_ALIAS}{target}"));
+            self.set_function_alias(name, target.clone());
         }
         self.set_box_object(name, BoxObject::Attached(callable));
     }
@@ -580,10 +578,8 @@ impl Scope {
                 continue;
             }
             self.journal_binding(&name);
-            if self
-                .function_aliases
-                .get(&name)
-                .is_some_and(|alias| alias.starts_with(IMPORT_ALIAS))
+            if let Some(BoxObject::Attached(Some(BoxCallable::Package(_)))) =
+                self.box_objects.get(&name)
             {
                 self.function_aliases.remove(&name);
             }

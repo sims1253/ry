@@ -2207,6 +2207,16 @@ expression: snapshots
   fixture: ry060_dots_fallback_data_pronoun.R
 - diagnostics:
     - code: RY060
+      message: "column `x` not found in data frame schema; available columns: y, g"
+      severity: error
+      span:
+        column: 0
+        end: 185
+        line: 5
+        start: 179
+  fixture: ry060_select_negative_first.R
+- diagnostics:
+    - code: RY060
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
       severity: error
       span:

@@ -116,3 +116,7 @@ stopifnot(inherits(dplyr::group_by(small, big = x > mean(x)), "grouped_df"))
 stopifnot(identical(names(base::subset(small, select = x)), "x"))
 stopifnot(identical(names(base::subset(small, select = c(new = x))), "x"))
 stopifnot(identical(base::with(base::subset(small, select = x), x + 1L), 2L))
+
+# A leading negative selector starts from every column.
+wide <- data.frame(x = 1L, y = 2L, g = 3L)
+stopifnot(identical(names(dplyr::select(wide, -x, y)), c("y", "g")))

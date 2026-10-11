@@ -69,7 +69,7 @@ fn record(
             path: "structured-test-input".into(),
             span: Span::default(),
             raw: "structured test record".into(),
-            target: DeclarationTarget::LocalFunction {
+            target: DeclarationTarget {
                 path: file.path.clone(),
                 definition: span,
                 display_name: Some(function.into()),
@@ -228,7 +228,7 @@ outer()
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    let DeclarationTarget::LocalFunction { definition, .. } = &mut declaration.source.target;
+    let DeclarationTarget { definition, .. } = &mut declaration.source.target;
     *definition = nested_function_span(&file, "outer", "f");
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![declaration]);
@@ -483,7 +483,7 @@ fn eager_top_level_call_never_borrows_a_later_same_name_contract() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    later.source.target = DeclarationTarget::LocalFunction {
+    later.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[1],
         display_name: Some("f".into()),
@@ -510,14 +510,14 @@ fn sequential_top_level_literals_keep_each_adopted_call_contract() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    first.source.target = DeclarationTarget::LocalFunction {
+    first.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[0],
         display_name: Some("f".into()),
     };
     let mut second = first.clone();
     second.source.provider = "second".into();
-    second.source.target = DeclarationTarget::LocalFunction {
+    second.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[1],
         display_name: Some("f".into()),
@@ -558,14 +558,14 @@ fn sequential_nested_literals_keep_each_adopted_call_contract() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    first.source.target = DeclarationTarget::LocalFunction {
+    first.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[0],
         display_name: Some("inner".into()),
     };
     let mut second = first.clone();
     second.source.provider = "second".into();
-    second.source.target = DeclarationTarget::LocalFunction {
+    second.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[1],
         display_name: Some("inner".into()),
@@ -680,7 +680,7 @@ fn nested_closure_reads_live_enclosing_environment() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    declaration.source.target = DeclarationTarget::LocalFunction {
+    declaration.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: first,
         display_name: Some("f".into()),
@@ -700,7 +700,7 @@ fn nested_closure_reads_live_enclosing_environment() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    declaration.source.target = DeclarationTarget::LocalFunction {
+    declaration.source.target = DeclarationTarget {
         path: stable.path.clone(),
         definition: all_named_function_spans(&stable, "f")[0],
         display_name: Some("f".into()),
@@ -811,7 +811,7 @@ fn nested_capture_tracks_expression_writes_in_its_enclosing_frame() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    declaration.source.target = DeclarationTarget::LocalFunction {
+    declaration.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: all_named_function_spans(&file, "f")[0],
         display_name: Some("f".into()),
@@ -2406,7 +2406,7 @@ fn other_file_global_write_does_not_replace_a_nested_local_literal() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    declaration.source.target = DeclarationTarget::LocalFunction {
+    declaration.source.target = DeclarationTarget {
         path: first.path.clone(),
         definition: all_named_function_spans(&first, "f")[0],
         display_name: Some("f".into()),
@@ -2781,7 +2781,7 @@ fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebindin
         (&mut character, "second", "character-nested"),
     ] {
         declaration.source.provider = provider.into();
-        declaration.source.target = DeclarationTarget::LocalFunction {
+        declaration.source.target = DeclarationTarget {
             path: file.path.clone(),
             definition: nested_function_span(&file, outer, "inner"),
             display_name: Some("inner".into()),
@@ -2810,7 +2810,7 @@ fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebindin
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    stale.source.target = DeclarationTarget::LocalFunction {
+    stale.source.target = DeclarationTarget {
         path: rebound.path.clone(),
         definition: nested_function_span(&rebound, "outer", "inner"),
         display_name: Some("inner".into()),
@@ -2829,7 +2829,7 @@ fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebindin
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    conditional_record.source.target = DeclarationTarget::LocalFunction {
+    conditional_record.source.target = DeclarationTarget {
         path: conditional.path.clone(),
         definition: nested_function_span(&conditional, "outer", "inner"),
         display_name: Some("inner".into()),
@@ -2864,7 +2864,7 @@ fn loop_exits_keep_agreed_nested_identity_and_never_borrow_flat_name() {
             );
             let mut nested = top.clone();
             nested.source.provider = "nested-provider".into();
-            nested.source.target = DeclarationTarget::LocalFunction {
+            nested.source.target = DeclarationTarget {
                 path: file.path.clone(),
                 definition: nested_function_span(&file, "outer", "inner"),
                 display_name: Some("inner".into()),
@@ -2903,7 +2903,7 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
             None,
         );
         let mut nested = top.clone();
-        nested.source.target = DeclarationTarget::LocalFunction {
+        nested.source.target = DeclarationTarget {
             path: file.path.clone(),
             definition: nested_function_span(&file, "outer", "inner"),
             display_name: Some("inner".into()),
@@ -2945,14 +2945,14 @@ fn zero_or_one_iteration_does_not_select_either_declared_literal() {
                 ("x", AtomicMode::Integer, SupplyStatus::Required),
                 None,
             );
-            first.source.target = DeclarationTarget::LocalFunction {
+            first.source.target = DeclarationTarget {
                 path: file.path.clone(),
                 definition: spans[0],
                 display_name: Some("inner".into()),
             };
             let mut second = first.clone();
             second.source.provider = "second".into();
-            second.source.target = DeclarationTarget::LocalFunction {
+            second.source.target = DeclarationTarget {
                 path: file.path.clone(),
                 definition: spans[1],
                 display_name: Some("inner".into()),
@@ -2991,7 +2991,7 @@ fn branch_only_function_introduction_cannot_borrow_flat_identity() {
         );
         let mut nested = top.clone();
         nested.source.provider = "nested".into();
-        nested.source.target = DeclarationTarget::LocalFunction {
+        nested.source.target = DeclarationTarget {
             path: file.path.clone(),
             definition: spans[1],
             display_name: Some("inner".into()),
@@ -2999,7 +2999,7 @@ fn branch_only_function_introduction_cannot_borrow_flat_identity() {
         if let Translation::Exact(signature) = &mut nested.translation {
             signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
         }
-        top.source.target = DeclarationTarget::LocalFunction {
+        top.source.target = DeclarationTarget {
             path: file.path.clone(),
             definition: spans[0],
             display_name: Some("inner".into()),
@@ -3029,7 +3029,7 @@ fn loop_nonfunction_rebind_falls_through_to_enclosing_definition() {
         None,
     );
     let mut nested = top.clone();
-    nested.source.target = DeclarationTarget::LocalFunction {
+    nested.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[1],
         display_name: Some("inner".into()),
@@ -3037,7 +3037,7 @@ fn loop_nonfunction_rebind_falls_through_to_enclosing_definition() {
     if let Translation::Exact(signature) = &mut nested.translation {
         signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
     }
-    top.source.target = DeclarationTarget::LocalFunction {
+    top.source.target = DeclarationTarget {
         path: file.path.clone(),
         definition: spans[0],
         display_name: Some("inner".into()),
@@ -3066,7 +3066,7 @@ fn loop_carried_widening_never_borrows_flat_contract_before_rebinding() {
             None,
         );
         let mut nested = top.clone();
-        nested.source.target = DeclarationTarget::LocalFunction {
+        nested.source.target = DeclarationTarget {
             path: file.path.clone(),
             definition: nested_function_span(&file, "outer", "inner"),
             display_name: Some("inner".into()),

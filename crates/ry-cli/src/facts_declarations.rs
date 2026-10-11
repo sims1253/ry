@@ -81,7 +81,7 @@ pub(crate) fn export_records(file: &SourceFile, records: &[DeclarationRecord]) -
                 return Err(miette!("stale annotation source text in {}", file.path));
             }
         }
-        let DeclarationTarget::LocalFunction {
+        let DeclarationTarget {
             path,
             definition,
             display_name,
@@ -172,7 +172,7 @@ mod tests {
                 path: "test.R".into(),
                 span: Span::new(start, start + raw.len(), 1, 2),
                 raw: raw.into(),
-                target: DeclarationTarget::LocalFunction {
+                target: DeclarationTarget {
                     path: "test.R".into(),
                     definition: Span::new(5, src.rfind('}').unwrap() + 1, 0, 5),
                     display_name: Some("f".into()),
@@ -250,8 +250,7 @@ mod tests {
 
         let mut external = record.clone();
         external.source.path = "upstream.R".into();
-        let DeclarationTarget::LocalFunction { path, .. } = &mut external.source.target;
-        *path = "upstream.R".into();
+        external.source.target.path = "upstream.R".into();
         let external_value = export_records(&file, &[external]).unwrap();
         assert!(external_value[0]["source"]["span"].is_null());
         assert!(external_value[0]["target"]["definition_span"].is_null());

@@ -5,6 +5,7 @@ use crate::{Diagnostic, Project, Severity};
 use ry_core::SourceFile;
 use ry_core::declarations::DeclarationRecord;
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Install one package group's resolved workspace context.
@@ -27,8 +28,9 @@ pub struct AdoptedRecords {
 
 /// Adopt typehint contracts in `config`'s scope. Attachment uses the display
 /// path, so a file is adopted only when its native path is known and that
-/// display path names exactly one native source; otherwise its contracts are
-/// declined and the loss is reported once per display path.
+/// display path names exactly one native source; otherwise contracts in
+/// scope under either path are declined and the loss is reported once per
+/// display path.
 pub fn adopted_records(files: &[Arc<SourceFile>], config: &ry_config::Config) -> AdoptedRecords {
     let Some(scope) = config.annotations.typehint.adopted_scope() else {
         return AdoptedRecords::default();
@@ -40,14 +42,19 @@ pub fn adopted_records(files: &[Arc<SourceFile>], config: &ry_config::Config) ->
     let mut result = AdoptedRecords::default();
     let mut ambiguous = BTreeSet::new();
     for file in files {
-        let records = crate::typehint::read_records_at(file, file.native_or_display_path(), &scope);
-        let unambiguous = display_counts[file.path.as_str()] == 1
-            && file.native_path.as_deref().is_some_and(|native| {
-                ry_config::unambiguous_native_display_path(native, &file.path)
-            });
-        if unambiguous {
-            result.records.extend(records);
-        } else if !records.is_empty() {
+        let native = file.native_path.as_deref().filter(|native| {
+            display_counts[file.path.as_str()] == 1
+                && ry_config::unambiguous_native_display_path(native, &file.path)
+        });
+        if let Some(native) = native {
+            result
+                .records
+                .extend(crate::typehint::read_records_at(file, native, &scope));
+        } else if [file.native_or_display_path(), Path::new(&file.path)]
+            .into_iter()
+            .any(|path| !crate::typehint::read_records_at(file, path, &scope).is_empty())
+        {
+            // A contract in scope under either spelling is lost; say so.
             ambiguous.insert(file.path.as_str());
         }
     }

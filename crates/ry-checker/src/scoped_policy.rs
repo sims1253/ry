@@ -18,7 +18,6 @@ struct Table {
 #[derive(Debug, Clone, Default)]
 pub struct ScopedRulePolicy {
     tables: Vec<Table>,
-    protected: Vec<String>,
 }
 
 impl ScopedRulePolicy {
@@ -27,6 +26,10 @@ impl ScopedRulePolicy {
     /// Config loading validates the globs. A programmatically constructed
     /// config with a bad glob is skipped rather than crashing a checker.
     pub fn new(config: &Config, config_root: Option<&Path>, protected: &[String]) -> Self {
+        let protected: Vec<&str> = protected
+            .iter()
+            .flat_map(|token| SeverityFilter::expand(token))
+            .collect();
         let mut tables = Vec::new();
         if let Some(root) = config_root {
             for table in &config.rule_overrides {
@@ -48,17 +51,16 @@ impl ScopedRulePolicy {
                 ] {
                     for token in tokens {
                         for code in SeverityFilter::expand(token) {
-                            choices.push((code, severity));
+                            if !protected.contains(&code) {
+                                choices.push((code, severity));
+                            }
                         }
                     }
                 }
                 tables.push(Table { paths, choices });
             }
         }
-        Self {
-            tables,
-            protected: protected.to_vec(),
-        }
+        Self { tables }
     }
 
     /// Apply scopes to the frontend's effective base filter. Ignores in that
@@ -71,13 +73,7 @@ impl ScopedRulePolicy {
         let mut scoped = None;
         for table in &self.tables {
             if table.paths.matches(source) {
-                let filter = scoped.get_or_insert_with(|| {
-                    let mut filter = base.clone();
-                    for token in &self.protected {
-                        filter.protect(token);
-                    }
-                    filter
-                });
+                let filter = scoped.get_or_insert_with(|| base.clone());
                 for &(code, severity) in &table.choices {
                     filter.set_scoped(code, severity);
                 }

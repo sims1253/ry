@@ -549,7 +549,6 @@ pub struct SeverityFilter {
     selected: Option<Vec<&'static str>>,
     extended_selection: Vec<&'static str>,
     scoped: std::collections::HashMap<&'static str, Option<Severity>>,
-    protected: std::collections::HashSet<&'static str>,
 }
 
 impl SeverityFilter {
@@ -593,25 +592,20 @@ impl SeverityFilter {
         self.extended_selection.extend(Self::expand(token));
     }
 
-    pub(crate) fn protect(&mut self, token: &str) {
-        self.protected.extend(Self::expand(token));
-    }
-
     pub(crate) fn set_scoped(&mut self, code: &'static str, severity: Option<Severity>) {
         self.scoped.insert(code, severity);
     }
 
     /// Returns the effective severity for a code, or None to suppress it.
-    /// Precedence (highest to lowest): global ignore, protected explicit
-    /// choice, path-scoped choice, global error, global warn, default.
+    /// Precedence (highest to lowest): global ignore, path-scoped choice,
+    /// global error, global warn, default. Scoped choices never include
+    /// codes protected by an explicit CLI or editor choice.
     pub fn effective(&self, code: &str, default: Severity) -> Option<Severity> {
         if self.expanded_ignores.contains(&code) {
             return None;
         }
-        if !self.protected.contains(code) {
-            if let Some(severity) = self.scoped.get(code) {
-                return *severity;
-            }
+        if let Some(severity) = self.scoped.get(code) {
+            return *severity;
         }
         if self.expanded_errors.contains(&code) {
             return Some(Severity::Error);

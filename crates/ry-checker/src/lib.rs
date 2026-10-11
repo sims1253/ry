@@ -614,12 +614,11 @@ impl Scope {
 
     pub fn insert(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
-        match self.box_call_after_write(&name, &t) {
-            None => self.insert_value(name, t),
-            Some(marker) => {
-                self.insert_value(name.clone(), t);
-                self.set_box_object(name, marker);
-            }
+        if self.box_call_after_write(&name, &t) {
+            self.insert_value(name.clone(), t);
+            self.set_box_object(name, box_imports::BoxObject::OpaqueCall);
+        } else {
+            self.insert_value(name, t);
         }
     }
 

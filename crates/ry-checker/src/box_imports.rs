@@ -547,32 +547,33 @@ impl Scope {
     /// An attachment lives in a parent environment. After a local write of
     /// a value that may not be a function, a call can still reach it, so
     /// calls through the name stay opaque until a function is assigned.
-    pub(crate) fn box_call_after_write(&self, name: &str, value: &RType) -> Option<BoxObject> {
-        if self.box_objects.is_empty() || value.mode == Mode::Function {
-            return None;
-        }
-        matches!(
-            self.box_objects.get(name),
-            Some(BoxObject::Attached(_) | BoxObject::OpaqueCall)
-        )
-        .then_some(BoxObject::OpaqueCall)
+    pub(crate) fn box_call_after_write(&self, name: &str, value: &RType) -> bool {
+        // `Scope::insert` asks on every write; most scopes have no box objects.
+        !self.box_objects.is_empty()
+            && value.mode != Mode::Function
+            && matches!(
+                self.box_objects.get(name),
+                Some(BoxObject::Attached(_) | BoxObject::OpaqueCall)
+            )
     }
 
     /// `box_call_after_write` for writers that journal the whole binding.
     pub(crate) fn replace_box_call_after_write(&mut self, name: &str, value: &RType) {
-        match self.box_call_after_write(name, value) {
-            Some(marker) => self.box_objects.insert(name.to_string(), marker),
-            None => self.box_objects.remove(name),
-        };
+        if self.box_call_after_write(name, value) {
+            self.box_objects
+                .insert(name.to_string(), BoxObject::OpaqueCall);
+        } else {
+            self.box_objects.remove(name);
+        }
     }
 
     /// Effect invalidation forgets values, not the attachments beneath them.
     pub(crate) fn keep_box_calls_after_writes(&mut self) {
-        self.box_objects
-            .retain(|_, object| matches!(object, BoxObject::Attached(_) | BoxObject::OpaqueCall));
-        for object in self.box_objects.values_mut() {
+        self.box_objects.retain(|_, object| {
+            let call = matches!(object, BoxObject::Attached(_) | BoxObject::OpaqueCall);
             *object = BoxObject::OpaqueCall;
-        }
+            call
+        });
     }
 
     fn set_box_attachment(&mut self, name: &str, callable: Option<BoxCallable>) {
@@ -834,8 +835,8 @@ impl Checker {
             let Some(import) = parse_import(argument) else {
                 // A computed argument is outside the static model. box
                 // quotes it, so evaluating it here would invent RY010s.
-                if let Some(alias) = &argument.name {
-                    scope.insert(alias.clone(), RType::unknown());
+                if let Some(alias) = argument.name.as_deref().and_then(binding_name_token) {
+                    scope.insert(alias, RType::unknown());
                 }
                 continue;
             };

@@ -404,24 +404,21 @@ fn non_exact_and_conflicting_source_records_keep_their_status() {
 #[test]
 fn schema_three_residuals_use_structural_token_offsets_and_unicode_columns() {
     let temp = project(Some(ADOPT));
-    for (source, raw, expected_start) in [(
-        "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n",
-        "dim(\"λ\")",
-        [2_u64, 15],
-    )] {
-        fs::write(temp.path().join("R/main.R"), source).unwrap();
-        let facts = dump(temp.path(), &["--annotations"]);
-        let residual = &facts["files"][0]["annotations"][0]["translation"]["residuals"][0];
-        assert_eq!(residual["raw"], raw);
-        let start = residual["span"]["bytes"][0].as_u64().unwrap() as usize;
-        let end = residual["span"]["bytes"][1].as_u64().unwrap() as usize;
-        assert_eq!(&source[start..end], raw);
-        assert_eq!(residual["span"]["start"], json!(expected_start));
-        assert_eq!(
-            residual["span"]["end"][1].as_u64().unwrap(),
-            expected_start[1] + raw.chars().count() as u64
-        );
-    }
+    let source = "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n";
+    let raw = "dim(\"λ\")";
+    fs::write(temp.path().join("R/main.R"), source).unwrap();
+    let facts = dump(temp.path(), &["--annotations"]);
+    let residual = &facts["files"][0]["annotations"][0]["translation"]["residuals"][0];
+    assert_eq!(residual["raw"], raw);
+    let start = residual["span"]["bytes"][0].as_u64().unwrap() as usize;
+    let end = residual["span"]["bytes"][1].as_u64().unwrap() as usize;
+    assert_eq!(&source[start..end], raw);
+    // Line and column count Unicode scalars, not bytes.
+    assert_eq!(residual["span"]["start"], json!([2, 15]));
+    assert_eq!(
+        residual["span"]["end"],
+        json!([2, 15 + raw.chars().count()])
+    );
 }
 
 #[test]

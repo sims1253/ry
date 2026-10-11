@@ -27,7 +27,10 @@ fn disk(root: &Path, operands: &[&str]) -> CliOutput {
         .run()
 }
 
-fn write(root: &Path, files: &[(&str, &[u8])]) {
+/// `(relative path, contents)` pairs to create.
+type Files<'a> = &'a [(&'a str, &'a [u8])];
+
+fn write(root: &Path, files: Files) {
     for (path, contents) in files {
         let path = root.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -209,7 +212,7 @@ fn missing_roots_keep_disk_output_and_exit_policy_with_stdin() {
 #[test]
 fn package_context_uses_stdin_instead_of_stale_disk() {
     struct Case {
-        files: &'static [(&'static str, &'static [u8])],
+        files: Files<'static>,
         target: &'static str,
         spellings: &'static [&'static str],
         neighbors: &'static [&'static str],
@@ -310,44 +313,59 @@ fn package_context_uses_stdin_instead_of_stale_disk() {
 #[cfg(unix)]
 #[test]
 fn symlink_alias_replaces_its_target() {
-    let cases: [(&[(&str, &[u8])], &str, &str, &[&str], &[u8], &str); 2] = [
-        (
-            &[
+    struct Case {
+        files: Files<'static>,
+        target: &'static str,
+        alias: &'static str,
+        neighbors: &'static [&'static str],
+        buffer: &'static str,
+        unbound_at: &'static str,
+    }
+    let cases = [
+        Case {
+            files: &[
                 ("DESCRIPTION", b"Package: demo\nLazyData: true\n"),
                 ("R/neighbor.R", b"gold\n"),
                 ("data/preprocess.r", b"gold <- 1L\n"),
             ],
-            "data/preprocess.r",
-            "data/alias.R",
-            &["R/neighbor.R"],
-            b"1L\n",
-            "R/neighbor.R",
-        ),
-        (
-            &[
+            target: "data/preprocess.r",
+            alias: "data/alias.R",
+            neighbors: &["R/neighbor.R"],
+            buffer: "1L\n",
+            unbound_at: "R/neighbor.R",
+        },
+        Case {
+            files: &[
                 ("DESCRIPTION", b"Package: demo\n"),
                 ("R/main.R", b"assign(\"ghost\", 1L)\n"),
             ],
-            "R/main.R",
-            "R/alias.R",
-            &[],
-            b"ghost\n",
-            "R/alias.R",
-        ),
+            target: "R/main.R",
+            alias: "R/alias.R",
+            neighbors: &[],
+            buffer: "ghost\n",
+            unbound_at: "R/alias.R",
+        },
     ];
-    for (files, target, alias, neighbors, input, unbound_at) in cases {
+    for case in cases {
         let temp = tempfile::tempdir().unwrap();
-        write(temp.path(), files);
-        let link_target = Path::new(target).file_name().unwrap();
-        std::os::unix::fs::symlink(link_target, temp.path().join(alias)).unwrap();
-        let before = fs::read(temp.path().join(target)).unwrap();
-        let buffer = stdin(temp.path(), alias, neighbors, input);
+        write(temp.path(), case.files);
+        let target = temp.path().join(case.target);
+        let link_target = target.file_name().unwrap();
+        std::os::unix::fs::symlink(link_target, temp.path().join(case.alias)).unwrap();
+        let before = fs::read(&target).unwrap();
+        let buffer = stdin(
+            temp.path(),
+            case.alias,
+            case.neighbors,
+            case.buffer.as_bytes(),
+        );
         assert_eq!(
             buffer.findings(),
-            [[unbound_at, "RY010", "warning"]],
-            "{alias}"
+            [[case.unbound_at, "RY010", "warning"]],
+            "{}",
+            case.alias
         );
-        assert_eq!(fs::read(temp.path().join(target)).unwrap(), before);
+        assert_eq!(fs::read(&target).unwrap(), before);
     }
 }
 

@@ -706,15 +706,9 @@ impl Checker {
             outward_writes,
             return_slot: slot,
         };
-        fn_table
-            .definition_fns
-            .insert((self.path.clone(), span.start, span.end), function.clone());
-        let prev = fn_table.fns.insert(name.clone(), function);
-        if let Some(prev) = prev {
-            Arc::make_mut(&mut self.fn_table)
-                .forwarded_calls
-                .retain(|call| call.caller != name);
-            tracing::debug!(fn_name = %name, prev_slot = prev.return_slot, "shadowed earlier def");
+        if let Some(prev_slot) = fn_table.insert_fn(name.clone(), function) {
+            fn_table.forwarded_calls.retain(|call| call.caller != name);
+            tracing::debug!(fn_name = %name, prev_slot, "shadowed earlier def");
         }
         slot
     }
@@ -1551,6 +1545,32 @@ mod collect_walker_tests {
         let mut checker = Checker::new("collect_walker_test.R");
         checker.collect_file_fns(&file);
         checker
+    }
+
+    #[test]
+    fn identity_lookup_shares_live_entries_and_keeps_replaced_literals() {
+        let checker = collect(
+            "setMethod(\"show\", \"Person\", function(object) object)\n\
+             f <- function(x) 1L\n\
+             f <- function(y) 2L\n",
+        );
+        let table = &checker.fn_table;
+        let method = &table.fns["__s4__show__Person"];
+        let by_identity = table
+            .definition(&method.source_path, method.definition_span)
+            .unwrap();
+        assert_eq!(by_identity.params, method.params);
+        let [replaced] = table.replaced_fns.values().collect::<Vec<_>>()[..] else {
+            panic!("expected one replaced literal");
+        };
+        assert_eq!(replaced.params[0].name, "x");
+        assert!(!table.is_live_definition(&replaced.source_path, replaced.definition_span));
+        assert!(
+            table
+                .definition(&replaced.source_path, replaced.definition_span)
+                .is_some_and(|function| function.params[0].name == "x")
+        );
+        assert_eq!(table.fns["f"].params[0].name, "y");
     }
 
     #[test]

@@ -637,12 +637,7 @@ impl crate::Checker {
             ));
             return;
         };
-        let live_definition = self
-            .fn_table
-            .fns
-            .values()
-            .any(|live| live.source_path == self.path && live.definition_span == span);
-        let inferred = if live_definition {
+        let inferred = if self.fn_table.is_live_definition(&self.path, span) {
             self.return_slots.get(function.return_slot)
         } else {
             // Pass 2 only refines the last function assigned to each name.

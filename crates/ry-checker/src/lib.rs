@@ -970,6 +970,11 @@ pub(crate) struct CallerVisibleSignature {
 }
 
 impl UserFn {
+    fn definition_key(&self) -> (String, usize, usize) {
+        let span = self.definition_span;
+        (self.source_path.clone(), span.start, span.end)
+    }
+
     pub(crate) fn outward_writes(&self) -> &collect::WriteSet {
         self.outward_writes
             .get_or_init(|| collect::function_outward_writes(&self.source_params, &self.body))
@@ -1032,10 +1037,11 @@ impl ReturnSlots {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
     pub(crate) fns: FxMap<String, UserFn>,
-    /// Every direct literal, including definitions later replaced in `fns`.
-    /// Declaration checks address this map by source identity; ordinary
-    /// inference still uses the name-indexed last-definition table.
-    pub(crate) definition_fns: FxMap<(String, usize, usize), UserFn>,
+    /// Source identity of each live `fns` entry.
+    live_definitions: FxMap<(String, usize, usize), String>,
+    /// Direct literals a later same-name definition replaced in `fns`.
+    /// Declaration checks still address them by source identity.
+    replaced_fns: FxMap<(String, usize, usize), UserFn>,
     /// Global-frame direct literal bindings addressable by declaration
     /// source identity. Kept by binding name for cross-file invalidation;
     /// nested local literals cannot be changed by another file's global
@@ -1094,9 +1100,36 @@ fn rebind_captured(
 }
 
 impl FnTable {
+    /// Any recorded direct literal, live or replaced, by source identity.
     pub(crate) fn definition(&self, path: &str, span: Span) -> Option<&UserFn> {
-        self.definition_fns
-            .get(&(path.to_string(), span.start, span.end))
+        let key = (path.to_string(), span.start, span.end);
+        match self.live_definitions.get(&key) {
+            Some(name) => self.fns.get(name),
+            None => self.replaced_fns.get(&key),
+        }
+    }
+
+    /// Whether the literal is still the last definition of some name.
+    pub(crate) fn is_live_definition(&self, path: &str, span: Span) -> bool {
+        self.live_definitions
+            .contains_key(&(path.to_string(), span.start, span.end))
+    }
+
+    /// Bind `name` to `function`, keeping a replaced literal addressable.
+    /// Returns the replaced entry's return slot.
+    fn insert_fn(&mut self, name: String, function: UserFn) -> Option<usize> {
+        let key = function.definition_key();
+        let prev = self.fns.insert(name.clone(), function);
+        if let Some(prev) = &prev {
+            let prev_key = prev.definition_key();
+            // Another name may still bind the same literal (`f <- g <- function() ...`).
+            if prev_key != key && self.live_definitions.get(&prev_key) == Some(&name) {
+                self.live_definitions.remove(&prev_key);
+                self.replaced_fns.insert(prev_key, prev.clone());
+            }
+        }
+        self.live_definitions.insert(key, name);
+        prev.map(|prev| prev.return_slot)
     }
 
     pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
@@ -1148,13 +1181,13 @@ impl FnTable {
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
-        self.fns.extend(collected.fns.iter().map(|(name, f)| {
-            let mut f = f.clone();
-            f.return_slot += slot_offset;
-            (name.clone(), f)
-        }));
-        self.definition_fns
-            .extend(collected.definition_fns.iter().map(|(key, function)| {
+        for (name, function) in &collected.fns {
+            let mut function = function.clone();
+            function.return_slot += slot_offset;
+            self.insert_fn(name.clone(), function);
+        }
+        self.replaced_fns
+            .extend(collected.replaced_fns.iter().map(|(key, function)| {
                 let mut function = function.clone();
                 function.return_slot += slot_offset;
                 (key.clone(), function)

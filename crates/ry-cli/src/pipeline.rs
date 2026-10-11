@@ -422,7 +422,10 @@ mod tests {
         let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
             let file = ry_core::RParser::new()
                 .unwrap()
-                .parse("test.R", "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n")
+                .parse(
+                    "test.R",
+                    "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+                )
                 .unwrap();
             let input = CheckInput {
                 files: vec![("test.R".to_string(), Arc::new(file))],

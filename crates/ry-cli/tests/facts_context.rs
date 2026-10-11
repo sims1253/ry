@@ -59,7 +59,10 @@ fn configuration_changes_invalidate_unchanged_source_context() {
             "warn = ['RY040']\n[[rule-overrides]]\npaths = ['R/**']\nignore = ['RY040']\n",
         ),
         ("globals = []\n", "globals = ['ambient']\n"),
-        ("[reports]\nenabled = false\n", "[reports]\nenabled = true\n"),
+        (
+            "[reports]\nenabled = false\n",
+            "[reports]\nenabled = true\n",
+        ),
     ] {
         let temp = tempfile::tempdir().unwrap();
         fs::create_dir(temp.path().join("R")).unwrap();
@@ -288,7 +291,11 @@ fn non_utf8_discovered_and_truncated_paths_return_explicit_errors() {
     for config in ["[index]\nmax-file-bytes = 1\n", ""] {
         fs::write(temp.path().join("ry.toml"), config).unwrap();
         let output = run(temp.path(), &["."]);
-        assert_eq!(output.code(), Some(1), "must report an input error: {output:?}");
+        assert_eq!(
+            output.code(),
+            Some(1),
+            "must report an input error: {output:?}"
+        );
         assert!(output.stderr().contains("source"), "{output:?}");
         assert!(output.stdout().is_empty(), "must not emit unusable paths");
     }

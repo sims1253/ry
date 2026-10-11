@@ -317,8 +317,8 @@ impl TypehintConfig {
 
     /// The audited, explicitly adopted source scope. Configs that were not
     /// loaded from a file have no root and adopt nothing.
-    pub fn adopted_scope(&self) -> Option<&ScopedPaths> {
-        self.adoption_is_complete().then_some(&self.scope)
+    pub fn adopted_scope(&self) -> Option<ScopedPaths> {
+        self.adoption_is_complete().then(|| self.scope.clone())
     }
 }
 
@@ -479,13 +479,15 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty());
-        let root = std::path::absolute(parent.unwrap_or(Path::new("."))).map_err(
-            |source| ConfigError::Read {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let root = std::path::absolute(parent.unwrap_or(Path::new("."))).map_err(|source| {
+            ConfigError::Read {
                 path: path.to_path_buf(),
                 source,
-            },
-        )?;
+            }
+        })?;
         let scope = |key: String, patterns: &[String]| {
             ScopedPaths::compile(&root, patterns).map_err(|(pattern, source)| {
                 ConfigError::InvalidPattern {
@@ -497,7 +499,10 @@ impl Config {
             })
         };
         for profile in &mut cfg.environments {
-            profile.scope = scope(format!("environments `{}` paths", profile.name), &profile.paths)?;
+            profile.scope = scope(
+                format!("environments `{}` paths", profile.name),
+                &profile.paths,
+            )?;
         }
         for (index, table) in cfg.rule_overrides.iter().enumerate() {
             if table.paths.is_empty() {
@@ -509,8 +514,10 @@ impl Config {
             scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
         }
         scope("include-build-ignored".into(), &cfg.include_build_ignored)?;
-        cfg.annotations.typehint.scope =
-            scope("annotations.typehint paths".into(), &cfg.annotations.typehint.paths)?;
+        cfg.annotations.typehint.scope = scope(
+            "annotations.typehint paths".into(),
+            &cfg.annotations.typehint.paths,
+        )?;
         if cfg.annotations.typehint.adopt && !cfg.annotations.typehint.adoption_is_complete() {
             return Err(ConfigError::InvalidTypehintAdoption {
                 path: path.to_path_buf(),

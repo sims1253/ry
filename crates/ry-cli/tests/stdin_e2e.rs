@@ -78,10 +78,24 @@ fn logical_filename_selects_the_path_rule_policy() {
         stdin(temp.path(), "R/saved.R", &[], b"\"a\" + 1L\n"),
         disk(temp.path(), &["R/saved.R"])
     );
-    for logical in ["R/saved.R", "R/new.R", "R/sub/../new.R", "mémoire.R", "other.R"] {
-        let expected = if logical == "other.R" { "warning" } else { "error" };
+    for logical in [
+        "R/saved.R",
+        "R/new.R",
+        "R/sub/../new.R",
+        "mémoire.R",
+        "other.R",
+    ] {
+        let expected = if logical == "other.R" {
+            "warning"
+        } else {
+            "error"
+        };
         let output = stdin(temp.path(), logical, &[], b"\"a\" + 1L\n");
-        assert_eq!(output.json()[0]["severity"], expected, "{logical}: {output:?}");
+        assert_eq!(
+            output.json()[0]["severity"],
+            expected,
+            "{logical}: {output:?}"
+        );
     }
     assert!(!temp.path().join("R/new.R").exists());
     assert!(!temp.path().join("mémoire.R").exists());
@@ -107,9 +121,7 @@ fn overlay_replaces_stale_disk_copy_in_directory_scan() {
     assert_eq!(buffer.codes(), ["RY010"]);
     let stderr = buffer.stderr();
     assert_eq!(
-        stderr
-            .matches("include ./R/main.R (stdin overlay)")
-            .count(),
+        stderr.matches("include ./R/main.R (stdin overlay)").count(),
         1,
         "{stderr}"
     );
@@ -139,7 +151,11 @@ fn typehint_adoption_uses_the_stdin_overlay_at_its_native_path() {
             let output = stdin(temp.path(), path, &[], source.as_bytes());
             assert!(output.success(), "{output:?}");
             assert_eq!(
-                output.codes().iter().filter(|code| *code == "RY114").count(),
+                output
+                    .codes()
+                    .iter()
+                    .filter(|code| *code == "RY114")
+                    .count(),
                 mismatches,
                 "path: {path}, class: {class}"
             );
@@ -377,15 +393,19 @@ fn symlinked_parent_dotdot_replaces_the_actual_source() {
         ],
     );
     std::os::unix::fs::symlink("a/b", temp.path().join("link")).unwrap();
-    let run = |logical| stdin(temp.path(), logical, &[".", "--explain-files"], b"updated <- 1L\n");
+    let run = |logical| {
+        stdin(
+            temp.path(),
+            logical,
+            &[".", "--explain-files"],
+            b"updated <- 1L\n",
+        )
+    };
     let through_link = run("link/../foo.R");
     let direct = run("a/foo.R");
     assert_eq!(through_link.status(), direct.status());
     assert_eq!(through_link.json(), direct.json());
-    assert_eq!(
-        through_link.findings(),
-        [["./foo.R", "RY040", "error"]]
-    );
+    assert_eq!(through_link.findings(), [["./foo.R", "RY040", "error"]]);
     let explained = through_link.stderr();
     assert!(
         explained.contains("include ./a/foo.R (stdin overlay)"),
@@ -505,10 +525,7 @@ fn warning_and_exit_zero_flags_apply_to_stdin() {
     ] {
         let output = stdin(temp.path(), "source.R", extra, b"\"a\" + 1L\n");
         assert_eq!(output.success(), success, "{extra:?}: {output:?}");
-        assert_eq!(
-            output.findings(),
-            [["source.R", "RY040", severity]]
-        );
+        assert_eq!(output.findings(), [["source.R", "RY040", severity]]);
     }
 }
 

@@ -10,7 +10,12 @@ fn ry_check() -> CliProcess {
 }
 
 fn check(root: &Path) -> Vec<serde_json::Value> {
-    match ry_check().args(["--output-format", "json"]).arg(root).run().json() {
+    match ry_check()
+        .args(["--output-format", "json"])
+        .arg(root)
+        .run()
+        .json()
+    {
         serde_json::Value::Array(diagnostics) => diagnostics,
         other => panic!("{other}"),
     }

@@ -605,8 +605,7 @@ fn discover_recursive(
                     .any(|ancestor| is_rbuildignored(root, ancestor, buildignore))
             });
         if build_ignored
-            && ((directory && includes.is_empty())
-                || (!directory && !includes.matches(&path)))
+            && ((directory && includes.is_empty()) || (!directory && !includes.matches(&path)))
         {
             skipped.record(&path, directory, ".Rbuildignore", limits.max_files);
             continue;

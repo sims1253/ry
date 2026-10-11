@@ -2810,10 +2810,15 @@ impl Checker {
                 if self.external_bindings.contains(name) {
                     return RType::unknown();
                 }
-                if self.native_routine_prefixes.iter().any(|prefix| {
-                    name.strip_prefix(prefix.as_str())
-                        .is_some_and(|rest| !rest.is_empty())
-                }) {
+                if self
+                    .package_facts
+                    .native_routine_prefixes
+                    .iter()
+                    .any(|prefix| {
+                        name.strip_prefix(prefix.as_str())
+                            .is_some_and(|rest| !rest.is_empty())
+                    })
+                {
                     return RType::unknown();
                 }
                 // Known typeshed function used as a value (e.g.

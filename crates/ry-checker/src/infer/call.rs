@@ -1865,7 +1865,7 @@ impl Checker {
         // functions, so they only get this treatment in a package that
         // declares `useDynLib(..., .registration = TRUE)`.
         if ry_core::FFI_PRIMITIVES.contains(&semantic_name)
-            || (is_registered_ffi_wrapper(semantic_name) && self.native_registration)
+            || (is_registered_ffi_wrapper(semantic_name) && self.package_facts.native_registration)
         {
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {

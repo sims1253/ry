@@ -88,6 +88,7 @@ pub struct Project {
     /// every package source file even when ry has no type stub for Shiny.
     /// Such bindings deliberately resolve to opaque values.
     external_bindings: HashMap<String, HashSet<String>>,
+    package_facts: HashMap<String, ry_workspace::PackageFacts>,
     imported_from: HashMap<String, HashMap<String, String>>,
     external_s3_methods: HashMap<String, HashSet<(String, String)>>,
     load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
@@ -550,6 +551,12 @@ impl Project {
     /// import in one checked package from leaking into an unrelated package.
     pub fn set_external_bindings(&mut self, bindings: HashMap<String, HashSet<String>>) {
         if set_if_changed(&mut self.external_bindings, bindings) {
+            self.mark_all_dirty();
+        }
+    }
+
+    pub fn set_package_facts(&mut self, facts: HashMap<String, ry_workspace::PackageFacts>) {
+        if set_if_changed(&mut self.package_facts, facts) {
             self.mark_all_dirty();
         }
     }
@@ -1220,6 +1227,7 @@ impl Project {
         let return_slots = Arc::new(std::mem::take(&mut self.return_slots));
         let loaded = Arc::new(std::mem::take(&mut self.loaded));
         let external_bindings = Arc::new(std::mem::take(&mut self.external_bindings));
+        let package_facts = Arc::new(std::mem::take(&mut self.package_facts));
         let imported_from = Arc::new(std::mem::take(&mut self.imported_from));
         let external_s3_methods = Arc::new(std::mem::take(&mut self.external_s3_methods));
         let load_bindings = Arc::new(std::mem::take(&mut self.load_bindings));
@@ -1290,6 +1298,7 @@ impl Project {
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );
+                emitter.set_package_facts(package_facts.get(path).cloned().unwrap_or_default());
                 emitter.set_imported_from(imported_from.get(path).cloned().unwrap_or_default());
                 emitter.set_external_s3_methods(
                     external_s3_methods.get(path).cloned().unwrap_or_default(),
@@ -1337,6 +1346,7 @@ impl Project {
         self.return_slots = Arc::unwrap_or_clone(return_slots);
         self.loaded = Arc::unwrap_or_clone(loaded);
         self.external_bindings = Arc::unwrap_or_clone(external_bindings);
+        self.package_facts = Arc::unwrap_or_clone(package_facts);
         self.imported_from = Arc::unwrap_or_clone(imported_from);
         self.external_s3_methods = Arc::unwrap_or_clone(external_s3_methods);
         self.load_bindings = Arc::unwrap_or_clone(load_bindings);

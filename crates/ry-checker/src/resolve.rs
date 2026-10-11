@@ -460,7 +460,8 @@ impl Checker {
     /// Package `R/` code without whole-package imports looks up base before
     /// the search path, so there only an unknown search path can.
     pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
-        scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
+        scope.search_path_unknown
+            || (!self.package_facts.base_before_search_path && !self.bare_loaded.is_empty())
     }
 
     /// Lenient variant of [`Self::resolves_to_base`]: same resolution

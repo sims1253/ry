@@ -28,6 +28,7 @@ impl CheckInput {
         project.set_bare_loaded(workspace.bare_bindings);
         project.set_user_stubs(self.user_stubs);
         project.set_external_bindings(workspace.external_bindings);
+        project.set_package_facts(workspace.package_facts);
         project.set_imported_from(workspace.imported_bindings);
         project.set_external_s3_methods(workspace.s3_methods);
         project.set_load_bindings(workspace.load_bindings);

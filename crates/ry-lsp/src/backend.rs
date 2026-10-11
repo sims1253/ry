@@ -519,6 +519,8 @@ impl ProjectCache {
         self.project
             .set_external_bindings(workspace.external_bindings.clone());
         self.project
+            .set_package_facts(workspace.package_facts.clone());
+        self.project
             .set_imported_from(workspace.imported_bindings.clone());
         self.project
             .set_external_s3_methods(workspace.s3_methods.clone());

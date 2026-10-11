@@ -274,14 +274,27 @@ fn inherits_narrows_positive_and_negated_else_branches() {
 #[test]
 fn dynlib_prefix_resolves_only_with_nonempty_remainder() {
     let diags = check_with("value <- pkg_call\n", |c| {
-        c.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+        c.set_package_facts(ry_workspace::PackageFacts {
+            native_routine_prefixes: HashSet::from(["pkg_".to_string()]),
+            ..Default::default()
+        });
     });
     assert!(diags.is_empty());
 
     let diags = check_with("value <- pkg_\n", |c| {
-        c.set_external_bindings(HashSet::from(["\0useDynLib:pkg_".to_string()]));
+        c.set_package_facts(ry_workspace::PackageFacts {
+            native_routine_prefixes: HashSet::from(["pkg_".to_string()]),
+            ..Default::default()
+        });
     });
     assert!(diags.iter().any(|d| d.code == "RY010"));
+}
+
+fn registered_native_package() -> ry_workspace::PackageFacts {
+    ry_workspace::PackageFacts {
+        native_registration: true,
+        ..Default::default()
+    }
 }
 
 /// `call_with_cleanup(native_symbol, ...)` is the cleancall
@@ -294,10 +307,8 @@ fn call_with_cleanup_symbol_needs_declared_registration() {
     let src = "f <- function(x) call_with_cleanup(map_impl, environment(), x)\n";
 
     let diags = check_with(src, |c| {
-        c.set_external_bindings(HashSet::from([
-            ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
-            "call_with_cleanup".to_string(),
-        ]));
+        c.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
+        c.set_package_facts(registered_native_package());
     });
     assert!(
         !diags.iter().any(|d| d.message.contains("map_impl")),
@@ -324,10 +335,8 @@ fn call_with_cleanup_still_checks_non_symbol_arguments() {
     let diags = check_with(
         "f <- function() call_with_cleanup(map_impl, undefined_thing_xyz)\n",
         |c| {
-            c.set_external_bindings(HashSet::from([
-                ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL.to_string(),
-                "call_with_cleanup".to_string(),
-            ]));
+            c.set_external_bindings(HashSet::from(["call_with_cleanup".to_string()]));
+            c.set_package_facts(registered_native_package());
         },
     );
     assert!(

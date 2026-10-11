@@ -10,23 +10,22 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 
-/// External-binding sentinel carrying a `useDynLib(..., .fixes = "prefix")`
-/// prefix. Any name starting with the prefix resolves to a native routine.
-/// The `\0` keeps it out of the R identifier namespace.
-pub const NATIVE_ROUTINE_PREFIX_SENTINEL: &str = "\0useDynLib:";
-
-/// External-binding sentinel recording `useDynLib(..., .registration = TRUE)`.
-/// The registered entry points are declared in `src/`'s `R_registerRoutines`
-/// table. This flag also retains call-position support when source tables
-/// cannot be enumerated.
-pub const NATIVE_REGISTRATION_SENTINEL: &str = "\0useDynLibRegistration";
-
-/// External-binding sentinel for package `R/` code, which looks up its
-/// namespace, its imports, then base, and only then the search path, so
-/// attached packages cannot mask base there. Set only without whole-package
-/// `import()`s: an installed export list does not prove an import lacks a
-/// base name.
-pub const BASE_BEFORE_SEARCH_PATH_SENTINEL: &str = "\0baseBeforeSearchPath";
+/// Per-file package facts that are not R bindings.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PackageFacts {
+    /// `useDynLib(..., .fixes = "prefix")` prefixes. Any name starting with
+    /// one resolves to a native routine.
+    pub native_routine_prefixes: HashSet<String>,
+    /// `useDynLib(..., .registration = TRUE)`. The registered entry points are
+    /// declared in `src/`'s `R_registerRoutines` table; this flag also
+    /// retains call-position support when source tables cannot be enumerated.
+    pub native_registration: bool,
+    /// Package `R/` code looks up its namespace, its imports, then base, and
+    /// only then the search path, so attached packages cannot mask base
+    /// there. Set only without whole-package `import()`s: an installed export
+    /// list does not prove an import lacks a base name.
+    pub base_before_search_path: bool,
+}
 
 /// Bindings and whole-package imports declared by an R package NAMESPACE.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

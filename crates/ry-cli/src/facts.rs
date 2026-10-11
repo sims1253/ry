@@ -80,10 +80,24 @@ fn workspace_value(workspace: &ry_workspace::WorkspaceContext) -> Value {
         .iter()
         .map(|(path, values)| (path, sorted_sets(values)))
         .collect();
+    let package_facts: BTreeMap<_, _> = workspace
+        .package_facts
+        .iter()
+        .map(|(path, facts)| {
+            let prefixes: BTreeSet<_> = facts.native_routine_prefixes.iter().collect();
+            let value = json!({
+                "native_routine_prefixes": prefixes,
+                "native_registration": facts.native_registration,
+                "base_before_search_path": facts.base_before_search_path,
+            });
+            (path, value)
+        })
+        .collect();
     json!({
         "attached_packages": workspace.attached_packages.iter().collect::<BTreeSet<_>>(),
         "bare_bindings": sorted_sets(&workspace.bare_bindings),
         "external_bindings": sorted_sets(&workspace.external_bindings),
+        "package_facts": package_facts,
         "imported_bindings": workspace.imported_bindings,
         "s3_methods": sorted_sets(&workspace.s3_methods),
         "load_bindings": loads,

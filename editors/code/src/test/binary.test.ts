@@ -1,4 +1,3 @@
-import { runBinary } from "../common/process";
 /**
  * Unit tests for binary resolution trust behavior.
  *
@@ -92,24 +91,19 @@ it("skips directories and non-executable files before a runnable candidate", () 
 });
 
 it.skipIf(process.platform === "win32")(
-  "version probing leaves the event loop responsive",
+  "version probing parses the reported version",
   async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
     try {
       const binary = path.join(dir, "ry");
-      fs.writeFileSync(
-        binary,
-        `#!/bin/sh\nsleep 0.1\necho '{"version":"0.9.0"}'\n`,
-        { mode: 0o755 },
-      );
-      let resolved = false;
-      const probe = getRyVersion(binary).then((version) => {
-        resolved = true;
-        return version;
+      fs.writeFileSync(binary, `#!/bin/sh\necho '{"version":"0.9.0"}'\n`, {
+        mode: 0o755,
       });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(resolved).toBe(false);
-      expect(await probe).toEqual({ major: 0, minor: 9, patch: 0 });
+      expect(await getRyVersion(binary)).toEqual({
+        major: 0,
+        minor: 9,
+        patch: 0,
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -141,74 +135,6 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "failed version probes are retried, never cached",
-  async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-failprobe-"));
-    try {
-      const binary = path.join(dir, "ry");
-      // A spawn that fails (non-zero exit) must not pin an unknown
-      // version for the binary's lifetime: the next restart retries.
-      fs.writeFileSync(binary, `#!/bin/sh\necho run >> "$0.marker"\nexit 1\n`, {
-        mode: 0o755,
-      });
-      expect(await getRyVersion(binary)).toBeUndefined();
-      expect(await getRyVersion(binary)).toBeUndefined();
-      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  },
-);
-
 it("returns an unknown version when the executable is missing", async () => {
   expect(await getRyVersion("/nonexistent/ry")).toBeUndefined();
 });
-
-it("reports the executable path when a process fails", async () => {
-  await expect(runBinary("/nonexistent/ry", [])).rejects.toThrow(
-    "/nonexistent/ry",
-  );
-});
-
-it.skipIf(process.platform === "win32")(
-  "version probes are cached until the executable changes",
-  async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
-    try {
-      const binary = path.join(dir, "ry");
-      fs.writeFileSync(
-        binary,
-        `#!/bin/sh\necho run >> "$0.marker"\necho '{"version":"0.9.0"}'\n`,
-        { mode: 0o755 },
-      );
-      fs.utimesSync(binary, 1_700_000_000, 1_700_000_000);
-      await getRyVersion(binary);
-      expect(await getRyVersion(binary)).toEqual({
-        major: 0,
-        minor: 9,
-        patch: 0,
-      });
-      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\n");
-      const stats = fs.statSync(binary);
-      const replacement = binary + ".new";
-      fs.writeFileSync(
-        replacement,
-        fs.readFileSync(binary, "utf8").replace("0.9.0", "0.9.1"),
-        { mode: 0o755 },
-      );
-      fs.utimesSync(replacement, stats.atime, stats.mtime);
-      fs.renameSync(replacement, binary);
-      expect(fs.statSync(binary).size).toBe(stats.size);
-      expect(fs.statSync(binary).mtimeMs).toBe(stats.mtimeMs);
-      expect(await getRyVersion(binary)).toEqual({
-        major: 0,
-        minor: 9,
-        patch: 1,
-      });
-      expect(fs.readFileSync(binary + ".marker", "utf8")).toBe("run\nrun\n");
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  },
-);

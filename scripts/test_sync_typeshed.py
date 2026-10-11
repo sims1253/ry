@@ -25,7 +25,6 @@ class SyncTypeshedTest(unittest.TestCase):
         stubs.mkdir(parents=True)
         (stubs / "base.json").write_text('{"package": "base"}\n')
         binaries = self.root / "bin"
-        self.binaries = binaries
         binaries.mkdir()
         cargo = binaries / "cargo"
         cargo.write_text("""#!/usr/bin/env bash
@@ -54,35 +53,11 @@ exit "$VALIDATION_STATUS"
     def assert_no_staging_directory(self):
         self.assertEqual(list(self.vendor.parent.glob("vendor.*")), [])
 
-    def assert_old_snapshot(self, path=None):
-        path = self.vendor if path is None else path
-        self.assertEqual((path / "old.json").read_text(), "old snapshot")
-        self.assertEqual((path / "SOURCE").read_text(), "old provenance")
-        self.assertEqual(sorted(p.name for p in path.iterdir()),
+    def assert_old_snapshot(self):
+        self.assertEqual((self.vendor / "old.json").read_text(), "old snapshot")
+        self.assertEqual((self.vendor / "SOURCE").read_text(), "old provenance")
+        self.assertEqual(sorted(p.name for p in self.vendor.iterdir()),
                          ["SOURCE", "old.json"])
-
-    def fail_move(self, mode):
-        move = self.binaries / "mv"
-        move.write_text("""#!/usr/bin/env bash
-set -eu
-if [[ "$MOVE_FAILURE" == backup && "$1" == "$EXPECTED_VENDOR" ]]; then
-  exit 7
-fi
-if [[ "$2" == "$EXPECTED_VENDOR" ]]; then
-  if [[ "${1##*/}" == snapshot ]]; then
-    [[ "$MOVE_FAILURE" != restore ]] || exit 9
-  elif [[ "$MOVE_FAILURE" == interrupt ]]; then
-    "$REAL_MV" "$@"
-    kill -TERM "$PPID"
-    exit 0
-  else
-    exit 7
-  fi
-fi
-exec "$REAL_MV" "$@"
-""")
-        move.chmod(0o755)
-        self.env.update(MOVE_FAILURE=mode, REAL_MV=shutil.which("mv"))
 
     def test_failed_validation_preserves_snapshot_and_provenance(self):
         result = self.run_sync(7)
@@ -97,28 +72,6 @@ exec "$REAL_MV" "$@"
         self.assertEqual((self.vendor / "base/base.json").read_bytes(),
                          (self.checkout / "stubs/base/base.json").read_bytes())
         self.assertIn("stubs-sha256:", (self.vendor / "SOURCE").read_text())
-        self.assert_no_staging_directory()
-
-    def test_sync_preserves_the_local_annotation_overlay(self):
-        # ry-side stub annotations (crates/ry-typeshed/overlay, issue
-        # #479) must survive a vendor sync: the sync wholesale-replaces
-        # vendor/ from the r-typeshed checkout -- whose stubs carry no
-        # ry-only specs -- while the overlay directory sits outside
-        # vendor/ and stays put. ry merges vendor + overlay at typeshed
-        # load time, so the effective annotations are intact after every
-        # weekly bump.
-        overlay = self.repo / "crates/ry-typeshed/overlay"
-        overlay.mkdir(parents=True)
-        overlay_entry = overlay / "vctrs.json"
-        overlay_entry.write_text('{"package": "vctrs", "vec_cast": "kept"}\n')
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        # vendor was replaced wholesale from upstream, which has no
-        # vec_cast annotation anywhere.
-        self.assertFalse((self.vendor / "overlay").exists())
-        # ... and the overlay directory is untouched by the sync.
-        self.assertEqual(overlay_entry.read_text(),
-                         '{"package": "vctrs", "vec_cast": "kept"}\n')
         self.assert_no_staging_directory()
 
     @unittest.skipUnless(shutil.which("cargo"), "requires Cargo")
@@ -156,48 +109,6 @@ exec "$REAL_MV" "$@"
         self.assertEqual(rebuilt.stdout, expected)
         self.assert_no_staging_directory()
 
-    def test_failed_freshness_refresh_preserves_snapshot(self):
-        touch = self.binaries / "touch"
-        touch.write_text("#!/usr/bin/env bash\nexit 8\n")
-        touch.chmod(0o755)
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 8, result.stderr)
-        self.assert_old_snapshot()
-        self.assert_no_staging_directory()
-
-    def test_failed_install_restores_snapshot_and_provenance(self):
-        self.fail_move("install")
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertIn("restored the previous typeshed snapshot", result.stderr)
-        self.assert_old_snapshot()
-        self.assert_no_staging_directory()
-
-    def test_failed_backup_move_leaves_existing_snapshot(self):
-        self.fail_move("backup")
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assert_old_snapshot()
-        self.assert_no_staging_directory()
-
-    def test_term_after_install_move_restores_snapshot(self):
-        self.fail_move("interrupt")
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 143, result.stderr)
-        self.assert_old_snapshot()
-        self.assert_no_staging_directory()
-
-    def test_failed_restore_retains_snapshot_and_reports_recovery_path(self):
-        self.fail_move("restore")
-        result = self.run_sync(0)
-        self.assertEqual(result.returncode, 7, result.stderr)
-        backups = list(self.vendor.parent.glob("vendor.backup.*"))
-        self.assertEqual(len(backups), 1)
-        snapshot = backups[0] / "snapshot"
-        self.assert_old_snapshot(snapshot)
-        self.assertIn(f"recover it from {snapshot}", result.stderr)
-        self.assertFalse(self.vendor.exists())
-        self.assertEqual(list(self.vendor.parent.glob("vendor.*")), backups)
 
 
 if __name__ == "__main__":

@@ -267,6 +267,9 @@ fn module_size_and_spelling_limits_never_select_another_file() {
     // When both spellings exist, box loads the lowercase `.r`.
     fs::write(root.path().join("mod.r"), "lower <- 1L\n").unwrap();
     fs::write(root.path().join("mod.R"), "upper <- 2L\n").unwrap();
+    if fs::read_dir(root.path()).unwrap().count() != 2 {
+        return; // a case-insensitive filesystem cannot hold both spellings
+    }
     assert_eq!(
         codes(&caller, "box::use(./mod[lower])\nlower\n"),
         Vec::<String>::new()

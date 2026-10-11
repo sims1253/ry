@@ -133,10 +133,7 @@ pub enum SuppressionKind {
 
 impl Suppression {
     pub fn suppresses(&self, code: &str) -> bool {
-        // Directive diagnostics use severity overrides, not comments that
-        // could hide their own mistakes. RY113 is reserved here for the
-        // stacked unused-ignore audit in #584 / PR #600.
-        if matches!(code, "RY112" | "RY113") {
+        if !rules::suppressible(code) {
             return false;
         }
         match &self.kind {
@@ -480,7 +477,7 @@ pub fn invalid_suppression_diagnostics(
                 Severity::Warning,
                 directive.span,
                 path,
-                "RY112",
+                rules::INVALID_IGNORE,
                 format!("invalid ry ignore directive: {reason}"),
             ))
         })

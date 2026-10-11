@@ -1,8 +1,10 @@
 //! Structured records exercise the shared checker before a source adapter exists.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use ry_checker::{Checker, DeclarationFindingKind, Project};
+use ry_config::config::ScopedPaths;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::declarations::{
     AssignmentSemantics, AtomicMode, DeclarationRecord, DeclarationSource, DeclarationTarget,
@@ -89,6 +91,31 @@ fn record(
         evidence: EvidenceUse::AdoptedContract,
         assumptions: vec![],
     }
+}
+
+fn adopted_records(file: &SourceFile) -> Vec<DeclarationRecord> {
+    let scope = ScopedPaths::new(Path::new("."), &["**".into()]).unwrap();
+    let records = ry_checker::typehint::read_records(file, &scope);
+    // A misattached or untranslated annotation would make "no mismatch"
+    // expectations pass vacuously.
+    assert!(
+        !records.is_empty()
+            && records
+                .iter()
+                .all(|record| matches!(record.translation, Translation::Exact(_))),
+        "{} must adopt exact typehint contracts: {records:?}",
+        file.path
+    );
+    records
+}
+
+fn new_project(files: &[&SourceFile], records: &[DeclarationRecord]) -> Project {
+    let mut project = Project::new();
+    for file in files {
+        project.add_file(file.path.clone(), (*file).clone());
+    }
+    project.set_declaration_records(records.to_vec());
+    project
 }
 
 fn kinds(checker: &Checker) -> Vec<DeclarationFindingKind> {
@@ -408,8 +435,32 @@ fn default_mismatch_is_separate_from_omission_and_known_call_mismatch() {
     );
 }
 
+/// The public view a CLI or editor check shows for a plainly annotated
+/// function: one RY114 for the bad actual and no per-formal RY115 notes.
 #[test]
-fn supplied_only_atomic_constraint_reports_applicability_instead_of_type_limit() {
+fn plain_annotated_function_reports_only_its_bad_actual() {
+    let file = parse(
+        "plain.R",
+        "f <- function(x, y = 1L) {\n  #| x integer\n  #| y integer\n  x\n}\nf(1L)\nf(\"bad\", y = 2L)\n",
+    );
+    let mut project = new_project(&[&file], &adopted_records(&file));
+    let mut diagnostics = project.check();
+    ry_checker::append_declaration_diagnostics(&mut diagnostics, project.declaration_findings());
+    let shown = diagnostics
+        .iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .map(|diagnostic| {
+            (
+                diagnostic.code,
+                &file.source[diagnostic.span.start..diagnostic.span.end],
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(shown, vec![("RY114", "\"bad\"")]);
+}
+
+#[test]
+fn supplied_only_constraint_checks_only_explicit_actuals() {
     let file = parse(
         "supplied-only.R",
         "f <- function(x = \"default\") { x }\nf()\nf(1L)\nf(\"wrong\")\n",
@@ -426,25 +477,10 @@ fn supplied_only_atomic_constraint_reports_applicability_instead_of_type_limit()
         None,
     )]);
     checker.check(&file);
-    let findings = checker.declaration_findings();
-    let partial = findings
-        .iter()
-        .find(|finding| finding.kind == DeclarationFindingKind::Partial)
-        .expect("supplied-only constraint has no unconditional body entry");
-    assert!(
-        partial
-            .message
-            .contains("only explicitly supplied arguments")
-    );
-    assert!(!partial.message.contains("cannot be represented"));
-    assert_eq!(
-        findings
-            .iter()
-            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
-            .count(),
-        1,
-        "omitted incompatible default is not checked as a supplied actual: {findings:?}"
-    );
+    // The omitted default is not a supplied actual, and a supplied-only
+    // constraint establishes no body type, which is not an incomplete check.
+    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    assert_eq!(mismatch_sources(&checker, &file), vec!["\"wrong\""]);
 }
 
 #[test]

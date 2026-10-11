@@ -590,24 +590,21 @@ impl crate::Checker {
                 ),
             ));
         }
-        let entry = if supplied_only {
-            None
-        } else {
-            body_entry_type(declared)
-        };
+        // A supplied-only constraint and an effective-class predicate never
+        // establish a body type; that is their meaning, not a checking gap.
+        if supplied_only || matches!(declared, TypeExpr::ExactClass(_)) {
+            return None;
+        }
+        let entry = body_entry_type(declared);
         if entry.is_none() {
-            let reason = if supplied_only {
-                "only explicitly supplied arguments are constrained; no unconditional body entry type is assumed"
-            } else if matches!(declared, TypeExpr::ExactClass(_)) {
-                "effective class does not establish a storage mode; no body entry type is assumed"
-            } else {
-                "constraint cannot be represented by body inference; no entry type is assumed"
-            };
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
                 parameter.span,
-                format!("constraint for `{}`: {reason}", parameter.name),
+                format!(
+                    "constraint for `{}` cannot be represented by body inference; no entry type is assumed",
+                    parameter.name
+                ),
             ));
         }
         entry

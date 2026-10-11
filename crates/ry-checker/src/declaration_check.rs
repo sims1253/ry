@@ -113,6 +113,8 @@ pub(crate) struct TargetDecision {
 pub(crate) struct DeclarationSet {
     records: Vec<DeclarationRecord>,
     targets: BTreeMap<TargetKey, TargetDecision>,
+    /// Whether any target selected a contract; checked on hot paths.
+    has_contracts: bool,
 }
 
 impl DeclarationSet {
@@ -133,8 +135,15 @@ impl DeclarationSet {
                 let DeclarationTarget::LocalFunction { definition, .. } = records[0].source.target;
                 (key, decide_target(definition, &records))
             })
-            .collect();
-        Self { records, targets }
+            .collect::<BTreeMap<_, _>>();
+        let has_contracts = targets
+            .values()
+            .any(|decision| decision.signature.is_some());
+        Self {
+            records,
+            targets,
+            has_contracts,
+        }
     }
 
     pub(crate) fn records(&self) -> &[DeclarationRecord] {
@@ -142,9 +151,7 @@ impl DeclarationSet {
     }
 
     pub(crate) fn has_contracts(&self) -> bool {
-        self.targets
-            .values()
-            .any(|decision| decision.signature.is_some())
+        self.has_contracts
     }
 
     pub(crate) fn target(&self, path: &str, span: Span) -> Option<&TargetDecision> {

@@ -218,53 +218,6 @@ pub(crate) fn collect_callable_binding_write(
     }
 }
 
-/// A deliberately narrow proof for calls whose implementation cannot run a
-/// user expression here. Absent effect metadata in a typeshed is not proof:
-/// retrieving a value can force an active binding or a delayed promise.
-pub(crate) fn certified_literal_effect_free_call(func: &Expr, args: &[Arg]) -> bool {
-    let Expr::Ident { name, .. } = func else {
-        return false;
-    };
-    let name = semantic_argument_name(name);
-    match strip_package(name, "base").unwrap_or(name) {
-        // A bare `quote` can be masked.
-        "quote" => name != "quote",
-        "eval" => {
-            let expression = named_or_first_positional(args, "expr");
-            args.iter().all(|argument| {
-                std::ptr::eq(argument, expression.unwrap_or(argument))
-                    || closed_literal_value(&argument.value)
-            }) && matches!(
-                expression.map(|argument| &argument.value),
-                Some(Expr::Call { func, args, .. })
-                    if is_base_qualified_call(func, "quote")
-                        && args.first().is_some_and(|arg| closed_literal_value(&arg.value))
-            )
-        }
-        "evalq" => {
-            args.first()
-                .is_some_and(|arg| closed_literal_value(&arg.value))
-                && args
-                    .iter()
-                    .skip(1)
-                    .all(|arg| closed_literal_value(&arg.value))
-        }
-        _ => false,
-    }
-}
-
-pub(crate) fn closed_literal_value(expr: &Expr) -> bool {
-    matches!(
-        expr,
-        Expr::Logical(..)
-            | Expr::Integer(..)
-            | Expr::Double(..)
-            | Expr::String(..)
-            | Expr::Null(..)
-            | Expr::Na(..)
-    )
-}
-
 fn collect_immediate_outward_writes(
     body: &[Stmt],
     outward: &mut FxSet<String>,
@@ -338,227 +291,62 @@ fn collect_helper_outward_writes(
     collect_immediate_outward_writes(body, outward, remaining);
 }
 
-/// Writes that executing a known function can make outside its own frame.
-/// This is the same bounded inventory used for deferred capture checking;
-/// eager call checking applies it only after that call has been inferred.
-pub(crate) fn called_function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<String> {
-    let mut remaining = MAX_DEFAULT_HELPER_CALLS;
-    let mut writes = collect_default_writes_bounded(params, &mut remaining).1;
-    collect_immediate_outward_writes(body, &mut writes, &mut remaining);
-    writes
-}
-
-#[derive(Default)]
-pub(crate) struct PotentialHelperCalls {
-    pub(crate) calls: FxSet<String>,
-    pub(crate) handled_calls: FxSet<String>,
-    pub(crate) aliases: FxMap<String, FxSet<String>>,
-    pub(crate) local_literals: FxMap<String, FxSet<Span>>,
-    pub(crate) unknown_bindings: FxSet<String>,
-    pub(crate) certified_calls: FxSet<String>,
-    pub(crate) unproven_calls: FxSet<String>,
-    pub(crate) read_sites: Vec<(String, usize)>,
-    pub(crate) call_sites: Vec<(String, usize)>,
-    pub(crate) definite_local_bindings: FxMap<String, usize>,
-    pub(crate) rebound_bindings: FxSet<String>,
-    pub(crate) formals: FxSet<String>,
-    pub(crate) immediate_closures: Vec<PotentialHelperCalls>,
-    pub(crate) operator_symbols: FxSet<&'static str>,
-    excluded_ident_spans: FxSet<(usize, usize)>,
-    pub(crate) uncertain: bool,
-}
-
-impl PotentialHelperCalls {
-    pub(crate) fn definitely_local_at(&self, name: &str, offset: usize) -> bool {
-        !self.rebound_bindings.contains(UNKNOWN_CAPTURE_BINDING)
-            && !self.rebound_bindings.contains(name)
-            && self
-                .definite_local_bindings
-                .get(name)
-                .is_some_and(|end| *end <= offset)
-    }
-}
-
-fn scan_possible_helper_node(
-    node: AstNode<'_>,
-    calls: &mut PotentialHelperCalls,
-    remaining: &mut usize,
-) {
-    let mut note_assignment = |target: &Expr, value: &Expr| {
-        let Expr::Ident { name, span } = target else {
-            return;
+/// Bindings that running a function can replace outside its own frame:
+/// its plain `<<-` targets. Anything that may run other code makes the
+/// effect unknown: a call, operator, or index (each may dispatch or force
+/// an active binding), a read of anything but a formal, or a complex
+/// assignment target. Defaults are included because forcing one runs it.
+pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<String> {
+    let formals: FxSet<&str> = params
+        .iter()
+        .map(|param| semantic_argument_name(&param.name))
+        .collect();
+    let mut writes = FxSet::default();
+    let policy = Walk {
+        assign_targets: false,
+        assign_operands: false,
+        ..FRAME_WALK
+    };
+    let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
+        let opaque = match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => binding_name(target).is_none(),
+            AstNode::Expr(Expr::BinOp {
+                op: op @ (BinOpKind::Assign | BinOpKind::SuperAssign),
+                lhs,
+                ..
+            }) => {
+                if *op == BinOpKind::SuperAssign && binding_name(lhs).is_some() {
+                    writes.insert(capture_binding_name(lhs).to_string());
+                }
+                binding_name(lhs).is_none()
+            }
+            AstNode::Expr(Expr::Ident { name, .. }) => {
+                !formals.contains(semantic_argument_name(name))
+            }
+            AstNode::Expr(
+                Expr::Call { .. }
+                | Expr::BinOp { .. }
+                | Expr::UnaryOp { .. }
+                | Expr::Index { .. }
+                | Expr::Unknown(_),
+            ) => true,
+            _ => false,
         };
-        // An assignment binder is not a value read. Its receiver or
-        // subscript, when present, is evaluated and must remain visible to
-        // the walk below.
-        calls.excluded_ident_spans.insert((span.start, span.end));
-        let name = capture_identifier_name(name);
-        if name == UNKNOWN_CAPTURE_BINDING {
-            calls.uncertain = true;
-            return;
-        }
-        match value {
-            Expr::Ident { name: source, span } => {
-                calls.excluded_ident_spans.insert((span.start, span.end));
-                calls
-                    .read_sites
-                    .push((capture_identifier_name(source).to_string(), span.start));
-                calls
-                    .aliases
-                    .entry(name.to_string())
-                    .or_default()
-                    .insert(capture_identifier_name(source).to_string());
-            }
-            Expr::Function { span, .. } => {
-                calls
-                    .local_literals
-                    .entry(name.to_string())
-                    .or_default()
-                    .insert(*span);
-            }
-            // The value may be a callable selected at runtime. A same-named
-            // outer helper cannot prove this local call is effect-free.
-            _ => {
-                calls.unknown_bindings.insert(name.to_string());
-            }
+        if opaque {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(Descend::Into)
         }
     };
-    match node {
-        AstNode::Stmt(Stmt::Assign { target, value, .. }) => note_assignment(target, value),
-        AstNode::Stmt(Stmt::For { name, .. }) => {
-            let name = capture_identifier_name(name);
-            if name == UNKNOWN_CAPTURE_BINDING {
-                calls.uncertain = true;
-            } else {
-                // Each iteration can install a different callable under
-                // this local name, independent of a same-named outer helper.
-                calls.unknown_bindings.insert(name.to_string());
-            }
-        }
-        AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
-            if matches!(op, BinOpKind::Assign | BinOpKind::SuperAssign) {
-                note_assignment(lhs, rhs);
-            } else {
-                calls.operator_symbols.insert(op_symbol(*op));
-                if !closed_literal_value(lhs) || !closed_literal_value(rhs) {
-                    // S3/S4 operator dispatch can run a mutating method.
-                    calls.uncertain = true;
-                }
-            }
-        }
-        AstNode::Expr(Expr::UnaryOp { op, expr, .. }) => {
-            calls.operator_symbols.insert(match op {
-                UnaryOpKind::Neg => "-",
-                UnaryOpKind::Not => "!",
-            });
-            if !closed_literal_value(expr) {
-                calls.uncertain = true;
-            }
-        }
-        AstNode::Expr(Expr::Call { func, args, .. }) => match func.as_ref() {
-            Expr::Ident { name, span } => {
-                calls.excluded_ident_spans.insert((span.start, span.end));
-                let name = capture_identifier_name(name);
-                if name == UNKNOWN_CAPTURE_BINDING {
-                    calls.uncertain = true;
-                } else {
-                    calls.calls.insert(name.to_string());
-                    calls.call_sites.push((name.to_string(), span.start));
-                    let mut direct = FxSet::default();
-                    collect_callable_binding_write(func, args, &mut direct);
-                    if !direct.is_empty() {
-                        calls.rebound_bindings.extend(direct.iter().cloned());
-                        calls.handled_calls.insert(name.to_string());
-                    } else if certified_literal_effect_free_call(func, args) {
-                        calls.certified_calls.insert(name.to_string());
-                    } else {
-                        calls.unproven_calls.insert(name.to_string());
-                    }
-                }
-            }
-            Expr::Function { params, body, .. } => {
-                if *remaining == 0 {
-                    calls.uncertain = true;
-                } else {
-                    *remaining -= 1;
-                    // An IIFE executes here, but its local bindings belong to
-                    // its own frame. Retain its effect summary separately so
-                    // an inner assignment cannot certify an outer read.
-                    calls
-                        .immediate_closures
-                        .push(potential_helper_calls(params, body, remaining));
-                }
-            }
-            _ => calls.uncertain = true,
-        },
-        AstNode::Expr(Expr::Index { .. }) => {
-            // `$`, `[[`, `[`, and slot reads can invoke an active binding or
-            // user accessor even without an explicit call node.
-            calls.uncertain = true;
-        }
-        AstNode::Expr(Expr::Ident { name, span })
-            if !calls.excluded_ident_spans.contains(&(span.start, span.end)) =>
-        {
-            calls
-                .read_sites
-                .push((capture_identifier_name(name).to_string(), span.start));
-        }
-        _ => {}
+    let opaque = params
+        .iter()
+        .filter_map(|param| param.default.as_ref())
+        .any(|default| walk_expr(default, policy, &mut visit).is_break())
+        || walk_stmts(body, policy, &mut visit).is_break();
+    if opaque {
+        writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
     }
-}
-
-fn scan_possible_helper_calls(
-    params: &[Param],
-    body: &[Stmt],
-    calls: &mut PotentialHelperCalls,
-    remaining: &mut usize,
-) {
-    // Only unconditional statements in the function's own sequence establish
-    // a binding on every path to a later read. An assignment under `if`, a
-    // loop, or a nested expression cannot certify an earlier/other-path use.
-    for statement in body {
-        if let Stmt::Assign {
-            target: Expr::Ident { name, .. },
-            value: Expr::Function { .. } | Expr::Ident { .. },
-            span,
-        } = statement
-        {
-            calls
-                .definite_local_bindings
-                .entry(capture_identifier_name(name).to_string())
-                .or_insert(span.end);
-        }
-    }
-    for parameter in params {
-        let name = capture_identifier_name(&parameter.name).to_string();
-        calls.unknown_bindings.insert(name.clone());
-        calls.formals.insert(name);
-    }
-    for parameter in params {
-        if let Some(default) = &parameter.default {
-            let _ = walk_expr(default, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
-                scan_possible_helper_node(node, calls, remaining);
-                ControlFlow::Continue(Descend::Into)
-            });
-        }
-    }
-    let _ = walk_stmts(body, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
-        scan_possible_helper_node(node, calls, remaining);
-        ControlFlow::Continue(Descend::Into)
-    });
-}
-
-/// Call heads that executing a function may reach. Local aliases and nested
-/// literals are retained as alternatives because a branch can select either.
-/// Immediate closures share the caller's bounded recursion budget.
-pub(crate) fn potential_helper_calls(
-    params: &[Param],
-    body: &[Stmt],
-    remaining: &mut usize,
-) -> PotentialHelperCalls {
-    let mut calls = PotentialHelperCalls::default();
-    scan_possible_helper_calls(params, body, &mut calls, remaining);
-    calls
+    writes
 }
 
 /// Defaults are promises evaluated in the called function's frame when
@@ -1099,11 +887,7 @@ impl Checker {
         span: Span,
     ) -> usize {
         let outward_writes = Arc::new(OnceLock::new());
-        let source_params = if params.iter().any(|param| param.default.is_some()) {
-            Some(Arc::from(params.to_vec()))
-        } else {
-            None
-        };
+        let source_params = Arc::from(params.to_vec());
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -1997,35 +1781,6 @@ mod collect_walker_tests {
     }
 
     #[test]
-    fn exhausted_default_helper_budget_skips_nested_iife_defaults_in_both_walkers() {
-        let source = "f <- function(z = (function(y = { target <<- 1L }) { y })()) { (function(y = { target <<- 1L }) { y })() }";
-        let statements = parse_stmts(source);
-        let Stmt::Assign {
-            value: Expr::Function { params, body, .. },
-            ..
-        } = &statements[0]
-        else {
-            panic!("fixture has one function literal");
-        };
-
-        let mut remaining = 0;
-        let (_, from_default) = collect_default_writes_bounded(params, &mut remaining);
-        assert_eq!(
-            from_default,
-            FxSet::from_iter([UNKNOWN_CAPTURE_BINDING.to_string()]),
-            "no inner default should be scanned after the budget is exhausted"
-        );
-
-        let mut from_body = FxSet::default();
-        collect_immediate_outward_writes(body, &mut from_body, &mut remaining);
-        assert_eq!(
-            from_body,
-            FxSet::from_iter([UNKNOWN_CAPTURE_BINDING.to_string()]),
-            "the body walker must apply the same bound before parameter descent"
-        );
-    }
-
-    #[test]
     fn unannotated_collection_does_not_build_helper_effect_summaries() {
         let statements = parse_stmts("f <- function() { g <<- 1L }");
         let mut checker = Checker::new("lazy-effect.R");
@@ -2034,25 +1789,6 @@ mod collect_walker_tests {
         assert!(function.outward_writes.get().is_none());
         assert!(function.outward_writes().contains("g"));
         assert!(function.outward_writes.get().is_some());
-    }
-
-    #[test]
-    fn spent_transitive_scan_budget_does_not_enter_an_iife() {
-        let statements = parse_stmts("bridge <- function() (function() mutate())()");
-        let Stmt::Assign {
-            value: Expr::Function { params, body, .. },
-            ..
-        } = &statements[0]
-        else {
-            panic!("fixture has one function literal");
-        };
-        let mut remaining = 0;
-        let calls = potential_helper_calls(params, body, &mut remaining);
-        assert!(calls.uncertain);
-        assert!(
-            calls.calls.is_empty(),
-            "exhaustion must stop before descent"
-        );
     }
 
     #[test]

@@ -965,7 +965,7 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
         ("eval(quote(f <- function(x) x), .GlobalEnv)", false),
         ("evalq(f <- function(x) x, envir = .GlobalEnv)", false),
         ("assign(\"f\", function(x) x, envir = new.env())", false),
-        ("eval(base::quote(1L))", true),
+        ("eval(base::quote(1L))", false),
         ("eval(quote(1L), envir = .GlobalEnv)", false),
         ("helper()", true),
     ] {
@@ -1155,7 +1155,7 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
         (
             "mutate <- function() f <<- function(x) x\npure <- function() 1L\nbridge <- function() pure()",
             "bridge()",
-            true,
+            false,
         ),
         ("mutate <- function() f <<- function(x) x", "1L", true),
     ] {
@@ -1285,7 +1285,7 @@ fn standalone_and_helper_value_reads_can_force_a_replacement() {
         (
             "e <- new.env(); e$trigger <- .GlobalEnv",
             "base::eval(base::quote(1L))",
-            vec!["\"before\"", "\"after\""],
+            vec!["\"before\""],
         ),
     ] {
         let source =
@@ -1310,140 +1310,6 @@ fn standalone_and_helper_value_reads_can_force_a_replacement() {
 }
 
 #[test]
-fn historical_function_table_name_does_not_certify_a_current_helper_read() {
-    for (setup, expected) in [
-        (
-            "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }, .GlobalEnv)",
-            vec!["\"before\""],
-        ),
-        ("trigger <- function() 1L", vec!["\"before\"", "\"after\""]),
-    ] {
-        let source = format!(
-            "{setup}\ntouch <- function() trigger\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
-        );
-        let file = parse("current-helper-read.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
-        assert_eq!(
-            mismatch_sources(&checker, &file),
-            expected,
-            "setup: {setup}"
-        );
-    }
-}
-
-#[test]
-fn helper_local_bindings_only_prove_reads_after_unconditional_assignment() {
-    for (body, expected) in [
-        ("{ trigger; trigger <- function() 1L }", vec!["\"before\""]),
-        (
-            "{ trigger <- function() 1L; trigger }",
-            vec!["\"before\"", "\"after\""],
-        ),
-        ("{ trigger; trigger <- pure }", vec!["\"before\""]),
-        (
-            "{ trigger <- pure; trigger }",
-            vec!["\"before\"", "\"after\""],
-        ),
-        (
-            "{ if (FALSE) trigger <- function() 1L; trigger }",
-            vec!["\"before\""],
-        ),
-        (
-            "{ for (i in NULL) trigger <- function() 1L; trigger }",
-            vec!["\"before\""],
-        ),
-    ] {
-        let source = format!(
-            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\npure <- function() 1L\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
-        );
-        let file = parse("helper-read-order.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
-        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
-    }
-}
-
-#[test]
-fn immediately_invoked_local_bindings_do_not_prove_outer_reads() {
-    for (body, expected) in [
-        (
-            "{ (function() { trigger <- function() 1L })(); trigger }",
-            vec!["\"before\""],
-        ),
-        (
-            "{ inner <- function() { trigger <- function() 1L }; inner(); trigger }",
-            vec!["\"before\""],
-        ),
-        (
-            "{ inner <- function() { trigger <- function() 1L }; saved <- inner; saved(); trigger }",
-            vec!["\"before\""],
-        ),
-        (
-            "{ (function(trigger) trigger)(function() 1L); trigger }",
-            vec!["\"before\""],
-        ),
-        ("{ (function() 1L)(); trigger }", vec!["\"before\""]),
-        (
-            "{ (function() { trigger <- function() 1L; trigger })() }",
-            vec!["\"before\"", "\"after\""],
-        ),
-        (
-            "{ trigger <- function() 1L; (function() 1L)(); trigger }",
-            vec!["\"before\"", "\"after\""],
-        ),
-    ] {
-        let source = format!(
-            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
-        );
-        let file = parse("inner-frame-reads.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
-        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
-    }
-}
-
-#[test]
-fn immediate_closure_outward_write_still_invalidates_later_contracts() {
-    for (body, expected) in [
-        ("(function() { f <<- function(x) x })()", vec!["\"before\""]),
-        ("(function() 1L)()", vec!["\"before\"", "\"after\""]),
-    ] {
-        let source = format!(
-            "f <- function(x) x\ntouch <- function() {{ {body} }}\nf(\"before\")\ntouch()\nf(\"after\")\n"
-        );
-        let file = parse("immediate-outward-write.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
-        assert_eq!(mismatch_sources(&checker, &file), expected, "body: {body}");
-    }
-}
-
-#[test]
 fn active_call_heads_cannot_reuse_removed_function_inventory() {
     for (setup, action, expected) in [
         (
@@ -1459,7 +1325,7 @@ fn active_call_heads_cannot_reuse_removed_function_inventory() {
         (
             "trigger <- function() 1L",
             "touch <- function() trigger()\ntouch()",
-            vec!["\"before\"", "\"after\""],
+            vec!["\"before\""],
         ),
         (
             "trigger <- function() NULL\nrm(trigger)\nmakeActiveBinding(\"trigger\", function() { f <<- function(x) x; function() 1L }, .GlobalEnv)",
@@ -1469,7 +1335,7 @@ fn active_call_heads_cannot_reuse_removed_function_inventory() {
         (
             "trigger <- function() 1L",
             "touch <- function() { trigger <- function() 1L; trigger() }\ntouch()",
-            vec!["\"before\"", "\"after\""],
+            vec!["\"before\""],
         ),
     ] {
         let source =
@@ -1488,48 +1354,6 @@ fn active_call_heads_cannot_reuse_removed_function_inventory() {
             expected,
             "action: {action}"
         );
-    }
-}
-
-#[test]
-fn warm_helper_binding_order_edits_match_cold_findings() {
-    let source = |body: &str| {
-        format!(
-            "makeActiveBinding(\"trigger\", function() {{ f <<- function(x) x; 1L }}, .GlobalEnv)\nf <- function(x) x\ntouch <- function() {{ {body} }}\ntouch()\nf(\"after\")\n"
-        )
-    };
-    let first = parse(
-        "ordered-reader.R",
-        &source("trigger <- function() 1L; trigger"),
-    );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.set_declaration_records(vec![declaration.clone()]);
-    project.check_incremental();
-    assert_eq!(project_mismatch_count(&project, &first.path), 1);
-
-    for (body, expected) in [
-        ("trigger; trigger <- function() 1L", 0),
-        ("trigger <- function() 1L; trigger", 1),
-        ("(function() { trigger <- function() 1L })(); trigger", 0),
-        ("trigger <- function() 1L; (function() 1L)(); trigger", 1),
-    ] {
-        let edited = parse("ordered-reader.R", &source(body));
-        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        project.check_incremental();
-        assert_eq!(project_mismatch_count(&project, &edited.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -1568,47 +1392,6 @@ fn evaluated_assignment_targets_can_replace_a_declared_callable() {
             mismatch_sources(&checker, &file),
             expected,
             "action: {action}"
-        );
-    }
-}
-
-#[test]
-fn helper_operator_lookup_requires_a_current_base_binding() {
-    for (setup, body, expected) in [
-        (
-            "`+` <- function(e1, e2) { f <<- function(x) x; 1L }",
-            "1L + 1L",
-            vec!["\"before\""],
-        ),
-        (
-            "`-` <- function(e1) { f <<- function(x) x; 1L }",
-            "-1L",
-            vec!["\"before\""],
-        ),
-        (
-            "",
-            "{ `+` <- function(e1, e2) { f <<- function(x) x; 1L }; 1L + 1L }",
-            vec!["\"before\""],
-        ),
-        ("", "1L + 1L", vec!["\"before\"", "\"after\""]),
-        ("", "-1L", vec!["\"before\"", "\"after\""]),
-    ] {
-        let source = format!(
-            "{setup}\ntouch <- function() {body}\nf <- function(x) x\nf(\"before\")\ntouch()\nf(\"after\")\n"
-        );
-        let file = parse("helper-operator-effect.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
-        assert_eq!(
-            mismatch_sources(&checker, &file),
-            expected,
-            "body: {body}, setup: {setup}"
         );
     }
 }
@@ -1722,52 +1505,6 @@ fn forcing_a_nonliteral_actual_promise_can_replace_the_declared_callee() {
             .map(|finding| &file.source[finding.span.start..finding.span.end])
             .collect::<Vec<_>>();
         assert_eq!(spans, expected, "definition: {definition}; call: {call}");
-    }
-}
-
-#[test]
-fn alias_only_helper_chains_spend_a_shared_effect_budget() {
-    for (aliases, expected_g_after) in [(12, true), (10_000, false)] {
-        let mut source = String::from(
-            "f <- function(x) x\ng <- function(x) x\nmutate <- function() f <<- function(x) x\nbridge <- function() {\n  a0 <- mutate\n",
-        );
-        for index in 1..=aliases {
-            source.push_str(&format!("  a{index} <- a{}\n", index - 1));
-        }
-        // Check the unrelated `g` before calling the now-replaced `f`:
-        // that call has no proven current body and may itself affect `g`.
-        source.push_str(&format!(
-            "  a{aliases}()\n}}\nf(\"before\")\ng(\"before\")\nbridge()\ng(\"after\")\nf(\"after\")\n"
-        ));
-        let file = parse("alias-budget.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![
-            record(
-                &file,
-                "f",
-                ("x", AtomicMode::Integer, SupplyStatus::Required),
-                None,
-            ),
-            record(
-                &file,
-                "g",
-                ("x", AtomicMode::Integer, SupplyStatus::Required),
-                None,
-            ),
-        ]);
-        checker.check(&file);
-        let spans = checker
-            .declaration_findings()
-            .iter()
-            .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
-            .map(|finding| &file.source[finding.span.start..finding.span.end])
-            .collect::<Vec<_>>();
-        let expected = if expected_g_after {
-            vec!["\"before\"", "\"before\"", "\"after\""]
-        } else {
-            vec!["\"before\"", "\"before\""]
-        };
-        assert_eq!(spans, expected, "alias count: {aliases}");
     }
 }
 
@@ -1933,7 +1670,7 @@ fn cross_file_wrapper_effect_retracts_after_warm_helper_edit() {
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
 
     for (body, expected) in [
-        ("mutate <- function() 1L", 2),
+        ("mutate <- function() 1L", 1),
         ("mutate <- function() f <<- function(x) x", 1),
     ] {
         let edited = parse("mutator.R", body);

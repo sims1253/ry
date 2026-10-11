@@ -19,8 +19,7 @@
 mod harness;
 
 use harness::{
-    file_uri, join_session, normalize_diagnostics, spawn_watching_session,
-    sync_barrier,
+    file_uri, join_session, normalize_diagnostics, spawn_watching_session, sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
 use ry_testkit::{FixtureProject, rpc_receive_timeout};

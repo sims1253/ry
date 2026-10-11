@@ -145,7 +145,7 @@ fn scoped_severity_does_not_match_lossy_non_utf8_filename() {
     let unicode = temp.path().join("bad\u{fffd}.R");
     for (path, expected, exit) in [(&raw, "warning", 0), (&unicode, "error", 1)] {
         fs::write(path, "\"text\" + 1L\n").unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .arg("check")
             .arg(path)
             .args(["--output-format", "json"])
@@ -216,7 +216,7 @@ fn scoped_severity_keeps_unix_backslash_distinct_from_separator() {
     let slash = temp.path().join("back/slash.R");
     for (path, expected, exit) in [(&backslash, "error", 1), (&slash, "warning", 0)] {
         fs::write(path, "\"text\" + 1L\n").unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .arg("check")
             .arg(path)
             .args(["--output-format", "json"])
@@ -251,7 +251,7 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     fs::write(temp.path().join("scripts/use.R"), "shared\n\"x\" + 1L\n").unwrap();
 
     let run = |args: &[&str]| {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .current_dir(temp.path())
             .arg("check")
             .args(args)
@@ -422,7 +422,7 @@ fn path_rule_overrides_normalize_equivalent_in_root_operands() {
         ),
     ];
     for (cwd, args) in cases {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .current_dir(cwd)
             .arg("check")
             .args(&args)
@@ -619,32 +619,19 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
     )
     .unwrap();
 
-    // Relative roots must match the same config-relative patterns as
-    // absolute ones.
-    for root in [
-        tmp.path(),
-        std::path::Path::new("."),
-        std::path::Path::new("./fixtures"),
-    ] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
-            .current_dir(tmp.path())
-            .arg("check")
-            .arg(root)
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "excluded file must not be checked from {root:?}, got {:?}; stderr={}",
-            output.status,
-            stderr
-        );
-        assert!(
-            !stderr.contains("RY040"),
-            "RY040 from excluded file must not appear from {root:?}: {}",
-            stderr
-        );
-    }
+    let output = ry_check(tmp.path());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "excluded file must not be checked, got {:?}; stderr={}",
+        output.status,
+        stderr
+    );
+    assert!(
+        !stderr.contains("RY040"),
+        "RY040 from excluded file must not appear: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -1378,7 +1365,7 @@ fn bundled_set6_imports_bind_exports_without_hiding_misspellings() {
         )
         .unwrap();
 
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .args(["check", "--output-format", "json"])
             .arg(tmp.path())
             .env("RY_NO_INSTALLED_LIBRARIES", "1")
@@ -1625,7 +1612,7 @@ fn parser_limit_is_reported_and_repair_restores_a_known_empty_inventory() {
             .unwrap()
     };
     let run_facts = || {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .current_dir(pkg)
             .args(["dump-facts", "R/use.R"])
             .output()
@@ -1825,7 +1812,7 @@ fn empty_discovery_preserves_output_format_contracts() {
     )
     .unwrap();
     for format in ["json", "gitlab", "junit", "github", "full", "concise"] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .current_dir(tmp.path())
             .args(["check", ".", "--output-format", format])
             .output()
@@ -1949,7 +1936,7 @@ fn check_missing_input_fails_instead_of_succeeding() {
         tmp.path().join("nonexistent.R"),
         tmp.path().join("missing_dir"),
     ] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
             .args(["check", "--output-format", "json"])
             .arg(&input)
             .output()
@@ -2311,4 +2298,25 @@ fn plain_check_subtracts_counts_against_regenerated_baseline() {
         serde_json::from_slice(&surplus.stdout).expect("valid JSON");
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0]["code"], "RY040");
+}
+
+#[test]
+fn ry_toml_exclude_patterns_apply_to_relative_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "exclude = [\"fixtures/**\"]\n").unwrap();
+    fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
+    fs::write(tmp.path().join("fixtures/bad.R"), "x <- \"a\" + 1L\n").unwrap();
+    fs::write(tmp.path().join("good.R"), "x <- 1L + 2L\n").unwrap();
+    for root in [".", "./fixtures"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(tmp.path())
+            .args(["check", root])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && !stderr.contains("RY040"),
+            "excluded file was checked from {root:?}: {stderr}"
+        );
+    }
 }

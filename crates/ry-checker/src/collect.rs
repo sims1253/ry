@@ -280,11 +280,13 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
             ControlFlow::Continue(Descend::Into)
         }
     };
-    writes.opaque = params
+    let unsummarized = params
         .iter()
         .filter_map(|param| param.default.as_ref())
         .any(|default| walk_expr(default, policy, &mut visit).is_break())
         || walk_stmts(body, policy, &mut visit).is_break();
+    // An undecodable `<<-` target already marked the set opaque.
+    writes.opaque |= unsummarized;
     writes
 }
 

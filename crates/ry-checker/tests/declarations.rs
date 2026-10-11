@@ -798,6 +798,7 @@ fn eager_calls_use_the_binding_before_but_not_after_a_runtime_installation() {
 fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
     for (body, expected_after_mismatch) in [
         ("f <<- function(x) x", false),
+        ("`\\x66` <<- function(x) x", false),
         (
             "base::assign(\"f\", function(x) x, envir = .GlobalEnv)",
             false,

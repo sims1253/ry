@@ -20,7 +20,7 @@ fn is_file_eligible_with_excludes(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Shared per-file eligibility for bounded discovery and open-buffer admission (#488)
+// Shared per-file eligibility for bounded discovery and open-buffer admission
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Component depth of `path` relative to `root`: the number of components
@@ -55,7 +55,7 @@ pub fn is_within_file_bytes(file_len: u64, max_file_bytes: u64) -> bool {
 
 /// Full per-file eligibility combining `exclude` patterns with the
 /// bounded-discovery caps, sharing one policy between the directory walker
-/// and open-buffer admission (#488).
+/// and open-buffer admission.
 ///
 /// `depth_root` is the root depth counts from (the walk root for discovery,
 /// the folder root for open documents — walk depth is not a path property,
@@ -75,6 +75,9 @@ pub fn is_file_eligible_with_limits(
     limits: &DiscoveryLimits,
     content_len: Option<u64>,
 ) -> bool {
+    if !limits.admits_report(path) {
+        return false;
+    }
     if exclude_anchor.is_some_and(|anchor| !is_file_eligible_with_excludes(path, anchor, excludes))
     {
         return false;
@@ -91,7 +94,7 @@ pub fn is_file_eligible_with_limits(
 /// class the walk applies — `exclude` patterns against the file and every
 /// ancestor directory up to `walk_root` (a bare `exclude = ["vendor"]`
 /// prunes the directory entry in the walk but never matches
-/// `vendor/defs.R` through file-shape matching, #524), the walk's
+/// `vendor/defs.R` through file-shape matching), the walk's
 /// symlink refusal for the file and every ancestor directory (the walk
 /// never descends through symlinked directories), walk-root containment
 /// (no walk reaches outside its root), the fixed pruned-directory shapes
@@ -102,7 +105,7 @@ pub fn is_file_eligible_with_limits(
 /// never-lands-a-directory rule (a directory named `pkg.R/` passes the
 /// extension check but is descended, never landed; exotic non-regular
 /// entries are refused too — the one documented, safe-direction
-/// divergence, #538), the on-disk size cap measured the way the walk
+/// divergence), the on-disk size cap measured the way the walk
 /// measures it, and `.Rbuildignore` with `include_build_ignored`
 /// rescue — anchored
 /// exactly like [`discover_r_files`]: excludes at `exclude_anchor`,
@@ -112,9 +115,7 @@ pub fn is_file_eligible_with_limits(
 ///
 /// What stays out: the `index.max-files` count is not a path property (the
 /// walk enforces it first-come-first-served per root), so callers apply it
-/// at commit time against their own entry accounting (#525). The
-/// `reports.enabled` opt-in is a config property, not a path one: callers
-/// gate reports before asking (the language server's eligibility check).
+/// at commit time against their own entry accounting.
 ///
 /// Point-in-time verdict: the checks above read the filesystem entry by
 /// entry, so concurrent edits can make them disagree with each other and
@@ -129,7 +130,7 @@ pub fn is_single_file_walk_admitted(
     limits: &DiscoveryLimits,
     check_test_fixtures: bool,
 ) -> bool {
-    if !is_r_source_path(path) {
+    if !is_source_path(path) || !limits.admits_report(path) {
         return false;
     }
     // The walk never follows symlinks; classify the entry itself.
@@ -251,7 +252,7 @@ pub fn is_single_file_walk_admitted(
     }
     // The shared policy's exclude and depth thirds for the file itself
     // (content length deliberately `None`: the size gate below measures the
-    // file on disk exactly like the walk does, #488).
+    // file on disk exactly like the walk does).
     if !is_file_eligible_with_limits(path, walk_root, exclude_anchor, excludes, limits, None) {
         return false;
     }
@@ -259,7 +260,7 @@ pub fn is_single_file_walk_admitted(
     // before the extension test, so a directory named like a source
     // (`pkg.R/`) is never landed — yet it passes the name-based checks
     // above and, directory entries being small, the size cap too
-    // (#538). Requiring a regular file also refuses exotic non-regular
+    //. Requiring a regular file also refuses exotic non-regular
     // entries (a FIFO named `x.R`) that the walk's file branch would
     // nominally land: a deliberate divergence in the safe direction —
     // no such entry can be read as a source. Unmeasurable entries
@@ -303,6 +304,8 @@ pub struct DiscoveryLimits {
     pub max_file_bytes: u64,
     /// Maximum directory depth to descend from each root.
     pub max_depth: usize,
+    /// Whether `.Rmd`/`.qmd` reports are analyzed (`reports.enabled`).
+    pub reports_enabled: bool,
 }
 
 impl DiscoveryLimits {
@@ -311,7 +314,13 @@ impl DiscoveryLimits {
             max_files: config.index.max_files as usize,
             max_file_bytes: config.index.max_file_bytes,
             max_depth: config.index.max_depth as usize,
+            reports_enabled: config.reports.enabled,
         }
+    }
+
+    /// False only for a report while reports are not opted in.
+    pub fn admits_report(&self, path: &Path) -> bool {
+        self.reports_enabled || !crate::reports::is_report_path(path)
     }
 }
 
@@ -345,7 +354,7 @@ pub struct SkippedPaths {
 
 impl SkippedPaths {
     fn record(&mut self, path: &Path, directory: bool, reason: &'static str, limit: usize) {
-        if !directory && !is_r_source_path(path) {
+        if !directory && !is_source_path(path) {
             return;
         }
         if self.entries.len() < limit {
@@ -384,10 +393,9 @@ impl BuildIgnoredIncludes {
 
 /// Whether `path` carries an extension the directory walk admits:
 /// conventional `.R`/`.r`, the historical S-dialect `.S`/`.s`/`.q`
-/// spellings, and report extensions in any case. Single-file eligibility
-/// checks that cannot afford a full walk (watched-file events, close-time
-/// refresh) classify through this; callers apply `reports.enabled`.
-pub fn is_r_source_path(path: &Path) -> bool {
+/// spellings, and report extensions in any case. `reports.enabled` is
+/// applied separately through [`DiscoveryLimits::admits_report`].
+pub fn is_source_path(path: &Path) -> bool {
     crate::reports::is_report_path(path)
         || path
             .extension()
@@ -423,7 +431,7 @@ pub struct DiscoveryResult {
     /// from an empty `files` so a caller can distinguish "this tree has
     /// no eligible R source" from "this tree could not be walked at
     /// all" — the latter must never look like a clean, empty check
-    /// (#485). A nonexistent root lands here too: `read_dir` on it
+    ///. A nonexistent root lands here too: `read_dir` on it
     /// fails, which is the discovery-level record of the miss.
     pub read_errors: Vec<(PathBuf, String)>,
 }
@@ -448,18 +456,18 @@ pub fn discover_r_files(
     // A single file passed directly is included regardless of package
     // rules: it is the explicit subject of the analysis. Only a report
     // still needs the explicit opt-in.
+    let limits = DiscoveryLimits::from_config(config);
     if walk_root.is_file() {
         let mut result = DiscoveryResult::default();
-        if crate::reports::is_report_path(walk_root) && !config.reports.enabled {
+        if limits.admits_report(walk_root) {
+            result.files.push(walk_root.to_path_buf());
+        } else {
             result
                 .skipped
                 .record(walk_root, false, "reports.enabled = false", usize::MAX);
-        } else {
-            result.files.push(walk_root.to_path_buf());
         }
         return result;
     }
-    let limits = DiscoveryLimits::from_config(config);
     let excludes = ry_config::Excludes::from_config(config);
     let has_excludes = !excludes.is_empty();
     let mut files = Vec::new();
@@ -488,7 +496,6 @@ pub fn discover_r_files(
         package_root.as_deref(),
         &buildignore,
         check_test_fixtures,
-        config.reports.enabled,
         0,
         &limits,
         &excludes,
@@ -590,7 +597,6 @@ fn discover_recursive(
     package_root: Option<&Path>,
     buildignore: &[glob::Pattern],
     check_test_fixtures: bool,
-    reports_enabled: bool,
     depth: usize,
     limits: &DiscoveryLimits,
     excludes: &ry_config::Excludes,
@@ -599,7 +605,7 @@ fn discover_recursive(
 ) {
     // A failed read_dir — the root does not exist, or permissions (or a
     // race) denied the listing — is recorded rather than swallowed: the
-    // caller decides whether an unwalkable tree fails the run (#485).
+    // caller decides whether an unwalkable tree fails the run.
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -667,7 +673,7 @@ fn discover_recursive(
             // than `max_depth` never becomes discoverable here, so
             // open-buffer admission must apply the same bound as a path
             // property (`is_within_depth`) or the admitted buffer would leak
-            // into project state the closed index omitted (#488).
+            // into project state the closed index omitted.
             if depth >= limits.max_depth {
                 truncated.depth_pruned_dirs.push(path);
                 continue;
@@ -689,15 +695,14 @@ fn discover_recursive(
                 nested_package_root.as_deref(),
                 &nested_buildignore,
                 check_test_fixtures,
-                reports_enabled,
                 depth + 1,
                 limits,
                 excludes,
                 has_excludes,
                 exclude_root,
             );
-        } else if is_r_source_path(&path) {
-            if crate::reports::is_report_path(&path) && !reports_enabled {
+        } else if is_source_path(&path) {
+            if !limits.admits_report(&path) {
                 skipped.record(&path, false, "reports.enabled = false", limits.max_files);
                 continue;
             }
@@ -713,7 +718,7 @@ fn discover_recursive(
             // max-file-bytes cap. This is the reference implementation of
             // the size half of [`is_file_eligible_with_limits`]: discovery
             // omits only sizes strictly above the cap, and passes the
-            // measured size so admission of the same bytes agrees (#488).
+            // measured size so admission of the same bytes agrees.
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let size = metadata.len();
                 if size > limits.max_file_bytes {
@@ -993,7 +998,7 @@ mod shared_tests {
         );
     }
 
-    /// The shared exclude third of `is_file_eligible_with_limits` (#488):
+    /// The shared exclude third of `is_file_eligible_with_limits`:
     /// matching is rooted at the configuration/workspace root and uses
     /// forward slashes, so indexing and publication cannot give the same
     /// patterns different exclude semantics.
@@ -1023,7 +1028,7 @@ mod shared_tests {
         assert!(eligible(&dir.path().join("keep.R")));
     }
 
-    /// The shared caps half of `is_file_eligible_with_limits` (#488): the
+    /// The shared caps half of `is_file_eligible_with_limits`: the
     /// size boundary is inclusive and the depth bound keeps files whose
     /// parent is exactly at `max_depth` — the same boundaries
     /// `discover_recursive` applies to the bytes and descent levels on
@@ -1035,6 +1040,7 @@ mod shared_tests {
             max_files: 100,
             max_file_bytes: 10,
             max_depth: 1,
+            reports_enabled: false,
         };
         let excludes = ry_config::Excludes::from_config(&ry_config::Config::default());
         let root = Path::new("/root");
@@ -1049,7 +1055,7 @@ mod shared_tests {
 
     /// Depth is a path property relative to the given root, not a walk
     /// property: nested roots see fewer components, and paths outside the
-    /// root carry no depth to judge (#488).
+    /// root carry no depth to judge.
     #[test]
     fn depth_counts_directory_components_relative_to_the_root() {
         assert!(is_within_depth(
@@ -1071,7 +1077,7 @@ mod shared_tests {
 
     /// Exclude matching reads the workspace entry name, not a
     /// canonicalized symlink target: an explicit exclude for `linked.R`
-    /// excludes that entry regardless of where it points (#488 pins this
+    /// excludes that entry regardless of where it points (pins this
     /// on the shared policy, not the retired excludes-only wrapper).
     #[cfg(unix)]
     #[test]
@@ -1557,7 +1563,7 @@ mod shared_tests {
 
     /// A nonexistent root is a discovery failure, not an empty file set:
     /// the failed `read_dir` is recorded so `ry check` can fail the run
-    /// instead of reporting a clean, empty check (#485).
+    /// instead of reporting a clean, empty check.
     #[test]
     fn missing_root_is_a_read_error_not_an_empty_discovery() {
         let dir = tempfile::tempdir().unwrap();
@@ -1605,7 +1611,7 @@ mod shared_tests {
     }
 
     /// The single-file verdict agrees with the walk on every path in a
-    /// mixed tree (#524): directory-shape excludes, file-shape excludes,
+    /// mixed tree: directory-shape excludes, file-shape excludes,
     /// buildignore pruning with include rescue (including across a nested
     /// package boundary), pruned directory names, depth and size caps, and
     /// testthat runner classification. The count gate is not a path
@@ -1713,7 +1719,7 @@ mod shared_tests {
     /// small — but the walk descends directories and never lands one
     /// in its file set, so the verdict must refuse the directory
     /// spelling while still admitting the real sources inside it
-    /// (#538).
+    ///.
     #[test]
     fn single_file_verdict_refuses_directory_named_like_a_source() {
         let dir = tempfile::tempdir().unwrap();
@@ -1763,7 +1769,7 @@ mod shared_tests {
         );
     }
 
-    /// `renv/` is pruned only inside a package (#524): without a
+    /// `renv/` is pruned only inside a package: without a
     /// DESCRIPTION above the walk root the walker keeps it — including a
     /// nested package below it — and the verdict must agree. The retired
     /// per-file check resolved the *nearest* package instead, so it pruned
@@ -1811,7 +1817,7 @@ mod shared_tests {
 
 /// Parity between [`is_single_file_walk_admitted`] and
 /// [`discover_r_files`] for symlinked directories and walk-root
-/// containment (#524): the verdict must refuse exactly the spellings the
+/// containment: the verdict must refuse exactly the spellings the
 /// walk never emits.
 #[cfg(test)]
 #[cfg(unix)]

@@ -9,7 +9,7 @@ mod native;
 pub mod reports;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
-    is_file_eligible_with_limits, is_r_source_path, is_single_file_walk_admitted,
+    is_file_eligible_with_limits, is_single_file_walk_admitted, is_source_path,
     is_test_fixture_path, is_within_depth, is_within_file_bytes, rbuildignore_pattern,
     source_extension_globs,
 };
@@ -19,7 +19,7 @@ pub mod packages;
 mod serialized;
 
 pub use serialized::InventoryFailure;
-use serialized::{InventoryStatus, serialized_inventory};
+use serialized::serialized_inventory;
 
 pub use packages::{
     NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
@@ -68,21 +68,17 @@ pub fn enclosing_package_root(path: &Path) -> Option<PathBuf> {
 /// Reports have their own ordered R environment even when they share a
 /// package directory. Ordinary source files retain package grouping.
 pub fn analysis_group_key(path: &Path) -> Option<PathBuf> {
-    group_key(path, enclosing_package_root)
-}
-
-fn group_key(path: &Path, package_root: impl FnOnce(&Path) -> Option<PathBuf>) -> Option<PathBuf> {
     if reports::is_report_path(path) {
         Some(path.to_path_buf())
     } else {
-        package_root(path)
+        enclosing_package_root(path)
     }
 }
 
 /// The directory a group resolves against. A report's group key is its
 /// file path; it resolves against its enclosing package so package
 /// imports still apply while its bindings stay separate.
-pub fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathBuf {
+fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathBuf {
     match group {
         Some(path) if reports::is_report_path(path) => {
             enclosing_package_root(path).unwrap_or_else(|| fallback.to_path_buf())
@@ -120,15 +116,74 @@ where
         } else {
             path.parent()
         };
-        let root = group_key(path, |path| {
+        let root = if reports::is_report_path(path) {
+            Some(path.to_path_buf())
+        } else {
             root_cache
                 .entry(key)
                 .or_insert_with(|| enclosing_package_root(path))
                 .clone()
-        });
+        };
         groups.entry(root).or_default().push(index);
     }
     groups
+}
+
+/// One package group of a file set with its resolved workspace context.
+pub struct ResolvedGroup {
+    /// The group key from [`group_by_package_root`].
+    pub key: Option<PathBuf>,
+    /// Indices into the input files, ascending.
+    pub indices: Vec<usize>,
+    pub resolution_root: PathBuf,
+    pub context: Result<WorkspaceContext, ResolveError>,
+}
+
+/// Group `files` by package and resolve each group against its own root;
+/// files outside every package resolve against `fallback_root`.
+pub fn resolve_grouped(
+    files: &[&SourceFile],
+    config: &ry_config::Config,
+    user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
+    fallback_root: &Path,
+) -> Vec<ResolvedGroup> {
+    group_by_package_root(files.iter().map(|file| file.path.as_str()))
+        .into_iter()
+        .map(|(key, indices)| {
+            let group_files = indices.iter().map(|&index| files[index]).collect();
+            let (resolution_root, context) = resolve_group(
+                key.as_deref(),
+                group_files,
+                config,
+                user_stubs,
+                fallback_root,
+            );
+            ResolvedGroup {
+                key,
+                indices,
+                resolution_root,
+                context,
+            }
+        })
+        .collect()
+}
+
+/// Resolve one group's files (see [`resolve_grouped`]) against the
+/// directory its key designates.
+pub fn resolve_group(
+    key: Option<&Path>,
+    files: Vec<&SourceFile>,
+    config: &ry_config::Config,
+    user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
+    fallback_root: &Path,
+) -> (PathBuf, Result<WorkspaceContext, ResolveError>) {
+    let resolution_root = resolution_root_for_group(key, fallback_root);
+    let context = resolve_workspace_context(
+        &resolution_root,
+        config,
+        ResolutionEnvironment { files, user_stubs },
+    );
+    (resolution_root, context)
 }
 
 /// Filesystem-derived state applied to a checker `Project`.
@@ -189,7 +244,7 @@ pub struct DecodedRSource {
     /// BOM is valid UTF-8 (it decodes to U+FEFF at the start of `text`,
     /// which is kept: R sees and rejects it), but R's parser errors with
     /// "unexpected input" at 1:1 in every execution context except
-    /// `parse(keep.source = TRUE)` (#474). Frontends attach this to the
+    /// `parse(keep.source = TRUE)`. Frontends attach this to the
     /// parsed `SourceFile` alongside `invalid_utf8` so both flag it.
     pub leading_bom: bool,
 }
@@ -235,7 +290,7 @@ impl DecodedRSource {
 /// Decode R source bytes as UTF-8, falling back to Latin-1 for invalid
 /// UTF-8 while recording each invalid sequence's span over the decoded
 /// text. The fallback maps every byte to its Latin-1 char, matching the
-/// pre-#376 display-only policy byte for byte; the spans are the new
+/// display-only policy byte for byte; the spans are the new
 /// part, and they are computed in decoded-text coordinates (a Latin-1
 /// char above 0x7F re-encodes as two UTF-8 bytes).
 ///
@@ -246,7 +301,7 @@ impl DecodedRSource {
 /// constant number of times here instead.
 ///
 /// A leading UTF-8 BOM is detected here, not as an invalid sequence: it
-/// is valid UTF-8 (and R rejects the file anyway, #474), so the text
+/// is valid UTF-8 (and R rejects the file anyway), so the text
 /// keeps it and only the flag records it. Both the valid-UTF-8 and the
 /// Latin-1 transcode path preserve the BOM's three bytes verbatim in
 /// `text`, so the flag is exactly `bytes.starts_with(BOM)`.
@@ -300,6 +355,81 @@ pub fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
         invalid_utf8,
         leading_bom,
     }
+}
+
+/// User stubs merged from configured typeshed directories.
+#[derive(Default)]
+pub struct LoadedStubs {
+    pub stubs: BTreeMap<String, ry_typeshed::Typeshed>,
+    /// Skipped stubs and unreadable directories, for the caller to report.
+    pub warnings: Vec<String>,
+    /// Directories were configured and none of them loaded.
+    pub all_failed: bool,
+}
+
+/// Load package stubs from `dirs`, later directories replacing same-named
+/// packages from earlier ones.
+pub fn load_stub_dirs(dirs: &[PathBuf]) -> LoadedStubs {
+    let mut loaded = LoadedStubs::default();
+    let mut loaded_any = false;
+    for dir in dirs {
+        match ry_typeshed::load_stub_dir_with_warnings(dir) {
+            Ok((stubs, warnings)) => {
+                loaded_any = true;
+                loaded.stubs.extend(stubs);
+                loaded
+                    .warnings
+                    .extend(warnings.iter().map(ToString::to_string));
+            }
+            Err(error) => loaded.warnings.push(error.to_string()),
+        }
+    }
+    loaded.all_failed = !dirs.is_empty() && !loaded_any;
+    loaded
+}
+
+/// Why [`parse_source_file`] produced no source file.
+#[derive(Debug)]
+pub enum SourceError {
+    Read(std::io::Error),
+    Parse(String),
+}
+
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Read(error) => write!(f, "{error}"),
+            Self::Parse(message) => f.write_str(message),
+        }
+    }
+}
+
+/// Load one source file the way every frontend loads disk sources: read
+/// `path` (or decode `overlay` in its place), parse it on this thread's
+/// cached parser, and record its native path and decoding findings.
+pub fn parse_source_file(path: &Path, overlay: Option<&[u8]>) -> Result<SourceFile, SourceError> {
+    thread_local! {
+        static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let decoded = match overlay {
+        Some(bytes) => decode_r_source(bytes),
+        None => read_r_source_decoded(path).map_err(SourceError::Read)?,
+    };
+    let display = path.to_string_lossy();
+    let parse_error = |error: ry_core::ParseError| SourceError::Parse(error.to_string());
+    let mut file = PARSER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        // A failed construction leaves the slot empty so the next file retries.
+        let parser = match slot.as_mut() {
+            Some(parser) => parser,
+            None => slot.insert(ry_core::RParser::new().map_err(parse_error)?),
+        };
+        reports::parse_source(parser, &display, &decoded.text).map_err(parse_error)
+    })?;
+    file.native_path = Some(path.to_path_buf());
+    decoded.attach_boundary_findings(&mut file);
+    Ok(file)
 }
 
 struct LibraryRoot {
@@ -522,10 +652,11 @@ pub fn resolve_workspace_context<'a>(
             let sysdata = root.join("R/sysdata.rda");
             // This file is optional. The inventory's single open decides
             // absence; a separate existence probe would race that open.
-            let sysdata_inventory = serialized_inventory(&sysdata, max_serialized_bytes);
-            file_bindings.extend(sysdata_inventory.bindings.iter().cloned());
-            if let InventoryStatus::Unavailable(reason) = sysdata_inventory.status {
-                degraded.insert((sysdata, reason));
+            if let Some(inventory) = serialized_inventory(&sysdata, max_serialized_bytes) {
+                file_bindings.extend(inventory.bindings);
+                if let Some(reason) = inventory.failure {
+                    degraded.insert((sysdata, reason));
+                }
             }
             let loaded = loaded_serialized_bindings(
                 file,
@@ -693,32 +824,34 @@ fn source_package_dynamic_bindings(root: &Path, files: &[&SourceFile]) -> Source
     let mut found = SourceBindings::default();
     let mut paths = Vec::new();
     collect_r_source_files(&root.join("R"), &mut paths);
-    visit_r_sources(
-        paths,
-        files.iter().copied().filter(|file| {
-            let path = Path::new(&file.path);
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(is_r_source_name)
-                && package_relative_path(path, root)
-                    .as_deref()
-                    .is_some_and(is_package_r_file)
-        }),
-        |file| collect_dynamic_bindings_stmts(&file.stmts, &mut found),
-    );
+    visit_r_sources(root, paths, files, is_package_r_file, |file| {
+        collect_dynamic_bindings_stmts(&file.stmts, &mut found)
+    });
     found
 }
 
-/// Supplied ASTs include live buffers and unsaved sources. Collect those
-/// first, then read only other on-disk sources, including when a supplied
-/// path is a symlink alias of a discovered source.
-fn visit_r_sources<'a>(
+/// Supplied ASTs include live buffers and unsaved sources. Visit the
+/// supplied `.R`/`.r` files whose package-relative path `admits`, then read
+/// only other on-disk `paths`, including when a supplied path is a symlink
+/// alias of a discovered source.
+fn visit_r_sources(
+    root: &Path,
     paths: Vec<PathBuf>,
-    files: impl Iterator<Item = &'a SourceFile>,
+    files: &[&SourceFile],
+    admits: impl Fn(&Path) -> bool,
     mut visit: impl FnMut(&SourceFile),
 ) {
     let mut supplied = HashSet::new();
     for file in files {
+        let path = Path::new(&file.path);
+        let admitted = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_r_source_name)
+            && package_relative_path(path, root).is_some_and(|relative| admits(&relative));
+        if !admitted {
+            continue;
+        }
         visit(file);
         if let Ok(identity) = Path::new(&file.path).canonicalize() {
             supplied.insert(identity);
@@ -879,27 +1012,29 @@ fn testthat_helper_context(root: &Path, files: &[&SourceFile]) -> TestthatHelper
     };
     let mut context = TestthatHelperContext::default();
     visit_r_sources(
+        root,
         paths,
-        files.iter().copied().filter(|file| {
-            let path = Path::new(&file.path);
-            is_testthat_helper(path)
-                && package_relative_path(path, root)
-                    .is_some_and(|relative| relative.parent() == Some(Path::new("tests/testthat")))
-        }),
+        files,
+        |relative| {
+            is_testthat_helper(relative) && relative.parent() == Some(Path::new("tests/testthat"))
+        },
         |file| {
             context.attached.extend(packages::attached_packages(file));
-            context
-                .bindings
-                .extend(file.stmts.iter().filter_map(|statement| match statement {
-                    Stmt::Assign {
-                        target: Expr::Ident { name, .. },
-                        ..
-                    } => Some(name.clone()),
-                    _ => None,
-                }));
+            context.bindings.extend(top_level_assignments(file));
         },
     );
     context
+}
+
+/// Names a file binds with top-level `name <- value` assignments.
+fn top_level_assignments(file: &SourceFile) -> impl Iterator<Item = String> + '_ {
+    file.stmts.iter().filter_map(|statement| match statement {
+        Stmt::Assign {
+            target: Expr::Ident { name, .. },
+            ..
+        } => Some(name.clone()),
+        _ => None,
+    })
 }
 
 fn is_testthat_helper(path: &Path) -> bool {
@@ -960,7 +1095,8 @@ fn source_package_datasets(
         };
         match extension.as_str() {
             "rda" | "rdata" => {
-                let inventory = serialized_inventory(&path, max_serialized_bytes);
+                let inventory = serialized_inventory(&path, max_serialized_bytes)
+                    .unwrap_or_else(|| serialized::unavailable(InventoryFailure::Unreadable));
                 if inventory.bindings.is_empty() {
                     if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
                         out.bindings.insert(stem.to_string());
@@ -968,7 +1104,7 @@ fn source_package_datasets(
                 } else {
                     out.bindings.extend(inventory.bindings);
                 }
-                if let Some(reason) = inventory.status.failure() {
+                if let Some(reason) = inventory.failure {
                     out.degraded.push((path, reason));
                 }
             }
@@ -982,25 +1118,11 @@ fn source_package_datasets(
         }
     }
     visit_r_sources(
+        root,
         sources,
-        files.iter().copied().filter(|file| {
-            let path = Path::new(&file.path);
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(is_r_source_name)
-                && package_relative_path(path, root)
-                    .is_some_and(|relative| relative.parent() == Some(Path::new("data")))
-        }),
-        |file| {
-            out.bindings
-                .extend(file.stmts.iter().filter_map(|statement| match statement {
-                    Stmt::Assign {
-                        target: Expr::Ident { name, .. },
-                        ..
-                    } => Some(name.clone()),
-                    _ => None,
-                }));
-        },
+        files,
+        |relative| relative.parent() == Some(Path::new("data")),
+        |file| out.bindings.extend(top_level_assignments(file)),
     );
     out
 }
@@ -1093,8 +1215,9 @@ fn loaded_serialized_bindings(
                 user_stubs,
             )
         }) {
-            let inventory = serialized_inventory(&path, max_serialized_bytes);
-            if let Some(reason) = inventory.status.failure() {
+            let inventory = serialized_inventory(&path, max_serialized_bytes)
+                .unwrap_or_else(|| serialized::unavailable(InventoryFailure::Unreadable));
+            if let Some(reason) = inventory.failure {
                 out.degraded.push((path, reason));
             }
             out.per_span.insert(span.start, inventory.bindings);
@@ -1561,7 +1684,7 @@ mod input_tests {
         assert!(read_r_source_decoded(&dir.path().join("missing.R")).is_err());
     }
 
-    // ---- leading UTF-8 BOM detection (#474) ----
+    // ---- leading UTF-8 BOM detection ----
 
     /// The BOM is valid UTF-8, so the text keeps it (as U+FEFF) and no
     /// invalid span is recorded: only the flag reports it, because R

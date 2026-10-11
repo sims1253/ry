@@ -5,8 +5,11 @@ dir <- tempfile()
 dir.create(file.path(dir, "mod"), recursive = TRUE)
 writeLines("answer <- function() 1L", file.path(dir, "mod", "preferred.r"))
 writeLines("answer <- function() 'wrong'", file.path(dir, "mod", "preferred.R"))
-if (length(list.files(file.path(dir, "mod"))) == 2L) {
-  options(box.path = dir)
+options(box.path = dir)
+loaded <- function() {
   box::use(mod/preferred[answer])
-  stopifnot(identical(answer(), 1L))
+  answer()
+}
+if (length(list.files(file.path(dir, "mod"))) == 2L) {
+  stopifnot(identical(loaded(), 1L))
 }

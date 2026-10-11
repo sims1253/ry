@@ -10,7 +10,7 @@ const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub struct JsonRpcProcess {
     child: Child,
     reader: BufReader<ChildStdout>,
-    writer: ChildStdin,
+    writer: Option<ChildStdin>,
     next_id: u64,
 }
 
@@ -43,7 +43,7 @@ impl JsonRpcProcess {
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
-            writer,
+            writer: Some(writer),
             next_id: 1,
         })
     }
@@ -70,8 +70,12 @@ impl JsonRpcProcess {
 
     pub fn send(&mut self, message: &Value) -> io::Result<()> {
         let frame = encode(message)?;
-        self.writer.write_all(&frame)?;
-        self.writer.flush()
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "server stdin closed"))?;
+        writer.write_all(&frame)?;
+        writer.flush()
     }
 
     pub fn receive(&mut self) -> io::Result<Value> {
@@ -137,6 +141,8 @@ impl JsonRpcProcess {
             return Err(io::Error::other(format!("shutdown failed: {error}")));
         }
         self.send(&json!({"jsonrpc": "2.0", "method": "exit"}))?;
+        // Clients close the server's stdin after `exit`.
+        self.writer = None;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             match self.child.try_wait()? {

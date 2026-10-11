@@ -118,8 +118,8 @@ paths = ["R/**"]
 
 All three settings are required when adoption is enabled. The path globs use
 the same configuration-root-relative matching described above. No comment is
-adopted by default. The [declaration guide](declarations.md) explains the supported class
-subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
+adopted by default. The [declaration guide](declarations.md) explains the
+supported class subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
 ordinary comments, and strings do not create typehint contracts.
 
 Explicit CLI values override scalar settings such as `output-format`.

@@ -6,6 +6,7 @@
 //! module size limit.
 
 use ry_checker::{Checker, Project};
+use ry_core::types::Mode;
 use ry_core::{RParser, SourceFile};
 use std::collections::BTreeMap;
 use std::fs;
@@ -103,6 +104,26 @@ fn box_fixtures() {
     }
     assert!(callers > 0, "no caller fixtures under {}", root.display());
     assert!(failures.is_empty(), "(expected, found): {failures:#?}");
+}
+
+/// What the fixture runner's code comparison cannot see: RY118 names the
+/// decoded member, and a plain import binds an opaque module object.
+#[test]
+fn box_fixtures_decode_missing_members_and_bind_opaque_objects() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/box");
+    let check = |name: &str| {
+        let path = root.join(name);
+        let source = fs::read_to_string(&path).unwrap();
+        Checker::new(&path.to_string_lossy()).check_with_scope(&parse(&path, &source))
+    };
+    let (diagnostics, _) = check("members_missing.R");
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect();
+    assert_eq!(messages, ["box module does not export `missing`"; 6]);
+    let (_, scope) = check("objects_and_selections.R");
+    assert_eq!(scope.get("hello").unwrap().mode, Mode::Opaque);
 }
 
 /// Kept out of the caller fixtures: the cloned-scope reference that the

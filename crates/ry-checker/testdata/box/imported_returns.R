@@ -11,6 +11,8 @@ scoped$foo() + 1L
 local_foo(wrong = 1L)
 scoped$foo(wrong = 1L)
 box::use(../oracle/box_module/imported_return[...])
+foo() + 1L
 foo(wrong = 1L)
 box::use(../oracle/box_module/function_imported_return[...])
+foo() + 1L
 foo(wrong = 1L)

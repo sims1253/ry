@@ -141,11 +141,11 @@ impl Checker {
         };
         let callee = if crate::semantic_lists::bare_name(&name) == "I" {
             self.resolves_to_base_lenient(&name, scope)
-        } else if let Some((package, member)) = name.rsplit_once("::")
-            && !package.ends_with(':')
+        } else if let Some((package, member)) = crate::resolve::split_qualified(&name)
+            && !name.contains(":::")
         {
             // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
-            !matches!(package, "base" | "methods" | "utils" | "stats")
+            !crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
                 && !self.fn_table.fns.contains_key(member)
                 && !self.known_vars.contains(member)
                 && !ops_chooser::operator_rebound(self, "::", scope)

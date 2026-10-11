@@ -6,7 +6,7 @@ use crate::infer::{dispatch_result, json_rtype_to_rtype};
 
 /// R's standard packages, which share ry's embedded base stub database:
 /// a qualified lookup in any of them resolves against `typeshed` itself.
-const BASE_DATABASE_PACKAGES: &[&str] = &[
+pub(crate) const BASE_DATABASE_PACKAGES: &[&str] = &[
     "base",
     "stats",
     "utils",
@@ -711,7 +711,7 @@ fn has_schema_semantics(signature: &FunctionSig) -> bool {
 /// Split `pkg::fun` / `pkg:::fun` into `(package, member)`. The triple-
 /// colon form splits as `("pkg:", "fun")`, so trailing colons are
 /// trimmed to recover the package name.
-fn split_qualified(name: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_qualified(name: &str) -> Option<(&str, &str)> {
     let (pkg_raw, member) = name.rsplit_once("::")?;
     Some((pkg_raw.trim_end_matches(':'), member))
 }

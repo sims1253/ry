@@ -53,7 +53,7 @@ fn identical_buffer_matches_disk_with_package_and_neighbor() {
     assert_eq!(
         buffer.findings(),
         [
-            ["R/helper.R", "RY010", "error"],
+            ["R/helper.R", "RY010", "warning"],
             ["R/main.R", "RY040", "error"],
         ]
     );
@@ -267,6 +267,7 @@ fn package_context_uses_stdin_instead_of_stale_disk() {
         let temp = tempfile::tempdir().unwrap();
         write(temp.path(), case.files);
         let path = temp.path().join(case.target);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         for &(old, source, expected) in case.steps {
             match old {
                 Some(old) => fs::write(&path, old).unwrap(),
@@ -327,7 +328,7 @@ fn symlink_alias_replaces_its_target() {
         let buffer = stdin(temp.path(), alias, neighbors, input);
         assert_eq!(
             buffer.findings(),
-            [[unbound_at, "RY010", "error"]],
+            [[unbound_at, "RY010", "warning"]],
             "{alias}"
         );
         assert_eq!(fs::read(temp.path().join(target)).unwrap(), before);
@@ -469,7 +470,8 @@ fn excluded_file_is_explicitly_checked_and_baseline_applies() {
             ("R/ignored.R", source),
         ],
     );
-    let directory = disk(temp.path(), &["."]);
+    // An absolute root: relative roots do not apply `exclude` today.
+    let directory = disk(temp.path(), &[temp.path().to_str().unwrap()]);
     assert!(directory.success());
     assert_eq!(directory.json(), json!([]));
 

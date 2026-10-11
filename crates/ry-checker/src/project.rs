@@ -221,6 +221,10 @@ impl Project {
     /// added later wins. This mirrors R's `source()` semantics, where
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
+    ///
+    /// Two files may share a path, since a lossy display path can name
+    /// distinct files: [`check`](Self::check) merges both, while the
+    /// incremental caches key files by path.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
         self.add_file_arc(path, Arc::new(file));
     }
@@ -496,7 +500,12 @@ impl Project {
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
-        self.check_incremental()
+        // Merge every entry rather than one cached collection per path: a
+        // lossy display path can name two distinct files.
+        let collected = self.collect_uncached();
+        let merged = self.merge_collected(collected.iter().map(|(_, collected)| collected));
+        self.collected_files.extend(collected);
+        self.install_and_emit(merged)
     }
 
     /// Check after one or more `update_file` calls, reusing pass-1
@@ -504,9 +513,16 @@ impl Project {
     /// tables to a fixpoint and pass 3 still emits every file, preserving
     /// cross-file diagnostic correctness.
     pub fn check_incremental(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // Pass 1: one collection walk per file harvests its functions and
-        // its `library`/`require` attachments. Files are independent, so
-        // missing cache entries fan out on rayon's pool.
+        let collected = self.collect_uncached();
+        self.collected_files.extend(collected);
+        let merged = self.merge_collected(self.cached_in_order());
+        self.install_and_emit(merged)
+    }
+
+    /// Pass 1: one collection walk per uncached file harvests its functions
+    /// and its `library`/`require` attachments. Files are independent, so
+    /// the walks fan out on rayon's pool; results keep file order.
+    fn collect_uncached(&mut self) -> Vec<(String, CollectedFile)> {
         let collected: Vec<_> = self
             .files
             .par_iter()
@@ -524,39 +540,32 @@ impl Project {
                 (path.clone(), collected)
             })
             .collect();
-        for (path, collected) in collected {
+        for (path, collected) in &collected {
             self.file_known_vars
                 .insert(path.clone(), collected.fn_table.known_vars.clone());
-            self.collected_files.insert(path, collected);
         }
-
-        // Attachments in any file are unioned with the declared packages
-        // and seeded into every emitter, matching R's source() semantics.
-        let mut loaded = self.declared_loaded.clone();
-        for (path, _) in &self.files {
-            let collected = &self.collected_files[path];
-            loaded.extend(collected.loaded.iter().cloned());
-            // Cache the set of function names this file calls, for the
-            // dirty-set computation in refine_and_emit.
-            self.file_called_fns.insert(
-                path.clone(),
-                collected.fn_table.call_sites.keys().cloned().collect(),
-            );
-        }
-        self.loaded = loaded;
-        let (fn_table, return_slots) = self.merged_tables();
-        self.fn_table = fn_table;
-        self.return_slots = return_slots;
-        self.refine_and_emit()
+        collected
     }
 
-    /// Merge the cached per-file collections in file order, so a later
-    /// file's same-named function replaces the earlier one's.
-    fn merged_tables(&self) -> (FnTable, ReturnSlots) {
+    fn cached_in_order(&self) -> impl Iterator<Item = &CollectedFile> {
+        self.files
+            .iter()
+            .map(|(path, _)| &self.collected_files[path])
+    }
+
+    /// Merge collections in file order, so a later file's same-named
+    /// function replaces the earlier one's. Attachments in any file are
+    /// unioned with the declared packages and seeded into every emitter,
+    /// matching R's source() semantics.
+    fn merge_collected<'a>(
+        &self,
+        collections: impl Iterator<Item = &'a CollectedFile>,
+    ) -> (FnTable, ReturnSlots, HashSet<String>) {
         let mut fn_table = FnTable::default();
         let mut return_slots = ReturnSlots::default();
-        for (path, _) in &self.files {
-            let collected = &self.collected_files[path];
+        let mut loaded = self.declared_loaded.clone();
+        for collected in collections {
+            loaded.extend(collected.loaded.iter().cloned());
             fn_table.append_collected(
                 &collected.fn_table,
                 &mut return_slots,
@@ -564,7 +573,30 @@ impl Project {
             );
         }
         fn_table.known_vars = self.pooled_known_vars();
-        (fn_table, return_slots)
+        (fn_table, return_slots, loaded)
+    }
+
+    fn install_and_emit(
+        &mut self,
+        (fn_table, return_slots, loaded): (FnTable, ReturnSlots, HashSet<String>),
+    ) -> Vec<(String, Vec<Diagnostic>)> {
+        // Cache the set of function names each file calls, for the
+        // dirty-set computation in refine_and_emit.
+        for (path, _) in &self.files {
+            self.file_called_fns.insert(
+                path.clone(),
+                self.collected_files[path]
+                    .fn_table
+                    .call_sites
+                    .keys()
+                    .cloned()
+                    .collect(),
+            );
+        }
+        self.loaded = loaded;
+        self.fn_table = fn_table;
+        self.return_slots = return_slots;
+        self.refine_and_emit()
     }
 
     /// A pass-2 checker over `fn_table` that records refinement reads.
@@ -755,7 +787,7 @@ impl Project {
             // stale recursive returns or argument evaluation metadata.
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
-            let (table, slots) = self.merged_tables();
+            let (table, slots, _) = self.merge_collected(self.cached_in_order());
             refiner = self.refiner(table, slots, &box_sources);
             refiner.run_fixpoint_scoped(None);
             #[cfg(test)]

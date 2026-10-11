@@ -397,6 +397,33 @@ fn redefinition_in_different_files_shadows() {
 }
 
 #[test]
+fn files_sharing_a_display_path_each_contribute_definitions() {
+    // A non-UTF-8 filename and a real U+FFFD filename share one lossy
+    // display path; the CLI adds both under that path.
+    let mut project = Project::new();
+    project.add_file(
+        "bad\u{fffd}.R".to_string(),
+        parse("bad\u{fffd}.R", "a <- function() \"x\"\n"),
+    );
+    project.add_file(
+        "bad\u{fffd}.R".to_string(),
+        parse("bad\u{fffd}.R", "b <- function() \"y\"\n"),
+    );
+    project.add_file(
+        "use.R".to_string(),
+        parse("use.R", "x <- a() + 1L\ny <- b() + 1L\n"),
+    );
+    let use_codes: Vec<_> = project
+        .check()
+        .into_iter()
+        .filter(|(path, _)| path == "use.R")
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(use_codes, ["RY040", "RY040"]);
+}
+
+#[test]
 fn diagnostics_returned_in_input_order() {
     // The per-file diagnostics vec should preserve the order files
     // were added. Callers (the CLI) rely on this to map paths back to

@@ -937,6 +937,7 @@ mod tests {
             "x <- 1L; x; if(flag) { x <- 2L; x; unknown(); x <- 3L; x } else { x <- 'a'; x }; x",
             "f <- function(p=1L) { x <- 1L; if(flag) { y <- p; x } else { x <- 2L; x }; x }; f()",
             "x <- list(a=1); if(flag) { x <- x %>% identity(); x$a } else x <- list(a=2); x$a",
+            "if (flag) { box::use(mod/x[answer]) }",
         ];
         for source in sources {
             let mut parser = ry_core::RParser::new().unwrap();

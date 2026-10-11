@@ -35,6 +35,35 @@ impl Checker {
                 self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
             }
         }
+        // Same join as `box_imports::join_box_provenance`, over whole branch
+        // scopes instead of journal deltas.
+        let box_provenance: Vec<_> = {
+            let mut paths = Vec::new();
+            if !then_scope.unreachable {
+                paths.push(&then_scope.box_objects);
+            }
+            if !has_else {
+                paths.push(&scope.box_objects);
+            } else if !else_scope.unreachable {
+                paths.push(&else_scope.box_objects);
+            }
+            let names: FxSet<&String> = (scope.box_objects.keys())
+                .chain(paths.iter().flat_map(|path| path.keys()))
+                .collect();
+            names
+                .into_iter()
+                .filter_map(|name| {
+                    let mut objects = paths.iter().map(|path| path.get(name));
+                    let first = objects.next()?;
+                    let joined = if objects.all(|other| other == first) {
+                        first.cloned()
+                    } else {
+                        Some(box_imports::BoxObject::OpaqueCall)
+                    };
+                    Some((name.clone(), joined))
+                })
+                .collect()
+        };
         // Merge branch bindings back into the parent scope. In R,
         // assignments inside an `if` branch leak to the enclosing
         // scope, so a name bound conditionally must still be visible
@@ -129,6 +158,7 @@ impl Checker {
             scope.insert_narrowed(name, refined);
         }
         scope.loop_vector_bindings = loop_vectors_after;
+        scope.apply_box_provenance(box_provenance);
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {

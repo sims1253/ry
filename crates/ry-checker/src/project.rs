@@ -267,7 +267,7 @@ impl Project {
     /// remove/re-add cycle moves a file to the end and flips which
     /// same-named definition wins. Callers that need an order independent
     /// of that history — the LSP feeds sorted paths, matching the CLI's
-    /// sorted discovery (#490) — call this after their updates so the
+    /// sorted discovery — call this after their updates so the
     /// merged table follows `order` alone. Paths missing from `order`
     /// sort after the listed ones, keeping their relative order.
     ///
@@ -798,8 +798,8 @@ impl Project {
             .is_none_or(|prev| prev != &self.loaded);
 
         // Compute functions whose return type or complete caller-visible
-        // parameter signature changed. Name-keyed snapshots avoid the historic
-        // slot-index defect when functions are inserted or removed.
+        // parameter signature changed. Snapshots are keyed by name because
+        // slot indices shift when functions are inserted or removed.
         let directly_changed_fns: HashSet<String> = self
             .fn_table
             .fns
@@ -986,10 +986,6 @@ impl Project {
         self.load_bindings = Arc::unwrap_or_clone(load_bindings);
         self.bare_loaded = Arc::unwrap_or_clone(bare_loaded);
 
-        // Merge newly-emitted diagnostics with cached diagnostics from
-        // files that were not in the dirty set.
-        let mut result: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
-
         // Scope records replace the previous emission's; files served
         // from cache contribute none (see `scope_records` on the struct).
         let mut per_file = per_file;
@@ -1018,48 +1014,33 @@ impl Project {
                 .collect();
         }
 
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>, Vec<DeclarationFinding>)> =
-            per_file
-                .into_iter()
-                .map(|emission| {
-                    (
-                        emission.index,
-                        (
-                            emission.path,
-                            emission.diagnostics,
-                            emission.declaration_findings,
-                        ),
-                    )
-                })
-                .collect();
-
-        let mut declaration_findings = Vec::with_capacity(self.files.len());
-        // Reuse warm results by path in one pass. Repeated linear scans here
-        // would make an unchanged project check quadratic in its file count.
+        // Files outside the emit set reuse their previous results, looked
+        // up by path: repeated linear scans would make an unchanged project
+        // check quadratic in its file count. A path added twice shares one
+        // cache entry, so its second copy falls back to empty results.
         let mut cached_diagnostics: HashMap<_, _> =
             std::mem::take(&mut self.diagnostics).into_iter().collect();
         let mut cached_findings: HashMap<_, _> = std::mem::take(&mut self.declaration_findings)
             .into_iter()
             .collect();
-
-        for (i, (path, _)) in self.files.iter().enumerate() {
-            if let Some((p, d, findings)) = emitted_map.remove(&i) {
-                declaration_findings.push((p.clone(), findings));
-                result.push((p, d));
-            } else if let Some(diagnostics) = cached_diagnostics.remove(path) {
-                // The unchanged file reuses its previous emissions.
-                result.push((path.clone(), diagnostics));
-                declaration_findings.push((
-                    path.clone(),
-                    cached_findings.remove(path).unwrap_or_default(),
-                ));
-            } else {
-                // No cached diagnostics and not emitted (shouldn't happen
-                // after the first check, but handle gracefully).
-                result.push((path.clone(), Vec::new()));
-                declaration_findings.push((path.clone(), Vec::new()));
-            }
-        }
+        // `per_file` follows `emit_indices`, which is in file order.
+        let mut emitted = per_file.into_iter().peekable();
+        let (result, declaration_findings): (Vec<_>, Vec<_>) = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, (path, _))| {
+                let (diagnostics, findings) =
+                    match emitted.next_if(|emission| emission.index == index) {
+                        Some(emission) => (emission.diagnostics, emission.declaration_findings),
+                        None => (
+                            cached_diagnostics.remove(path).unwrap_or_default(),
+                            cached_findings.remove(path).unwrap_or_default(),
+                        ),
+                    };
+                ((path.clone(), diagnostics), (path.clone(), findings))
+            })
+            .unzip();
         self.declaration_findings = declaration_findings;
 
         // Record state for the next incremental check.

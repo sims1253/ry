@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -109,6 +110,22 @@ exit "$VALIDATION_STATUS"
         self.assertEqual(rebuilt.stdout, expected)
         self.assert_no_staging_directory()
 
+
+
+class VendoredTypeshedTest(unittest.TestCase):
+    def test_vendored_tree_matches_recorded_stubs_hash(self):
+        # Same digest as sync_typeshed.sh: sha256sum over the sorted file
+        # list. A mismatch means vendor/ was edited without a sync.
+        vendor = Path(__file__).resolve().parents[1] / "crates/ry-typeshed/vendor"
+        names = sorted(f"./{path.relative_to(vendor).as_posix()}".encode()
+                       for path in vendor.rglob("*")
+                       if path.is_file() and path != vendor / "SOURCE")
+        listing = b"".join(
+            hashlib.sha256((vendor / name.decode()).read_bytes()).hexdigest().encode()
+            + b"  " + name + b"\n" for name in names)
+        self.assertIn(f"stubs-sha256: {hashlib.sha256(listing).hexdigest()}\n",
+                      (vendor / "SOURCE").read_text(),
+                      "edit stubs in r-typeshed and run scripts/sync_typeshed.sh")
 
 
 if __name__ == "__main__":

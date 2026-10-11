@@ -1599,6 +1599,16 @@ expression: snapshots
         line: 23
         start: 1269
   fixture: err_vacuous_all_guard_interprocedural.R
+- diagnostics:
+    - code: RY091
+      message: "missing required argument `to` in call to `vec_cast`"
+      severity: warning
+      span:
+        column: 0
+        end: 82
+        line: 2
+        start: 64
+  fixture: err_vctrs_vec_cast_missing_to.R
 - diagnostics: []
   fixture: ok_ambient_globals.R
 - diagnostics: []

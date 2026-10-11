@@ -43,13 +43,15 @@ const { startServer } = await import("../common/server");
 
 describe("server start failure", () => {
   it("names the binary and reason, and disposes the client", async () => {
-    disposed = 0;
-    startFailure = new Error("spawn ENOENT");
-    stopFailure = undefined;
-    await expect(
-      startServer("ry", "/missing/ry", {} as never, {} as never),
-    ).rejects.toThrow("Server failed to start at /missing/ry: spawn ENOENT");
-    expect(disposed).toBe(1);
+    for (const reason of [new Error("spawn ENOENT"), "spawn ENOENT"]) {
+      disposed = 0;
+      startFailure = reason;
+      stopFailure = undefined;
+      await expect(
+        startServer("ry", "/missing/ry", {} as never, {} as never),
+      ).rejects.toThrow("Server failed to start at /missing/ry: spawn ENOENT");
+      expect(disposed).toBe(1);
+    }
   });
 
   it("logs a cleanup failure without hiding the startup failure", async () => {

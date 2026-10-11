@@ -91,19 +91,24 @@ it("skips directories and non-executable files before a runnable candidate", () 
 });
 
 it.skipIf(process.platform === "win32")(
-  "version probing parses the reported version",
+  "version probing leaves the event loop responsive",
   async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ry-version-"));
     try {
       const binary = path.join(dir, "ry");
-      fs.writeFileSync(binary, `#!/bin/sh\necho '{"version":"0.9.0"}'\n`, {
-        mode: 0o755,
+      fs.writeFileSync(
+        binary,
+        `#!/bin/sh\nsleep 0.1\necho '{"version":"0.9.0"}'\n`,
+        { mode: 0o755 },
+      );
+      let resolved = false;
+      const probe = getRyVersion(binary).then((version) => {
+        resolved = true;
+        return version;
       });
-      expect(await getRyVersion(binary)).toEqual({
-        major: 0,
-        minor: 9,
-        patch: 0,
-      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(resolved).toBe(false);
+      expect(await probe).toEqual({ major: 0, minor: 9, patch: 0 });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

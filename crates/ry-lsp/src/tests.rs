@@ -1,14 +1,10 @@
-use crate::backend::{
-    FolderAnalysisContext, ProjectCache, State, build_folder_contexts, rebuild_folder_context,
-    uri_to_path,
-};
+use crate::backend::{FolderAnalysisContext, ProjectCache, State, uri_to_path};
 use crate::diagnostics::{
     diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
     make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
 use crate::positions::*;
-use crate::settings::ServerSettings;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
@@ -474,236 +470,133 @@ fn code_action_ignore_line_appends_suppression_comment() {
     );
 }
 
+/// The line quick-fix is offered exactly when it would change what the
+/// checker's own suppression parser suppresses: a directive that already
+/// covers the code (trailing, or standalone on a preceding comment line)
+/// withholds it, and so does an edit that would leave a still-malformed
+/// directive or target a comment-only line. A code-less diagnostic is
+/// fixed with a bare ignore.
 #[test]
-fn code_action_ignore_line_skips_already_suppressed() {
-    // A line that already carries an `ry: ignore` comment is fully
-    // suppressed; the action must return `None` so the lightbulb
-    // does not offer a redundant no-op.
-    let text = "x <- 1L + \"s\"  # ry: ignore[RY040]\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
+fn code_action_ignore_line_availability_follows_checker_suppressions() {
     let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "should not offer an action for an already-suppressed line"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_rule_list_must_cover_diagnostic_code() {
-    // A different rule must not withhold the action; the edit merges codes.
-    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
-        "a directive for another rule must not withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_rule_list_withholds_matching_code() {
-    // The same `[RY010]` directive DOES withhold the action for the
-    // rule it names: the checker would suppress that diagnostic
-    // already, so offering the quick-fix would be redundant.
-    let text = "x <- 1L + \"s\"  # ry: ignore[RY010]\n";
-    let diag = lsp_diag(0, 0, 1, "RY010");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "a directive naming this rule must withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_bare_directive_withholds_any_code() {
-    // A bare `# ry: ignore` carries an empty rule list, which the
-    // checker reads as "suppress all rules" — so it withholds the
-    // action regardless of the diagnostic's code.
-    let text = "x <- 1L + \"s\"  # ry: ignore\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "a bare directive suppresses every rule"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_on_comment_only_line_has_no_effective_edit() {
-    // A synthetic diagnostic on a comment-only line has no expression the
-    // proposed action could suppress, even though the standalone directive
-    // targets the next code line. The shared-parser check rejects the no-op.
-    let text = "# ry: ignore\n\"a\" + 1L\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let file = parse_src("test.R", text);
-    let suppressions = ry_checker::parse_suppressions_from_comments(&file.comments, text);
-    assert_eq!(suppressions.len(), 1);
-    assert_eq!(suppressions[0].line, 1);
-    assert!(
-        !suppressions
-            .iter()
-            .any(|s| s.line == 0 && s.suppresses("RY040"))
-    );
-    assert!(
-        make_ignore_action(&uri, &diag, &file).is_none(),
-        "an ignore action on a comment-only line would have no effect"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_withheld_by_preceding_standalone_directive() {
-    // A standalone directive on the comment-only line ABOVE the
-    // diagnostic is assigned to this code line by the checker (it
-    // defers to the next non-comment, non-blank line), so the
-    // diagnostic is already suppressed and the quick-fix would append
-    // a redundant second suppression.
-    let text = "# ry: ignore[RY010]\nz <- length(xx = 1L)\n";
-    let diag = lsp_diag(1, 0, 1, "RY010");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "a preceding standalone directive for this rule must withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_preceding_standalone_rule_list_must_cover_code() {
-    // The preceding standalone `[RY040]` directive suppresses only
-    // RY040; for a diagnostic with a different code the checker would
-    // still publish it, so the quick-fix must stay available.
-    let text = "# ry: ignore[RY040]\nz <- length(xx = 1L)\n";
-    let diag = lsp_diag(1, 0, 1, "RY010");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
-        "a preceding standalone directive for another rule must not withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_withheld_by_preceding_bare_directive() {
-    // A bare preceding standalone directive carries an empty rule
-    // list ("suppress all rules"), so it withholds the action for any
-    // code, exactly like its trailing counterpart.
-    let text = "# ry: ignore\nz <- length(xx = 1L)\n";
-    let diag = lsp_diag(1, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "a bare preceding standalone directive suppresses every rule"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_preceding_directive_skips_interleaved_comments() {
-    // The checker skips blank and comment-only lines when resolving a
-    // standalone directive, so a directive separated from the code
-    // line by prose comments or blanks still reaches it.
-    let text = "# ry: ignore[RY010]\n# why this is fine\n\nz <- length(xx = 1L)\n";
-    let diag = lsp_diag(3, 0, 1, "RY010");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none(),
-        "a standalone directive above interleaved comments must still withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_preceding_directive_blocked_by_code_line() {
-    // A code line between the directive and the diagnostic's line
-    // absorbs the standalone directive (the checker resolves it to the
-    // NEXT code line), so the diagnostic below is not suppressed and
-    // the quick-fix stays available.
-    let text = "# ry: ignore[RY010]\ny <- 1L\nz <- length(xx = 1L)\n";
-    let diag = lsp_diag(2, 0, 1, "RY010");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some(),
-        "a directive absorbed by an earlier code line must not withhold the action"
-    );
-}
-
-#[test]
-fn code_action_ignore_line_ignores_hash_inside_string() {
-    let text = "x <- \"# not a comment\"\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
-}
-
-#[test]
-fn code_action_ignore_line_detects_noqa_after_string_hash() {
-    let text = "x <- \"# not a comment\"  # noqa\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
-}
-
-#[test]
-fn code_action_ignore_line_not_blocked_by_ignore_file_marker() {
-    // `# ry: ignore-file` is a FILE-level directive: the checker's
-    // suppression parser does not line-suppress through it, so the line
-    // quick-fix must still be offered. (The hand-rolled marker check
-    // this replaces treated it as a line suppression and blocked the
-    // action.)
-    let text = "x <- 1L + \"s\"  # ry: ignore-file\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
-}
-
-#[test]
-fn code_action_ignore_line_not_blocked_by_prose_mention() {
-    // A directive that does not START the comment body is prose, not a
-    // suppression — the checker's parser ignores it, so the quick-fix
-    // availability must too.
-    let text = "x <- 1L + \"s\"  # see docs for ry: ignore\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_some());
-}
-
-#[test]
-fn code_action_uses_checker_parser_for_invalid_and_foreign_directives() {
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    for marker in [
-        "ry: ignore[RX040]",
-        "ry: ignore[RY999999]",
-        "noqa: E501",
-        "noqa-ish note",
-    ] {
-        let text = format!("\"a\" + 1L  # {marker}\n");
-        assert!(
-            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_some(),
-            "{marker}"
-        );
+    let cases: &[(&str, u32, Option<&str>, bool)] = &[
+        (
+            "x <- 1L + \"s\"  # ry: ignore[RY040]\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        (
+            "x <- 1L + \"s\"  # ry: ignore[RY010]\n",
+            0,
+            Some("RY040"),
+            true,
+        ),
+        (
+            "x <- 1L + \"s\"  # ry: ignore[RY010]\n",
+            0,
+            Some("RY010"),
+            false,
+        ),
+        ("x <- 1L + \"s\"  # ry: ignore\n", 0, Some("RY040"), false),
+        (
+            "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        (
+            "x <- 1L + \"s\"  # ry: ignore-file\n",
+            0,
+            Some("RY040"),
+            true,
+        ),
+        (
+            "x <- 1L + \"s\"  # see docs for ry: ignore\n",
+            0,
+            Some("RY040"),
+            true,
+        ),
+        ("x <- \"# not a comment\"\n", 0, Some("RY040"), true),
+        (
+            "x <- \"# not a comment\"  # noqa\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        ("# ry: ignore\n\"a\" + 1L\n", 0, Some("RY040"), false),
+        (
+            "# ry: ignore[RY010]\nz <- length(xx = 1L)\n",
+            1,
+            Some("RY010"),
+            false,
+        ),
+        (
+            "# ry: ignore[RY040]\nz <- length(xx = 1L)\n",
+            1,
+            Some("RY010"),
+            true,
+        ),
+        (
+            "# ry: ignore\nz <- length(xx = 1L)\n",
+            1,
+            Some("RY040"),
+            false,
+        ),
+        (
+            "# ry: ignore[RY010]\n# why this is fine\n\nz <- length(xx = 1L)\n",
+            3,
+            Some("RY010"),
+            false,
+        ),
+        (
+            "# ry: ignore[RY010]\ny <- 1L\nz <- length(xx = 1L)\n",
+            2,
+            Some("RY010"),
+            true,
+        ),
+        ("\"a\" + 1L  # ry: ignore[RX040]\n", 0, Some("RY040"), true),
+        (
+            "\"a\" + 1L  # ry: ignore[RY999999]\n",
+            0,
+            Some("RY040"),
+            true,
+        ),
+        ("\"a\" + 1L  # noqa: E501\n", 0, Some("RY040"), true),
+        ("\"a\" + 1L  # noqa-ish note\n", 0, Some("RY040"), true),
+        ("\"a\" + 1L  # noqa: E501, RY040\n", 0, Some("RY040"), false),
+        (
+            "\"a\" + 1L  # ry: ignore[RY040]]\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        (
+            "\"a\" + 1L  # ry: ignore[RY040] ]\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        (
+            "\"a\" + 1L  # ry: ignore[RY040][RX040]\n",
+            0,
+            Some("RY040"),
+            false,
+        ),
+        ("\"a\" + 1L  # noqa[RY040]]\n", 0, Some("RY040"), false),
+        ("\"a\" + 1L # ry: ignore[RY040]]\n", 0, None, false),
+        ("\"a\" + 1L # ry: ignore[RY040] ]\n", 0, None, false),
+        ("\"a\" + 1L # noqa[RY040]]\n", 0, None, false),
+        ("\"a\" + 1L # ry: ignore[RY010] reason\n", 0, None, true),
+    ];
+    for &(text, line, code, offered) in cases {
+        let mut diag = lsp_diag(line, 0, 1, code.unwrap_or("RY040"));
+        if code.is_none() {
+            diag.code = None;
+        }
+        let action = make_ignore_action(&uri, &diag, &parse_src("test.R", text));
+        assert_eq!(action.is_some(), offered, "{code:?} on {text:?}");
     }
-    let text = "\"a\" + 1L  # noqa: E501, RY040\n";
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
-    for marker in [
-        "ry: ignore[RY040]]",
-        "ry: ignore[RY040] ]",
-        "ry: ignore[RY040][RX040]",
-        "noqa[RY040]]",
-    ] {
-        let text = format!("\"a\" + 1L  # {marker}\n");
-        assert!(
-            make_ignore_action(&uri, &diag, &parse_src("test.R", &text)).is_none(),
-            "{marker}"
-        );
-    }
-}
-
-#[test]
-fn code_action_ignore_line_marker_is_case_insensitive() {
-    // The checker's parser matches `ry:` / `noqa` markers
-    // case-insensitively; the quick-fix availability follows it.
-    let text = "x <- 1L + \"s\"  # RY: IGNORE[RY040]\n";
-    let diag = lsp_diag(0, 0, 1, "RY040");
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    assert!(make_ignore_action(&uri, &diag, &parse_src("test.R", text)).is_none());
 }
 
 #[test]
@@ -726,26 +619,6 @@ fn code_action_ignore_line_handles_missing_code() {
     assert_eq!(
         action.title, "Ignore this diagnostic on its line",
         "missing code should use a generic title"
-    );
-}
-
-#[test]
-fn code_action_missing_code_withholds_still_malformed_replacement() {
-    let uri = Url::parse("file:///tmp/test.R").unwrap();
-    let mut diag = lsp_diag(0, 0, 1, "RY040");
-    diag.code = None;
-    for marker in ["ry: ignore[RY040]]", "ry: ignore[RY040] ]", "noqa[RY040]]"] {
-        let src = format!("\"a\" + 1L # {marker}\n");
-        assert!(
-            make_ignore_action(&uri, &diag, &parse_src("test.R", &src)).is_none(),
-            "{marker}: a code-less action must not leave an invalid directive"
-        );
-    }
-
-    let src = "\"a\" + 1L # ry: ignore[RY010] reason\n";
-    assert!(
-        make_ignore_action(&uri, &diag, &parse_src("test.R", src)).is_some(),
-        "a valid bracketed directive must still be replaceable by a bare ignore"
     );
 }
 
@@ -1157,7 +1030,7 @@ fn folder_settings_deserialize_camel_case() {
         "enable": false
     });
     let settings: crate::settings::FolderSettings = serde_json::from_value(json).unwrap();
-    assert_eq!(settings.min_confidence.as_deref(), Some("high"));
+    assert_eq!(settings.min_confidence, Some(ry_checker::Confidence::High));
     assert_eq!(settings.baseline.as_deref(), Some("/path/to/baseline.json"));
     assert_eq!(settings.enable, Some(false));
 }
@@ -1553,15 +1426,9 @@ fn removed_file_clears_cross_file_resolution() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stub reload classification (#494)
-//
-// Bug being pinned: `rebuild_folder_context` treated an intentionally
-// empty reload result (the config no longer declares any typeshed
-// directory) the same as a failed one, so a warm session kept stubs a
-// fresh server no longer loads until restart. The reload must instead
-// distinguish "no directories configured" (the empty map is the new
-// state) from "directories configured but every one failed" (retain the
-// previous stubs).
+// Stub reload classification: "no directories configured" makes the empty
+// map the new state; "every configured directory failed" retains the
+// previous stubs.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A one-function stub pinning the named package.
@@ -1590,8 +1457,12 @@ fn stub_reload_context(config: &str) -> (ry_testkit::FixtureProject, FolderAnaly
     fixture
         .write_file("other/otherdep.json", package_stub("otherdep"))
         .unwrap();
-    let mut contexts = build_folder_contexts(Some(fixture.root()), &[], &ServerSettings::default());
-    (fixture, contexts.remove(0))
+    let ctx = FolderAnalysisContext::load(fixture.root().to_path_buf(), Default::default(), None);
+    (fixture, ctx)
+}
+
+fn rebuild_folder_context(old: &FolderAnalysisContext) -> FolderAnalysisContext {
+    FolderAnalysisContext::load(old.root.clone(), old.folder_settings.clone(), Some(old))
 }
 
 #[test]

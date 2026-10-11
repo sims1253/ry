@@ -16,9 +16,8 @@ impl LanguageServer for Backend {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        // Root-level folder_settings: first per-folder entry, else the
-        // global fallback.
-        let folder_settings = server_settings
+        // Fallback settings: first per-folder entry, else the global ones.
+        let fallback_settings = server_settings
             .settings
             .first()
             .cloned()
@@ -62,8 +61,6 @@ impl LanguageServer for Backend {
             .and_then(|w| w.did_change_watched_files.as_ref())
             .and_then(|f| f.relative_pattern_support)
             .unwrap_or(false);
-        let server_settings_clone = server_settings.clone();
-        let root_clone = root.clone();
         let ws_folder_paths: Vec<(usize, PathBuf)> = params
             .workspace_folders
             .as_ref()
@@ -75,51 +72,25 @@ impl LanguageServer for Backend {
                     .collect()
             })
             .unwrap_or_default();
-        let folder_contexts = {
-            tokio::task::spawn_blocking(move || {
-                build_folder_contexts(
-                    root_clone.as_deref(),
-                    &ws_folder_paths,
-                    &server_settings_clone,
-                )
-            })
-            .await
-            .unwrap_or_default()
+        // Without workspace folders, the root is the single folder.
+        let ws_folder_paths = match (&root, ws_folder_paths.is_empty()) {
+            (Some(root), true) => vec![(0, root.clone())],
+            _ => ws_folder_paths,
         };
-
-        // Root-level config and stubs for the single-root fallback.
-        let root_clone2 = root.clone();
-        let (root_config_dir, file_config, user_stubs) =
-            tokio::task::spawn_blocking(move || load_root_config_and_stubs(root_clone2.as_deref()))
-                .await
-                .unwrap_or_default();
-
-        let root_baseline =
-            match load_folder_baseline(&folder_settings, &file_config, root.as_deref()) {
-                Ok(opt) => opt,
-                Err(error) => {
-                    tracing::warn!(%error, "failed to load root baseline; no baseline cached");
-                    None
-                }
-            };
-
-        let (root_filter, root_min_confidence, root_excludes) =
-            compute_folder_filter(&file_config, &folder_settings);
-        let root_scoped_policy =
-            scoped_rule_policy(&file_config, root_config_dir.as_deref(), &folder_settings);
+        let settings = server_settings.clone();
+        let fallback_root = root.unwrap_or_default();
+        let (folder_contexts, fallback) = tokio::task::spawn_blocking(move || {
+            (
+                load_folder_contexts(&ws_folder_paths, &settings),
+                FolderAnalysisContext::load(fallback_root, fallback_settings, None),
+            )
+        })
+        .await
+        .unwrap_or_default();
 
         let mut state = self.state.lock().await;
         state.initial_index_pending = true;
-        state.user_stubs = user_stubs;
-        state.root = root;
-        state.file_config = file_config;
-        state.root_config_dir = root_config_dir;
-        state.root_baseline = root_baseline;
-        state.root_filter = root_filter;
-        state.root_scoped_policy = root_scoped_policy;
-        state.root_min_confidence = root_min_confidence;
-        state.root_excludes = root_excludes;
-        state.folder_settings = folder_settings;
+        state.fallback = fallback;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_document_changes = supports_document_changes;
@@ -180,7 +151,7 @@ impl LanguageServer for Backend {
 
         // didOpen can run while indexing. Replay those documents only after
         // their workspace bindings and package metadata have been installed.
-        if self.spawn_background_index().await {
+        if self.reindex().await {
             self.republish_all_open_documents().await;
         }
     }
@@ -216,7 +187,7 @@ impl LanguageServer for Backend {
             }
             state.update_doc(&path, text, version);
         }
-        self.schedule_diagnostics(uri).await;
+        self.request_pass([path]).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -224,7 +195,7 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let version = params.text_document.version;
         #[cfg(feature = "test-util")]
-        let paused_transition = crate::test_seam::maybe_pause_change_transition().await;
+        let paused_transition = crate::test_seam::pause(Seam::ChangeTransition).await;
         let applied = self.state.lock().await.apply_document_changes(
             &path,
             &uri,
@@ -233,15 +204,15 @@ impl LanguageServer for Backend {
         );
         #[cfg(feature = "test-util")]
         if paused_transition {
-            crate::test_seam::note_change_transition_landed();
+            crate::test_seam::landed(Seam::ChangeTransition);
         }
         if !applied {
             return;
         }
-        self.schedule_diagnostics(uri).await;
+        self.request_pass([path]).await;
         // Test seam: signals didChange completion (see `test_seam`).
         #[cfg(feature = "test-util")]
-        crate::test_seam::note_did_change();
+        crate::test_seam::signal(Seam::DidChange);
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
@@ -260,18 +231,22 @@ impl LanguageServer for Backend {
             let ry_section = raw.get("ry").unwrap_or(raw);
             if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
                 let mut state = self.state.lock().await;
-                state.folder_settings = settings.clone();
-                for ctx in &mut state.folder_contexts {
+                let state = &mut *state;
+                for ctx in state
+                    .folder_contexts
+                    .iter_mut()
+                    .chain(std::iter::once(&mut state.fallback))
+                {
                     ctx.folder_settings = settings.clone();
+                    ctx.refresh_policy();
                 }
                 state.server_settings.global_settings = settings;
-                refresh_cached_folder_filters(&mut state);
             }
         }
 
         self.reload_folder_contexts().await;
         self.refresh_watchers().await;
-        self.spawn_background_index().await;
+        self.reindex().await;
 
         self.republish_all_open_documents().await;
     }
@@ -292,23 +267,15 @@ impl LanguageServer for Backend {
                 .any(|r| std::path::Path::new(p).starts_with(r))
         };
 
-        // URIs owned by removed roots — diagnostics for these must be
-        // cleared: the open documents, plus closed disk files whose last
-        // publication came from the background index. The closed files
-        // are not open, so the partition below misses them, and the
-        // `published_uris` retain further down forgets them — without
-        // an explicit empty publication here they would keep their
-        // squiggles in the client while being unreachable by
-        // `clear_dropped_diagnostics` (#489).
-        let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<Url>) = {
+        // Clear every URI under a removed root: open documents and closed
+        // disk files alike, since the tracked map forgets them below.
+        let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<String>) = {
             let state = self.state.lock().await;
             let (keep, clear): (Vec<&String>, Vec<&String>) =
                 state.docs.keys().partition(|p| !under_removed_root(p));
             let source_uris = |path: &str| source_uris(&state.open_source_paths, path);
             let mut docs_to_clear: std::collections::HashSet<Url> =
                 clear.into_iter().flat_map(|p| source_uris(p)).collect();
-            // Mirror the `did_close` pattern: publish empty now, then
-            // leave the tracked map via the retain below.
             for (_, uris) in state
                 .published_uris
                 .iter()
@@ -318,7 +285,7 @@ impl LanguageServer for Backend {
             }
             (
                 docs_to_clear.into_iter().collect(),
-                keep.into_iter().flat_map(|p| source_uris(p)).collect(),
+                keep.into_iter().cloned().collect(),
             )
         };
 
@@ -331,14 +298,9 @@ impl LanguageServer for Backend {
             state.trees.retain(|p, _| !under_removed_root(p));
             state.parsed.retain(|p, _| !under_removed_root(p));
             state.hints.retain(|p, _| !under_removed_root(p));
-            // Removed roots must not be reindexed through the root fallback.
             state.reconciliation.cancel_where(under_removed_root);
-            // The explicit empty publications below clear these URIs, so
-            // they leave the tracked map too (#489).
             state.published_uris.retain(|p, _| !under_removed_root(p));
 
-            // Rebuild folder contexts from the surviving + added roots
-            // through the shared builder used at initialize.
             let added_roots: Vec<PathBuf> = params
                 .event
                 .added
@@ -349,14 +311,11 @@ impl LanguageServer for Backend {
             let new_contexts = if !added_roots.is_empty() {
                 let server_settings = state.server_settings.clone();
                 tokio::task::spawn_blocking(move || {
-                    build_folder_contexts(
-                        None,
-                        &added_roots
-                            .iter()
-                            .map(|path| (usize::MAX, path.clone()))
-                            .collect::<Vec<_>>(),
-                        &server_settings,
-                    )
+                    let added: Vec<_> = added_roots
+                        .into_iter()
+                        .map(|path| (usize::MAX, path))
+                        .collect();
+                    load_folder_contexts(&added, &server_settings)
                 })
                 .await
                 .unwrap_or_default()
@@ -382,13 +341,7 @@ impl LanguageServer for Backend {
         }
 
         self.refresh_watchers().await;
-
-        // Skip indexing when no folder contexts remain (all removed) so
-        // state.root does not re-index a removed directory.
-        let has_contexts = !self.state.lock().await.folder_contexts.is_empty();
-        if has_contexts {
-            self.spawn_background_index().await;
-        }
+        self.reindex().await;
 
         for uri in &docs_to_clear {
             self.client
@@ -396,18 +349,7 @@ impl LanguageServer for Backend {
                 .await;
         }
 
-        // Not `republish_all_open_documents`: documents under removed roots
-        // were just cleared and, falling back to root-level eligibility, a
-        // blanket reschedule would re-publish results for them.
-        if docs_to_republish.is_empty() {
-            // No open document will drive a debounced pass, so reconcile
-            // directly: closed disk files the folder removal dropped from
-            // the index must not keep their publications (#489).
-            self.clear_dropped_diagnostics().await;
-        }
-        for uri in &docs_to_republish {
-            self.schedule_diagnostics(uri.clone()).await;
-        }
+        self.request_pass(docs_to_republish).await;
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
@@ -440,17 +382,13 @@ impl LanguageServer for Backend {
                     || path.ends_with(".RData")
                     || path.ends_with(".rdata")
             });
-        // R source events refresh the disk index entry-by-entry (#486):
-        // an edit/create/delete of an unopened file lands here instead of
-        // sitting stale until an unrelated rescan. Deleted files leave
-        // the index; changed or created ones are re-read through the
-        // bounded decoder. Open documents keep shadowing — the refresh
-        // itself skips live buffers.
+        // Source events refresh the disk index entry by entry; the refresh
+        // itself skips open buffers.
         let r_source_paths: Vec<std::path::PathBuf> = params
             .changes
             .iter()
             .filter_map(|change| change.uri.to_file_path().ok())
-            .filter(|path| ry_workspace::is_r_source_path(path))
+            .filter(|path| ry_workspace::is_source_path(path))
             .collect();
         if !resolution_changed && r_source_paths.is_empty() {
             return;
@@ -460,23 +398,12 @@ impl LanguageServer for Backend {
             self.reload_folder_contexts().await;
         }
 
+        // Closed files to republish alongside every open document.
+        let mut publish: Vec<String> = Vec::new();
         if resolution_changed {
-            if self.spawn_background_index().await {
-                // The rescan landed new index state with no open document
-                // to drive its publish (#528): schedule the tracked
-                // publications through the debounce so the refreshed bytes
-                // are republished. A superseded scan (false) leaves the
-                // republish to its supplanter.
-                let tracked: Vec<String> = {
-                    self.state
-                        .lock()
-                        .await
-                        .published_uris
-                        .keys()
-                        .cloned()
-                        .collect()
-                };
-                self.schedule_closed_file_publish(tracked).await;
+            // A superseded scan leaves the republish to its supplanter.
+            if self.reindex().await {
+                publish.extend(self.state.lock().await.published_uris.keys().cloned());
             }
         } else {
             let mut landed: Vec<(String, u64)> = Vec::new();
@@ -487,39 +414,18 @@ impl LanguageServer for Backend {
                 }
             }
             if landed.is_empty() {
-                // Every event either settled terminally (open buffer,
-                // cap refusal) or left a RETAINED obligation — the
-                // ladder lost its races and its backstop. Wake the
-                // reconciliation driver so the retained paths converge
-                // without needing another event (P1).
+                // Retained obligations converge through the driver.
                 self.wake_reconciliation().await;
                 return;
             }
-            // A landed refresh updates the parse but not the resolution
-            // context: advance the owning package groups through the same
-            // resolution pass the scan uses before publishing, so a
-            // watched addition resolves its configured globals, library
-            // attachments, imports, and load bindings without a rescan
-            // (#527). Paths whose group could not settle keep their
-            // obligation for the reconciliation driver.
+            // Advance the owning package contexts before publishing.
             let ctx_settled = self.refresh_package_contexts(&landed).await;
-            // A landed refresh with no open document would otherwise never
-            // be republished (#528): `republish_all_open_documents` below
-            // degenerates to dropped-URI reconciliation, which only clears
-            // paths that left the index. Schedule the landed paths through
-            // the debounce instead; a no-op when an open document drives
-            // the pass anyway.
-            self.schedule_closed_file_publish(
-                landed.iter().map(|(path, _)| path.clone()).collect(),
-            )
-            .await;
+            publish.extend(landed.into_iter().map(|(path, _)| path));
             self.acknowledge_publications(&ctx_settled).await;
         }
 
-        self.republish_all_open_documents().await;
-        // Retained obligations (superseded refreshes/backstops from this
-        // or a concurrent event burst) get their driver; a no-op when
-        // everything settled.
+        publish.extend(self.state.lock().await.docs.keys().cloned());
+        self.request_pass(publish).await;
         self.wake_reconciliation().await;
     }
 
@@ -529,8 +435,7 @@ impl LanguageServer for Backend {
         let (remaining_open_paths, survivor) = {
             let mut state = self.state.lock().await;
             let survivor = state.close_open_source(&path, &uri);
-            // The empty publication below clears this URI, so it must
-            // leave the tracked set too (#489).
+            // The empty publication below clears this URI.
             if survivor.is_none() {
                 state.docs.remove(&path);
                 state.versions.remove(&path);
@@ -550,67 +455,28 @@ impl LanguageServer for Backend {
         };
         if let Some(survivor) = survivor {
             self.client.publish_diagnostics(uri, Vec::new(), None).await;
-            self.schedule_diagnostics(survivor).await;
+            self.request_pass([uri_to_path(&survivor)]).await;
             return;
         }
-        {
-            // A closed file lives in at most one package cache, but its
-            // package key may have shifted while it was open (a
-            // DESCRIPTION added or removed above it), so evict it from
-            // every cache in the owning folder's map and the root map
-            // rather than computing the key and risking the wrong one.
-            let caches: Vec<Arc<Mutex<ProjectCache>>> = {
-                let state = self.state.lock().await;
-                let mut caches = Vec::new();
-                if let Some(ctx) = state.folder_context_for_path(&path) {
-                    caches.extend(ctx.package_caches.values().cloned());
-                }
-                caches.extend(state.root_caches.values().cloned());
-                caches
-            };
-            for cache in caches {
-                let mut cache = cache.lock().await;
-                cache.project.remove_file(&path);
-                cache.files.remove(&path);
-            }
-        }
-        // Re-read the closed file from disk so save-then-close converges
-        // with a fresh server: the buffer's last-saved bytes become the
-        // indexed snapshot instead of the initialize-time one (#486). A
-        // discard-then-close (disk still holds the old bytes) re-reads
-        // those same old bytes, which is exactly what "matches" means —
-        // no content comparison is needed because the decoder is a pure
-        // function of the current disk state. Unreadable files leave the
-        // index, matching the walk; a dropped entry that previously
-        // carried diagnostics is reconciled by the republish below (#489).
+        // Re-read the closed file so its last-saved bytes become the indexed
+        // snapshot, converging with a fresh server.
         let refreshed_epoch = self
             .refresh_disk_entry(std::path::PathBuf::from(&path))
             .await;
         if let Some(epoch) = refreshed_epoch {
-            // The close-time refresh already claimed the next generation, so
-            // a still-current background pass whose walk may have read this
-            // file before the save cannot replace the map with its older
-            // snapshot (#526). The saved bytes still need their resolution
-            // entries (#527); the close's own publications (the empty clear
-            // below plus the remaining documents' reschedule) carry the
-            // publication duty for a settled group.
+            // The close's own publications below carry the publication duty.
             let ctx_settled = self.refresh_package_contexts(&[(path, epoch)]).await;
             self.acknowledge_publications(&ctx_settled).await;
         }
-        // Clear diagnostics for the closed document so stale squiggles
-        // don't linger after the user closes the file.
         self.client
             .publish_diagnostics(uri.clone(), Vec::new(), None)
             .await;
         // Closing a document can change diagnostics in the remaining open
         // documents (names defined in the closed file become unresolved),
         // so refresh them.
-        if let Some(first) = remaining_open_paths.first() {
-            self.schedule_diagnostics(path_to_uri(first)).await;
+        if !remaining_open_paths.is_empty() {
+            self.request_pass(remaining_open_paths).await;
         }
-        // A close-time re-read that lost its ladder left a retained
-        // obligation: the driver re-reads the final disk state and
-        // publishes it without needing another event (P1).
         self.wake_reconciliation().await;
     }
 
@@ -626,23 +492,10 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let range = params.range;
 
-        // Inlay hints are on-demand, document-local analysis (one parse
-        // plus single-file assignment inference — no project state), so
-        // they keep serving documents the project-wide gates exclude: a
-        // folder set to `enable: false` returns null (the editor
-        // intentionally disabled ry there), but a file over
-        // `max-file-bytes` or below a pruned `max-depth` still gets its
-        // own hints while staying out of every other file's resolution
-        // (#488). The explicit report opt-in also gates report hints: its
-        // masked parser must not add features to a disabled report.
-        {
-            let state = self.state.lock().await;
-            let folder = state.folder_context_for_path(&path);
-            let disabled = folder.is_some_and(|ctx| ctx.folder_settings.enable == Some(false))
-                || (folder.is_none() && state.folder_settings.enable == Some(false));
-            if disabled || state.report_disabled(&path) {
-                return Ok(None);
-            }
+        // Hints are document-local, so they ignore the size and depth caps
+        // but not a disabled folder or an unopted report.
+        if self.state.lock().await.analysis_disabled(&path) {
+            return Ok(None);
         }
 
         let Some(mut hints) = self.hints_for(&path).await else {

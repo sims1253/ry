@@ -6,7 +6,6 @@ use crate::scope_journal::BranchDelta;
 use crate::*;
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
@@ -656,20 +655,13 @@ pub(crate) fn box_member<'a>(
     Some((base, object, member))
 }
 
-/// Read and parse an existing module file. The read is bounded as well as
-/// the metadata precheck: the file can grow between those operations.
+/// Read and parse an existing module file within the size limit.
 fn read_module(path: &Path, identity: &Path) -> Option<SourceFile> {
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
         return None;
     }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(MAX_MODULE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let decoded = ry_workspace::decode_r_source(&bytes);
+    let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
     let mut file = ry_core::RParser::new()
         .ok()?
         .parse(&path.to_string_lossy(), &decoded.text)
@@ -744,10 +736,9 @@ impl Checker {
                     Err(_) => return None,
                 },
             };
-            // Source that R's parser rejects (#376, #474) cannot provide a
+            // Source that R's parser rejects cannot provide a
             // trustworthy inventory, whether read from disk or a buffer.
-            if file.source.len() as u64 > MAX_MODULE_BYTES
-                || file.leading_bom
+            if file.leading_bom
                 || !file.invalid_utf8.is_empty()
                 || !file.parse_errors.is_empty()
                 || !file.syntax_violations.is_empty()

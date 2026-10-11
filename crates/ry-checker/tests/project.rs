@@ -1784,11 +1784,6 @@ fn check_mode_transitions_match_fresh_projects() {
                                 project.remove_file(path);
                                 files.retain(|(p, _)| p != path);
                             }
-                            Edit::Reorder(_) if initial_cold => {
-                                // `check()` keeps no pass-1 cache, so a later
-                                // reorder cannot find the flipped winner.
-                                continue;
-                            }
                             Edit::Reorder(order) => {
                                 let order: Vec<String> =
                                     order.iter().map(|path| path.to_string()).collect();

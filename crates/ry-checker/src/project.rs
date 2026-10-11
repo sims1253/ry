@@ -479,44 +479,10 @@ impl Project {
     /// For incremental updates, use [`update_file`](Self::update_file)
     /// followed by [`check_incremental`](Self::check_incremental).
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        // Pass 1: one collection walk per file. Each file's functions
-        // AND its `library`/`require` attachments are harvested in the
-        // same pass (issue #178); the attachments are unioned with the
-        // project-declared `loaded` set (from `ry.toml`'s `packages`
-        // key). The union is seeded into every pass-3 emitter so a
-        // `library(dplyr)` in any file makes dplyr NSE verbs resolve
-        // everywhere (matching R's source()-based cross-file semantics).
-        let mut union_loaded = self.declared_loaded.clone();
-        let mut fn_table = FnTable::default();
-        let mut return_slots = ReturnSlots::default();
+        // Discard every collection and refinement cache, so the shared path
+        // below collects all files, refines everything, and emits every file.
+        self.collected_files.clear();
         self.file_known_vars.clear();
-        // Pass 1 collection is independent per file, so it fans out on
-        // rayon's pool (same pool as pass 3); the ordered serial merge
-        // below preserves shadowing semantics exactly — a later file's
-        // same-named function must still replace the earlier one's.
-        let collected_files: Vec<_> = self
-            .files
-            .par_iter()
-            .map(|(path, file)| {
-                let mut collector = Checker::new(path);
-                collector.set_user_stubs(Arc::clone(&self.user_stubs));
-                let loaded = collector.collect_file_fns(file);
-                let (collected, slots) = collector.into_tables();
-                (loaded, collected, slots)
-            })
-            .collect();
-        for ((path, _), (loaded, collected, slots)) in self.files.iter().zip(collected_files) {
-            self.file_known_vars
-                .insert(path.clone(), collected.known_vars.clone());
-            union_loaded.extend(loaded);
-            fn_table.append_collected(&collected, &mut return_slots, &slots);
-        }
-        self.loaded = union_loaded.clone();
-        fn_table.known_vars = self.pooled_known_vars();
-        self.fn_table = fn_table;
-        self.return_slots = return_slots;
-        // Cold check: every file must be emitted, and prior incremental
-        // state (if any) is discarded.
         self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
         self.prev_loaded = None;
         self.has_prev_emit = false;
@@ -530,7 +496,7 @@ impl Project {
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
-        self.refine_and_emit()
+        self.check_incremental()
     }
 
     /// Check after one or more `update_file` calls, reusing pass-1
@@ -538,42 +504,38 @@ impl Project {
     /// tables to a fixpoint and pass 3 still emits every file, preserving
     /// cross-file diagnostic correctness.
     pub fn check_incremental(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        for (path, file) in &self.files {
-            if self.collected_files.contains_key(path) {
-                continue;
-            }
-            // Same combined collection walk as the cold `check`: the
-            // file's functions and attachments in one pass (#178).
-            let mut collector = Checker::new(path);
-            collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            let loaded = collector.collect_file_fns(file);
-            let (fn_table, return_slots) = collector.into_tables();
-            self.file_known_vars
-                .insert(path.clone(), fn_table.known_vars.clone());
-            self.collected_files.insert(
-                path.clone(),
-                CollectedFile {
+        // Pass 1: one collection walk per file harvests its functions and
+        // its `library`/`require` attachments. Files are independent, so
+        // missing cache entries fan out on rayon's pool.
+        let collected: Vec<_> = self
+            .files
+            .par_iter()
+            .filter(|(path, _)| !self.collected_files.contains_key(path))
+            .map(|(path, file)| {
+                let mut collector = Checker::new(path);
+                collector.set_user_stubs(Arc::clone(&self.user_stubs));
+                let loaded = collector.collect_file_fns(file);
+                let (fn_table, return_slots) = collector.into_tables();
+                let collected = CollectedFile {
                     fn_table,
                     return_slots,
                     loaded,
-                },
-            );
+                };
+                (path.clone(), collected)
+            })
+            .collect();
+        for (path, collected) in collected {
+            self.file_known_vars
+                .insert(path.clone(), collected.fn_table.known_vars.clone());
+            self.collected_files.insert(path, collected);
         }
 
-        let mut fn_table = FnTable::default();
-        let mut return_slots = ReturnSlots::default();
+        // Attachments in any file are unioned with the declared packages
+        // and seeded into every emitter, matching R's source() semantics.
         let mut loaded = self.declared_loaded.clone();
         for (path, _) in &self.files {
-            let collected = self
-                .collected_files
-                .get(path)
-                .expect("every project file has a pass-1 cache entry");
+            let collected = &self.collected_files[path];
             loaded.extend(collected.loaded.iter().cloned());
-            fn_table.append_collected(
-                &collected.fn_table,
-                &mut return_slots,
-                &collected.return_slots,
-            );
             // Cache the set of function names this file calls, for the
             // dirty-set computation in refine_and_emit.
             self.file_called_fns.insert(
@@ -581,11 +543,43 @@ impl Project {
                 collected.fn_table.call_sites.keys().cloned().collect(),
             );
         }
-        fn_table.known_vars = self.pooled_known_vars();
+        self.loaded = loaded;
+        let (fn_table, return_slots) = self.merged_tables();
         self.fn_table = fn_table;
         self.return_slots = return_slots;
-        self.loaded = loaded;
         self.refine_and_emit()
+    }
+
+    /// Merge the cached per-file collections in file order, so a later
+    /// file's same-named function replaces the earlier one's.
+    fn merged_tables(&self) -> (FnTable, ReturnSlots) {
+        let mut fn_table = FnTable::default();
+        let mut return_slots = ReturnSlots::default();
+        for (path, _) in &self.files {
+            let collected = &self.collected_files[path];
+            fn_table.append_collected(
+                &collected.fn_table,
+                &mut return_slots,
+                &collected.return_slots,
+            );
+        }
+        fn_table.known_vars = self.pooled_known_vars();
+        (fn_table, return_slots)
+    }
+
+    /// A pass-2 checker over `fn_table` that records refinement reads.
+    fn refiner(
+        &self,
+        fn_table: FnTable,
+        return_slots: ReturnSlots,
+        box_sources: &Arc<crate::box_imports::BoxSources>,
+    ) -> Checker {
+        let mut refiner = Checker::with_tables("__project_pass2__", fn_table, return_slots);
+        refiner.set_loaded(self.loaded.clone());
+        refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.set_box_sources(Arc::clone(box_sources));
+        refiner.refinement_dependencies = Some(HashMap::new());
+        refiner
     }
 
     /// Compute the set of function names that need fixpoint refinement.
@@ -740,15 +734,9 @@ impl Project {
         // Compute scope before moving the current tables into the refiner;
         // S3 generic-to-method dependencies are recorded in `fn_table`.
         let mut fixpoint_scope = self.compute_fixpoint_scope();
-        let mut refiner = Checker::with_tables(
-            "__project_pass2__",
-            std::mem::take(&mut self.fn_table),
-            std::mem::take(&mut self.return_slots),
-        );
-        refiner.set_loaded(self.loaded.clone());
-        refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-        refiner.set_box_sources(Arc::clone(&box_sources));
-        refiner.refinement_dependencies = Some(HashMap::new());
+        let fn_table = std::mem::take(&mut self.fn_table);
+        let return_slots = std::mem::take(&mut self.return_slots);
+        let mut refiner = self.refiner(fn_table, return_slots, &box_sources);
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
@@ -765,20 +753,10 @@ impl Project {
             // Alias-based library/require calls can change every bare lookup.
             // Rebuild from collection: widening the seeded scope could retain
             // stale recursive returns or argument evaluation metadata.
-            let mut table = FnTable::default();
-            let mut slots = ReturnSlots::default();
-            for (path, _) in &self.files {
-                let collected = &self.collected_files[path];
-                table.append_collected(&collected.fn_table, &mut slots, &collected.return_slots);
-            }
-            table.known_vars = self.pooled_known_vars();
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
-            refiner = Checker::with_tables("__project_pass2__", table, slots);
-            refiner.set_loaded(self.loaded.clone());
-            refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-            refiner.set_box_sources(Arc::clone(&box_sources));
-            refiner.refinement_dependencies = Some(HashMap::new());
+            let (table, slots) = self.merged_tables();
+            refiner = self.refiner(table, slots, &box_sources);
             refiner.run_fixpoint_scoped(None);
             #[cfg(test)]
             for (name, count) in attempted_counts {

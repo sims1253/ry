@@ -857,7 +857,7 @@ fn forced_default_local_assignment_can_shadow_an_outward_contract() {
 }
 
 #[test]
-fn default_iife_outward_write_is_distinct_from_literal_and_local_write() {
+fn default_outward_write_is_distinct_from_local_write() {
     for (default, body, mismatch) in [
         (
             "(function() { f <<- function(x) { x } })()",
@@ -875,9 +875,10 @@ fn default_iife_outward_write_is_distinct_from_literal_and_local_write() {
             false,
         ),
         (
+            // An outward write anywhere in a default counts, as it does in a body.
             "function() { f <<- function(x) { x } }",
             "z; f(\"bad\")",
-            true,
+            false,
         ),
         (
             "(function() { f <- function(x) { x } })()",
@@ -912,14 +913,14 @@ fn default_iife_outward_write_is_distinct_from_literal_and_local_write() {
 }
 
 #[test]
-fn forced_default_named_helper_only_invalidates_when_it_can_write_outward() {
+fn forced_default_invalidates_only_when_it_contains_an_outward_write() {
     for (default, expected_mismatch) in [
         ("{ g <- function() { f <<- function(x) x }; g() }", false),
         (
             "{ invisible(g <- function() { f <<- function(x) x }); g() }",
             false,
         ),
-        ("{ g <- function() { f <<- function(x) x }; g }", true),
+        ("{ g <- function() { f <<- function(x) x }; g }", false),
         ("{ g <- function() { f <- function(x) x }; g() }", true),
         (
             "{ g <- function() { h <- function() { f <<- function(x) x }; h() }; g() }",

@@ -1,4 +1,5 @@
 use super::*;
+use crate::collect::WriteSet;
 use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
@@ -37,11 +38,11 @@ impl Checker {
         } else if may_replace_bindings {
             scope.clear_scalar_assertions();
         }
-        if let Some(mut writes) = declaration_writes {
-            if writes.remove(crate::collect::UNKNOWN_CAPTURE_BINDING) {
+        if let Some(writes) = declaration_writes {
+            if writes.opaque {
                 self.invalidate_declaration_identities(scope);
             }
-            for name in writes {
+            for name in writes.names {
                 scope.insert(name, RType::unknown());
             }
         }
@@ -160,17 +161,18 @@ impl Checker {
     /// Bindings a call may replace, for adopted declaration identities. Only
     /// a resolvable user function called with literal actuals has a known
     /// effect; forcing any other promise may read an active binding.
-    fn declaration_call_writes(&self, func: &Expr, args: &[Arg], scope: &Scope) -> FxSet<String> {
-        let unknown = || FxSet::from_iter([crate::collect::UNKNOWN_CAPTURE_BINDING.to_string()]);
+    fn declaration_call_writes(&self, func: &Expr, args: &[Arg], scope: &Scope) -> WriteSet {
         if !args.iter().all(|arg| is_scalar_literal(&arg.value)) {
-            return unknown();
+            return WriteSet::unknown();
         }
         if let Expr::Function { params, body, .. } = func {
             return crate::collect::function_outward_writes(params, body);
         }
         callee_name(func)
             .and_then(|name| self.declaration_helper(semantic_argument_name(&name), scope))
-            .map_or_else(unknown, |function| function.outward_writes().clone())
+            .map_or_else(WriteSet::unknown, |function| {
+                function.outward_writes().clone()
+            })
     }
 
     /// The literal a call head currently names: the exact lexical
@@ -1600,54 +1602,6 @@ impl Checker {
         // may contain a same-named nested/top-level definition from elsewhere;
         // using that signature here produces bogus RY090/RY091 diagnostics.
         let lexical_callable = !name.contains("::") && scope.is_lexical_function(lookup_name);
-        // R's function-position lookup skips a proven nonfunction local and
-        // searches enclosing environments. A current callable/unknown local
-        // instead masks those environments. Keep the nearest exact literal
-        // identity when one exists, regardless of which same-spelled entry
-        // survived in the flat inference table.
-        let local_binding = scope.get(lookup_name);
-        let local_is_nonfunction = local_binding
-            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
-        let outward = scope.outward_function_definition(lookup_name);
-        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
-            frame
-                .possible_default_writes
-                .contains(semantic_argument_name(lookup_name))
-                || frame
-                    .possible_default_writes
-                    .contains(crate::collect::UNKNOWN_CAPTURE_BINDING)
-        });
-        let local_definition = scope.lexical_definition(lookup_name);
-        // Function walks start with a copy of the captured scope. An exact
-        // literal that is identical to the nearest enclosing frame is still
-        // an outward binding, not a new local one: R's closure keeps the
-        // environment live after the literal is created.
-        let from_outward = local_is_nonfunction
-            || (local_binding.is_none() && local_definition.is_none())
-            || (local_definition.is_some() && local_definition == outward.flatten());
-        let exact_definition = if from_outward {
-            outward.flatten()
-        } else {
-            local_definition
-        };
-        let exact_declaration_function = if self.discarding {
-            None
-        } else {
-            exact_definition
-                .filter(|definition| {
-                    !possible_default_shadow
-                        && (!from_outward
-                            || !self
-                                .fn_table
-                                .was_rebound_after_capture(&self.path, *definition))
-                        && self
-                            .declarations
-                            .target(&self.path, *definition)
-                            .is_some_and(|decision| decision.signature.is_some())
-                })
-                .and_then(|definition| self.fn_table.definition(&self.path, definition))
-                .cloned()
-        };
         let user_function = if lexical_callable {
             None
         } else {
@@ -1659,29 +1613,11 @@ impl Checker {
                     .map(|(_, function)| function.clone())
             })
         };
-        // A local binding may be an earlier literal, a later rebind, or a
-        // branch join. The flat table is last-definition-wins, so its
-        // declaration is safe only when the current binding is absent (a
-        // cross-file/deferred lookup) or has the identical source span.
-        let declaration_user_function = user_function
-            .as_ref()
-            .filter(|function| {
-                if possible_default_shadow || local_is_nonfunction || outward.is_some() {
-                    false
-                } else if local_binding.is_some() {
-                    function.source_path == self.path
-                        && exact_definition == Some(function.definition_span)
-                } else {
-                    // A deferred call inside a function may resolve a later
-                    // definition. An eager top-level call cannot use a function
-                    // defined later in this same file; the table's future entry
-                    // is not evidence about the current binding.
-                    !self.enclosing_formals.is_empty()
-                        || function.source_path != self.path
-                        || function.definition_span.start < call_span.start
-                }
-            })
-            .cloned();
+        let declaration_function = if self.discarding || !self.declarations.has_contracts() {
+            None
+        } else {
+            self.declaration_function(lookup_name, user_function.as_ref(), scope, call_span)
+        };
         if let Some(function) = &user_function {
             self.record_signature_read(function.return_slot);
         }
@@ -1818,11 +1754,87 @@ impl Checker {
             arg_types,
             resolved_sig,
             user_function,
-            declaration_user_function,
-            exact_declaration_function,
+            declaration_function,
             lexical_callable,
             locally_shadows_stub: false,
         }
+    }
+
+    /// The definition whose adopted contract a call checks: the exact
+    /// current or nearest enclosing literal, else the flat entry when its
+    /// source identity agrees with the current binding.
+    fn declaration_function(
+        &self,
+        lookup_name: &str,
+        user_function: Option<&UserFn>,
+        scope: &Scope,
+        call_span: Span,
+    ) -> Option<UserFn> {
+        // R's function-position lookup skips a proven nonfunction local and
+        // searches enclosing environments. A current callable/unknown local
+        // instead masks those environments. Keep the nearest exact literal
+        // identity when one exists, regardless of which same-spelled entry
+        // survived in the flat inference table.
+        let local_binding = scope.get(lookup_name);
+        let local_is_nonfunction = local_binding
+            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
+        let outward = scope.outward_function_definition(lookup_name);
+        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
+            frame
+                .possible_default_writes
+                .may_write(semantic_argument_name(lookup_name))
+        });
+        let local_definition = scope.lexical_definition(lookup_name);
+        // Function walks start with a copy of the captured scope. An exact
+        // literal that is identical to the nearest enclosing frame is still
+        // an outward binding, not a new local one: R's closure keeps the
+        // environment live after the literal is created.
+        let from_outward = local_is_nonfunction
+            || (local_binding.is_none() && local_definition.is_none())
+            || (local_definition.is_some() && local_definition == outward.flatten());
+        let exact_definition = if from_outward {
+            outward.flatten()
+        } else {
+            local_definition
+        };
+        let exact = exact_definition
+            .filter(|definition| {
+                !possible_default_shadow
+                    && (!from_outward
+                        || !self
+                            .fn_table
+                            .was_rebound_after_capture(&self.path, *definition))
+                    && self
+                        .declarations
+                        .target(&self.path, *definition)
+                        .is_some_and(|decision| decision.signature.is_some())
+            })
+            .and_then(|definition| self.fn_table.definition(&self.path, definition));
+        if exact.is_some() {
+            return exact.cloned();
+        }
+        // A local binding may be an earlier literal, a later rebind, or a
+        // branch join. The flat table is last-definition-wins, so its
+        // declaration is safe only when the current binding is absent (a
+        // cross-file/deferred lookup) or has the identical source span.
+        user_function
+            .filter(|function| {
+                if possible_default_shadow || local_is_nonfunction || outward.is_some() {
+                    false
+                } else if local_binding.is_some() {
+                    function.source_path == self.path
+                        && exact_definition == Some(function.definition_span)
+                } else {
+                    // A deferred call inside a function may resolve a later
+                    // definition. An eager top-level call cannot use a function
+                    // defined later in this same file; the table's future entry
+                    // is not evidence about the current binding.
+                    !self.enclosing_formals.is_empty()
+                        || function.source_path != self.path
+                        || function.definition_span.start < call_span.start
+                }
+            })
+            .cloned()
     }
 
     /// The argument-validation stage: matching is validated only for
@@ -1878,10 +1890,7 @@ impl Checker {
         self.check_declaration_call(
             original_name,
             lookup_name,
-            resolution
-                .exact_declaration_function
-                .as_ref()
-                .or(resolution.declaration_user_function.as_ref()),
+            resolution.declaration_function.as_ref(),
             args,
             &resolution.arg_types,
         );
@@ -2460,10 +2469,8 @@ struct CallResolution {
     /// The project FnTable entry for the call, unless a lexical callable
     /// shadows it.
     user_function: Option<UserFn>,
-    /// Flat entry only when source identity agrees with the current binding.
-    declaration_user_function: Option<UserFn>,
-    /// Exact current or nearest enclosing literal, used only for declarations.
-    exact_declaration_function: Option<UserFn>,
+    /// The definition whose adopted contract applies, if any.
+    declaration_function: Option<UserFn>,
     /// Whether a lexical function binding shadows every table lookup.
     lexical_callable: bool,
     /// Whether a local non-alias binding shadows a same-named stub; the

@@ -4,59 +4,109 @@ use crate::semantic_lists::{bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
-fn function_literal_span(value: &Expr) -> Option<Span> {
-    match value {
-        Expr::Function { span, .. } => Some(*span),
+/// Bindings some code may replace. `opaque` marks a write no name
+/// summarizes: a computed target, an escaped identifier (equating it with
+/// another spelling needs R's decoder), or code with unknown effects.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WriteSet {
+    pub(crate) names: FxSet<String>,
+    pub(crate) opaque: bool,
+}
+
+impl WriteSet {
+    pub(crate) fn unknown() -> Self {
+        Self {
+            opaque: true,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn may_write(&self, name: &str) -> bool {
+        self.opaque || self.names.contains(name)
+    }
+
+    fn insert_name(&mut self, name: Option<&str>) {
+        match name {
+            Some(name) => {
+                self.names.insert(name.to_string());
+            }
+            None => self.opaque = true,
+        }
+    }
+
+    pub(crate) fn extend(&mut self, other: WriteSet) {
+        self.names.extend(other.names);
+        self.opaque |= other.opaque;
+    }
+}
+
+/// The R name a plain binding target writes; `None` when it is escaped.
+fn target_name(target: &Expr) -> Option<&str> {
+    match target {
+        Expr::Ident { name, .. } => identifier_name(name),
+        Expr::String(name, _) => Some(name),
         _ => None,
     }
 }
 
-/// An escaped identifier needs R's escape decoder before it can be equated
-/// with another spelling. Treat such a write as an unknown binding rather
-/// than retaining a false exact captured-function identity.
-pub(crate) const UNKNOWN_CAPTURE_BINDING: &str = "\0";
+fn identifier_name(name: &str) -> Option<&str> {
+    (!name.contains('\\')).then(|| semantic_argument_name(name))
+}
 
-fn capture_binding_name(target: &Expr) -> &str {
-    match target {
-        Expr::Ident { name, .. } => capture_identifier_name(name),
-        Expr::String(name, _) => name,
-        _ => UNKNOWN_CAPTURE_BINDING,
+/// The binding `node` makes in the frame it runs in, with the assigned
+/// value. Statement `<<-` is an assignment whose value repeats the
+/// operation; only that inner operation writes, and it writes outward.
+fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
+    match node {
+        AstNode::Stmt(Stmt::Assign {
+            target,
+            value,
+            span,
+        }) if binding_name(target).is_some()
+            && !matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. } if operation == span) =>
+        {
+            Some((target_name(target), Some(value)))
+        }
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign,
+            lhs,
+            rhs,
+            ..
+        }) if binding_name(lhs).is_some() => Some((target_name(lhs), Some(rhs))),
+        AstNode::Stmt(Stmt::For { name, .. }) => Some((identifier_name(name), None)),
+        _ => None,
     }
 }
 
-fn capture_identifier_name(name: &str) -> &str {
-    if name.contains('\\') {
-        UNKNOWN_CAPTURE_BINDING
-    } else {
-        semantic_argument_name(name)
+/// Writes `node` can make outside the frame it runs in: a `<<-`, a
+/// recognized binding installer, or a nested function's defaults (forcing
+/// one runs it in that function's frame, where it may itself write outward).
+fn note_outward_write(node: AstNode<'_>, writes: &mut WriteSet) {
+    match node {
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::SuperAssign,
+            lhs,
+            ..
+        }) if binding_name(lhs).is_some() => writes.insert_name(target_name(lhs)),
+        AstNode::Expr(Expr::Call { func, args, .. }) => {
+            collect_callable_binding_write(func, args, writes);
+        }
+        AstNode::Stmt(Stmt::FunctionDef { params, .. })
+        | AstNode::Expr(Expr::Function { params, .. }) => {
+            for default in params.iter().filter_map(|param| param.default.as_ref()) {
+                let _ = walk_expr(
+                    default,
+                    CAPTURE_WALK,
+                    |node, _| -> ControlFlow<(), Descend> {
+                        note_outward_write(node, writes);
+                        ControlFlow::Continue(Descend::Into)
+                    },
+                );
+            }
+        }
+        _ => {}
     }
 }
-
-fn note_capture_write(
-    current: &mut FxMap<String, Span>,
-    name: &str,
-    literal: Option<Span>,
-    rebound: &mut FxSet<Span>,
-    literal_names: &mut FxMap<String, Vec<Span>>,
-) {
-    if let Some(previous) = current.remove(name) {
-        rebound.insert(previous);
-    }
-    if let Some(span) = literal {
-        current.insert(name.to_string(), span);
-        literal_names
-            .entry(name.to_string())
-            .or_default()
-            .push(span);
-    }
-}
-
-/// A default may invoke a helper it just bound. Inspect only literal helper
-/// bodies reached by an explicit call; merely constructing or returning a
-/// closure does not execute its outward assignments. The bound also handles
-/// recursive helpers without making declaration collection source-sized per
-/// call chain. Exhaustion makes captured identity uncertain.
-pub(crate) const MAX_DEFAULT_HELPER_CALLS: usize = 64;
 
 /// Code that runs in the walked frame: nested function bodies run in their
 /// own frame and `$`/`@` field names are never evaluated.
@@ -66,21 +116,18 @@ const FRAME_WALK: Walk = Walk {
     ..Walk::ALL
 };
 
-fn note_called_name(node: AstNode<'_>, called: &mut FxSet<String>) -> ControlFlow<(), Descend> {
-    if let AstNode::Expr(Expr::Call { func, .. }) = node
-        && let Expr::Ident { name, .. } = func.as_ref()
-    {
-        called.insert(semantic_argument_name(name).to_string());
-    }
-    ControlFlow::Continue(Descend::Into)
-}
+/// Everything a closure may later run, including nested function bodies.
+const CAPTURE_WALK: Walk = Walk {
+    dollar_args: false,
+    ..Walk::ALL
+};
 
-fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
+fn collect_quoted_global_writes(expr: &Expr, writes: &mut WriteSet) {
     let _ = walk_expr(expr, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
         match node {
             AstNode::Stmt(Stmt::Assign { target, .. }) => {
                 if binding_name(target).is_some() {
-                    writes.insert(capture_binding_name(target).to_string());
+                    writes.insert_name(target_name(target));
                 }
             }
             AstNode::Expr(Expr::BinOp {
@@ -88,7 +135,7 @@ fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
                 lhs,
                 ..
             }) if binding_name(lhs).is_some() => {
-                writes.insert(capture_binding_name(lhs).to_string());
+                writes.insert_name(target_name(lhs));
             }
             _ => {}
         }
@@ -96,44 +143,28 @@ fn collect_quoted_global_writes(expr: &Expr, writes: &mut FxSet<String>) {
     });
 }
 
-fn collect_rm_list(expr: &Expr, writes: &mut FxSet<String>, remaining: usize) {
-    if remaining == 0 {
-        writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-        return;
-    }
+fn collect_rm_list(expr: &Expr, writes: &mut WriteSet) {
     match expr {
         Expr::String(name, _) => {
-            writes.insert(name.clone());
+            writes.names.insert(name.clone());
         }
         // Bare `c` can be masked and return a different name; only the
         // namespace-qualified constructor justifies inspecting its literals.
         Expr::Call { func, args, .. } if is_base_qualified_call(func, "c") => {
             for argument in args {
-                collect_rm_list(&argument.value, writes, remaining - 1);
+                collect_rm_list(&argument.value, writes);
             }
         }
-        _ => {
-            writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-        }
+        _ => writes.opaque = true,
     }
 }
 
-fn collect_rm_targets(args: &[Arg], writes: &mut FxSet<String>) {
+fn collect_rm_targets(args: &[Arg], writes: &mut WriteSet) {
     for argument in args {
         match argument.name.as_deref().map(semantic_argument_name) {
-            Some("list") => collect_rm_list(&argument.value, writes, 16),
+            Some("list") => collect_rm_list(&argument.value, writes),
             Some("pos" | "envir" | "inherits") => {}
-            _ => match &argument.value {
-                Expr::Ident { name, .. } => {
-                    writes.insert(capture_identifier_name(name).to_string());
-                }
-                Expr::String(name, _) => {
-                    writes.insert(name.clone());
-                }
-                _ => {
-                    writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-                }
-            },
+            _ => writes.insert_name(target_name(&argument.value)),
         }
     }
 }
@@ -151,35 +182,26 @@ fn named_or_first_positional<'a>(args: &'a [Arg], formal: &str) -> Option<&'a Ar
         .or_else(|| args.iter().find(|argument| argument.name.is_none()))
 }
 
-pub(crate) fn collect_callable_binding_write(
-    func: &Expr,
-    args: &[Arg],
-    writes: &mut FxSet<String>,
-) {
+fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteSet) {
     let Expr::Ident { name, .. } = func else {
         return;
     };
-    let target_name = |formal: &str| {
-        named_or_first_positional(args, formal)
-            .and_then(|argument| string_literal(&argument.value))
-            .unwrap_or(UNKNOWN_CAPTURE_BINDING)
+    let mut target = |formal: &str| {
+        writes.insert_name(
+            named_or_first_positional(args, formal)
+                .and_then(|argument| string_literal(&argument.value)),
+        )
     };
     let name = semantic_argument_name(name);
     match strip_package(name, "base").unwrap_or(name) {
-        "assign" | "delayedAssign" => {
-            // `pos`, an environment alias, and omitted `envir` can all
-            // reach a captured frame. Even a `new.env()` spelling is not
-            // proof of freshness when that name can be masked. A delayed
-            // promise replaces the binding before its value is forced, and
-            // its assign.env can identify a captured/global frame.
-            writes.insert(target_name("x").to_string());
-        }
-        "makeActiveBinding" => {
-            writes.insert(target_name("sym").to_string());
-        }
-        "rm" | "remove" => {
-            collect_rm_targets(args, writes);
-        }
+        // `pos`, an environment alias, and omitted `envir` can all reach a
+        // captured frame. Even a `new.env()` spelling is not proof of
+        // freshness when that name can be masked. A delayed promise
+        // replaces the binding before its value is forced, and its
+        // assign.env can identify a captured/global frame.
+        "assign" | "delayedAssign" => target("x"),
+        "makeActiveBinding" => target("sym"),
+        "rm" | "remove" => collect_rm_targets(args, writes),
         "eval" => {
             // Bare `quote` can be masked to return an unrelated mutating
             // expression, so only a base-qualified quote is inspected.
@@ -193,102 +215,22 @@ pub(crate) fn collect_callable_binding_write(
             {
                 collect_quoted_global_writes(&quoted.value, writes);
             } else {
-                writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
+                writes.opaque = true;
             }
         }
-        "evalq" => {
-            if let Some(expression) = named_or_first_positional(args, "expr") {
-                collect_quoted_global_writes(&expression.value, writes);
-            } else {
-                writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-            }
-        }
+        "evalq" => match named_or_first_positional(args, "expr") {
+            Some(expression) => collect_quoted_global_writes(&expression.value, writes),
+            None => writes.opaque = true,
+        },
         _ => match strip_package(name, "methods").unwrap_or(name) {
-            "setGeneric" => {
-                // Installing a generic can replace an ordinary binding in the
-                // current/global environment. The method table can also change
-                // an existing callable's behavior without an R assignment.
-                writes.insert(target_name("name").to_string());
-            }
-            "setMethod" => {
-                writes.insert(target_name("f").to_string());
-            }
+            // Installing a generic can replace an ordinary binding in the
+            // current/global environment. The method table can also change
+            // an existing callable's behavior without an R assignment.
+            "setGeneric" => target("name"),
+            "setMethod" => target("f"),
             _ => {}
         },
     }
-}
-
-fn collect_immediate_outward_writes(
-    body: &[Stmt],
-    outward: &mut FxSet<String>,
-    remaining: &mut usize,
-) {
-    let mut called = FxSet::default();
-    let _ = walk_stmts(body, FRAME_WALK, |node, _| {
-        note_called_name(node, &mut called)
-    });
-    let mut scanned = FxSet::<(usize, usize)>::default();
-    let _ = walk_stmts(body, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
-        match node {
-            AstNode::Stmt(Stmt::Assign { target, value, .. }) => {
-                if let Expr::Function { params, body, span } = value
-                    && binding_name(target).is_some()
-                    && called.contains(capture_binding_name(target))
-                    && scanned.insert((span.start, span.end))
-                {
-                    collect_helper_outward_writes(params, body, outward, remaining);
-                }
-            }
-            AstNode::Expr(Expr::BinOp {
-                op: BinOpKind::SuperAssign,
-                lhs,
-                ..
-            }) => {
-                if binding_name(lhs).is_some() {
-                    outward.insert(capture_binding_name(lhs).to_string());
-                }
-            }
-            AstNode::Expr(Expr::BinOp {
-                op: BinOpKind::Assign,
-                lhs,
-                rhs,
-                ..
-            }) => {
-                if let Expr::Function { params, body, span } = rhs.as_ref()
-                    && binding_name(lhs).is_some()
-                    && called.contains(capture_binding_name(lhs))
-                    && scanned.insert((span.start, span.end))
-                {
-                    collect_helper_outward_writes(params, body, outward, remaining);
-                }
-            }
-            AstNode::Expr(Expr::Call { func, args, .. }) => {
-                collect_callable_binding_write(func, args, outward);
-                if let Expr::Function { params, body, .. } = func.as_ref() {
-                    collect_helper_outward_writes(params, body, outward, remaining);
-                }
-            }
-            _ => {}
-        }
-        ControlFlow::Continue(Descend::Into)
-    });
-}
-
-/// Outward writes of a helper literal that runs here, charged to the shared
-/// helper budget. Exhaustion makes the written names unknown.
-fn collect_helper_outward_writes(
-    params: &[Param],
-    body: &[Stmt],
-    outward: &mut FxSet<String>,
-    remaining: &mut usize,
-) {
-    if *remaining == 0 {
-        outward.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-        return;
-    }
-    *remaining -= 1;
-    outward.extend(collect_default_writes_bounded(params, remaining).1);
-    collect_immediate_outward_writes(body, outward, remaining);
 }
 
 /// Bindings that running a function can replace outside its own frame:
@@ -296,12 +238,12 @@ fn collect_helper_outward_writes(
 /// effect unknown: a call, operator, or index (each may dispatch or force
 /// an active binding), a read of anything but a formal, or a complex
 /// assignment target. Defaults are included because forcing one runs it.
-pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<String> {
+pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
     let formals: FxSet<&str> = params
         .iter()
         .map(|param| semantic_argument_name(&param.name))
         .collect();
-    let mut writes = FxSet::default();
+    let mut writes = WriteSet::default();
     let policy = Walk {
         assign_targets: false,
         assign_operands: false,
@@ -316,7 +258,7 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<
                 ..
             }) => {
                 if *op == BinOpKind::SuperAssign && binding_name(lhs).is_some() {
-                    writes.insert(capture_binding_name(lhs).to_string());
+                    writes.insert_name(target_name(lhs));
                 }
                 binding_name(lhs).is_none()
             }
@@ -338,105 +280,27 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> FxSet<
             ControlFlow::Continue(Descend::Into)
         }
     };
-    let opaque = params
+    writes.opaque = params
         .iter()
         .filter_map(|param| param.default.as_ref())
         .any(|default| walk_expr(default, policy, &mut visit).is_break())
         || walk_stmts(body, policy, &mut visit).is_break();
-    if opaque {
-        writes.insert(UNKNOWN_CAPTURE_BINDING.to_string());
-    }
     writes
 }
 
-/// Defaults are promises evaluated in the called function's frame when
-/// forced. Return their ordinary local writes separately from outward `<<-`
-/// writes; neither is an unconditional effect at function definition time.
-pub(crate) fn collect_default_writes(params: &[Param]) -> (FxSet<String>, FxSet<String>) {
-    let mut remaining = MAX_DEFAULT_HELPER_CALLS;
-    collect_default_writes_bounded(params, &mut remaining)
-}
-
-fn collect_default_writes_bounded(
-    params: &[Param],
-    remaining: &mut usize,
-) -> (FxSet<String>, FxSet<String>) {
-    let mut local = FxSet::default();
-    let mut outward = FxSet::default();
-    for parameter in params {
-        if let Some(default) = &parameter.default {
-            let mut called = FxSet::default();
-            let _ = walk_expr(default, FRAME_WALK, |node, _| {
-                note_called_name(node, &mut called)
-            });
-            let mut scanned = FxSet::<(usize, usize)>::default();
-            let _ = walk_expr(default, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
-                match node {
-                    AstNode::Stmt(Stmt::Assign {
-                        target,
-                        value,
-                        span,
-                    }) => {
-                        let wrapped_superassign = matches!(
-                            value,
-                            Expr::BinOp {
-                                op: BinOpKind::SuperAssign,
-                                span: operation_span,
-                                ..
-                            } if operation_span == span
-                        );
-                        if !wrapped_superassign && binding_name(target).is_some() {
-                            local.insert(capture_binding_name(target).to_string());
-                        }
-                        if let Expr::Function { params, body, span } = value
-                            && binding_name(target).is_some()
-                            && called.contains(capture_binding_name(target))
-                            && scanned.insert((span.start, span.end))
-                        {
-                            collect_helper_outward_writes(params, body, &mut outward, remaining);
-                        }
-                    }
-                    AstNode::Stmt(Stmt::For { name, .. }) => {
-                        local.insert(capture_identifier_name(name).to_string());
-                    }
-                    AstNode::Expr(Expr::BinOp { op, lhs, rhs, .. }) => {
-                        if binding_name(lhs).is_some() {
-                            let name = capture_binding_name(lhs);
-                            match op {
-                                BinOpKind::Assign => {
-                                    local.insert(name.to_string());
-                                    if let Expr::Function { params, body, span } = rhs.as_ref()
-                                        && called.contains(name)
-                                        && scanned.insert((span.start, span.end))
-                                    {
-                                        collect_helper_outward_writes(
-                                            params,
-                                            body,
-                                            &mut outward,
-                                            remaining,
-                                        );
-                                    }
-                                }
-                                BinOpKind::SuperAssign => {
-                                    outward.insert(name.to_string());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    AstNode::Expr(Expr::Call { func, args, .. }) => {
-                        collect_callable_binding_write(func, args, &mut outward);
-                        if let Expr::Function { params, body, .. } = func.as_ref() {
-                            collect_helper_outward_writes(params, body, &mut outward, remaining);
-                        }
-                    }
-                    _ => {}
-                }
-                ControlFlow::Continue(Descend::Into)
-            });
-        }
+/// Names that forcing a default may bind in the function's own frame.
+/// None is an unconditional effect at definition time.
+pub(crate) fn default_local_writes(params: &[Param]) -> WriteSet {
+    let mut writes = WriteSet::default();
+    for default in params.iter().filter_map(|param| param.default.as_ref()) {
+        let _ = walk_expr(default, FRAME_WALK, |node, _| -> ControlFlow<(), Descend> {
+            if let Some((name, _)) = frame_binding(node) {
+                writes.insert_name(name);
+            }
+            ControlFlow::Continue(Descend::Into)
+        });
     }
-    (local, outward)
+    writes
 }
 
 impl Checker {
@@ -493,126 +357,51 @@ impl Checker {
     /// installation can write outward, so its target conservatively
     /// invalidates same-named captured literals in this file.
     fn collect_capture_writes(&mut self, stmts: &[Stmt]) {
+        // Per function frame: the literal each name currently holds.
         let mut frames = vec![FxMap::<String, Span>::default()];
         let mut rebound = FxSet::<Span>::default();
         let mut literal_names = FxMap::<String, Vec<Span>>::default();
         let mut global_literals = FxSet::<Span>::default();
-        let mut global_writes = FxSet::<String>::default();
-        let mut superassigned = FxSet::<String>::default();
-        let _ = walk_stmts(
-            stmts,
-            Walk {
-                dollar_args: false,
-                ..Walk::ALL
-            },
-            |node, function_depth| -> ControlFlow<(), Descend> {
-                // `walk_stmts` is preorder and increments the depth only
-                // inside a function body. Pop a completed sibling frame
-                // before visiting its next statement or expression.
-                frames.truncate(function_depth + 1);
-                match node {
-                    AstNode::Stmt(Stmt::Assign {
-                        target,
-                        value,
-                        span,
-                    }) => {
-                        // The parser represents statement `<<-` as an
-                        // assignment whose RHS repeats the actual operation.
-                        // Only the inner SuperAssign writes, and it targets
-                        // an enclosing environment, not this frame.
-                        let wrapped_superassign = matches!(
-                            value,
-                            Expr::BinOp {
-                                op: BinOpKind::SuperAssign,
-                                span: operation_span,
-                                ..
-                            } if operation_span == span
-                        );
-                        if !wrapped_superassign && binding_name(target).is_some() {
-                            let name = capture_binding_name(target);
-                            if function_depth == 0 {
-                                global_writes.insert(name.to_string());
-                                if let Some(span) = function_literal_span(value) {
-                                    global_literals.insert(span);
-                                }
-                            }
-                            note_capture_write(
-                                frames.last_mut().expect("top-level frame"),
-                                name,
-                                function_literal_span(value),
-                                &mut rebound,
-                                &mut literal_names,
-                            );
-                        }
-                    }
-                    AstNode::Stmt(Stmt::For { name, .. }) => {
-                        if function_depth == 0 {
-                            global_writes.insert(capture_identifier_name(name).to_string());
-                        }
-                        note_capture_write(
-                            frames.last_mut().expect("top-level frame"),
-                            capture_identifier_name(name),
-                            None,
-                            &mut rebound,
-                            &mut literal_names,
-                        );
-                    }
-                    AstNode::Expr(Expr::BinOp {
-                        op: BinOpKind::Assign,
-                        lhs,
-                        rhs,
-                        ..
-                    }) => {
-                        if binding_name(lhs).is_some() {
-                            let name = capture_binding_name(lhs);
-                            if function_depth == 0 {
-                                global_writes.insert(name.to_string());
-                                if let Some(span) = function_literal_span(rhs) {
-                                    global_literals.insert(span);
-                                }
-                            }
-                            note_capture_write(
-                                frames.last_mut().expect("top-level frame"),
-                                name,
-                                function_literal_span(rhs),
-                                &mut rebound,
-                                &mut literal_names,
-                            );
-                        }
-                    }
-                    AstNode::Expr(Expr::BinOp {
-                        op: BinOpKind::SuperAssign,
-                        lhs,
-                        ..
-                    }) => {
-                        if binding_name(lhs).is_some() {
-                            superassigned.insert(capture_binding_name(lhs).to_string());
-                        }
-                    }
-                    AstNode::Expr(Expr::Call { func, args, .. }) => {
-                        collect_callable_binding_write(func, args, &mut superassigned);
-                    }
-                    AstNode::Stmt(Stmt::FunctionDef { params, .. })
-                    | AstNode::Expr(Expr::Function { params, .. }) => {
-                        // Defaults are promises: a forced default can write
-                        // outward after the function was defined. The shared
-                        // walker deliberately omits parameter defaults, so
-                        // inspect explicit `<<-` there once at this node.
-                        superassigned.extend(collect_default_writes(params).1);
-                        frames.push(FxMap::default());
-                    }
-                    _ => {}
+        let mut global_writes = WriteSet::default();
+        let mut outward = WriteSet::default();
+        let _ = walk_stmts(stmts, CAPTURE_WALK, |node, function_depth| {
+            // `walk_stmts` is preorder and increments the depth only
+            // inside a function body. Pop a completed sibling frame
+            // before visiting its next statement or expression.
+            frames.truncate(function_depth + 1);
+            if let Some((name, value)) = frame_binding(node) {
+                let literal = match value {
+                    Some(Expr::Function { span, .. }) => Some(*span),
+                    _ => None,
+                };
+                if function_depth == 0 {
+                    global_writes.insert_name(name);
+                    global_literals.extend(literal);
                 }
-                ControlFlow::Continue(Descend::Into)
-            },
-        );
-        if superassigned.contains(UNKNOWN_CAPTURE_BINDING)
-            || global_writes.contains(UNKNOWN_CAPTURE_BINDING)
-        {
-            rebound.extend(literal_names.values().flatten().copied());
-        }
-        for name in &superassigned {
-            if let Some(spans) = literal_names.get(name) {
+                if let Some(name) = name {
+                    let frame = frames.last_mut().expect("top-level frame");
+                    if let Some(previous) = frame.remove(name) {
+                        rebound.insert(previous);
+                    }
+                    if let Some(span) = literal {
+                        frame.insert(name.to_string(), span);
+                        literal_names
+                            .entry(name.to_string())
+                            .or_default()
+                            .push(span);
+                    }
+                }
+            }
+            note_outward_write(node, &mut outward);
+            if let AstNode::Stmt(Stmt::FunctionDef { .. }) | AstNode::Expr(Expr::Function { .. }) =
+                node
+            {
+                frames.push(FxMap::default());
+            }
+            ControlFlow::<(), Descend>::Continue(Descend::Into)
+        });
+        for (name, spans) in &literal_names {
+            if outward.may_write(name) || global_writes.opaque {
                 rebound.extend(spans.iter().copied());
             }
         }
@@ -620,7 +409,7 @@ impl Checker {
         for (name, spans) in literal_names {
             for span in spans {
                 let key = (self.path.clone(), span.start, span.end);
-                if global_literals.contains(&span) && table.definition_fns.contains_key(&key) {
+                if global_literals.contains(&span) && table.definition(&self.path, span).is_some() {
                     table
                         .capture_literal_bindings
                         .entry(name.clone())
@@ -634,8 +423,8 @@ impl Checker {
                 .into_iter()
                 .map(|span| (self.path.clone(), span.start, span.end)),
         );
-        table.global_capture_writes.extend(global_writes);
-        table.outward_capture_writes.extend(superassigned);
+        table.capture_writes.extend(global_writes);
+        table.capture_writes.extend(outward);
     }
 
     // Records one identifier-bound assignment from the collection
@@ -651,10 +440,7 @@ impl Checker {
         // this same file) without triggering RY010.
         if let Some(name) = binding_name(target) {
             let table = Arc::make_mut(&mut self.fn_table);
-            table.has_escaped_binding_names |= name.contains('\\');
-            table.has_escaped_operator_names |=
-                custom_operator::escaped_name_may_mask_operator(name);
-            table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(name);
+            table.note_bound_name(name);
             table.known_vars.insert(name.to_string());
             // Keep raw names for type/provenance lookup, but recognize an
             // ordinary read of a backtick-bound symbol as an existing value.
@@ -736,11 +522,7 @@ impl Checker {
                         if let Some(first) = args.first() {
                             for declared in string_literals(&first.value) {
                                 let table = Arc::make_mut(&mut self.fn_table);
-                                table.has_escaped_binding_names |= declared.contains('\\');
-                                table.has_escaped_operator_names |=
-                                    custom_operator::escaped_name_may_mask_operator(&declared);
-                                table.has_escaped_slot_names |=
-                                    custom_operator::escaped_name_may_mask_slot(&declared);
+                                table.note_bound_name(&declared);
                                 table.known_vars.insert(declared);
                             }
                         }
@@ -758,9 +540,7 @@ impl Checker {
                         && let Some(binding) = string_literal(&first.value)
                     {
                         let table = Arc::make_mut(&mut self.fn_table);
-                        table.has_escaped_binding_names |= binding.contains('\\');
-                        table.has_escaped_operator_names |= custom_operator::escaped_name_may_mask_operator(binding);
-                        table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(binding);
+                        table.note_bound_name(binding);
                         table.known_vars.insert(binding.to_string());
                     }
                     self.collect_s4_call(bare, args);
@@ -775,11 +555,7 @@ impl Checker {
             "setGeneric" => {
                 if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
                     let table = Arc::make_mut(&mut self.fn_table);
-                    table.has_escaped_binding_names |= generic.contains('\\');
-                    table.has_escaped_operator_names |=
-                        custom_operator::escaped_name_may_mask_operator(generic);
-                    table.has_escaped_slot_names |=
-                        custom_operator::escaped_name_may_mask_slot(generic);
+                    table.note_bound_name(generic);
                     table.known_vars.insert(generic.to_string());
                 }
             }
@@ -919,10 +695,7 @@ impl Checker {
         // refine_fn_return is a refcount bump, not a deep copy.
         let body: Arc<[Stmt]> = Arc::from(body);
         let fn_table = Arc::make_mut(&mut self.fn_table);
-        fn_table.has_escaped_binding_names |= name.contains('\\');
-        fn_table.has_escaped_operator_names |=
-            custom_operator::escaped_name_may_mask_operator(&name);
-        fn_table.has_escaped_slot_names |= custom_operator::escaped_name_may_mask_slot(&name);
+        fn_table.note_bound_name(&name);
         let function = UserFn {
             params,
             source_params,
@@ -1787,7 +1560,7 @@ mod collect_walker_tests {
         checker.collect_fns(&statements);
         let function = &checker.fn_table.fns["f"];
         assert!(function.outward_writes.get().is_none());
-        assert!(function.outward_writes().contains("g"));
+        assert!(function.outward_writes().names.contains("g"));
         assert!(function.outward_writes.get().is_some());
     }
 

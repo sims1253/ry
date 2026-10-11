@@ -761,7 +761,7 @@ fn explicit_slot_masks_skip_data_and_preserve_ops_prefix_behavior() {
             .infer_custom_slot_operator(true, &mut scope)
             .is_none()
     );
-    assert!(!scope.effects_unknown);
+    assert!(!scope.uncertainty.effects);
 
     // The literal @ prefix cannot denote an Ops symbol. Escaped slot names
     // need conservative handling without widening the existing Ops policy.
@@ -772,7 +772,7 @@ fn explicit_slot_masks_skip_data_and_preserve_ops_prefix_behavior() {
             .infer_custom_slot_operator(true, &mut scope)
             .is_some()
     );
-    assert!(scope.effects_unknown);
+    assert!(scope.uncertainty.effects);
 }
 
 #[test]
@@ -785,7 +785,7 @@ fn escaped_slot_setters_forget_caller_facts() {
            identical(y[1L], 1L)"#,
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    assert!(scope.effects_unknown);
+    assert!(scope.uncertainty.effects);
     assert_eq!(scope.get("y").unwrap().mode, Mode::Opaque);
     assert!(!scope.has_list_origin("y"));
 }
@@ -813,15 +813,24 @@ fn escaped_slot_flag_survives_branch_merge_without_binding_changes() {
     ] {
         let checker = Checker::new("slot-branch-state.R");
         let mut scope = Scope {
-            has_escaped_slot_names: parent,
+            uncertainty: Uncertainty {
+                escaped_slot_names: parent,
+                ..Uncertainty::default()
+            },
             ..Scope::default()
         };
         let then_scope = Scope {
-            has_escaped_slot_names: then,
+            uncertainty: Uncertainty {
+                escaped_slot_names: then,
+                ..Uncertainty::default()
+            },
             ..Scope::default()
         };
         let else_scope = Scope {
-            has_escaped_slot_names: otherwise,
+            uncertainty: Uncertainty {
+                escaped_slot_names: otherwise,
+                ..Uncertainty::default()
+            },
             ..Scope::default()
         };
         checker.merge_branch_bindings(
@@ -831,7 +840,7 @@ fn escaped_slot_flag_survives_branch_merge_without_binding_changes() {
             (&[], Some(&[])),
             &HashSet::new(),
         );
-        assert!(scope.has_escaped_slot_names);
+        assert!(scope.uncertainty.escaped_slot_names);
         assert!(scope.bindings.is_empty());
         assert!(!checker.fn_table.has_escaped_slot_names);
         assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &scope));

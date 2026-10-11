@@ -596,7 +596,7 @@ impl Checker {
                 span: assignment_span,
             } => {
                 self.drop_scalar_facts_for_complex_assignment(target, value, scope);
-                if !scope.ops_environment_unknown
+                if !scope.uncertainty.ops_environment
                     && !ops_chooser::ordinary_assignment(self, target, value)
                 {
                     scope.invalidate_ops_environment();
@@ -623,7 +623,7 @@ impl Checker {
                 // function marks its binding too.
                 let value_has_list_origin = scope_marked_origin || every_mode_is_list(&vt);
                 let known_string = condition_string_literal(value, scope)
-                    .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                    .filter(|_| !scope.uncertainty.literal_values && !scope.uncertainty.effects)
                     .filter(|_| ops_chooser::base_assignment(self, target, value, scope))
                     .map(Arc::<str>::from);
                 let function_alias = self.function_alias_target(value, scope);
@@ -1369,7 +1369,7 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
-        if !scope.dynamic_bindings_unknown
+        if !scope.uncertainty.dynamic_bindings
             && (binding_name(target).is_none()
                 || !ops_chooser::base_assignment(self, target, value, scope))
         {
@@ -1398,7 +1398,7 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        if !scope.dynamic_bindings_unknown && self.body_may_replace_bindings(body, scope) {
+        if !scope.uncertainty.dynamic_bindings && self.body_may_replace_bindings(body, scope) {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -1626,15 +1626,8 @@ impl Checker {
         };
         scope.clear_ops_facts();
         scope.clear_known_strings();
-        scope.ops_environment_unknown |=
-            then_delta.ops_environment_unknown || else_delta.ops_environment_unknown;
-        scope.effects_unknown |= then_delta.effects_unknown || else_delta.effects_unknown;
-        scope.dynamic_bindings_unknown |= (!then_diverges && then_delta.dynamic_bindings_unknown)
-            || (!else_diverges && else_delta.dynamic_bindings_unknown);
-        scope.literal_values_unknown |=
-            then_delta.literal_values_unknown || else_delta.literal_values_unknown;
-        scope.has_escaped_slot_names |=
-            then_delta.has_escaped_slot_names || else_delta.has_escaped_slot_names;
+        scope.uncertainty |= then_delta.uncertainty.continuing(then_diverges)
+            | else_delta.uncertainty.continuing(else_diverges);
         // Compute definite assignments only when both arms change a type,
         // matching the clone merge's lazy AST analysis.
         let mut definitely_rebound = None;
@@ -2978,7 +2971,7 @@ impl Checker {
         // A skipped custom call may install active bindings, so even a later
         // assignment cannot make identifier reads trustworthy again. This is
         // expression uncertainty, not a model of rebound control syntax.
-        if scope.effects_unknown && !is_scalar_literal(e) {
+        if scope.uncertainty.effects && !is_scalar_literal(e) {
             return RType::unknown();
         }
 
@@ -3011,7 +3004,7 @@ impl Checker {
                 result
             }
             Expr::BinOp { op, lhs, rhs, span } => {
-                if !scope.literal_values_unknown {
+                if !scope.uncertainty.literal_values {
                     let symbol = op_symbol(*op);
                     if self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope) {
                         scope.invalidate_literal_values();
@@ -3022,7 +3015,7 @@ impl Checker {
                 }
                 // A rebound operator can mutate the chooser before forcing
                 // either operand. Invalidate before inspecting their bodies.
-                if !scope.ops_environment_unknown
+                if !scope.uncertainty.ops_environment
                     && ops_chooser::operator_rebound(self, op_symbol(*op), scope)
                 {
                     scope.invalidate_ops_environment();
@@ -3066,7 +3059,7 @@ impl Checker {
                 // value (invisibly).
                 if matches!(*op, BinOpKind::Assign | BinOpKind::SuperAssign) {
                     self.drop_scalar_facts_for_complex_assignment(lhs, rhs, scope);
-                    if !scope.ops_environment_unknown
+                    if !scope.uncertainty.ops_environment
                         && !ops_chooser::ordinary_assignment(self, lhs, rhs)
                     {
                         scope.invalidate_ops_environment();
@@ -3074,7 +3067,7 @@ impl Checker {
                     let class_write = self.prepare_class_attribute(lhs, rhs, scope);
                     let rt = self.infer(rhs, scope);
                     let known_string = condition_string_literal(rhs, scope)
-                        .filter(|_| !scope.literal_values_unknown && !scope.effects_unknown)
+                        .filter(|_| !scope.uncertainty.literal_values && !scope.uncertainty.effects)
                         .filter(|_| {
                             *op == BinOpKind::Assign
                                 && !ops_chooser::operator_rebound(self, "<-", scope)
@@ -3137,7 +3130,9 @@ impl Checker {
                     binop::OperandEvidence {
                         known_null: known_null_arithmetic_operand(lhs, scope)
                             || known_null_arithmetic_operand(rhs, scope),
-                        plain_vectors: left_plain && right_plain && !scope.ops_environment_unknown,
+                        plain_vectors: left_plain
+                            && right_plain
+                            && !scope.uncertainty.ops_environment,
                     },
                     scope,
                 )

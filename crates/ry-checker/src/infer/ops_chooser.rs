@@ -48,7 +48,7 @@ pub(crate) fn literal_function(
     value: &Expr,
     scope: &Scope,
 ) -> Option<Arc<LiteralFunction>> {
-    if scope.ops_environment_unknown || !checker.bare_loaded.is_empty() {
+    if scope.uncertainty.ops_environment || !checker.bare_loaded.is_empty() {
         return None;
     }
     if let Expr::Ident { name, .. } = value {
@@ -140,7 +140,7 @@ pub(crate) fn dispatch(
             && lexical_method(&right_name))
         .then(|| Dispatch::Value(RType::unknown()));
     };
-    if scope.ops_environment_unknown
+    if scope.uncertainty.ops_environment
         || syntax_rebound(checker, scope)
         || operator_rebound(checker, symbol, scope)
     {
@@ -200,7 +200,7 @@ pub(crate) fn pure_literal_constructor(
     if pure_literal_c(checker, func, args, scope) {
         return true;
     }
-    if scope.ops_environment_unknown
+    if scope.uncertainty.ops_environment
         || scope.data_mask_unknown
         || scope.search_path_unknown
         || checker.user_stubs.contains_key("base")
@@ -300,7 +300,7 @@ fn known_atomic(ty: &RType) -> bool {
 }
 
 pub(crate) fn plain_vector(checker: &Checker, value: &Expr, scope: &Scope) -> bool {
-    if scope.ops_environment_unknown {
+    if scope.uncertainty.ops_environment {
         return false;
     }
     if let Expr::Ident { name, .. } = value {
@@ -328,7 +328,7 @@ pub(crate) fn plain_vector(checker: &Checker, value: &Expr, scope: &Scope) -> bo
 
 fn pure_literal_c(checker: &Checker, func: &Expr, args: &[Arg], scope: &Scope) -> bool {
     ident_name(func) == Some("base::c")
-        && !scope.ops_environment_unknown
+        && !scope.uncertainty.ops_environment
         && !scope.data_mask_unknown
         && !scope.search_path_unknown
         && !checker.user_stubs.contains_key("base")

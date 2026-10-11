@@ -687,7 +687,7 @@ impl Checker {
     pub(crate) fn mark_scalar_assertions(&self, args: &[Arg], scope: &mut Scope) {
         // An earlier call outside the safe set may already have replaced the
         // subject with an active binding or a promise.
-        if scope.dynamic_bindings_unknown
+        if scope.uncertainty.dynamic_bindings
             || stopifnot_evaluates_quoted(args)
             || !self.resolves_to_base_lenient("stopifnot", scope)
             || self.project_defines_scalar_proof_method()
@@ -830,7 +830,7 @@ impl Checker {
     /// every enclosing formal has no default or a literal one can no forced
     /// default rebind the subject.
     fn scalar_assertion_subject_stable_on_force(&self, scope: &Scope) -> bool {
-        !scope.effects_unknown
+        !scope.uncertainty.effects
             && !scope.search_path_unknown
             && !scope.data_mask_unknown
             && self
@@ -856,7 +856,7 @@ impl Checker {
                         && !scope.is_parameter(name)
                         && !scope.search_path_unknown
                         && !scope.data_mask_unknown
-                        && !scope.effects_unknown)
+                        && !scope.uncertainty.effects)
             }
             expr if is_scalar_literal(expr) => true,
             Expr::BinOp { op, lhs, rhs, .. }
@@ -1075,11 +1075,11 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
 /// to model guard narrowing, so copy just those assignment targets back (not
 /// the guard refinement itself) after evaluating the RHS.
 fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr) {
-    if evaluated.literal_values_unknown {
+    if evaluated.uncertainty.literal_values {
         scope.invalidate_literal_values();
     }
-    scope.effects_unknown |= evaluated.effects_unknown;
-    if evaluated.dynamic_bindings_unknown && !scope.dynamic_bindings_unknown {
+    scope.uncertainty.effects |= evaluated.uncertainty.effects;
+    if evaluated.uncertainty.dynamic_bindings && !scope.uncertainty.dynamic_bindings {
         scope.invalidate_scalar_assertions();
     }
     // A call allowed before an assertion drops facts without the flag.

@@ -58,8 +58,8 @@ impl Checker {
                     || else_diverges
                     || else_scope.scalar_asserted_bindings.contains(name))
         });
-        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
-            || (!else_diverges && else_scope.dynamic_bindings_unknown);
+        scope.uncertainty |= then_scope.uncertainty.continuing(then_diverges)
+            | else_scope.uncertainty.continuing(else_diverges);
         let mut loop_vectors_after = FxSet::default();
         if !then_diverges && literal_cond != Some(false) {
             loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
@@ -148,13 +148,11 @@ impl Checker {
         // carry its identity or constant result across a branch merge.
         scope.clear_ops_facts();
         scope.clear_known_strings();
-        scope.ops_environment_unknown |=
-            then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
-        scope.literal_values_unknown |=
-            then_scope.literal_values_unknown || else_scope.literal_values_unknown;
-        scope.has_escaped_slot_names |=
-            then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
+        // The caller passes on dynamic bindings only from continuing arms.
+        scope.uncertainty |= Uncertainty {
+            dynamic_bindings: false,
+            ..then_scope.uncertainty | else_scope.uncertainty
+        };
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

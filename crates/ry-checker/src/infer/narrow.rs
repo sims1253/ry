@@ -717,7 +717,7 @@ impl Checker {
                 predicate_target(crate::semantic_lists::bare_name(name)).is_some()
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
-                    && !scope.effects_unknown
+                    && !scope.uncertainty.effects
                     && args.len() == 1
                     && matches!(args[0].value, Expr::Ident { .. })
             }

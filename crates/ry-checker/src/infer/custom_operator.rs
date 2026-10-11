@@ -13,7 +13,7 @@ impl Checker {
         let escaped = if matches!(symbol, "@" | "@<-") {
             self.fn_table.has_escaped_slot_names
                 || self.escaped_slot_bindings
-                || scope.has_escaped_slot_names
+                || scope.uncertainty.escaped_slot_names
         } else {
             self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings
         };
@@ -99,7 +99,7 @@ impl Checker {
         }
         let escaped = self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings;
         if !escaped
-            && !scope.ops_environment_unknown
+            && !scope.uncertainty.ops_environment
             && !scope.data_mask_unknown
             && !scope.search_path_unknown
             && self.bare_loaded.is_empty()

@@ -120,16 +120,7 @@ pub(crate) struct AssignmentUndo {
 
 impl AssignmentUndo {
     fn restore(self, scope: &mut Scope, name: String) {
-        let sets = [
-            &mut scope.narrowed_bindings,
-            &mut scope.parameter_bindings,
-            &mut scope.scalar_asserted_bindings,
-            &mut scope.loop_vector_bindings,
-            &mut scope.list_origin_bindings,
-            &mut scope.default_parameter_bindings,
-            &mut scope.lexical_functions,
-        ];
-        for (index, set) in sets.into_iter().enumerate() {
+        for (index, set) in scope.assignment_marker_sets().into_iter().enumerate() {
             debug_assert!(!set.contains(&name));
             if self.removed_markers & (1 << index) != 0 {
                 set.insert(name.clone());
@@ -192,8 +183,21 @@ pub(crate) enum Undo {
     ),
 }
 
+/// Undo records for the active branch snapshots. A cloned scope starts its
+/// own history: rollback in the original never replays into the clone.
+#[derive(Debug, Default)]
+pub(crate) struct Journal {
+    pub(crate) undo: Vec<Undo>,
+    pub(crate) depth: usize,
+}
+
+impl Clone for Journal {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 pub(crate) struct Mark {
-    literal_values_unknown: bool,
     len: usize,
     data_mask_unknown: bool,
     tidy_injection: Option<InjectionMode>,
@@ -201,23 +205,16 @@ pub(crate) struct Mark {
     unreachable: bool,
     provenance: Option<(Span, bool, Option<ReferenceBlocker>)>,
     loop_frame: Option<usize>,
-    effects_unknown: bool,
-    dynamic_bindings_unknown: bool,
-    ops_environment_unknown: bool,
-    has_escaped_slot_names: bool,
+    uncertainty: Uncertainty,
 }
 
 pub(crate) type BranchChanges =
     hashbrown::HashMap<String, BindingState, std::collections::hash_map::RandomState>;
 
 pub(crate) struct BranchDelta {
-    pub literal_values_unknown: bool,
     pub changed: BranchChanges,
     pub unreachable: bool,
-    pub effects_unknown: bool,
-    pub dynamic_bindings_unknown: bool,
-    pub ops_environment_unknown: bool,
-    pub has_escaped_slot_names: bool,
+    pub uncertainty: Uncertainty,
 }
 
 pub(crate) struct BindingView<'a> {
@@ -273,6 +270,20 @@ impl BranchDelta {
 }
 
 impl Scope {
+    /// Per-name markers an ordinary assignment clears. `AssignmentUndo`
+    /// records removals as bits indexed by this order.
+    fn assignment_marker_sets(&mut self) -> [&mut FxSet<String>; 7] {
+        [
+            &mut self.narrowed_bindings,
+            &mut self.parameter_bindings,
+            &mut self.scalar_asserted_bindings,
+            &mut self.loop_vector_bindings,
+            &mut self.list_origin_bindings,
+            &mut self.default_parameter_bindings,
+            &mut self.lexical_functions,
+        ]
+    }
+
     pub(crate) fn clear_ops_binding(&mut self, raw_name: &str) {
         let name = semantic_argument_name(raw_name);
         let function = if self.literal_functions.is_empty() {
@@ -281,8 +292,9 @@ impl Scope {
             self.literal_functions.remove(name)
         };
         let vector = !self.plain_ops_vectors.is_empty() && self.plain_ops_vectors.remove(name);
-        if self.snapshot_depth > 0 && (function.is_some() || vector) {
-            self.undo
+        if self.journal.depth > 0 && (function.is_some() || vector) {
+            self.journal
+                .undo
                 .push(Undo::OpsBinding(name.to_string(), function, vector));
         }
     }
@@ -302,8 +314,8 @@ impl Scope {
     }
 
     fn journal_ops_binding(&mut self, name: &str) {
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::OpsBinding(
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::OpsBinding(
                 name.to_string(),
                 self.literal_functions.get(name).cloned(),
                 self.plain_ops_vectors.contains(name),
@@ -312,10 +324,10 @@ impl Scope {
     }
 
     pub(crate) fn clear_ops_facts(&mut self) {
-        if self.snapshot_depth > 0
+        if self.journal.depth > 0
             && (!self.literal_functions.is_empty() || !self.plain_ops_vectors.is_empty())
         {
-            self.undo.push(Undo::OpsTables(
+            self.journal.undo.push(Undo::OpsTables(
                 std::mem::take(&mut self.literal_functions),
                 std::mem::take(&mut self.plain_ops_vectors),
             ));
@@ -326,21 +338,12 @@ impl Scope {
     }
 
     pub(crate) fn insert_with_assignment_undo(&mut self, name: String, ty: RType) {
-        debug_assert!(self.snapshot_depth > 0);
+        debug_assert!(self.journal.depth > 0);
         self.clear_ops_binding(&name);
-        let sets = [
-            &mut self.narrowed_bindings,
-            &mut self.parameter_bindings,
-            &mut self.scalar_asserted_bindings,
-            &mut self.loop_vector_bindings,
-            &mut self.list_origin_bindings,
-            &mut self.default_parameter_bindings,
-            &mut self.lexical_functions,
-        ];
         let mut removed_markers = 0;
         // Rollback retains empty tables' capacity. Avoid hashing a name for
         // removals that cannot find anything in those retained tables.
-        for (index, set) in sets.into_iter().enumerate() {
+        for (index, set) in self.assignment_marker_sets().into_iter().enumerate() {
             if !set.is_empty() && set.remove(&name) {
                 removed_markers |= 1 << index;
             }
@@ -378,7 +381,7 @@ impl Scope {
             self.bindings.insert(name.clone(), ty);
             None
         };
-        self.undo.push(Undo::Assignment(
+        self.journal.undo.push(Undo::Assignment(
             name,
             AssignmentUndo {
                 ty: previous,
@@ -392,11 +395,11 @@ impl Scope {
     }
 
     pub(crate) fn begin_binding_change(&mut self, name: &str) -> Option<usize> {
-        if self.snapshot_depth == 0 {
+        if self.journal.depth == 0 {
             return None;
         }
-        let index = self.undo.len();
-        self.undo.push(Undo::Binding(
+        let index = self.journal.undo.len();
+        self.journal.undo.push(Undo::Binding(
             name.to_string(),
             BindingState::capture_metadata(self, name),
         ));
@@ -405,15 +408,15 @@ impl Scope {
 
     pub(crate) fn finish_binding_change(&mut self, index: Option<usize>, previous: Option<RType>) {
         if let Some(index) = index {
-            if let Undo::Binding(_, state) = &mut self.undo[index] {
+            if let Undo::Binding(_, state) = &mut self.journal.undo[index] {
                 state.ty = previous;
             }
         }
     }
 
     pub(crate) fn journal_binding(&mut self, name: &str) {
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::Binding(
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::Binding(
                 name.to_string(),
                 BindingState::capture(self, name),
             ));
@@ -421,7 +424,7 @@ impl Scope {
     }
 
     pub(crate) fn journal_marker(&mut self, name: &str, kind: MarkerKind) {
-        if self.snapshot_depth > 0 {
+        if self.journal.depth > 0 {
             let present = match kind {
                 MarkerKind::ListOrigin => self.list_origin_bindings.contains(name),
                 MarkerKind::Lexical => self.lexical_functions.contains(name),
@@ -429,14 +432,15 @@ impl Scope {
                 MarkerKind::ScalarAsserted => self.scalar_asserted_bindings.contains(name),
                 MarkerKind::LoopVector => self.loop_vector_bindings.contains(name),
             };
-            self.undo
+            self.journal
+                .undo
                 .push(Undo::Marker(kind, name.to_string(), present));
         }
     }
 
     pub(crate) fn journal_lexical_definition(&mut self, name: &str) {
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::LexicalDefinition(
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::LexicalDefinition(
                 name.to_string(),
                 self.lexical_definition(name),
             ));
@@ -444,8 +448,8 @@ impl Scope {
     }
 
     pub(crate) fn journal_alias(&mut self, name: &str) {
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::Alias(
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::Alias(
                 name.to_string(),
                 self.function_aliases.get(name).cloned(),
             ));
@@ -453,8 +457,8 @@ impl Scope {
     }
 
     pub(crate) fn journal_reference_binding(&mut self, name: &str) {
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::Reference(
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::Reference(
                 name.to_string(),
                 self.reference_provenance
                     .as_ref()
@@ -465,8 +469,9 @@ impl Scope {
 
     pub(crate) fn clear_reference_bindings(&mut self) {
         if let Some(provenance) = self.reference_provenance.as_mut() {
-            if self.snapshot_depth > 0 {
-                self.undo
+            if self.journal.depth > 0 {
+                self.journal
+                    .undo
                     .push(Undo::Provenance(std::mem::take(&mut provenance.bindings)));
             } else {
                 provenance.bindings.clear();
@@ -475,15 +480,11 @@ impl Scope {
     }
 
     pub(crate) fn begin_snapshot(&mut self) -> Mark {
-        self.snapshot_depth += 1;
+        self.journal.depth += 1;
         Mark {
-            literal_values_unknown: self.literal_values_unknown,
-            len: self.undo.len(),
+            len: self.journal.undo.len(),
             loop_frame: self.loop_frame,
-            effects_unknown: self.effects_unknown,
-            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
-            ops_environment_unknown: self.ops_environment_unknown,
-            has_escaped_slot_names: self.has_escaped_slot_names,
+            uncertainty: self.uncertainty,
             data_mask_unknown: self.data_mask_unknown,
             tidy_injection: self.tidy_injection,
             search_path_unknown: self.search_path_unknown,
@@ -501,7 +502,7 @@ impl Scope {
         mut changed: BranchChanges,
     ) -> BranchDelta {
         debug_assert!(changed.is_empty());
-        let capacity = self.bindings.len().min(self.undo.len() - mark.len);
+        let capacity = self.bindings.len().min(self.journal.undo.len() - mark.len);
         // Iterating or clearing a nonempty hash table scans its capacity.
         // A previous dense branch must not make a later sparse delta linear
         // in the old scope size. Dropping this empty cache visits no entries.
@@ -511,7 +512,7 @@ impl Scope {
         changed.reserve(capacity);
         // Inspect the latest operation for each name while all final facts
         // are still present. Rollback runs only after capture is complete.
-        for undo in self.undo[mark.len..].iter().rev() {
+        for undo in self.journal.undo[mark.len..].iter().rev() {
             match undo {
                 Undo::Assignment(name, _) => {
                     if let hashbrown::hash_map::EntryRef::Vacant(entry) =
@@ -544,16 +545,12 @@ impl Scope {
             }
         }
         let delta = BranchDelta {
-            literal_values_unknown: self.literal_values_unknown,
-            effects_unknown: self.effects_unknown,
-            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
-            ops_environment_unknown: self.ops_environment_unknown,
-            has_escaped_slot_names: self.has_escaped_slot_names,
+            uncertainty: self.uncertainty,
             unreachable: self.unreachable,
             changed,
         };
-        while self.undo.len() > mark.len {
-            match self.undo.pop().unwrap() {
+        while self.journal.undo.len() > mark.len {
+            match self.journal.undo.pop().unwrap() {
                 Undo::KnownString(name, previous) => {
                     if let Some(value) = previous {
                         self.known_strings.insert(name, value);
@@ -623,11 +620,7 @@ impl Scope {
             }
         }
         self.loop_frame = mark.loop_frame;
-        self.effects_unknown = mark.effects_unknown;
-        self.dynamic_bindings_unknown = mark.dynamic_bindings_unknown;
-        self.ops_environment_unknown = mark.ops_environment_unknown;
-        self.has_escaped_slot_names = mark.has_escaped_slot_names;
-        self.literal_values_unknown = mark.literal_values_unknown;
+        self.uncertainty = mark.uncertainty;
         self.data_mask_unknown = mark.data_mask_unknown;
         self.tidy_injection = mark.tidy_injection;
         self.search_path_unknown = mark.search_path_unknown;
@@ -648,7 +641,7 @@ impl Scope {
                 p.unsafe_read_blocker = unsafe_read_blocker;
             }
         }
-        self.snapshot_depth -= 1;
+        self.journal.depth -= 1;
         delta
     }
 
@@ -674,11 +667,11 @@ mod tests {
         let initial = format!("{:?}", scope.clone());
         let mark = scope.begin_snapshot();
         scope.insert("x", integer.clone());
-        assert!(scope.undo.is_empty());
+        assert!(scope.journal.undo.is_empty());
         scope.mark_list_origin("x");
-        let before_assignment = scope.undo.len();
+        let before_assignment = scope.journal.undo.len();
         scope.insert("x", integer);
-        assert_eq!(scope.undo.len(), before_assignment + 1);
+        assert_eq!(scope.journal.undo.len(), before_assignment + 1);
         scope.set_function_alias("x", "callee".into());
         scope.insert("x", RType::new(Mode::Character, Length::One));
         scope.mark_lexical_function("x", Span::default());
@@ -715,8 +708,8 @@ mod tests {
         assert_eq!(delta.changed["new"].ty, Some(character));
         assert_eq!(scope.bindings, initial);
         assert!(scope.list_origin_bindings.is_empty());
-        assert!(scope.undo.is_empty());
-        assert_eq!(scope.snapshot_depth, 0);
+        assert!(scope.journal.undo.is_empty());
+        assert_eq!(scope.journal.depth, 0);
     }
 
     #[test]
@@ -792,8 +785,8 @@ mod tests {
         scope.insert("new", RType::unknown());
         scope.replace_binding_only(".", Some(RType::unknown()));
         let clone = scope.clone();
-        assert_eq!(clone.snapshot_depth, 0);
-        assert!(clone.undo.is_empty());
+        assert_eq!(clone.journal.depth, 0);
+        assert!(clone.journal.undo.is_empty());
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
         assert!(delta.changed.contains_key("new"));
         assert_eq!(format!("{:?}", scope.clone()), outer_state);
@@ -820,7 +813,10 @@ mod tests {
         assert_eq!(left.box_objects, right.box_objects);
         assert_eq!(left.plain_ops_vectors, right.plain_ops_vectors);
         assert_eq!(left.known_strings, right.known_strings);
-        assert_eq!(left.literal_values_unknown, right.literal_values_unknown);
+        assert_eq!(
+            left.uncertainty.literal_values,
+            right.uncertainty.literal_values
+        );
         assert_eq!(left.literal_functions.len(), right.literal_functions.len());
         for (name, function) in &left.literal_functions {
             assert_eq!(
@@ -830,13 +826,19 @@ mod tests {
         }
         assert_eq!(left.loop_frame, right.loop_frame);
         assert_eq!(left.unreachable, right.unreachable);
-        assert_eq!(left.effects_unknown, right.effects_unknown);
+        assert_eq!(left.uncertainty.effects, right.uncertainty.effects);
         assert_eq!(
-            left.dynamic_bindings_unknown,
-            right.dynamic_bindings_unknown
+            left.uncertainty.dynamic_bindings,
+            right.uncertainty.dynamic_bindings
         );
-        assert_eq!(left.ops_environment_unknown, right.ops_environment_unknown);
-        assert_eq!(left.has_escaped_slot_names, right.has_escaped_slot_names);
+        assert_eq!(
+            left.uncertainty.ops_environment,
+            right.uncertainty.ops_environment
+        );
+        assert_eq!(
+            left.uncertainty.escaped_slot_names,
+            right.uncertainty.escaped_slot_names
+        );
         assert_eq!(left.search_path_unknown, right.search_path_unknown);
         assert_eq!(left.data_mask_unknown, right.data_mask_unknown);
         assert_eq!(left.tidy_injection, right.tidy_injection);
@@ -895,20 +897,20 @@ mod tests {
         let inner = scope.begin_snapshot();
         scope.insert("`x`", RType::scalar(Mode::Logical));
         scope.invalidate_unknown_effects();
-        scope.dynamic_bindings_unknown = true;
+        scope.uncertainty.dynamic_bindings = true;
         scope.insert("x", RType::scalar(Mode::Integer));
         scope.loop_frame = None;
         scope.unreachable = true;
         let independent = scope.independent_execution_scope();
-        assert!(independent.undo.is_empty());
-        assert_eq!(independent.snapshot_depth, 0);
+        assert!(independent.journal.undo.is_empty());
+        assert_eq!(independent.journal.depth, 0);
         assert_eq!(independent.loop_frame, None);
         assert!(!independent.unreachable);
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
         assert!(
-            delta.effects_unknown
-                && delta.dynamic_bindings_unknown
-                && delta.ops_environment_unknown
+            delta.uncertainty.effects
+                && delta.uncertainty.dynamic_bindings
+                && delta.uncertainty.ops_environment
                 && delta.unreachable
         );
         assert_same_scope(&scope, &before_inner);
@@ -1095,19 +1097,24 @@ mod tests {
         scope.insert(name, RType::scalar(Mode::Logical));
         scope.replace_binding_only(name, None);
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
-        assert!(delta.has_escaped_slot_names);
+        assert!(delta.uncertainty.escaped_slot_names);
         assert!(delta.changed[name].ty.is_none());
         assert_same_scope(&scope, &before_inner);
-        assert!(!scope.has_escaped_slot_names);
+        assert!(!scope.uncertainty.escaped_slot_names);
         let delta = scope.finish_snapshot(outer, BranchChanges::default());
-        assert!(!delta.has_escaped_slot_names);
+        assert!(!delta.uncertainty.escaped_slot_names);
         assert_same_scope(&scope, &initial);
 
         let outer = scope.begin_snapshot();
         scope.insert(name, RType::unknown());
         let before_inner = scope.clone();
-        assert!(before_inner.has_escaped_slot_names);
-        assert!(scope.independent_execution_scope().has_escaped_slot_names);
+        assert!(before_inner.uncertainty.escaped_slot_names);
+        assert!(
+            scope
+                .independent_execution_scope()
+                .uncertainty
+                .escaped_slot_names
+        );
         let inner = scope.begin_snapshot();
         scope.invalidate_unknown_effects();
         scope.insert_parameter_default(name, RType::scalar(Mode::Integer));
@@ -1116,13 +1123,15 @@ mod tests {
         assert!(
             scope
                 .finish_snapshot(inner, BranchChanges::default())
-                .has_escaped_slot_names
+                .uncertainty
+                .escaped_slot_names
         );
         assert_same_scope(&scope, &before_inner);
         assert!(
             scope
                 .finish_snapshot(outer, BranchChanges::default())
-                .has_escaped_slot_names
+                .uncertainty
+                .escaped_slot_names
         );
         assert_same_scope(&scope, &initial);
     }

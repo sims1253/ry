@@ -428,7 +428,11 @@ fn r_options(
             }
             return Err(HeaderError::Unsupported);
         };
-        let key = if is_quoted(name) {
+        let raw =
+            name.len() > 1 && name.starts_with(['r', 'R']) && name[1..].starts_with(['"', '\'']);
+        let key = if raw {
+            unquote_r_string(name)
+        } else if is_quoted(name) {
             decode_r_quoted_name(name).ok_or(HeaderError::Unsupported)?
         } else {
             name.clone()
@@ -1063,6 +1067,12 @@ mod tests {
             ),
             // Quoted keys are recognized; option names are case-sensitive.
             ("```{r, \"eval\"=FALSE}\nx <- 'a'\n```\n", 0, None),
+            ("```{r, r\"(eval)\"=FALSE}\nx <- 'a'\n```\n", 0, None),
+            (
+                "```{r, r\"(child)\"='other.Rmd'}\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
             ("```{r}\n#| \"eval\": false\nx <- 'a'\n```\n", 0, None),
             ("```{r, Eval=FALSE}\n'x' + 1L\n```\n", 1, None),
             ("```{r}\n#| Eval: false\n'x' + 1L\n```\n", 1, None),

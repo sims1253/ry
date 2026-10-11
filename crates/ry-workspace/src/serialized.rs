@@ -440,6 +440,38 @@ mod tests {
     }
 
     #[test]
+    fn parser_limit_messages_are_limits_and_truncation_is_not() {
+        // The InvalidFormat message families of rds2rust 0.3; a reword
+        // upstream would surface as a lost file-stem fallback.
+        for (message, limit) in [
+            ("Parser nesting limit 64 exceeded", true),
+            (
+                "Materialized allocation of 1 bytes exceeds limits while parsing x",
+                true,
+            ),
+            ("Allocation of 1 bytes exceeds cap while parsing x", true),
+            ("Length 1 exceeds safe limit 1 while parsing x", true),
+            ("Allocation size overflow while parsing x", true),
+            ("Length overflow while parsing x", true),
+            (
+                "Length 1 (1 bytes) exceeds remaining 1 bytes while parsing x",
+                false,
+            ),
+            ("invalid R serialization header", false),
+        ] {
+            let error = rds2rust::Error::InvalidFormat(message.into());
+            assert_eq!(is_resource_limit(&error), limit, "{message}");
+        }
+        assert!(is_resource_limit(&rds2rust::Error::MemoryBudgetExceeded {
+            needed: 2,
+            available: 1,
+        }));
+        assert!(!is_resource_limit(&rds2rust::Error::ParseError(
+            "opaque".into()
+        )));
+    }
+
+    #[test]
     fn empty_workspace_and_parser_limit_have_distinct_inventory_status() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sysdata.rda");

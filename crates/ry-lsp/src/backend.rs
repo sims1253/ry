@@ -2166,9 +2166,8 @@ impl Backend {
             for (path, epoch) in landed {
                 let folder_root = match state.folder_context_for_path(path) {
                     Some(ctx) => ctx.root.clone(),
-                    // Root-owned partitions check against no stored
-                    // context (the publish path passes `None`), so there
-                    // is nothing to advance for them.
+                    // The fallback context stores no package contexts, so
+                    // there is nothing to advance.
                     None => {
                         settled.push((path.clone(), *epoch));
                         continue;

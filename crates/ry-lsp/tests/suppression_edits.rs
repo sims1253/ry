@@ -1,6 +1,7 @@
 //! The line quick-fix through the protocol: a repair keeps the existing
-//! comment and removes only its target, and a malformed directive withholds
-//! the repair. The marker table lives with the unit tests.
+//! comment and reason, merges into an existing rule list, repairs an invalid
+//! code, and removes only its target; a malformed directive withholds it.
+//! The marker table lives with the unit tests.
 
 mod harness;
 
@@ -27,61 +28,87 @@ async fn line_action(session: &mut ClientSession, uri: &str, diagnostic: &Value)
     })
 }
 
+fn find(diagnostics: &[Value], code: &str, line: u64) -> Value {
+    diagnostics
+        .iter()
+        .find(|diag| diag["code"] == code && diag["range"]["start"]["line"] == line)
+        .unwrap_or_else(|| panic!("{code} on line {line}: {diagnostics:?}"))
+        .clone()
+}
+
 #[tokio::test]
-async fn suppression_edit_keeps_the_comment_and_malformed_directives_withhold_it() {
-    let source = "x <- never_bound_here # explanation\n\"a\" + 1L # ry: ignore[RY040]]\n";
+async fn suppression_edits_repair_merge_and_withhold() {
+    let mut text = concat!(
+        "x <- never_bound_here # explanation\n",
+        "\"a\" + 1L # ry: ignore[RY040]]\n",
+        "y <- 1L + \"s\"; z <- never_bound_here # ry: ignore[RY040] reason\n",
+        "\"b\" + 1L # ry: ignore[RX040] reason\n",
+    )
+    .to_string();
     let fixture = FixtureProject::empty().unwrap();
-    let uri = file_uri(&fixture.write_file("main.R", source).unwrap());
+    let uri = file_uri(&fixture.write_file("main.R", &text).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     let mark = session.publication_mark();
-    session.open(&uri, 1, source).await.unwrap();
-    let before = session
+    session.open(&uri, 1, &text).await.unwrap();
+    let publish = session
         .published_diagnostics_after(&uri, mark)
         .await
         .unwrap();
-    let diagnostics = normalize_diagnostics(&before);
-    let find = |code: &str| {
-        diagnostics
-            .iter()
-            .find(|diag| diag["code"] == code)
-            .unwrap_or_else(|| panic!("{code}: {before}"))
-            .clone()
-    };
-    let unbound = find("RY010");
-    let malformed = find("RY040");
+    let mut diagnostics = normalize_diagnostics(&publish);
 
-    let mut foreign = unbound.clone();
+    let mut foreign = find(&diagnostics, "RY010", 0);
     foreign["source"] = json!("lintr");
     assert!(line_action(&mut session, &uri, &foreign).await.is_none());
+    let malformed = find(&diagnostics, "RY040", 1);
     assert!(line_action(&mut session, &uri, &malformed).await.is_none());
 
-    let action = line_action(&mut session, &uri, &unbound)
-        .await
-        .expect("repair action");
-    let edit = &action["edit"]["changes"][&uri][0];
-    let old_line = source.lines().next().unwrap();
-    assert_eq!(edit["range"]["start"], json!({"line": 0, "character": 0}));
-    assert_eq!(
-        edit["range"]["end"],
-        json!({"line": 0, "character": old_line.len()})
-    );
-    let new_line = edit["newText"].as_str().unwrap();
-    assert!(new_line.contains("# explanation"), "{new_line}");
-    let updated = source.replacen(old_line, new_line, 1);
-    let mark = session.publication_mark();
-    session
-        .change(&uri, 2, json!([{"text": updated}]))
-        .await
-        .unwrap();
-    let after = session
-        .published_diagnostics_after(&uri, mark)
-        .await
-        .unwrap();
-    let expected: Vec<_> = diagnostics
-        .iter()
-        .filter(|diag| **diag != unbound)
-        .cloned()
-        .collect();
-    assert_eq!(normalize_diagnostics(&after), expected, "{updated}");
+    for (version, (code, line, expected)) in [
+        ("RY010", 0, "# explanation"),
+        ("RY010", 2, "# ry: ignore[RY010, RY040] reason"),
+        ("RY040", 3, "# ry: ignore[RY040] reason"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let target = find(&diagnostics, code, line);
+        let action = line_action(&mut session, &uri, &target)
+            .await
+            .unwrap_or_else(|| panic!("{code} on line {line}"));
+        let edit = &action["edit"]["changes"][&uri][0];
+        let old_line = text.lines().nth(line as usize).unwrap().to_string();
+        assert_eq!(
+            edit["range"]["start"],
+            json!({"line": line, "character": 0})
+        );
+        assert_eq!(
+            edit["range"]["end"],
+            json!({"line": line, "character": old_line.encode_utf16().count()})
+        );
+        let new_line = edit["newText"].as_str().unwrap();
+        assert!(new_line.contains(expected), "{new_line}");
+        assert_eq!(new_line.matches("# ry: ignore[").count(), 1);
+        text = text.replacen(&old_line, new_line, 1);
+        let mark = session.publication_mark();
+        session
+            .change(&uri, version as i32 + 2, json!([{"text": text}]))
+            .await
+            .unwrap();
+        let publish = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        let after = normalize_diagnostics(&publish);
+        // Only the target leaves, plus the RY112 of the repaired directive.
+        let expected: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                **diag != target
+                    && !(diag["code"] == "RY112" && diag["range"]["start"]["line"] == line)
+            })
+            .cloned()
+            .collect();
+        assert_eq!(after, expected, "{text}");
+        diagnostics = after;
+    }
     join_session(session, server).await;
 }

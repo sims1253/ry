@@ -1,217 +1,121 @@
-use ry_testkit::{AsyncJsonRpcClient, FixtureProject, file_uri};
-use serde_json::json;
+//! A serialized scope the inventory cannot enumerate is reported once per
+//! failure, with the same reason the CLI prints.
 
-fn assert_serialized_notice(bytes: &[u8], config: &str, reason: &str) {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            fixture
-                .write_file("DESCRIPTION", "Package: example\nVersion: 1.0\n")
-                .unwrap();
-            fixture.write_file("ry.toml", config).unwrap();
-            fixture.write_file("R/main.R", "sysdata\n").unwrap();
-            fixture.write_file("R/sysdata.rda", bytes).unwrap();
-            let (client, server) = tokio::io::duplex(128 * 1024);
-            let (reader, writer) = tokio::io::split(server);
-            let server = tokio::spawn(ry_lsp::run_with(reader, writer));
-            let (reader, writer) = tokio::io::split(client);
-            let mut client = AsyncJsonRpcClient::new(reader, writer);
-            let root = file_uri(fixture.root()).unwrap();
-            let id = client
-                .request(
-                    "initialize",
-                    json!({
-                        "processId": null, "rootUri": root, "capabilities": {},
-                        "workspaceFolders": [{"uri": root, "name": "example"}]
-                    }),
-                )
-                .await
-                .unwrap();
-            client
-                .receive_until(|message| message["id"] == id, 20)
-                .await
-                .unwrap();
-            client.notify("initialized", json!({})).await.unwrap();
-            let notice = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                client.receive_until(
-                    |message| {
-                        message["method"] == "window/logMessage"
-                            && message["params"]["message"]
-                                .as_str()
-                                .is_some_and(|text| text.contains(reason))
-                    },
-                    20,
-                ),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            assert_eq!(notice["params"]["type"], 2);
-            assert!(
-                notice["params"]["message"]
-                    .as_str()
-                    .unwrap()
-                    .contains("R/sysdata.rda")
-            );
-            drop(client);
-            server.abort();
-        });
+mod harness;
+
+use harness::{ClientSession, file_uri, join_session, spawn_session};
+use ry_testkit::FixtureProject;
+use serde_json::{Value, json};
+
+fn package(sysdata: &[u8], config: &str) -> FixtureProject {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: example\nVersion: 1.0\n")
+        .unwrap();
+    fixture.write_file("ry.toml", config).unwrap();
+    fixture.write_file("R/main.R", "sysdata\n").unwrap();
+    fixture.write_file("R/sysdata.rda", sysdata).unwrap();
+    fixture
 }
 
-#[test]
-fn indexing_reports_byte_limit_with_the_source_path() {
-    assert_serialized_notice(
-        b"over the configured cap",
-        "max-serialized-bytes = 1\n",
-        "decoded-byte limit exceeded",
+fn is_notice(message: &Value, reason: &str) -> bool {
+    message["method"] == "window/logMessage"
+        && message["params"]["message"]
+            .as_str()
+            .is_some_and(|text| text.contains(reason))
+}
+
+/// The warning notice for `reason`, which must name the serialized file.
+async fn notice_after(session: &mut ClientSession, mark: u64, reason: &str) {
+    let notice = session
+        .notification_after(mark, "window/logMessage", |message| {
+            is_notice(message, reason)
+        })
+        .await
+        .unwrap();
+    assert_eq!(notice["params"]["type"], 2);
+    assert!(
+        notice["params"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("R/sysdata.rda"),
+        "{notice}"
     );
 }
 
-#[test]
-fn indexing_reports_parser_limit_with_the_same_reason_as_cli() {
-    assert_serialized_notice(
-        include_bytes!("../../../testdata/serialized/nested-limit.rda"),
-        "max-serialized-bytes = 4096\n",
-        "serialized parser resource limit exceeded",
-    );
+#[tokio::test]
+async fn indexing_reports_byte_limit_with_the_source_path() {
+    let fixture = package(b"over the configured cap", "max-serialized-bytes = 1\n");
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    notice_after(&mut session, 0, "decoded-byte limit exceeded").await;
+    join_session(session, server).await;
 }
 
-#[test]
-fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports_again() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            fixture
-                .write_file("DESCRIPTION", "Package: example\nVersion: 1.0\n")
-                .unwrap();
-            fixture.write_file("R/main.R", "sysdata\n").unwrap();
-            let data_path = fixture.path("R/sysdata.rda");
-            let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
-            fixture.write_file("R/sysdata.rda", nested).unwrap();
-            let (client, server) = tokio::io::duplex(128 * 1024);
-            let (reader, writer) = tokio::io::split(server);
-            let server = tokio::spawn(ry_lsp::run_with(reader, writer));
-            let (reader, writer) = tokio::io::split(client);
-            let mut client = AsyncJsonRpcClient::new(reader, writer);
-            let root = file_uri(fixture.root()).unwrap();
-            let main = file_uri(&fixture.path("R/main.R")).unwrap();
-            let serialized = file_uri(&data_path).unwrap();
-            let id = client
-                .request(
-                    "initialize",
-                    json!({
-                        "processId": null, "rootUri": root, "capabilities": {},
-                        "workspaceFolders": [{"uri": root, "name": "example"}]
-                    }),
-                )
-                .await
-                .unwrap();
-            client
-                .receive_until(|message| message["id"] == id, 20)
-                .await
-                .unwrap();
-            client.notify("initialized", json!({})).await.unwrap();
-            let is_limit_notice = |message: &serde_json::Value| {
-                message["method"] == "window/logMessage"
-                    && message["params"]["message"].as_str().is_some_and(|text| {
-                        text.contains("serialized parser resource limit exceeded")
-                    })
-            };
-            tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                client.receive_until(is_limit_notice, 20),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+#[tokio::test]
+async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports_again() {
+    const LIMIT: &str = "serialized parser resource limit exceeded";
+    let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
+    let fixture = package(nested, "max-serialized-bytes = 4096\n");
+    let data_path = fixture.path("R/sysdata.rda");
+    let main = file_uri(&fixture.path("R/main.R"));
+    let serialized = file_uri(&data_path);
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    notice_after(&mut session, 0, LIMIT).await;
 
-            client
-                .notify(
-                    "textDocument/didOpen",
-                    json!({"textDocument": {
-                        "uri": main, "languageId": "r", "version": 1, "text": "sysdata\n"
-                    }}),
-                )
-                .await
-                .unwrap();
-            client
-                .receive_until(
-                    |message| {
-                        message["method"] == "textDocument/publishDiagnostics"
-                            && message["params"]["uri"] == main
-                    },
-                    30,
-                )
-                .await
-                .unwrap();
+    let mark = session.publication_mark();
+    session.open(&main, 1, "sysdata\n").await.unwrap();
+    session
+        .published_diagnostics_after(&main, mark)
+        .await
+        .unwrap();
 
-            std::fs::write(
-                &data_path,
-                include_bytes!("../../../testdata/serialized/empty.rda"),
-            )
-            .unwrap();
-            client
-                .notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": serialized, "type": 2}]}),
-                )
-                .await
-                .unwrap();
-            let mut repeated_notices = 0;
-            let repaired = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                client.receive_until(
-                    |message| {
-                        if is_limit_notice(message) {
-                            repeated_notices += 1;
-                        }
-                        message["method"] == "textDocument/publishDiagnostics"
-                            && message["params"]["uri"] == main
-                            && message["params"]["diagnostics"]
-                                .as_array()
-                                .is_some_and(|diags| {
-                                    diags.iter().any(|diag| {
-                                        diag["code"] == "RY010"
-                                            && diag["message"]
-                                                .as_str()
-                                                .is_some_and(|text| text.contains("sysdata"))
-                                    })
-                                })
-                    },
-                    40,
-                ),
-            )
+    std::fs::write(
+        &data_path,
+        include_bytes!("../../../testdata/serialized/empty.rda"),
+    )
+    .unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": serialized, "type": 2}]}),
+        )
+        .await
+        .unwrap();
+    // The repaired inventory binds no `sysdata`, so the name is unbound again.
+    loop {
+        let publish = session
+            .published_diagnostics_after(&main, mark)
             .await
-            .unwrap()
             .unwrap();
-            assert_eq!(
-                repeated_notices, 0,
-                "repair must clear the notice: {repaired}"
-            );
+        let unbound = publish["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diag| {
+                diag["code"] == "RY010"
+                    && diag["message"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("sysdata"))
+            });
+        if unbound {
+            break;
+        }
+    }
+    assert!(
+        !session.routed_after(mark, |message| is_notice(message, LIMIT)),
+        "repair must not repeat the notice"
+    );
 
-            std::fs::write(&data_path, nested).unwrap();
-            client
-                .notify(
-                    "workspace/didChangeWatchedFiles",
-                    json!({"changes": [{"uri": serialized, "type": 2}]}),
-                )
-                .await
-                .unwrap();
-            tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                client.receive_until(is_limit_notice, 40),
-            )
-            .await
-            .unwrap()
-            .unwrap();
-            drop(client);
-            server.abort();
-        });
+    std::fs::write(&data_path, nested).unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": serialized, "type": 2}]}),
+        )
+        .await
+        .unwrap();
+    notice_after(&mut session, mark, LIMIT).await;
+    join_session(session, server).await;
 }

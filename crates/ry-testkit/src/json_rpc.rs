@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -92,6 +93,70 @@ impl JsonRpcProcess {
             io::ErrorKind::InvalidData,
             format!("no matching JSON-RPC message in {message_limit} messages"),
         ))
+    }
+}
+
+impl JsonRpcProcess {
+    /// Drive a whole server session: initialize at `root`, open `uri` with
+    /// `text`, take its first publication, then require a clean shutdown and
+    /// process exit. Returns the published diagnostics.
+    pub fn open_and_publish(
+        &mut self,
+        root: &Path,
+        uri: &str,
+        text: &str,
+    ) -> io::Result<Vec<Value>> {
+        let root_uri = crate::file_uri(root)?;
+        let id = self.request(
+            "initialize",
+            json!({
+                "processId": null,
+                "rootUri": root_uri,
+                "capabilities": {},
+                "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+            }),
+        )?;
+        self.receive_until(|message| message.get("id") == Some(&json!(id)), 32)?;
+        self.notify("initialized", json!({}))?;
+        self.notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {"uri": uri, "languageId": "r", "version": 1, "text": text}}),
+        )?;
+        let publication = self.receive_until(
+            |message| {
+                message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                    && message.pointer("/params/uri") == Some(&json!(uri))
+            },
+            64,
+        )?;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": "shutdown"}))?;
+        let response = self.receive_until(|message| message.get("id") == Some(&json!(id)), 64)?;
+        if let Some(error) = response.get("error") {
+            return Err(io::Error::other(format!("shutdown failed: {error}")));
+        }
+        self.send(&json!({"jsonrpc": "2.0", "method": "exit"}))?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match self.child.try_wait()? {
+                Some(status) if status.success() => break,
+                Some(status) => {
+                    return Err(io::Error::other(format!("server exited with {status}")));
+                }
+                None if std::time::Instant::now() > deadline => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "server did not exit after shutdown",
+                    ));
+                }
+                None => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+        Ok(publication["params"]["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

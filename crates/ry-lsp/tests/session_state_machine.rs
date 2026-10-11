@@ -1413,13 +1413,9 @@ fn assert_hint_at(hints: &Value, line: u32, character: u32) {
     );
 }
 
-#[test]
-fn utf16_contract_holds_across_one_real_lsp_transcript() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(utf16_transcript());
+#[tokio::test]
+async fn utf16_contract_holds_across_one_real_lsp_transcript() {
+    utf16_transcript().await;
 }
 
 async fn utf16_transcript() {
@@ -1617,13 +1613,9 @@ async fn utf16_transcript() {
 /// reopened document's diagnostics, and the close's clearing `[]` must not
 /// be mistakable for that publication.  Deterministic companion to the
 /// convergence property, which samples this path randomly.
-#[test]
-fn close_reopen_publishes_diagnostics_again() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(close_reopen_republishes());
+#[tokio::test]
+async fn close_reopen_publishes_diagnostics_again() {
+    close_reopen_republishes().await;
 }
 
 async fn close_reopen_republishes() {
@@ -1682,4 +1674,60 @@ async fn close_reopen_republishes() {
     );
 
     join_session(session, server).await;
+}
+
+/// An analysis publication carries the document version; the clear sent on
+/// close does not, since no version of a closed document exists.
+#[tokio::test]
+async fn analysis_clear_carries_version_but_close_clear_does_not() {
+    let fixture = FixtureProject::empty().unwrap();
+    let path = fixture
+        .write_file("R/a.R", "value <- missing_name\n")
+        .unwrap();
+    let uri = harness::file_uri(&path);
+    let (mut session, server) = harness::spawn_session(&[fixture.root()], json!({}), None).await;
+
+    let mark = session.publication_mark();
+    session
+        .open(&uri, 1, "value <- missing_name\n")
+        .await
+        .unwrap();
+    let opened = session
+        .quiesce_diagnostics_timed(&uri, mark, DRAIN_IDLE)
+        .await
+        .unwrap();
+    assert_eq!(opened.first.pointer("/params/version"), Some(&json!(1)));
+    assert!(
+        opened.first["params"]["diagnostics"]
+            .as_array()
+            .is_some_and(|diagnostics| !diagnostics.is_empty())
+    );
+
+    let mark = session.publication_mark();
+    session
+        .change(&uri, 2, json!([{"text": "value <- 1L\n"}]))
+        .await
+        .unwrap();
+    let cleared = session
+        .quiesce_diagnostics_timed(&uri, mark, DRAIN_IDLE)
+        .await
+        .unwrap();
+    assert_eq!(cleared.first.pointer("/params/version"), Some(&json!(2)));
+    assert_eq!(cleared.first["params"]["diagnostics"], json!([]));
+
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": uri}}),
+        )
+        .await
+        .unwrap();
+    let closed = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert!(closed.pointer("/params/version").is_none_or(Value::is_null));
+    assert_eq!(closed["params"]["diagnostics"], json!([]));
+    harness::join_session(session, server).await;
 }

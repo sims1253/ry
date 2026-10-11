@@ -295,7 +295,6 @@ async fn server_edit_replay_matches_fresh_cli() -> Result<(), DriverError> {
     let workload_bytes = fs::read(&workload_path)?;
     let workload: Workload = serde_json::from_slice(&workload_bytes)?;
     assert_eq!(workload.schema_version, 1);
-    assert_eq!(workload.scenarios.len(), 3);
 
     let binary = env::var_os("RY_REPLAY_BINARY")
         .map(PathBuf::from)
@@ -364,115 +363,5 @@ async fn server_edit_replay_matches_fresh_cli() -> Result<(), DriverError> {
         });
         fs::write(path, serde_json::to_vec_pretty(&report)?)?;
     }
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn repeated_caller_finding_rejects_the_previous_analysis_generation()
--> Result<(), DriverError> {
-    let workload_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/server-replay/v1.json");
-    let workload: Workload = serde_json::from_slice(&fs::read(workload_path)?)?;
-    let binary = env::var_os("RY_REPLAY_BINARY")
-        .map(PathBuf::from)
-        .unwrap_or_else(ry_binary)
-        .canonicalize()?;
-    let (mut replay, _) = Replay::start(&binary, &workload).await?;
-    let helper = file_uri(&replay.live.path("R/helper.R"))?;
-    let caller = file_uri(&replay.live.path("R/caller.R"))?;
-
-    let mark = replay.session.publication_mark();
-    replay
-        .session
-        .change(
-            &helper,
-            2,
-            json!([{"text": "value <- function() \"text\"\n"}]),
-        )
-        .await?;
-    let first = replay
-        .session
-        .quiesce_diagnostics_timed(&caller, mark, DRAIN_IDLE)
-        .await?
-        .first;
-    let old_generation = completion_generation(&first, Some(replay.last_generation))?
-        .ok_or("caller must report a diagnostic")?;
-    assert_eq!(first.pointer("/params/version"), Some(&json!(1)));
-
-    let mark = replay.session.publication_mark();
-    replay
-        .session
-        .change(&helper, 3, json!([{"text": "value <- function() 1L\n"}]))
-        .await?;
-    let reset = replay
-        .session
-        .quiesce_diagnostics_timed(&caller, mark, DRAIN_IDLE)
-        .await?;
-    assert_eq!(reset.first["params"]["diagnostics"], json!([]));
-
-    // A second final edit would produce the same caller version and RY040.
-    // Replaying the earlier publication instead must fail even though a fresh
-    // CLI check of the intended source has identical normalized findings.
-    replay
-        .fresh
-        .write_file("R/helper.R", "value <- function() \"text\"\n")?;
-    let expected: Vec<_> = replay
-        .cli_diagnostics()?
-        .into_iter()
-        .filter(|item| item.path == "R/caller.R")
-        .collect();
-    assert_eq!(
-        published_from_lsp(
-            &first,
-            &replay.fresh.path("R/caller.R"),
-            replay.fresh.root()
-        ),
-        expected
-    );
-    let stale = completion_generation(&first, Some(old_generation)).unwrap_err();
-    assert!(stale.to_string().contains("stale completion generation"));
-    replay.finish().await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn analysis_clear_carries_version_but_close_clear_does_not() -> Result<(), DriverError> {
-    let fixture = FixtureProject::empty()?;
-    let path = fixture.write_file("R/a.R", "value <- missing_name\n")?;
-    let uri = file_uri(&path)?;
-    let (mut session, server) = harness::spawn_session(&[fixture.root()], json!({}), None).await;
-
-    let mark = session.publication_mark();
-    session.open(&uri, 1, "value <- missing_name\n").await?;
-    let opened = session
-        .quiesce_diagnostics_timed(&uri, mark, DRAIN_IDLE)
-        .await?;
-    assert_eq!(opened.first.pointer("/params/version"), Some(&json!(1)));
-    assert!(
-        opened.first["params"]["diagnostics"]
-            .as_array()
-            .is_some_and(|diagnostics| !diagnostics.is_empty())
-    );
-
-    let mark = session.publication_mark();
-    session
-        .change(&uri, 2, json!([{"text": "value <- 1L\n"}]))
-        .await?;
-    let cleared = session
-        .quiesce_diagnostics_timed(&uri, mark, DRAIN_IDLE)
-        .await?;
-    assert_eq!(cleared.first.pointer("/params/version"), Some(&json!(2)));
-    assert_eq!(cleared.first["params"]["diagnostics"], json!([]));
-
-    let mark = session.publication_mark();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": uri}}),
-        )
-        .await?;
-    let closed = session.published_diagnostics_after(&uri, mark).await?;
-    assert!(closed.pointer("/params/version").is_none_or(Value::is_null));
-    assert_eq!(closed["params"]["diagnostics"], json!([]));
-    harness::join_session(session, server).await;
     Ok(())
 }

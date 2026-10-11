@@ -53,55 +53,42 @@ fn ry040_lines(diagnostics: &[Value]) -> Vec<u64> {
     lines
 }
 
-fn run<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(future)
-}
-
 /// A never-opened file's diagnostics arrive via the background disk
 /// index: opening `other.R` triggers the project-wide publish — the
 /// only trigger, since no publication covers a closed file while no
 /// document is open — and the publication for `a.R` must respect the
 /// inline directive: the suppressed line dropped, the control line
 /// kept.
-#[test]
-fn never_opened_file_respects_inline_suppression() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("a.R", SUPPRESSED_SRC).unwrap();
-        fixture.write_file("other.R", OTHER_SRC).unwrap();
-        let a_uri = file_uri(&fixture.path("a.R"));
-        let other_uri = file_uri(&fixture.path("other.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &other_uri).await;
+#[tokio::test]
+async fn never_opened_file_respects_inline_suppression() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("a.R", SUPPRESSED_SRC).unwrap();
+    fixture.write_file("other.R", OTHER_SRC).unwrap();
+    let a_uri = file_uri(&fixture.path("a.R"));
+    let other_uri = file_uri(&fixture.path("other.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &other_uri).await;
 
-        let mark = session.publication_mark();
-        session.open(&other_uri, 1, OTHER_SRC).await.unwrap();
-        let publish = session
-            .published_diagnostics_after(&a_uri, mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            ry040_lines(
-                publish["params"]["diagnostics"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-            ),
-            vec![2],
-            "the background-index publication for never-opened a.R must drop the \
-             suppressed line and keep the control line, got: {:?}",
-            publish["params"]["diagnostics"].to_string()
-        );
+    let mark = session.publication_mark();
+    session.open(&other_uri, 1, OTHER_SRC).await.unwrap();
+    let publish = session
+        .published_diagnostics_after(&a_uri, mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        ry040_lines(
+            publish["params"]["diagnostics"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        ),
+        vec![2],
+        "the background-index publication for never-opened a.R must drop the \
+         suppressed line and keep the control line, got: {:?}",
+        publish["params"]["diagnostics"].to_string()
+    );
 
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }
 
 /// The close-after-open path: while `a.R` is open the directive holds;
@@ -109,68 +96,66 @@ fn never_opened_file_respects_inline_suppression() {
 /// republish (driven by the still-open `other.R`) must keep the
 /// directive holding — the diagnostics published for the now-closed
 /// file are exactly the control line.
-#[test]
-fn closed_file_keeps_inline_suppression() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("a.R", SUPPRESSED_SRC).unwrap();
-        fixture.write_file("other.R", OTHER_SRC).unwrap();
-        let a_uri = file_uri(&fixture.path("a.R"));
-        let other_uri = file_uri(&fixture.path("other.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &other_uri).await;
+#[tokio::test]
+async fn closed_file_keeps_inline_suppression() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("a.R", SUPPRESSED_SRC).unwrap();
+    fixture.write_file("other.R", OTHER_SRC).unwrap();
+    let a_uri = file_uri(&fixture.path("a.R"));
+    let other_uri = file_uri(&fixture.path("other.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &other_uri).await;
 
-        // Open both; while open, the directive holds.
-        let open_mark = session.publication_mark();
-        session.open(&a_uri, 1, SUPPRESSED_SRC).await.unwrap();
-        session.open(&other_uri, 1, OTHER_SRC).await.unwrap();
-        let open_publish = session
-            .published_diagnostics_after(&a_uri, open_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            ry040_lines(
-                open_publish["params"]["diagnostics"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-            ),
-            vec![2],
-            "the open buffer's publication must respect the directive, got: {:?}",
-            open_publish["params"]["diagnostics"].to_string()
-        );
+    // Open both; while open, the directive holds.
+    let open_mark = session.publication_mark();
+    session.open(&a_uri, 1, SUPPRESSED_SRC).await.unwrap();
+    session.open(&other_uri, 1, OTHER_SRC).await.unwrap();
+    let open_publish = session
+        .published_diagnostics_after(&a_uri, open_mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        ry040_lines(
+            open_publish["params"]["diagnostics"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        ),
+        vec![2],
+        "the open buffer's publication must respect the directive, got: {:?}",
+        open_publish["params"]["diagnostics"].to_string()
+    );
 
-        // Close a.R. didClose first clears its diagnostics, then the
-        // republish for the still-open other.R re-publishes a.R from
-        // the disk index. quiesce collects publications until the
-        // stream goes quiet; the last publication per URI wins in the
-        // map, so a.R's entry is the post-close disk-state set — after
-        // the clearing notification and any straggler pre-close
-        // publication, both of which precede the 180ms debounce. The
-        // idle window must exceed that debounce so the republish is
-        // actually collected.
-        let close_mark = session.publication_mark();
-        session
-            .notify(
-                "textDocument/didClose",
-                json!({"textDocument": {"uri": a_uri}}),
-            )
-            .await
-            .unwrap();
-        let burst = session
-            .quiesce_diagnostics(&a_uri, close_mark, std::time::Duration::from_millis(500))
-            .await
-            .unwrap();
-        let closed = burst
-            .get(&a_uri)
-            .expect("the republish must cover the closed a.R again");
-        assert_eq!(
-            ry040_lines(closed),
-            vec![2],
-            "the post-close disk-index publication for a.R must drop the \
-             suppressed line and keep the control line, got: {closed:?}"
-        );
+    // Close a.R. didClose first clears its diagnostics, then the
+    // republish for the still-open other.R re-publishes a.R from
+    // the disk index. quiesce collects publications until the
+    // stream goes quiet; the last publication per URI wins in the
+    // map, so a.R's entry is the post-close disk-state set — after
+    // the clearing notification and any straggler pre-close
+    // publication, both of which precede the 180ms debounce. The
+    // idle window must exceed that debounce so the republish is
+    // actually collected.
+    let close_mark = session.publication_mark();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": a_uri}}),
+        )
+        .await
+        .unwrap();
+    let burst = session
+        .quiesce_diagnostics(&a_uri, close_mark, std::time::Duration::from_millis(500))
+        .await
+        .unwrap();
+    let closed = burst
+        .get(&a_uri)
+        .expect("the republish must cover the closed a.R again");
+    assert_eq!(
+        ry040_lines(closed),
+        vec![2],
+        "the post-close disk-index publication for a.R must drop the \
+         suppressed line and keep the control line, got: {closed:?}"
+    );
 
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }

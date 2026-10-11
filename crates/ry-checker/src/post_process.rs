@@ -46,40 +46,34 @@ use crate::diagnostics::{
 const UNUSED_IGNORE_AUDITABLE_CODES: &[&str] = &["RY034", "RY102"];
 
 fn unchecked_audit_regions(file: &SourceFile) -> Vec<Span> {
+    // The walk visits an assignment before its value, so a directly
+    // assigned function is known by the time its `Expr::Function` is reached.
     let mut assigned_functions = HashSet::new();
-    let _ = walk_stmts(
-        &file.stmts,
-        Walk::ALL,
-        |node, _| -> ControlFlow<(), Descend> {
-            if let AstNode::Stmt(Stmt::Assign {
-                value: Expr::Function { span, .. },
-                ..
-            }) = node
-            {
-                assigned_functions.insert(*span);
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
-
     let mut unchecked = Vec::new();
     let _ = walk_stmts(
         &file.stmts,
         Walk::ALL,
         |node, _| -> ControlFlow<(), Descend> {
             match node {
+                AstNode::Stmt(Stmt::Assign {
+                    value: Expr::Function { span, .. },
+                    ..
+                }) => {
+                    assigned_functions.insert(*span);
+                }
                 AstNode::Expr(Expr::Function { span, .. })
                     if !assigned_functions.contains(span) =>
                 {
                     unchecked.push(*span);
-                    ControlFlow::Continue(Descend::Skip)
+                    return ControlFlow::Continue(Descend::Skip);
                 }
                 AstNode::Expr(Expr::Unknown(span)) => {
                     unchecked.push(*span);
-                    ControlFlow::Continue(Descend::Skip)
+                    return ControlFlow::Continue(Descend::Skip);
                 }
-                _ => ControlFlow::Continue(Descend::Into),
+                _ => {}
             }
+            ControlFlow::Continue(Descend::Into)
         },
     );
     unchecked

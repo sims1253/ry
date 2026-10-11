@@ -385,6 +385,9 @@ fn nested_modules_use_the_callers_directory_and_prefer_lowercase_r() {
     fs::create_dir_all(root.path().join("shared")).unwrap();
     write(&nested, "mod/hello.r", "lower <- 1L\n");
     write(&nested, "mod/hello.R", "upper <- 2L\n");
+    if fs::read_dir(nested.join("mod")).unwrap().count() != 2 {
+        return; // a case-insensitive filesystem cannot hold both spellings
+    }
     write(root.path(), "shared/__init__.r", "parent <- 3L\n");
     let diagnostics = codes_for(
         &nested,

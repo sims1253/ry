@@ -412,8 +412,11 @@ fn selected_columns_from_source(data_type: &RType, expr: &Expr) -> Option<Vec<(S
 /// Apply ordered `(exclude, source column, output name)` selections.
 /// Tidyselect begins with all columns only when the first selector is
 /// negative, so an empty c() selects nothing. Operations apply in order:
-/// c(-x, x) removes x and then reintroduces it. `None` when a selector
-/// names a column the schema lacks.
+/// c(-x, x) removes x and then reintroduces it. A named selector renames the
+/// column's unrenamed entry in place, otherwise it adds another output, so
+/// `a = x, b = x` keeps both. A bare selector of an already selected column
+/// is a no-op. `None` when a selector names a column the schema lacks or
+/// reuses an output name for another column.
 fn apply_tidy_selection(
     source: &ColumnSchema,
     operations: Vec<(bool, String, String)>,
@@ -432,12 +435,18 @@ fn apply_tidy_selection(
         let ty = source.get(&name)?;
         if exclude {
             selected.retain(|(_, selected_source, _)| *selected_source != name);
+        } else if output == name {
+            if !selected.iter().any(|(_, source, _)| *source == name) {
+                selected.push((output, name, ty));
+            }
         } else if let Some(entry) = selected
             .iter_mut()
-            .find(|(_, selected_source, _)| *selected_source == name)
+            .find(|(selected_output, source, _)| *source == name && *selected_output == name)
         {
-            if output != name {
-                entry.0 = output;
+            entry.0 = output;
+        } else if let Some((_, source, _)) = selected.iter().find(|(o, ..)| *o == output) {
+            if *source != name {
+                return None;
             }
         } else {
             selected.push((output, name, ty));

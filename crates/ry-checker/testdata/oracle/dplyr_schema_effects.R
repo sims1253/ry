@@ -123,3 +123,6 @@ stopifnot(identical(names(dplyr::select(wide, -x, y)), c("y", "g")))
 # Shared non-key join columns are suffixed.
 joined <- dplyr::left_join(data.frame(id = 1L, v = 2), data.frame(id = 1L, v = "a"), by = "id")
 stopifnot(identical(names(joined), c("id", "v.x", "v.y")))
+# Each named selector of one column is a separate output.
+stopifnot(identical(names(dplyr::select(wide, a = x, b = x)), c("a", "b")))
+stopifnot(identical(names(dplyr::select(wide, -x, a = y, b = y)), c("a", "g", "b")))

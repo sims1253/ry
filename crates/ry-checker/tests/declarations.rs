@@ -1,9 +1,12 @@
-//! Structured records exercise the shared checker before a source adapter exists.
+//! Declaration checking through real `#|` typehint source where that adapter
+//! can express the contract, and through hand-built records for vocabulary
+//! no adapter produces (storage modes, unions, variadics, return constraints,
+//! checked defaults, provider conflicts, and evidence kinds).
 
 use std::path::Path;
 use std::sync::Arc;
 
-use ry_checker::{Checker, DeclarationFindingKind, Project};
+use ry_checker::{Checker, DeclarationFinding, DeclarationFindingKind, Project};
 use ry_config::config::ScopedPaths;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::declarations::{
@@ -30,31 +33,6 @@ fn named_function_span(file: &SourceFile, name: &str) -> Span {
             _ => None,
         })
         .expect("fixture has named top-level function")
-}
-
-fn nested_function_span(file: &SourceFile, outer: &str, inner: &str) -> Span {
-    let body = file
-        .stmts
-        .iter()
-        .find_map(|statement| match statement {
-            Stmt::Assign {
-                target: Expr::Ident { name, .. },
-                value: Expr::Function { body, .. },
-                ..
-            } if name == outer => Some(body),
-            _ => None,
-        })
-        .expect("fixture has outer function");
-    body.iter()
-        .find_map(|statement| match statement {
-            Stmt::Assign {
-                target: Expr::Ident { name, .. },
-                value: Expr::Function { span, .. },
-                ..
-            } if name == inner => Some(*span),
-            _ => None,
-        })
-        .expect("fixture has named nested function")
 }
 
 fn record(
@@ -93,6 +71,15 @@ fn record(
     }
 }
 
+/// Check `source` with its `#|` comments adopted, as `annotations.typehint` does.
+fn check_adopted(path: &str, source: &str) -> (SourceFile, Checker) {
+    let file = parse(path, source);
+    let mut checker = Checker::new(&file.path);
+    checker.set_declaration_records(adopted_records(&file));
+    checker.check(&file);
+    (file, checker)
+}
+
 fn adopted_records(file: &SourceFile) -> Vec<DeclarationRecord> {
     let scope = ScopedPaths::new(Path::new("."), &["**".into()]).unwrap();
     let records = ry_checker::typehint::read_records(file, &scope);
@@ -107,15 +94,6 @@ fn adopted_records(file: &SourceFile) -> Vec<DeclarationRecord> {
         file.path
     );
     records
-}
-
-fn new_project(files: &[&SourceFile], records: &[DeclarationRecord]) -> Project {
-    let mut project = Project::new();
-    for file in files {
-        project.add_file(file.path.clone(), (*file).clone());
-    }
-    project.set_declaration_records(records.to_vec());
-    project
 }
 
 fn kinds(checker: &Checker) -> Vec<DeclarationFindingKind> {
@@ -160,17 +138,9 @@ fn captured_helper_effects_do_not_borrow_caller_local_proofs() {
         ),
     ] {
         let source = format!(
-            "f <- function(x) x\n{setup}\ng <- function() {{ {body} }}\nouter <- function() {{ {local}; g(); f(\"bad\") }}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\n{setup}\ng <- function() {{ {body} }}\nouter <- function() {{ {local}; g(); f(\"bad\") }}\nouter()\n"
         );
-        let file = parse("captured-helper-scope.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("captured-helper-scope.R", &source);
         assert!(
             mismatch_sources(&checker, &file).is_empty(),
             "setup: {setup}, caller local: {local}, findings: {:?}",
@@ -208,24 +178,19 @@ fn unadopted_records_preserve_ordinary_local_function_diagnostics() {
 
 #[test]
 fn global_helper_project_proofs_respect_unknown_current_bindings() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "unknown-global-helper-binding.R",
         r#"h <- function() 1L
 get("assign")("h", function() get("assign")("f", function(x) x, envir = .GlobalEnv), envir = .GlobalEnv)
-f <- function(x) x
+f <- function(x) {
+  #| x integer
+  x
+}
 g <- function() h()
 g()
 f("bad")
 "#,
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&file);
     assert!(
         mismatch_sources(&checker, &file).is_empty(),
         "findings: {:?}",
@@ -235,13 +200,16 @@ f("bad")
 
 #[test]
 fn captured_helper_project_proofs_respect_unknown_current_bindings() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "unknown-helper-binding.R",
         r#"f <- function(x) x
 h <- function() 1L
 outer <- function() {
     get("assign")("h", function() get("assign")("f", function(x) x, envir = parent.env(environment())), envir = .GlobalEnv)
-    f <- function(x) x
+    f <- function(x) {
+        #| x integer
+        x
+    }
     g <- function() h()
     g()
     f("bad")
@@ -249,42 +217,11 @@ outer <- function() {
 outer()
 "#,
     );
-    let mut declaration = record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let DeclarationTarget { definition, .. } = &mut declaration.source.target;
-    *definition = nested_function_span(&file, "outer", "f");
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![declaration]);
-    checker.check(&file);
     assert!(
         mismatch_sources(&checker, &file).is_empty(),
         "findings: {:?}",
         checker.declaration_findings()
     );
-}
-
-fn all_named_function_spans(file: &SourceFile, name: &str) -> Vec<Span> {
-    use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-    use std::ops::ControlFlow;
-
-    let mut spans = Vec::new();
-    let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| {
-        if let AstNode::Stmt(Stmt::Assign {
-            target: Expr::Ident { name: bound, .. },
-            value: Expr::Function { span, .. },
-            ..
-        }) = node
-            && bound == name
-        {
-            spans.push(*span);
-        }
-        ControlFlow::<(), Descend>::Continue(Descend::Into)
-    });
-    spans
 }
 
 #[test]
@@ -461,22 +398,10 @@ fn plain_annotated_function_reports_only_its_bad_actual() {
 
 #[test]
 fn supplied_only_constraint_checks_only_explicit_actuals() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "supplied-only.R",
-        "f <- function(x = \"default\") { x }\nf()\nf(1L)\nf(\"wrong\")\n",
+        "f <- function(x = \"default\") {\n  #| x integer\n  x\n}\nf()\nf(1L)\nf(\"wrong\")\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        (
-            "x",
-            AtomicMode::Integer,
-            SupplyStatus::DefaultedSuppliedOnly,
-        ),
-        None,
-    )]);
-    checker.check(&file);
     // The omitted default is not a supplied actual, and a supplied-only
     // constraint establishes no body type, which is not an incomplete check.
     assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
@@ -507,26 +432,10 @@ fn authored_default_is_checked_even_when_every_call_supplies_a_valid_actual() {
 
 #[test]
 fn eager_top_level_call_never_borrows_a_later_same_name_contract() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "top-level-order.R",
-        "f <- function(x) { x }\nf(\"text\")\nf <- function(x) { x }\nf(\"text\")\n",
+        "f <- function(x) { x }\nf(\"text\")\nf <- function(x) {\n  #| x integer\n  x\n}\nf(\"text\")\n",
     );
-    let spans = all_named_function_spans(&file, "f");
-    assert_eq!(spans.len(), 2);
-    let mut later = record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    later.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[1],
-        display_name: Some("f".into()),
-    };
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![later]);
-    checker.check(&file);
     assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
     let after = file.source.rfind("f(\"text\")").unwrap();
     assert!(checker.declaration_findings()[0].span.start >= after);
@@ -534,144 +443,82 @@ fn eager_top_level_call_never_borrows_a_later_same_name_contract() {
 
 #[test]
 fn sequential_top_level_literals_keep_each_adopted_call_contract() {
-    let file = parse(
-        "sequential-top.R",
-        "f <- function(x) { x }\nf(\"bad\")\nf <- function(x) { x }\nf(1L)\n",
-    );
-    let spans = all_named_function_spans(&file, "f");
-    assert_eq!(spans.len(), 2);
-    let mut first = record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    first.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[0],
-        display_name: Some("f".into()),
-    };
-    let mut second = first.clone();
-    second.source.provider = "second".into();
-    second.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[1],
-        display_name: Some("f".into()),
-    };
-    if let Translation::Exact(signature) = &mut second.translation {
-        signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
-    }
-    let first_call = file.source.find("f(\"bad\")").unwrap() + "f(".len();
-    let second_call = file.source.find("f(1L)").unwrap() + "f(".len();
-    for (records, expected) in [
-        (vec![first.clone()], vec![first_call]),
-        (vec![first, second], vec![first_call, second_call]),
+    for (second, both) in [
+        ("f <- function(x) { x }", false),
+        ("f <- function(x) {\n  #| x character\n  x\n}", true),
     ] {
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(records);
-        checker.check(&file);
+        let source =
+            format!("f <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"bad\")\n{second}\nf(1L)\n");
+        let (file, checker) = check_adopted("sequential-top.R", &source);
+        let first_call = file.source.find("f(\"bad\")").unwrap() + "f(".len();
+        let second_call = file.source.find("f(1L)").unwrap() + "f(".len();
         let calls = checker
             .declaration_findings()
             .iter()
             .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
             .map(|finding| finding.span.start)
             .collect::<Vec<_>>();
-        assert_eq!(calls, expected);
+        let expected = if both {
+            vec![first_call, second_call]
+        } else {
+            vec![first_call]
+        };
+        assert_eq!(calls, expected, "{source}");
     }
 }
 
 #[test]
 fn sequential_nested_literals_keep_each_adopted_call_contract() {
-    let file = parse(
-        "sequential-nested.R",
-        "outer <- function() { inner <- function(x) { x }; inner(\"bad\"); inner <- function(x) { x }; inner(1L) }\nouter()\n",
-    );
-    let spans = all_named_function_spans(&file, "inner");
-    assert_eq!(spans.len(), 2);
-    let mut first = record(
-        &file,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    first.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[0],
-        display_name: Some("inner".into()),
-    };
-    let mut second = first.clone();
-    second.source.provider = "second".into();
-    second.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[1],
-        display_name: Some("inner".into()),
-    };
-    if let Translation::Exact(signature) = &mut second.translation {
-        signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
-    }
-    let first_call = file.source.find("inner(\"bad\")").unwrap() + "inner(".len();
-    let second_call = file.source.find("inner(1L)").unwrap() + "inner(".len();
-    for (records, expected) in [
-        (vec![first.clone()], vec![first_call]),
-        (vec![first, second], vec![first_call, second_call]),
+    for (second, both) in [
+        ("inner <- function(x) { x }", false),
+        (
+            "inner <- function(x) {\n    #| x character\n    x\n  }",
+            true,
+        ),
     ] {
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(records);
-        checker.check(&file);
+        let source = format!(
+            "outer <- function() {{\n  inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  inner(\"bad\")\n  {second}\n  inner(1L)\n}}\nouter()\n"
+        );
+        let (file, checker) = check_adopted("sequential-nested.R", &source);
+        let first_call = file.source.find("inner(\"bad\")").unwrap() + "inner(".len();
+        let second_call = file.source.find("inner(1L)").unwrap() + "inner(".len();
         let calls = checker
             .declaration_findings()
             .iter()
             .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
             .map(|finding| finding.span.start)
             .collect::<Vec<_>>();
-        assert_eq!(calls, expected);
+        let expected = if both {
+            vec![first_call, second_call]
+        } else {
+            vec![first_call]
+        };
+        assert_eq!(calls, expected, "{source}");
     }
 }
 
 #[test]
 fn function_position_skips_nested_nonfunction_but_not_same_environment_overwrite() {
-    let nested = parse(
+    let (_, nested) = check_adopted(
         "nested-nonfunction.R",
-        "f <- function(x) { x }\nouter <- function() { f <- 1L; f(\"bad\") }\nouter()\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() { f <- 1L; f(\"bad\") }\nouter()\n",
     );
-    let mut checker = Checker::new(&nested.path);
-    checker.set_declaration_records(vec![record(
-        &nested,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&nested);
-    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    assert_eq!(kinds(&nested), vec![DeclarationFindingKind::Mismatch]);
 
-    let overwritten = parse(
+    let (_, overwritten) = check_adopted(
         "same-environment.R",
-        "f <- function(x) { x }\nf <- 1L\nf(\"bad\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf <- 1L\nf(\"bad\")\n",
     );
-    checker.set_declaration_records(vec![record(
-        &overwritten,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&overwritten);
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    assert!(!kinds(&overwritten).contains(&DeclarationFindingKind::Mismatch));
 
     for shadow in [
         "f <- function(x) { x }",
         "f <- if (flag) function(x) { x } else 1L",
     ] {
         let source = format!(
-            "f <- function(x) {{ x }}\nouter <- function(flag) {{ {shadow}; f(\"bad\") }}\nouter(TRUE)\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function(flag) {{ {shadow}; f(\"bad\") }}\nouter(TRUE)\n"
         );
-        let file = parse("possible-local-shadow.R", &source);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("possible-local-shadow.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "shadow: {shadow}, findings: {:?}",
@@ -684,17 +531,9 @@ fn function_position_skips_nested_nonfunction_but_not_same_environment_overwrite
 fn deferred_body_cannot_use_a_captured_global_literal_after_global_rebinding() {
     for replacement in ["f <- function(x) { x }", "f <- 1L"] {
         let source = format!(
-            "f <- function(x) {{ x }}\nouter <- function() {{ f(\"bad\") }}\n{replacement}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function() {{ f(\"bad\") }}\n{replacement}\nouter()\n"
         );
-        let file = parse("deferred-global-rebind.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("deferred-global-rebind.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "replacement: {replacement}, findings: {:?}",
@@ -705,45 +544,16 @@ fn deferred_body_cannot_use_a_captured_global_literal_after_global_rebinding() {
 
 #[test]
 fn nested_closure_reads_live_enclosing_environment() {
-    let file = parse(
-        "nested-environment.R",
-        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; f <- function(x) { x }; inner() }\nouter()\n",
-    );
-    let first = all_named_function_spans(&file, "f")[0];
-    let mut declaration = record(
-        &file,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    declaration.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: first,
-        display_name: Some("f".into()),
-    };
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![declaration]);
-    checker.check(&file);
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
-
-    let stable = parse(
-        "nested-stable.R",
-        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; inner() }\nouter()\n",
-    );
-    declaration = record(
-        &stable,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    declaration.source.target = DeclarationTarget {
-        path: stable.path.clone(),
-        definition: all_named_function_spans(&stable, "f")[0],
-        display_name: Some("f".into()),
-    };
-    checker.set_declaration_records(vec![declaration]);
-    checker.check(&stable);
-    assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
+    for (rebind, expected) in [
+        ("f <- function(x) { x }", vec![]),
+        ("", vec![DeclarationFindingKind::Mismatch]),
+    ] {
+        let source = format!(
+            "outer <- function() {{\n  f <- function(x) {{\n    #| x integer\n    x\n  }}\n  inner <- function() {{ f(\"bad\") }}\n  {rebind}\n  inner()\n}}\nouter()\n"
+        );
+        let (_, checker) = check_adopted("nested-environment.R", &source);
+        assert_eq!(kinds(&checker), expected, "rebind: {rebind}");
+    }
 }
 
 #[test]
@@ -756,17 +566,9 @@ fn captured_global_contract_is_invalidated_by_executed_write_positions() {
         "{ f <- function(x) { x } }",
     ] {
         let source = format!(
-            "f <- function(x) {{ x }}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
         );
-        let file = parse("capture-write-positions.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("capture-write-positions.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "write: {write}, findings: {:?}",
@@ -777,18 +579,10 @@ fn captured_global_contract_is_invalidated_by_executed_write_positions() {
 
 #[test]
 fn later_expression_write_does_not_erase_an_earlier_direct_known_call() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "ordered-expression-write.R",
-        "f <- function(x) { x }\nf(\"bad\")\ninvisible(f <- function(x) { x })\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\ninvisible(f <- function(x) { x })\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&file);
     let mismatches = checker
         .declaration_findings()
         .iter()
@@ -815,17 +609,9 @@ fn nested_local_write_does_not_invalidate_outer_but_superassignment_can() {
         ),
     ] {
         let source = format!(
-            "f <- function(x) {{ x }}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function() {{ f(\"bad\") }}\n{write}\nouter()\n"
         );
-        let file = parse("nested-write-scope.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("nested-write-scope.R", &source);
         assert_eq!(
             kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             mismatch,
@@ -837,58 +623,28 @@ fn nested_local_write_does_not_invalidate_outer_but_superassignment_can() {
 
 #[test]
 fn nested_capture_tracks_expression_writes_in_its_enclosing_frame() {
-    let file = parse(
+    let (_, checker) = check_adopted(
         "nested-expression-write.R",
-        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; if ({ f <- function(x) { x }; TRUE }) 1L; inner() }\nouter()\n",
+        "outer <- function() {\n  f <- function(x) {\n    #| x integer\n    x\n  }\n  inner <- function() { f(\"bad\") }\n  if ({ f <- function(x) { x }; TRUE }) 1L\n  inner()\n}\nouter()\n",
     );
-    let mut declaration = record(
-        &file,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    declaration.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: all_named_function_spans(&file, "f")[0],
-        display_name: Some("f".into()),
-    };
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![declaration]);
-    checker.check(&file);
     assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }
 
 #[test]
 fn forced_default_superassignment_can_replace_an_outward_contract() {
-    let file = parse(
+    let (_, checker) = check_adopted(
         "default-superassign.R",
-        "f <- function(x) { x }\nouter <- function(z = (f <<- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function(z = (f <<- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&file);
     assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }
 
 #[test]
 fn forced_default_local_assignment_can_shadow_an_outward_contract() {
-    let file = parse(
+    let (_, checker) = check_adopted(
         "default-local-assign.R",
-        "f <- function(x) { x }\nouter <- function(z = (f <- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function(z = (f <- function(x) { x })) { z; f(\"bad\") }\nouter()\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&file);
     assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }
 
@@ -928,17 +684,9 @@ fn default_outward_write_is_distinct_from_local_write() {
         ),
     ] {
         let source = format!(
-            "f <- function(x) {{ x }}\nouter <- function(z = {default}) {{ {body} }}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function(z = {default}) {{ {body} }}\nouter()\n"
         );
-        let file = parse("default-iife.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("default-iife.R", &source);
         assert_eq!(
             kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             mismatch,
@@ -964,17 +712,9 @@ fn forced_default_invalidates_only_when_it_contains_an_outward_write() {
         ),
     ] {
         let source = format!(
-            "f <- function(x) x\nouter <- function(z = {default}) {{ z; f(\"bad\") }}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function(z = {default}) {{ z; f(\"bad\") }}\nouter()\n"
         );
-        let file = parse("default-helper.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("default-helper.R", &source);
         assert_eq!(
             kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             expected_mismatch,
@@ -1007,17 +747,9 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
         ("helper()", true),
     ] {
         let source = format!(
-            "f <- function(x) x\nhelper <- function() 1L\nouter <- function() {{ {body}; f(\"bad\") }}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nhelper <- function() 1L\nouter <- function() {{ {body}; f(\"bad\") }}\nouter()\n"
         );
-        let file = parse("global-environment.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("global-environment.R", &source);
         assert_eq!(
             kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             expected_mismatch,
@@ -1039,16 +771,10 @@ fn eager_calls_use_the_binding_before_but_not_after_a_runtime_installation() {
         "base::assign(target, function(x) x, envir = .GlobalEnv)",
         "(function() { f <<- function(x) x })()",
     ] {
-        let source = format!("f <- function(x) x\nf(\"before\")\n{write}\nf(\"after\")\n");
-        let file = parse("eager-installation.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\n{write}\nf(\"after\")\n"
+        );
+        let (file, checker) = check_adopted("eager-installation.R", &source);
         let mismatches = checker
             .declaration_findings()
             .iter()
@@ -1080,17 +806,9 @@ fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
         ("local <- function(x) x", true),
     ] {
         let source = format!(
-            "f <- function(x) x\nmutate <- function() {{ {body} }}\nf(\"before\")\nmutate()\nf(\"after\")\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nmutate <- function() {{ {body} }}\nf(\"before\")\nmutate()\nf(\"after\")\n"
         );
-        let file = parse("invoked-helper-write.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("invoked-helper-write.R", &source);
         let mismatch_spans = checker
             .declaration_findings()
             .iter()
@@ -1196,17 +914,10 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
         ),
         ("mutate <- function() f <<- function(x) x", "1L", true),
     ] {
-        let source =
-            format!("f <- function(x) x\n{setup}\nf(\"before\")\n{invoke}\nf(\"after\")\n");
-        let file = parse("known-wrapper.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\n{setup}\nf(\"before\")\n{invoke}\nf(\"after\")\n"
+        );
+        let (file, checker) = check_adopted("known-wrapper.R", &source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -1224,18 +935,10 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
 
 #[test]
 fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "pure-helper.R",
-        "f <- function(x) x\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
     );
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![record(
-        &file,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&file);
     let spans = checker
         .declaration_findings()
         .iter()
@@ -1255,17 +958,9 @@ fn forcing_a_possible_active_or_delayed_binding_drops_stale_contract_identity() 
         "e <- new.env(); e$trigger <- 1L",
     ] {
         let source = format!(
-            "{setup}\nf <- function(x) x\nf(\"before\")\nget(\"trigger\", envir = e)\nf(\"after\")\n"
+            "{setup}\nf <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\nget(\"trigger\", envir = e)\nf(\"after\")\n"
         );
-        let file = parse("forced-binding.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("forced-binding.R", &source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -1325,17 +1020,10 @@ fn standalone_and_helper_value_reads_can_force_a_replacement() {
             vec!["\"before\""],
         ),
     ] {
-        let source =
-            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
-        let file = parse("forced-value-read.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let source = format!(
+            "{setup}\nf <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\n{action}\nf(\"after\")\n"
+        );
+        let (file, checker) = check_adopted("forced-value-read.R", &source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -1375,17 +1063,10 @@ fn active_call_heads_cannot_reuse_removed_function_inventory() {
             vec!["\"before\""],
         ),
     ] {
-        let source =
-            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
-        let file = parse("call-head-identity.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let source = format!(
+            "{setup}\nf <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\n{action}\nf(\"after\")\n"
+        );
+        let (file, checker) = check_adopted("call-head-identity.R", &source);
         assert_eq!(
             mismatch_sources(&checker, &file),
             expected,
@@ -1414,17 +1095,9 @@ fn evaluated_assignment_targets_can_replace_a_declared_callable() {
         ),
     ] {
         let source = format!(
-            "e <- new.env()\nmakeActiveBinding(\"trigger\", function(value) {{ f <<- function(x) x; if (missing(value)) c(0L) else NULL }}, e)\nswap <- function() {{ f <<- function(x) x; \"other\" }}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n"
+            "e <- new.env()\nmakeActiveBinding(\"trigger\", function(value) {{ f <<- function(x) x; if (missing(value)) c(0L) else NULL }}, e)\nswap <- function() {{ f <<- function(x) x; \"other\" }}\nf <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\n{action}\nf(\"after\")\n"
         );
-        let file = parse("assignment-target-effects.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("assignment-target-effects.R", &source);
         assert_eq!(
             mismatch_sources(&checker, &file),
             expected,
@@ -1442,17 +1115,10 @@ fn direct_masked_operators_drop_only_later_declaration_identity() {
         ),
         ("`-` <- function(e1) { f <<- function(x) x; 1L }", "-1L"),
     ] {
-        let source =
-            format!("{setup}\nf <- function(x) x\nf(\"before\")\n{action}\nf(\"after\")\n");
-        let file = parse("direct-operator-effect.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let source = format!(
+            "{setup}\nf <- function(x) {{\n  #| x integer\n  x\n}}\nf(\"before\")\n{action}\nf(\"after\")\n"
+        );
+        let (file, checker) = check_adopted("direct-operator-effect.R", &source);
         assert_eq!(
             mismatch_sources(&checker, &file),
             vec!["\"before\""],
@@ -1465,33 +1131,18 @@ fn direct_masked_operators_drop_only_later_declaration_identity() {
 fn warm_helper_value_read_edits_match_cold_declaration_findings() {
     let source = |body: &str| {
         format!(
-            "e <- new.env()\nmakeActiveBinding(\"trigger\", function() {{ assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }}, e)\nf <- function(x) x\ntouch <- function() {body}\ntouch()\nf(\"after\")\n"
+            "e <- new.env()\nmakeActiveBinding(\"trigger\", function() {{ assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }}, e)\nf <- function(x) {{\n  #| x integer\n  x\n}}\ntouch <- function() {body}\ntouch()\nf(\"after\")\n"
         )
     };
     let first = parse("reader.R", &source("1L"));
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.set_declaration_records(vec![declaration.clone()]);
+    let mut project = new_project(&[&first], &adopted_records(&first));
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
 
     for (body, expected) in [("e$trigger", 0), ("1L", 1)] {
         let edited = parse("reader.R", &source(body));
-        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &edited, &[&edited], &adopted_records(&edited));
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -1555,17 +1206,9 @@ fn loop_binder_callable_shadows_a_same_named_pure_outer_helper() {
         ("for (h in 1L) 1L", vec!["\"before\"", "\"after\""]),
     ] {
         let source = format!(
-            "f <- function(x) x\nh <- function() 1L\nbridge <- function() {{ {body} }}\nf(\"before\")\nbridge()\nf(\"after\")\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nh <- function() 1L\nbridge <- function() {{ {body} }}\nf(\"before\")\nbridge()\nf(\"after\")\n"
         );
-        let file = parse("loop-helper-shadow.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("loop-helper-shadow.R", &source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -1583,17 +1226,9 @@ fn saved_alias_keeps_the_aliased_function_identity_after_name_rebinding() {
         ("f <<- function(x) x", "1L", false),
     ] {
         let source = format!(
-            "f <- function(x) x\nmutate <- function() {first}\nsaved <- mutate\nmutate <- function() {second}\nf(\"before\")\nsaved()\nf(\"after\")\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nmutate <- function() {first}\nsaved <- mutate\nmutate <- function() {second}\nf(\"before\")\nsaved()\nf(\"after\")\n"
         );
-        let file = parse("saved-identity.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("saved-identity.R", &source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -1639,21 +1274,11 @@ fn mutating_argument_does_not_change_the_selected_call_head() {
 fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits() {
     let first = parse(
         "first.R",
-        "f <- function(x) x\nf(\"before\")\nmutate()\nf(\"after\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"before\")\nmutate()\nf(\"after\")\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.add_file(
-        "mutator.R".into(),
-        parse("mutator.R", "mutate <- function() f <<- function(x) x"),
-    );
-    project.set_declaration_records(vec![declaration.clone()]);
+    let mutator = parse("mutator.R", "mutate <- function() f <<- function(x) x");
+    let records = adopted_records(&first);
+    let mut project = new_project(&[&first, &mutator], &records);
     project.check_incremental();
     let kinds_in_first = |project: &Project| {
         project
@@ -1672,15 +1297,8 @@ fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits(
         ("mutate <- function() f <<- function(x) x", 1),
     ] {
         let edited = parse("mutator.R", body);
-        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &edited, &[&first, &edited], &records);
         assert_eq!(kinds_in_first(&project).len(), expected, "mutator: {body}");
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -1688,21 +1306,11 @@ fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits(
 fn cross_file_wrapper_effect_retracts_after_warm_helper_edit() {
     let first = parse(
         "first.R",
-        "f <- function(x) x\nbridge <- function() mutate()\nf(\"before\")\nbridge()\nf(\"after\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nbridge <- function() mutate()\nf(\"before\")\nbridge()\nf(\"after\")\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.add_file(
-        "mutator.R".into(),
-        parse("mutator.R", "mutate <- function() f <<- function(x) x"),
-    );
-    project.set_declaration_records(vec![declaration.clone()]);
+    let mutator = parse("mutator.R", "mutate <- function() f <<- function(x) x");
+    let records = adopted_records(&first);
+    let mut project = new_project(&[&first, &mutator], &records);
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
 
@@ -1711,87 +1319,53 @@ fn cross_file_wrapper_effect_retracts_after_warm_helper_edit() {
         ("mutate <- function() f <<- function(x) x", 1),
     ] {
         let edited = parse("mutator.R", body);
-        project.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &edited, &[&first, &edited], &records);
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
 #[test]
 fn eager_forward_call_has_no_future_declaration_but_deferred_call_can_use_it() {
-    let eager = parse("forward.R", "f(1L)\nf <- function(x) { x }\n");
-    let mut checker = Checker::new(&eager.path);
-    checker.set_declaration_records(vec![record(
-        &eager,
-        "f",
-        ("x", AtomicMode::Character, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&eager);
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
-
-    let deferred = parse(
-        "deferred.R",
-        "g <- function() { f(1L) }\nf <- function(x) { x }\ng()\n",
+    let (_, eager) = check_adopted(
+        "forward.R",
+        "f(1L)\nf <- function(x) {\n  #| x character\n  x\n}\n",
     );
-    checker.set_declaration_records(vec![record(
-        &deferred,
-        "f",
-        ("x", AtomicMode::Character, SupplyStatus::Required),
-        None,
-    )]);
-    checker.check(&deferred);
-    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    assert!(!kinds(&eager).contains(&DeclarationFindingKind::Mismatch));
+
+    let (_, deferred) = check_adopted(
+        "deferred.R",
+        "g <- function() { f(1L) }\nf <- function(x) {\n  #| x character\n  x\n}\ng()\n",
+    );
+    assert!(kinds(&deferred).contains(&DeclarationFindingKind::Mismatch));
 }
 
 #[test]
 fn same_offset_in_another_file_cannot_identify_a_local_eager_binding() {
-    let first = parse("a.R", "f <- function(x) { x }\nf(1L)\n");
-    let second = parse("b.R", "f <- function(x) { x }\n");
+    let literal = "f <- function(x) {\n  #| x character\n  x\n}\n";
+    let first = parse("a.R", &format!("{literal}f(1L)\n"));
+    let second = parse("b.R", literal);
     assert_eq!(
         named_function_span(&first, "f"),
         named_function_span(&second, "f")
     );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first);
-    project.add_file(second.path.clone(), second.clone());
-    project.set_declaration_records(vec![record(
-        &second,
-        "f",
-        ("x", AtomicMode::Character, SupplyStatus::Required),
-        None,
-    )]);
+    // Only b.R is adopted.
+    let mut project = new_project(&[&first, &second], &adopted_records(&second));
     project.check();
     assert!(project.declaration_findings()[0].1.is_empty());
 }
 
 #[test]
 fn project_keeps_same_named_declarations_in_distinct_files() {
-    let first = parse("first.R", "f <- function(x) { x }\nf(\"bad\")\n");
-    let second = parse("second.R", "f <- function(x) { x }\nf(1L)\n");
-    let integer = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
+    let first = parse(
+        "first.R",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\n",
     );
-    let mut character = record(
-        &second,
-        "f",
-        ("x", AtomicMode::Character, SupplyStatus::Required),
-        None,
+    let second = parse(
+        "second.R",
+        "f <- function(x) {\n  #| x character\n  x\n}\nf(1L)\n",
     );
-    character.source.provider = "second".into();
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first);
-    project.add_file(second.path.clone(), second);
-    project.set_declaration_records(vec![integer, character]);
+    let records = [adopted_records(&first), adopted_records(&second)].concat();
+    let mut project = new_project(&[&first, &second], &records);
     project.check();
     let findings = project.declaration_findings();
     assert_eq!(findings.len(), 2);
@@ -1810,25 +1384,54 @@ fn project_keeps_same_named_declarations_in_distinct_files() {
 fn project_deferred_capture_stays_uncertain_across_files() {
     let first = parse(
         "first.R",
-        "f <- function(x) { x }\nouter <- function() { f(\"bad\") }\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() { f(\"bad\") }\n",
     );
     let second = parse("second.R", "f <- function(x) { x }\n");
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first);
-    project.add_file(second.path.clone(), second);
-    project.set_declaration_records(vec![declaration]);
+    let mut project = new_project(&[&first, &second], &adopted_records(&first));
     project.check();
     assert!(project.declaration_findings().iter().all(|(_, findings)| {
         !findings
             .iter()
             .any(|finding| finding.kind == DeclarationFindingKind::Mismatch)
     }));
+}
+
+fn new_project(files: &[&SourceFile], records: &[DeclarationRecord]) -> Project {
+    let mut project = Project::new();
+    for file in files {
+        project.add_file(file.path.clone(), (*file).clone());
+    }
+    project.set_declaration_records(records.to_vec());
+    project
+}
+
+fn cold_findings(
+    files: &[&SourceFile],
+    records: &[DeclarationRecord],
+) -> Vec<(String, Vec<DeclarationFinding>)> {
+    let mut cold = new_project(files, records);
+    cold.check();
+    cold.declaration_findings().to_vec()
+}
+
+/// Apply `edited` to the warm project; its findings must equal a cold check
+/// of `files` (which include the edit) under the same records.
+fn edit_warm(
+    warm: &mut Project,
+    edited: &SourceFile,
+    files: &[&SourceFile],
+    records: &[DeclarationRecord],
+) {
+    warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
+    warm.set_declaration_records(records.to_vec());
+    warm.check_incremental();
+    assert_eq!(
+        warm.declaration_findings(),
+        cold_findings(files, records),
+        "warm edit of {}:\n{}",
+        edited.path,
+        edited.source
+    );
 }
 
 fn project_mismatch_count(project: &Project, path: &str) -> usize {
@@ -1847,14 +1450,9 @@ fn project_mismatch_count(project: &Project, path: &str) -> usize {
 fn project_capture_inventory_includes_global_expression_control_binder_and_outward_writes() {
     let first = parse(
         "first.R",
-        "f <- function(x) { x }\nf(\"bad\")\nouter <- function() { f(\"bad\") }\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\nouter <- function() { f(\"bad\") }\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
+    let records = adopted_records(&first);
     for (second_source, expected) in [
         ("invisible(f <- function(x) { x })", 1),
         ("if ({ f <- function(x) { x }; TRUE }) 1L", 1),
@@ -1945,11 +1543,7 @@ fn project_capture_inventory_includes_global_expression_control_binder_and_outwa
         ),
         ("g <- function(x) { x }", 2),
     ] {
-        let second = parse("second.R", second_source);
-        let mut project = Project::new();
-        project.add_file(first.path.clone(), first.clone());
-        project.add_file(second.path.clone(), second);
-        project.set_declaration_records(vec![declaration.clone()]);
+        let mut project = new_project(&[&first, &parse("second.R", second_source)], &records);
         project.check();
         assert_eq!(
             project_mismatch_count(&project, &first.path),
@@ -1964,18 +1558,10 @@ fn project_capture_inventory_includes_global_expression_control_binder_and_outwa
 fn project_capture_write_edits_and_removal_match_cold_analysis() {
     let first = parse(
         "first.R",
-        "f <- function(x) { x }\nouter <- function() { f(\"bad\") }\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() { f(\"bad\") }\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.add_file("second.R".into(), parse("second.R", "g <- 1L\n"));
-    project.set_declaration_records(vec![declaration.clone()]);
+    let records = adopted_records(&first);
+    let mut project = new_project(&[&first, &parse("second.R", "g <- 1L\n")], &records);
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 1);
 
@@ -1986,16 +1572,8 @@ fn project_capture_write_edits_and_removal_match_cold_analysis() {
         ("g <- 2L\n", 1),
     ] {
         let second = parse("second.R", source);
-        project.update_file("second.R".into(), Arc::new(second.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &second, &[&first, &second], &records);
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(second.path.clone(), second);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
     project.remove_file("second.R");
     project.check_incremental();
@@ -2006,18 +1584,13 @@ fn project_capture_write_edits_and_removal_match_cold_analysis() {
 fn write_only_warm_edits_reemit_a_deferred_capture() {
     let first = parse(
         "first.R",
-        "f <- function(x) x\nouter <- function() f(\"bad\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() f(\"bad\")\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
+    let records = adopted_records(&first);
+    let mut project = new_project(
+        &[&first, &parse("writer.R", "invisible(f <- 1L)")],
+        &records,
     );
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.add_file("writer.R".into(), parse("writer.R", "invisible(f <- 1L)"));
-    project.set_declaration_records(vec![declaration.clone()]);
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 0);
 
@@ -2027,17 +1600,9 @@ fn write_only_warm_edits_reemit_a_deferred_capture() {
         ("invisible(g <- 1L)", 1),
     ] {
         let writer = parse("writer.R", source);
-        project.update_file(writer.path.clone(), Arc::new(writer.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &writer, &[&first, &writer], &records);
         assert_eq!(project.emit_count, 2, "write-only edit: {source}");
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(writer.path.clone(), writer);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -2045,19 +1610,11 @@ fn write_only_warm_edits_reemit_a_deferred_capture() {
 fn generic_installation_warm_edits_match_cold_capture_checking() {
     let first = parse(
         "first.R",
-        "f <- function(x) x\nouter <- function() f(\"bad\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() f(\"bad\")\n",
     );
-    let declaration = record(
-        &first,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
+    let records = adopted_records(&first);
     let generic = "methods::setGeneric(\"f\", function(x) standardGeneric(\"f\")); methods::setMethod(\"f\", \"ANY\", function(x) x)";
-    let mut project = Project::new();
-    project.add_file(first.path.clone(), first.clone());
-    project.add_file("writer.R".into(), parse("writer.R", generic));
-    project.set_declaration_records(vec![declaration.clone()]);
+    let mut project = new_project(&[&first, &parse("writer.R", generic)], &records);
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &first.path), 0);
 
@@ -2067,16 +1624,8 @@ fn generic_installation_warm_edits_match_cold_capture_checking() {
         ("g <- function(x) x", 1),
     ] {
         let writer = parse("writer.R", source);
-        project.update_file(writer.path.clone(), Arc::new(writer.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &writer, &[&first, &writer], &records);
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(writer.path.clone(), writer);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -2095,18 +1644,12 @@ fn quoted_and_plain_bindings_share_capture_identity_cold_and_warm() {
     ] {
         let first = parse(
             "first.R",
-            &format!("{first_name} <- function(x) x\nouter <- function() f(\"bad\")\n"),
+            &format!(
+                "{first_name} <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function() f(\"bad\")\n"
+            ),
         );
-        let declaration = record(
-            &first,
-            first_name,
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        );
-        let mut project = Project::new();
-        project.add_file(first.path.clone(), first.clone());
-        project.add_file("second.R".into(), parse("second.R", "g <- 1L\n"));
-        project.set_declaration_records(vec![declaration.clone()]);
+        let records = adopted_records(&first);
+        let mut project = new_project(&[&first, &parse("second.R", "g <- 1L\n")], &records);
         project.check_incremental();
         assert_eq!(
             project_mismatch_count(&project, &first.path),
@@ -2114,20 +1657,12 @@ fn quoted_and_plain_bindings_share_capture_identity_cold_and_warm() {
             "initial {first_name}"
         );
         let second = parse("second.R", second_write);
-        project.update_file("second.R".into(), Arc::new(second.clone()));
-        project.check_incremental();
+        edit_warm(&mut project, &second, &[&first, &second], &records);
         assert_eq!(
             project_mismatch_count(&project, &first.path),
             expected,
             "{first_name}: {second_write}"
         );
-
-        let mut cold = Project::new();
-        cold.add_file(first.path.clone(), first.clone());
-        cold.add_file(second.path.clone(), second);
-        cold.set_declaration_records(vec![declaration]);
-        cold.check();
-        assert_eq!(project.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -2138,20 +1673,12 @@ fn quoted_binding_replacement_invalidates_a_same_file_deferred_call() {
         ("`f`", "f <- function(x) x", 0),
         ("`f`", "g <- function(x) x", 1),
     ] {
-        let file = parse(
+        let (_, checker) = check_adopted(
             "quoted-local.R",
             &format!(
-                "{definition} <- function(x) x\nouter <- function() f(\"bad\")\n{replacement}\nouter()\n"
+                "{definition} <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function() f(\"bad\")\n{replacement}\nouter()\n"
             ),
         );
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            definition,
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
         assert_eq!(
             kinds(&checker)
                 .iter()
@@ -2181,17 +1708,9 @@ fn quoted_formal_reads_keep_only_live_parameter_identity() {
         ("q", "other", "= 1L", "outer()", 0),
     ] {
         let source = format!(
-            "f <- function(x) x\nouter <- function({formal}{default}) {{ {read}; f(\"bad\") }}\n{call}\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function({formal}{default}) {{ {read}; f(\"bad\") }}\n{call}\n"
         );
-        let file = parse("formal-spelling.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("formal-spelling.R", &source);
         let actual = kinds(&checker)
             .iter()
             .filter(|kind| **kind == DeclarationFindingKind::Mismatch)
@@ -2209,33 +1728,19 @@ fn quoted_formal_reads_keep_only_live_parameter_identity() {
 fn quoted_formal_edits_retract_and_restore_warm_declaration_findings() {
     let source = |read: &str| {
         format!(
-            "f <- function(x) x\nouter <- function(`q` = 1L) {{ {read}; f(\"bad\") }}\nouter()\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nouter <- function(`q` = 1L) {{ {read}; f(\"bad\") }}\nouter()\n"
         )
     };
     let original = parse("formal-warm.R", &source("`q`"));
-    let declaration = record(
-        &original,
-        "f",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut warm = Project::new();
-    warm.add_file(original.path.clone(), original.clone());
-    warm.set_declaration_records(vec![declaration.clone()]);
+    let records = adopted_records(&original);
+    let mut warm = new_project(&[&original], &records);
     warm.check_incremental();
     assert_eq!(project_mismatch_count(&warm, &original.path), 1);
 
     for (read, expected) in [("other", 0), ("q", 1), ("`q`", 1)] {
         let edited = parse("formal-warm.R", &source(read));
-        warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        warm.check_incremental();
+        edit_warm(&mut warm, &edited, &[&edited], &records);
         assert_eq!(project_mismatch_count(&warm, &edited.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration.clone()]);
-        cold.check();
-        assert_eq!(warm.declaration_findings(), cold.declaration_findings());
     }
 }
 
@@ -2318,14 +1823,13 @@ fn quoted_formal_entry_and_attachment_edits_match_cold_analysis() {
         format!("f <- function({formal}) {{ {formal} }}\nf({actual} = \"bad\")\n")
     };
     let original = parse("formal-attachment-warm.R", &source("x", "x"));
-    let mut warm = Project::new();
-    warm.add_file(original.path.clone(), original.clone());
-    warm.set_declaration_records(vec![record(
+    let declaration = record(
         &original,
         "f",
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
-    )]);
+    );
+    let mut warm = new_project(&[&original], &[declaration]);
     warm.check_incremental();
     assert_eq!(project_mismatch_count(&warm, &original.path), 1);
 
@@ -2343,16 +1847,8 @@ fn quoted_formal_entry_and_attachment_edits_match_cold_analysis() {
             (declared, AtomicMode::Integer, SupplyStatus::Required),
             None,
         );
-        warm.update_file(edited.path.clone(), Arc::new(edited.clone()));
-        warm.set_declaration_records(vec![declaration.clone()]);
-        warm.check_incremental();
+        edit_warm(&mut warm, &edited, &[&edited], &[declaration]);
         assert_eq!(project_mismatch_count(&warm, &edited.path), expected);
-
-        let mut cold = Project::new();
-        cold.add_file(edited.path.clone(), edited);
-        cold.set_declaration_records(vec![declaration]);
-        cold.check();
-        assert_eq!(warm.declaration_findings(), cold.declaration_findings());
     }
 
     let file = parse("formal-entry.R", "f <- function(`x`) { `x` }\n");
@@ -2403,18 +1899,10 @@ fn quoted_default_is_checked_against_its_semantic_declared_formal() {
 #[test]
 fn escaped_backtick_replacement_cannot_keep_a_decoded_contract() {
     for source in [
-        "f <- function(x) x\nf(\"before\")\n`\\x66` <- function(x) x\nf(\"after\")\n",
-        "f <- function(x) x\nouter <- function() f(\"bad\")\n`\\x66` <- function(x) x\nouter()\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"before\")\n`\\x66` <- function(x) x\nf(\"after\")\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() f(\"bad\")\n`\\x66` <- function(x) x\nouter()\n",
     ] {
-        let file = parse("escaped-binding.R", source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "f",
-            ("x", AtomicMode::Integer, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (file, checker) = check_adopted("escaped-binding.R", source);
         let spans = checker
             .declaration_findings()
             .iter()
@@ -2434,28 +1922,14 @@ fn escaped_backtick_replacement_cannot_keep_a_decoded_contract() {
 fn other_file_global_write_does_not_replace_a_nested_local_literal() {
     let first = parse(
         "first.R",
-        "outer <- function() { f <- function(x) { x }; inner <- function() { f(\"bad\") }; inner() }\n",
+        "outer <- function() {\n  f <- function(x) {\n    #| x integer\n    x\n  }\n  inner <- function() { f(\"bad\") }\n  inner()\n}\n",
     );
-    let mut declaration = record(
-        &first,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    declaration.source.target = DeclarationTarget {
-        path: first.path.clone(),
-        definition: all_named_function_spans(&first, "f")[0],
-        display_name: Some("f".into()),
-    };
+    let records = adopted_records(&first);
     for second_source in [
         "invisible(f <- function(x) { x })",
         "mutate <- function() { f <<- function(x) { x } }; mutate()",
     ] {
-        let second = parse("second.R", second_source);
-        let mut project = Project::new();
-        project.add_file(first.path.clone(), first.clone());
-        project.add_file(second.path.clone(), second);
-        project.set_declaration_records(vec![declaration.clone()]);
+        let mut project = new_project(&[&first, &parse("second.R", second_source)], &records);
         project.check();
         assert_eq!(project_mismatch_count(&project, &first.path), 1);
     }
@@ -2801,34 +2275,10 @@ fn flattened_wide_union_stays_out_of_body_in_any_form_or_order() {
 
 #[test]
 fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebinding() {
-    let file = parse(
+    let (file, checker) = check_adopted(
         "nested-calls.R",
-        "first <- function() { inner <- function(x) { x }; inner(\"bad\") }\nsecond <- function() { inner <- function(x) { x }; inner(\"good\") }\nfirst()\nsecond()\n",
+        "first <- function() {\n  inner <- function(x) {\n    #| x integer\n    x\n  }\n  inner(\"bad\")\n}\nsecond <- function() {\n  inner <- function(x) {\n    #| x character\n    x\n  }\n  inner(\"good\")\n}\nfirst()\nsecond()\n",
     );
-    let mut integer = record(
-        &file,
-        "first",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    let mut character = integer.clone();
-    for (declaration, outer, provider) in [
-        (&mut integer, "first", "integer-nested"),
-        (&mut character, "second", "character-nested"),
-    ] {
-        declaration.source.provider = provider.into();
-        declaration.source.target = DeclarationTarget {
-            path: file.path.clone(),
-            definition: nested_function_span(&file, outer, "inner"),
-            display_name: Some("inner".into()),
-        };
-    }
-    if let Translation::Exact(signature) = &mut character.translation {
-        signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
-    }
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![integer, character]);
-    checker.check(&file);
     assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
     let mismatch = &checker.declaration_findings()[0];
     assert_eq!(
@@ -2836,43 +2286,22 @@ fn direct_nested_calls_use_exact_lexical_definition_after_shadowing_and_rebindin
         "\"bad\""
     );
 
-    let rebound = parse(
-        "rebound-nested.R",
-        "outer <- function() { inner <- function(x) { x }; inner <- function(x) { x }; inner(\"bad\") }\nouter()\n",
-    );
-    let mut stale = record(
-        &rebound,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    stale.source.target = DeclarationTarget {
-        path: rebound.path.clone(),
-        definition: nested_function_span(&rebound, "outer", "inner"),
-        display_name: Some("inner".into()),
-    };
-    checker.set_declaration_records(vec![stale]);
-    checker.check(&rebound);
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
-
-    let conditional = parse(
-        "conditional-nested.R",
-        "outer <- function(flag) { inner <- function(x) { x }; if (flag) inner <- function(x) { x }; inner(\"bad\") }\nouter(TRUE)\n",
-    );
-    let mut conditional_record = record(
-        &conditional,
-        "outer",
-        ("x", AtomicMode::Integer, SupplyStatus::Required),
-        None,
-    );
-    conditional_record.source.target = DeclarationTarget {
-        path: conditional.path.clone(),
-        definition: nested_function_span(&conditional, "outer", "inner"),
-        display_name: Some("inner".into()),
-    };
-    checker.set_declaration_records(vec![conditional_record]);
-    checker.check(&conditional);
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    for (path, source) in [
+        (
+            "rebound-nested.R",
+            "outer <- function() {\n  inner <- function(x) {\n    #| x integer\n    x\n  }\n  inner <- function(x) { x }\n  inner(\"bad\")\n}\nouter()\n",
+        ),
+        (
+            "conditional-nested.R",
+            "outer <- function(flag) {\n  inner <- function(x) {\n    #| x integer\n    x\n  }\n  if (flag) inner <- function(x) { x }\n  inner(\"bad\")\n}\nouter(TRUE)\n",
+        ),
+    ] {
+        let (_, checker) = check_adopted(path, source);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "{source}"
+        );
+    }
 }
 
 #[test]
@@ -2889,29 +2318,9 @@ fn loop_exits_keep_agreed_nested_identity_and_never_borrow_flat_name() {
             ("1L", Vec::new()),
         ] {
             let source = format!(
-                "inner <- function(x) {{ x }}\nouter <- function() {{ inner <- function(x) {{ x }}; {loop_body}; inner({actual}) }}\nouter()\n"
+                "inner <- function(x) {{\n  #| x character\n  x\n}}\nouter <- function() {{\n  inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  {loop_body}\n  inner({actual})\n}}\nouter()\n"
             );
-            let file = parse("loop-identity.R", &source);
-            let mut top = record(
-                &file,
-                "inner",
-                ("x", AtomicMode::Character, SupplyStatus::Required),
-                None,
-            );
-            let mut nested = top.clone();
-            nested.source.provider = "nested-provider".into();
-            nested.source.target = DeclarationTarget {
-                path: file.path.clone(),
-                definition: nested_function_span(&file, "outer", "inner"),
-                display_name: Some("inner".into()),
-            };
-            if let Translation::Exact(signature) = &mut nested.translation {
-                signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
-            }
-            top.source.provider = "top-provider".into();
-            let mut checker = Checker::new(&file.path);
-            checker.set_declaration_records(vec![top, nested]);
-            checker.check(&file);
+            let (_, checker) = check_adopted("loop-identity.R", &source);
             assert_eq!(
                 kinds(&checker),
                 expected,
@@ -2929,27 +2338,9 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
         "repeat { inner <- function(x) { x }; break }",
     ] {
         let source = format!(
-            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body}; inner(1L) }}\nouter(TRUE)\n"
+            "inner <- function(x) {{\n  #| x character\n  x\n}}\nouter <- function(flag) {{\n  inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  {loop_body}\n  inner(1L)\n}}\nouter(TRUE)\n"
         );
-        let file = parse("loop-rebind.R", &source);
-        let top = record(
-            &file,
-            "inner",
-            ("x", AtomicMode::Character, SupplyStatus::Required),
-            None,
-        );
-        let mut nested = top.clone();
-        nested.source.target = DeclarationTarget {
-            path: file.path.clone(),
-            definition: nested_function_span(&file, "outer", "inner"),
-            display_name: Some("inner".into()),
-        };
-        if let Translation::Exact(signature) = &mut nested.translation {
-            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
-        }
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![top, nested]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("loop-rebind.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "loop: {loop_body}, findings: {:?}",
@@ -2960,50 +2351,28 @@ fn loop_rebinding_drops_exact_identity_but_keeps_lexical_shadow() {
 
 #[test]
 fn zero_or_one_iteration_does_not_select_either_declared_literal() {
-    for (loop_body, expected_integer_mismatch) in [
-        ("while (flag) { inner <- function(x) { x }; break }", false),
+    let character = "inner <- function(x) {\n      #| x character\n      x\n    }";
+    for (exit, expected_integer_mismatch) in [
+        ("while (flag) {", "break", false),
+        ("while (flag) {", "flag <- FALSE", false),
+        ("for (i in 1L) {", "", true),
+    ]
+    .map(|(head, tail, expected)| {
         (
-            "while (flag) { inner <- function(x) { x }; flag <- FALSE }",
-            false,
-        ),
-        ("for (i in 1L) { inner <- function(x) { x } }", true),
-    ] {
+            format!("{head}\n    {character}\n    {tail}\n  }}"),
+            expected,
+        )
+    }) {
         for actual in ["1L", "\"text\""] {
             let source = format!(
-                "outer <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body}; inner({actual}) }}\nouter(TRUE)\n"
+                "outer <- function(flag) {{\n  inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  {exit}\n  inner({actual})\n}}\nouter(TRUE)\n"
             );
-            let file = parse("two-loop-definitions.R", &source);
-            let spans = all_named_function_spans(&file, "inner");
-            assert_eq!(spans.len(), 2);
-            let mut first = record(
-                &file,
-                "outer",
-                ("x", AtomicMode::Integer, SupplyStatus::Required),
-                None,
-            );
-            first.source.target = DeclarationTarget {
-                path: file.path.clone(),
-                definition: spans[0],
-                display_name: Some("inner".into()),
-            };
-            let mut second = first.clone();
-            second.source.provider = "second".into();
-            second.source.target = DeclarationTarget {
-                path: file.path.clone(),
-                definition: spans[1],
-                display_name: Some("inner".into()),
-            };
-            if let Translation::Exact(signature) = &mut second.translation {
-                signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Character));
-            }
-            let mut checker = Checker::new(&file.path);
-            checker.set_declaration_records(vec![first, second]);
-            checker.check(&file);
+            let (_, checker) = check_adopted("two-loop-definitions.R", &source);
             let mismatch = kinds(&checker).contains(&DeclarationFindingKind::Mismatch);
             assert_eq!(
                 mismatch,
                 expected_integer_mismatch && actual == "1L",
-                "loop: {loop_body}, actual: {actual}, findings: {:?}",
+                "{source}: {:?}",
                 checker.declaration_findings()
             );
         }
@@ -3014,35 +2383,9 @@ fn zero_or_one_iteration_does_not_select_either_declared_literal() {
 fn branch_only_function_introduction_cannot_borrow_flat_identity() {
     for actual in ["1L", "\"text\""] {
         let source = format!(
-            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ if (flag) inner <- function(x) {{ x }}; inner({actual}) }}\nouter(TRUE)\n"
+            "inner <- function(x) {{\n  #| x character\n  x\n}}\nouter <- function(flag) {{\n  if (flag) inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  inner({actual})\n}}\nouter(TRUE)\n"
         );
-        let file = parse("branch-introduction.R", &source);
-        let spans = all_named_function_spans(&file, "inner");
-        assert_eq!(spans.len(), 2);
-        let mut top = record(
-            &file,
-            "inner",
-            ("x", AtomicMode::Character, SupplyStatus::Required),
-            None,
-        );
-        let mut nested = top.clone();
-        nested.source.provider = "nested".into();
-        nested.source.target = DeclarationTarget {
-            path: file.path.clone(),
-            definition: spans[1],
-            display_name: Some("inner".into()),
-        };
-        if let Translation::Exact(signature) = &mut nested.translation {
-            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
-        }
-        top.source.target = DeclarationTarget {
-            path: file.path.clone(),
-            definition: spans[0],
-            display_name: Some("inner".into()),
-        };
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![top, nested]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("branch-introduction.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "actual: {actual}, findings: {:?}",
@@ -3053,34 +2396,10 @@ fn branch_only_function_introduction_cannot_borrow_flat_identity() {
 
 #[test]
 fn loop_nonfunction_rebind_falls_through_to_enclosing_definition() {
-    let file = parse(
+    let (_, checker) = check_adopted(
         "loop-nonfunction.R",
-        "inner <- function(x) { x }\nouter <- function() { inner <- function(x) { x }; for (i in 1L) { inner <- 1L }; inner(1L) }\nouter()\n",
+        "inner <- function(x) {\n  #| x character\n  x\n}\nouter <- function() {\n  inner <- function(x) {\n    #| x integer\n    x\n  }\n  for (i in 1L) { inner <- 1L }\n  inner(1L)\n}\nouter()\n",
     );
-    let spans = all_named_function_spans(&file, "inner");
-    let mut top = record(
-        &file,
-        "inner",
-        ("x", AtomicMode::Character, SupplyStatus::Required),
-        None,
-    );
-    let mut nested = top.clone();
-    nested.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[1],
-        display_name: Some("inner".into()),
-    };
-    if let Translation::Exact(signature) = &mut nested.translation {
-        signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
-    }
-    top.source.target = DeclarationTarget {
-        path: file.path.clone(),
-        definition: spans[0],
-        display_name: Some("inner".into()),
-    };
-    let mut checker = Checker::new(&file.path);
-    checker.set_declaration_records(vec![top, nested]);
-    checker.check(&file);
     assert_eq!(kinds(&checker), vec![DeclarationFindingKind::Mismatch]);
 }
 
@@ -3092,27 +2411,9 @@ fn loop_carried_widening_never_borrows_flat_contract_before_rebinding() {
         "repeat { inner(1L); inner <- function(x) { x }; break }",
     ] {
         let source = format!(
-            "inner <- function(x) {{ x }}\nouter <- function(flag) {{ inner <- function(x) {{ x }}; {loop_body} }}\nouter(TRUE)\n"
+            "inner <- function(x) {{\n  #| x character\n  x\n}}\nouter <- function(flag) {{\n  inner <- function(x) {{\n    #| x integer\n    x\n  }}\n  {loop_body}\n}}\nouter(TRUE)\n"
         );
-        let file = parse("loop-entry.R", &source);
-        let top = record(
-            &file,
-            "inner",
-            ("x", AtomicMode::Character, SupplyStatus::Required),
-            None,
-        );
-        let mut nested = top.clone();
-        nested.source.target = DeclarationTarget {
-            path: file.path.clone(),
-            definition: nested_function_span(&file, "outer", "inner"),
-            display_name: Some("inner".into()),
-        };
-        if let Translation::Exact(signature) = &mut nested.translation {
-            signature.parameters[0].constraint = Some(TypeExpr::atomic(AtomicMode::Integer));
-        }
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![top, nested]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("loop-entry.R", &source);
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             "loop: {loop_body}, findings: {:?}",
@@ -3130,17 +2431,9 @@ fn iterator_function_lookup_skips_proven_nonfunctions() {
         ("1L", vec![DeclarationFindingKind::Mismatch]),
     ] {
         let source = format!(
-            "inner <- function(x) {{ x }}\nouter <- function() {{ for (inner in {iter}) {{ inner(1L) }} }}\nouter()\n"
+            "inner <- function(x) {{\n  #| x character\n  x\n}}\nouter <- function() {{ for (inner in {iter}) {{ inner(1L) }} }}\nouter()\n"
         );
-        let file = parse("loop-iterator.R", &source);
-        let mut checker = Checker::new(&file.path);
-        checker.set_declaration_records(vec![record(
-            &file,
-            "inner",
-            ("x", AtomicMode::Character, SupplyStatus::Required),
-            None,
-        )]);
-        checker.check(&file);
+        let (_, checker) = check_adopted("loop-iterator.R", &source);
         assert_eq!(kinds(&checker), expected, "iterator: {iter}");
     }
 }
@@ -3188,9 +2481,7 @@ fn earlier_definition_return_evidence_survives_warm_annotation_edits() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         Some(AtomicMode::Integer),
     );
-    let mut project = Project::new();
-    project.add_file(file.path.clone(), file.clone());
-    project.set_declaration_records(vec![declaration.clone()]);
+    let mut project = new_project(&[&file], std::slice::from_ref(&declaration));
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &file.path), 1);
 
@@ -3200,12 +2491,10 @@ fn earlier_definition_return_evidence_survives_warm_annotation_edits() {
     project.set_declaration_records(vec![declaration.clone()]);
     project.check_incremental();
     assert_eq!(project_mismatch_count(&project, &file.path), 0);
-
-    let mut cold = Project::new();
-    cold.add_file(file.path.clone(), file);
-    cold.set_declaration_records(vec![declaration]);
-    cold.check();
-    assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    assert_eq!(
+        project.declaration_findings(),
+        cold_findings(&[&file], &[declaration])
+    );
 }
 
 #[test]
@@ -3243,12 +2532,10 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
     assert_eq!(project.emit_count, 2);
     assert!(project.declaration_findings()[1].1.is_empty());
 
-    let mut cold = Project::new();
-    cold.add_file("defs.R".into(), defs);
-    cold.add_file("calls.R".into(), calls.clone());
-    cold.set_declaration_records(vec![character]);
-    cold.check();
-    assert_eq!(project.declaration_findings(), cold.declaration_findings());
+    assert_eq!(
+        project.declaration_findings(),
+        cold_findings(&[&defs, &calls], &[character])
+    );
 
     // Editing only the source comment changes the target's byte identity.
     // The caller supplies records from the edited buffer; warm and cold
@@ -3260,19 +2547,13 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
         ("x", AtomicMode::Integer, SupplyStatus::Required),
         None,
     );
-    project.update_file("defs.R".into(), Arc::new(edited_defs.clone()));
-    project.set_declaration_records(vec![edited_integer.clone()]);
-    project.check_incremental();
-    assert_eq!(project.emit_count, 2);
-    let mut edited_cold = Project::new();
-    edited_cold.add_file("defs.R".into(), edited_defs);
-    edited_cold.add_file("calls.R".into(), calls);
-    edited_cold.set_declaration_records(vec![edited_integer]);
-    edited_cold.check();
-    assert_eq!(
-        project.declaration_findings(),
-        edited_cold.declaration_findings()
+    edit_warm(
+        &mut project,
+        &edited_defs,
+        &[&edited_defs, &calls],
+        &[edited_integer],
     );
+    assert_eq!(project.emit_count, 2);
     assert_eq!(project.declaration_findings()[1].1.len(), 1);
 
     project.set_declaration_records(Vec::new());

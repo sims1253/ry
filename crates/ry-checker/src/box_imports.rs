@@ -207,23 +207,10 @@ pub(crate) fn has_box_use(file: &SourceFile) -> bool {
     .is_break()
 }
 
-/// An existing file's physical identity, or the physical identity of its
-/// nearest existing ancestor plus an unsaved final path. This lets a module
-/// opened in an editor match its on-disk caller even with a symlinked root.
-pub(crate) fn path_identity(path: &Path) -> Option<PathBuf> {
-    let absolute = std::path::absolute(path).ok()?;
-    let mut existing = absolute.as_path();
-    let mut tail = Vec::new();
-    while !existing.exists() {
-        tail.push(existing.file_name()?.to_os_string());
-        existing = existing.parent()?;
-    }
-    let mut resolved = std::fs::canonicalize(existing).ok()?;
-    for component in tail.into_iter().rev() {
-        resolved.push(component);
-    }
-    Some(resolved)
-}
+/// Physical identity of a module path, which may name an unsaved file. It
+/// lets a module opened in an editor match its on-disk caller even with a
+/// symlinked root.
+pub(crate) use ry_config::scoped_path_identity as path_identity;
 
 fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]> {
     let mut stem = caller.parent()?.to_path_buf();

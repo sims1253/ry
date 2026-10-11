@@ -1,12 +1,7 @@
 import { errorMessage } from "./errors";
 import * as vscode from "vscode";
-import { type Disposable, type OutputChannel } from "vscode";
-import {
-  type LanguageClientOptions,
-  MessageType,
-  ShowMessageNotification,
-  State,
-} from "vscode-languageclient";
+import { type OutputChannel } from "vscode";
+import { type LanguageClientOptions, State } from "vscode-languageclient";
 import {
   LanguageClient,
   RevealOutputChannelOn,
@@ -14,36 +9,10 @@ import {
 import { LOG_CHANNEL_NAME, RY_SERVER_SUBCOMMAND } from "./constants";
 import { logger } from "./logger";
 import {
-  type ISettings,
   getExtensionSettings,
   getGlobalSettings,
   getWorkspaceSettings,
 } from "./settings";
-
-/**
- * The initialization options envelope sent to the server.
- */
-export type InitializationOptions = {
-  settings: ISettings[];
-  globalSettings: ISettings;
-};
-
-/**
- * Build the `initializationOptions` to send at `initialize`: the
- * per-folder array from `getExtensionSettings`, plus the global fallback.
- */
-export function getInitializationOptions(
-  namespace: string,
-): InitializationOptions {
-  const folderSettings = getExtensionSettings(namespace);
-  const globalSettings = getGlobalSettings(namespace);
-  return {
-    settings: folderSettings.length > 0 ? folderSettings : [globalSettings],
-    globalSettings,
-  };
-}
-
-const disposables = new WeakMap<LanguageClient, Disposable[]>();
 
 /**
  * Construct and start the language server client.
@@ -58,7 +27,11 @@ export async function startServer(
   outputChannel: OutputChannel,
   traceOutputChannel: OutputChannel,
 ) {
-  const initializationOptions = getInitializationOptions(namespace);
+  // The server falls back to `globalSettings` when `settings` is empty.
+  const initializationOptions = {
+    settings: getExtensionSettings(namespace),
+    globalSettings: getGlobalSettings(namespace),
+  };
   logger.info(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
   );
@@ -73,11 +46,7 @@ export async function startServer(
     `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
   );
 
-  const serverOptions = {
-    command: binaryPath,
-    args: serverArgs,
-    options: { env: process.env },
-  };
+  const serverOptions = { command: binaryPath, args: serverArgs };
 
   const clientOptions: LanguageClientOptions = {
     // Register the server for R documents (and ry.toml).
@@ -121,61 +90,27 @@ export async function startServer(
     clientOptions,
   );
 
-  disposables.set(newLSClient, [
-    newLSClient.onDidChangeState((e) => {
-      switch (e.newState) {
-        case State.Stopped:
-          logger.debug("Server State: Stopped");
-          break;
-        case State.Starting:
-          logger.debug("Server State: Starting");
-          break;
-        case State.Running:
-          logger.debug("Server State: Running");
-          break;
-      }
-    }),
-    // Intercept `window/showMessage` from the server and attach a
-    // "Show Logs" button, turning an opaque server error into something
-    // actionable.
-    newLSClient.onNotification(ShowMessageNotification.type, (params) => {
-      const showMessageMethod =
-        params.type === MessageType.Error
-          ? vscode.window.showErrorMessage
-          : params.type === MessageType.Warning
-            ? vscode.window.showWarningMessage
-            : vscode.window.showInformationMessage;
-      showMessageMethod(params.message, "Show Logs").then((selection) => {
-        if (selection) {
-          outputChannel.show();
-        }
-      });
-    }),
-  ]);
+  newLSClient.onDidChangeState((e) =>
+    logger.debug(`Server State: ${State[e.newState]}`),
+  );
 
   logger.info("Server: Start requested.");
   try {
     await newLSClient.start();
-  } catch (cause) {
-    const message = `Server failed to start at ${binaryPath}: ${errorMessage(cause)}`;
-    logger.error(message);
+  } catch (error) {
     try {
-      await dispose(newLSClient);
-    } catch (error) {
-      logger.error(`Server cleanup failed: ${errorMessage(error)}`);
+      await newLSClient.dispose();
+    } catch (cleanupError) {
+      logger.error(`Server cleanup failed: ${errorMessage(cleanupError)}`);
     }
-    throw new Error(message, { cause });
+    throw new Error(
+      `Server failed to start at ${binaryPath}: ${errorMessage(error)}`,
+    );
   }
   return newLSClient;
 }
 
-export async function stopServer(client: LanguageClient): Promise<void> {
+export function stopServer(client: LanguageClient): Promise<void> {
   logger.info("Server: Stop requested");
-  await dispose(client);
-}
-
-async function dispose(client: LanguageClient): Promise<void> {
-  for (const disposable of disposables.get(client) ?? []) disposable.dispose();
-  disposables.delete(client);
-  await client.dispose();
+  return client.dispose();
 }

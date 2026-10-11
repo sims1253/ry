@@ -7,6 +7,7 @@ import { errorMessage } from "./errors";
 import { runBinary } from "./process";
 import { ResolvedBinary } from "./binary";
 import { type ISettings } from "./settings";
+import { versionToString } from "./version";
 
 export async function debugInformationCommand(
   binary: ResolvedBinary | undefined,
@@ -17,11 +18,7 @@ export async function debugInformationCommand(
   lines.push("");
   lines.push(`**Binary path**: ${binary?.path ?? "not resolved"}`);
   lines.push(
-    `**Version**: ${
-      binary?.version
-        ? `${binary.version.major}.${binary.version.minor}.${binary.version.patch}`
-        : "unknown"
-    }`,
+    `**Version**: ${binary?.version ? versionToString(binary.version) : "unknown"}`,
   );
   lines.push("");
   lines.push("**Settings:**");
@@ -50,19 +47,8 @@ export async function explainRuleCommand(binaryPath: string): Promise<void> {
       "--output-format",
       "json",
     ]);
-    const rules: unknown = JSON.parse(stdout);
-    if (
-      !Array.isArray(rules) ||
-      !rules.every(
-        (rule): rule is { code: string; name: string; summary: string } =>
-          rule &&
-          typeof rule === "object" &&
-          typeof rule.code === "string" &&
-          typeof rule.name === "string" &&
-          typeof rule.summary === "string",
-      )
-    )
-      throw new Error("Invalid rule list from ry");
+    const rules: { code: string; name: string; summary: string }[] =
+      JSON.parse(stdout);
     const items = rules.map((rule) => ({
       label: rule.code,
       description: rule.name,

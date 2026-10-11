@@ -36,12 +36,11 @@ export async function startServer(
     `Initialization options: ${JSON.stringify(initializationOptions, null, 4)}`,
   );
 
+  // Scope the level to ry's own crates, matching the server's `ry=warn` default.
   const logLevel = vscode.workspace
     .getConfiguration(namespace)
-    .get<string>("logLevel");
-  const serverArgs: string[] = logLevel
-    ? [RY_SERVER_SUBCOMMAND, "--log-level", logLevel]
-    : [RY_SERVER_SUBCOMMAND];
+    .get<string>("logLevel", "warn");
+  const serverArgs = [RY_SERVER_SUBCOMMAND, "--log-level", `ry=${logLevel}`];
   logger.info(
     `ry language server command: '${[binaryPath, ...serverArgs].join(" ")}'`,
   );

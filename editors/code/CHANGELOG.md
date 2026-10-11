@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- `ry.logLevel` now applies only to ry's own crates (`--log-level ry=<level>`),
+  so `debug` and `trace` no longer enable logging for every dependency.
+- Changing `ry.configuration` no longer restarts the server; the server
+  already reloads it live.
+
 ## [0.11.1] - 2026-09-22
 
 - Fix the banner and logo in the Marketplace and Open VSX readme: vsce

@@ -23,14 +23,8 @@ impl CheckInput {
     fn into_project(self, records: Vec<DeclarationRecord>) -> ry_checker::Project {
         let mut project = ry_checker::Project::new();
         project.set_declaration_records(records);
-        let workspace = self.workspace;
-        project.set_loaded(workspace.attached_packages);
-        project.set_bare_loaded(workspace.bare_bindings);
         project.set_user_stubs(self.user_stubs);
-        project.set_external_bindings(workspace.external_bindings);
-        project.set_imported_from(workspace.imported_bindings);
-        project.set_external_s3_methods(workspace.s3_methods);
-        project.set_load_bindings(workspace.load_bindings);
+        ry_checker::frontend::set_workspace_context(&mut project, self.workspace);
         for (path, file) in self.files {
             project.add_file_arc(path, file);
         }
@@ -38,53 +32,7 @@ impl CheckInput {
     }
 }
 
-pub(crate) fn adopted_records(
-    files: &[Arc<ry_core::SourceFile>],
-    cfg: &config::Config,
-) -> AdoptedRecords {
-    let Some(scope) = cfg.annotations.typehint.adopted_scope() else {
-        return AdoptedRecords::default();
-    };
-    let mut display_counts = std::collections::HashMap::new();
-    for file in files {
-        *display_counts.entry(file.path.as_str()).or_insert(0usize) += 1;
-    }
-    let mut result = AdoptedRecords::default();
-    let mut ambiguous = std::collections::BTreeSet::new();
-    for file in files {
-        let native = file.native_or_display_path();
-        let records = ry_checker::typehint::read_records_at(file, native, &scope);
-        if display_counts[file.path.as_str()] == 1
-            && config::unambiguous_native_display_path(native, &file.path)
-        {
-            result.records.extend(records);
-        } else if !records.is_empty() {
-            // Project attachment still uses the display path. Decline all
-            // contracts at that path and report the loss once; otherwise a
-            // scoped UTF-8 neighbor could attach to an excluded raw filename.
-            ambiguous.insert(file.path.clone());
-        }
-    }
-    result.diagnostics = ambiguous
-        .into_iter()
-        .map(|path| {
-            ry_checker::Diagnostic::new(
-                ry_checker::Severity::Warning,
-                ry_core::Span::new(0, 1, 0, 0),
-                &path,
-                "RY117",
-                "Native source paths share one display name; typehint attachment is ambiguous and was skipped.",
-            )
-        })
-        .collect();
-    result
-}
-
-#[derive(Default)]
-pub(crate) struct AdoptedRecords {
-    pub records: Vec<DeclarationRecord>,
-    pub diagnostics: Vec<ry_checker::Diagnostic>,
-}
+pub(crate) use ry_checker::frontend::adopted_records;
 
 /// Run a one-shot project check with workspace metadata and adopted
 /// declaration records.
@@ -128,25 +76,16 @@ pub(crate) fn check_project_with_facts_capture(
     }
 }
 
-/// Load package stubs from every `--typeshed` directory, later
-/// directories replacing same-named packages from earlier ones. Warnings
-/// are surfaced; an unreadable directory keeps the run going.
+/// Load package stubs from every `--typeshed` directory. Warnings are
+/// surfaced; an unreadable directory keeps the run going.
 pub(crate) fn load_user_stubs(
     dirs: &[PathBuf],
 ) -> Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>> {
-    let mut merged = std::collections::BTreeMap::new();
-    for dir in dirs {
-        match ry_typeshed::load_stub_dir_with_warnings(dir) {
-            Ok((stubs, warnings)) => {
-                for warning in warnings {
-                    eprintln!("ry: warning: {warning}");
-                }
-                merged.extend(stubs);
-            }
-            Err(error) => eprintln!("ry: warning: {error}"),
-        }
+    let loaded = ry_workspace::load_stub_dirs(dirs);
+    for warning in loaded.warnings {
+        eprintln!("ry: warning: {warning}");
     }
-    Arc::new(merged)
+    Arc::new(loaded.stubs)
 }
 
 pub(crate) fn sort_and_deduplicate_paths(paths: &mut Vec<PathBuf>) {
@@ -177,22 +116,7 @@ pub(crate) fn discover_config(
 }
 
 /// Why one input file could not be parsed.
-#[derive(Debug)]
-pub(crate) enum ParseError {
-    /// Reading the file failed.
-    Read(std::io::Error),
-    /// The parser rejected the source.
-    Parse(String),
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseError::Read(error) => write!(f, "{error}"),
-            ParseError::Parse(message) => write!(f, "{message}"),
-        }
-    }
-}
+pub(crate) use ry_workspace::SourceError as ParseError;
 
 /// One failed input file, for the caller to report.
 #[derive(Debug)]
@@ -243,9 +167,6 @@ fn size_rayon_pool() {
 
 /// Parse every path in parallel on rayon's pool, in input order.
 ///
-/// Each rayon thread reuses an `RParser` across files and runs to avoid
-/// loading the grammar for every file.
-///
 /// Every failure is passed to `on_failure` as it happens; the callback
 /// reports it and picks the action. `Skip`ped files are dropped from
 /// the result. The first failure (in input order) whose action is
@@ -264,12 +185,20 @@ pub(crate) fn parse_files(
     size_rayon_pool();
     let outcomes: Vec<_> = paths
         .par_iter()
-        .map(|path| match parse_one(path, overlay) {
-            Ok(file) => Some(Ok(file)),
-            Err(failure) => match on_failure(&failure.path, &failure.error) {
-                FailureAction::Skip => None,
-                FailureAction::Abort => Some(Err(failure)),
-            },
+        .map(|path| {
+            let overlay = overlay
+                .filter(|source| source.path == *path)
+                .map(|source| source.bytes.as_slice());
+            match ry_workspace::parse_source_file(path, overlay) {
+                Ok(file) => Some(Ok(Arc::new(file))),
+                Err(error) => match on_failure(path, &error) {
+                    FailureAction::Skip => None,
+                    FailureAction::Abort => Some(Err(ParseFailure {
+                        path: path.clone(),
+                        error,
+                    })),
+                },
+            }
         })
         .collect();
     outcomes.into_iter().flatten().collect()
@@ -280,60 +209,6 @@ pub(crate) fn parse_files(
 pub(crate) struct SourceOverlay {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
-}
-
-/// Read and parse one file on the calling thread, using that thread's
-/// parser from the pool (see [`parse_files`]).
-fn parse_one(
-    path: &Path,
-    overlay: Option<&SourceOverlay>,
-) -> Result<Arc<ry_core::SourceFile>, ParseFailure> {
-    thread_local! {
-        static PARSER: std::cell::RefCell<Option<ry_core::RParser>> =
-            const { std::cell::RefCell::new(None) };
-    }
-    let source = match overlay.filter(|source| source.path == path) {
-        Some(source) => Ok(ry_workspace::decode_r_source(&source.bytes)),
-        None => ry_workspace::read_r_source_decoded(path),
-    };
-    let decoded = match source {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            return Err(ParseFailure {
-                path: path.to_path_buf(),
-                error: ParseError::Read(error),
-            });
-        }
-    };
-    let path_str = path.to_string_lossy().to_string();
-    let file = PARSER.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let parser = match slot.as_mut() {
-            Some(parser) => parser,
-            None => match ry_core::RParser::new() {
-                Ok(parser) => slot.insert(parser),
-                // A worker whose parser cannot initialize must not panic the
-                // whole check: report the file as unparseable and leave the
-                // slot empty so the next file retries, matching the LSP's
-                // index tolerance.
-                Err(error) => return Err(error.to_string()),
-            },
-        };
-        ry_workspace::reports::parse_source(parser, &path_str, &decoded.text)
-            .map_err(|message| message.to_string())
-    });
-    file.map(|mut file| {
-        file.native_path = Some(path.to_path_buf());
-        // Record where the on-disk bytes were not valid UTF-8, and
-        // whether they started with a BOM, so the checker can flag files
-        // R's parser rejects (#376, #474).
-        decoded.attach_boundary_findings(&mut file);
-        Arc::new(file)
-    })
-    .map_err(|message| ParseFailure {
-        path: path.to_path_buf(),
-        error: ParseError::Parse(message),
-    })
 }
 
 /// One per-package group, ready for the checker: the group's files and
@@ -352,7 +227,7 @@ pub(crate) struct ResolvedGroup {
 /// about library scoping or resolution roots.
 ///
 /// Each DESCRIPTION root becomes its own group (see
-/// [`ry_workspace::group_by_package_root`]). A group without a package root resolves
+/// [`ry_workspace::resolve_grouped`]). A group without a package root resolves
 /// against the first entry of `fallback_roots` that is set — `ry check`
 /// passes the config root, `dump-types` passes `--project-root` and then
 /// the config root — and finally against the working directory. The
@@ -366,8 +241,6 @@ pub(crate) fn resolve_groups(
     user_stubs: &Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
     fallback_roots: &[Option<&Path>],
 ) -> miette::Result<Vec<ResolvedGroup>> {
-    let groups = ry_workspace::group_by_package_root(parsed.iter().map(|file| file.path.as_str()));
-    let mut resolved = Vec::with_capacity(groups.len());
     let fallback = fallback_roots
         .iter()
         .flatten()
@@ -375,48 +248,29 @@ pub(crate) fn resolve_groups(
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    for (group_root, indices) in &groups {
-        let resolution_root =
-            ry_workspace::resolution_root_for_group(group_root.as_deref(), &fallback);
-        // A relative file such as R/main.R can find DESCRIPTION at the
-        // empty ancestor path. That ancestor is the working directory.
-        let resolution_root = if resolution_root.as_os_str().is_empty() {
-            PathBuf::from(".")
-        } else {
-            resolution_root
-        };
-        let mut package_scope = ry_workspace::resolve_workspace_context(
-            &resolution_root,
-            cfg,
-            ry_workspace::ResolutionEnvironment {
-                files: indices
-                    .iter()
-                    .map(|index| parsed[*index].as_ref())
-                    .collect(),
-                user_stubs,
-            },
-        )
-        .map_err(|error| miette::miette!(error))?;
-        let analysis_files = indices
-            .iter()
-            .map(|index| {
-                let parsed_file = &parsed[*index];
-                (parsed_file.path.clone(), Arc::clone(parsed_file))
+    let files: Vec<&ry_core::SourceFile> = parsed.iter().map(AsRef::as_ref).collect();
+    ry_workspace::resolve_grouped(&files, cfg, user_stubs, &fallback)
+        .into_iter()
+        .map(|group| {
+            let mut workspace = group.context.map_err(|error| miette::miette!(error))?;
+            let degraded_scopes = std::mem::take(&mut workspace.degraded_scopes);
+            let analysis_files = group
+                .indices
+                .iter()
+                .map(|&index| (parsed[index].path.clone(), Arc::clone(&parsed[index])))
+                .collect();
+            Ok(ResolvedGroup {
+                resolution_root: group.resolution_root,
+                source_indices: group.indices,
+                check_input: CheckInput {
+                    files: analysis_files,
+                    user_stubs: Arc::clone(user_stubs),
+                    workspace,
+                },
+                degraded_scopes,
             })
-            .collect();
-        let degraded_scopes = std::mem::take(&mut package_scope.degraded_scopes);
-        resolved.push(ResolvedGroup {
-            resolution_root,
-            source_indices: indices.clone(),
-            check_input: CheckInput {
-                files: analysis_files,
-                user_stubs: Arc::clone(user_stubs),
-                workspace: package_scope,
-            },
-            degraded_scopes,
-        });
-    }
-    Ok(resolved)
+        })
+        .collect()
 }
 
 #[cfg(test)]

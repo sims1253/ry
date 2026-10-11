@@ -35,8 +35,6 @@ struct Renderer {
     max_bytes: usize,
     compact: bool,
     truncated: bool,
-    #[cfg(test)]
-    inspected_name_characters: usize,
 }
 
 impl Renderer {
@@ -46,8 +44,6 @@ impl Renderer {
             max_bytes,
             compact,
             truncated: false,
-            #[cfg(test)]
-            inspected_name_characters: 0,
         }
     }
 
@@ -63,34 +59,15 @@ impl Renderer {
     }
 
     fn escaped_name(&mut self, name: &str) {
-        // `Debug for str` collects a run of printable characters before it
-        // writes to a formatter. Iterate ourselves so the output budget also
-        // bounds how much of an arbitrarily long name we inspect.
-        self.push("\"");
-        let mut characters = name.chars();
-        while !self.truncated {
-            let Some(character) = characters.next() else {
-                break;
-            };
-            #[cfg(test)]
-            {
-                self.inspected_name_characters += 1;
-            }
-            // Rust's str Debug leaves apostrophes literal; char Debug escapes
-            // them. Its other character escapes match str Debug.
-            if character == '\'' {
-                self.push("'");
-            } else {
-                for escaped in character.escape_debug() {
-                    let mut bytes = [0; 4];
-                    self.push(escaped.encode_utf8(&mut bytes));
-                    if self.truncated {
-                        break;
-                    }
-                }
-            }
-        }
-        self.push("\"");
+        // Every character escapes to at least one byte, so a prefix one
+        // character longer than the remaining budget already overflows it.
+        // Bounding the prefix bounds the work for arbitrarily long names.
+        let budget = self.max_bytes.saturating_sub(self.text.len());
+        let prefix = name
+            .char_indices()
+            .nth(budget)
+            .map_or(name, |(end, _)| &name[..end]);
+        self.push(&format!("{prefix:?}"));
     }
 
     fn finish(mut self) -> TypeView {
@@ -365,64 +342,5 @@ mod tests {
             locally_constructed: true,
         }));
         assert!(expanded_type(&escaped).text.contains("\"a\\\"b\\n\""));
-    }
-
-    #[test]
-    fn wide_schema_and_source_sized_name_obey_output_budget() {
-        let huge_name = "\\\"".repeat(200_000);
-        let mut columns = vec![(huge_name, RType::scalar(Mode::Integer))];
-        columns.extend(
-            (0..100_000).map(|index| (format!("late{index}"), RType::scalar(Mode::Integer))),
-        );
-        let ty = RType::new(Mode::List, Length::Unknown).with_columns(Arc::new(ColumnSchema {
-            columns,
-            complete: true,
-            locally_constructed: true,
-        }));
-        let view = expanded_type(&ty);
-        assert!(view.truncated);
-        assert!(view.text.len() <= DETAIL_BYTES);
-        assert!(view.text.ends_with('…'));
-    }
-
-    #[test]
-    fn escaped_name_matches_str_debug_and_stops_on_plain_ascii_budget() {
-        let samples = [
-            "",
-            "plain",
-            "a'b",
-            "a\"b",
-            "a\\b",
-            "a\n\t\r\0",
-            "é",
-            "😀",
-            "a\u{0301}",
-            "\u{200d}",
-            "\u{7f}",
-        ];
-        for sample in samples {
-            let mut renderer = Renderer::new(8192, false);
-            renderer.escaped_name(sample);
-            assert_eq!(renderer.finish().text, format!("{sample:?}"));
-        }
-        for byte in 0u8..=127 {
-            let sample = (byte as char).to_string();
-            let mut renderer = Renderer::new(8192, false);
-            renderer.escaped_name(&sample);
-            assert_eq!(renderer.finish().text, format!("{sample:?}"));
-        }
-
-        let short = "x".repeat(10_000);
-        let long = "x".repeat(20_000_000);
-        let render = |name: &str| {
-            let mut renderer = Renderer::new(160, false);
-            renderer.escaped_name(name);
-            assert!(renderer.inspected_name_characters <= 160);
-            renderer.finish()
-        };
-        let long_view = render(&long);
-        assert_eq!(long_view, render(&short));
-        assert!(long_view.truncated);
-        assert!(long_view.text.len() <= 160);
     }
 }

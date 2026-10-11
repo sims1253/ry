@@ -126,3 +126,6 @@ stopifnot(identical(names(joined), c("id", "v.x", "v.y")))
 # Each named selector of one column is a separate output.
 stopifnot(identical(names(dplyr::select(wide, a = x, b = x)), c("a", "b")))
 stopifnot(identical(names(dplyr::select(wide, -x, a = y, b = y)), c("a", "g", "b")))
+# Named tables may surround `by`; the shared non-key column is still suffixed.
+reordered <- dplyr::left_join(x = data.frame(id = 1L, v = 2), by = "id", y = data.frame(id = 1L, v = "a"))
+stopifnot(identical(names(reordered), c("id", "v.x", "v.y")))

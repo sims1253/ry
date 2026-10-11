@@ -718,13 +718,25 @@ fn schema_aggregate_type(
 /// Without `by`, a natural join uses every shared column as a key. Unknown
 /// keys, `suffix`, and `keep` leave every shared column possibly renamed.
 fn shared_join_key(args: &[Arg]) -> impl Fn(&str) -> bool {
+    fn name(arg: &Arg) -> Option<&str> {
+        arg.name.as_deref().map(semantic_argument_name)
+    }
+    // Unnamed arguments fill whichever of `x` and `y` were not named; any
+    // further unnamed argument is a positional option.
+    let mut positional_tables = 2usize.saturating_sub(
+        args.iter()
+            .filter(|arg| matches!(name(arg), Some("x" | "y")))
+            .count(),
+    );
     let mut by = None;
     let mut known = true;
-    for arg in args.iter().skip(2) {
-        match arg.name.as_deref().map(semantic_argument_name) {
+    for arg in args {
+        match name(arg) {
             Some("by") => by = Some(&arg.value),
-            Some("suffix" | "keep") | None => known = false,
+            Some("suffix" | "keep") => known = false,
             Some(_) => {}
+            None if positional_tables > 0 => positional_tables -= 1,
+            None => known = false,
         }
     }
     let keys: Option<Vec<String>> = match by {

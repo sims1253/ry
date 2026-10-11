@@ -7,3 +7,6 @@ joined$v.x + 1
 paste0(joined$v.y, "!")
 natural <- dplyr::inner_join(left, data.frame(id = 2L, w = TRUE))
 natural$w & TRUE
+# Named tables can surround the `by` argument.
+reordered <- dplyr::left_join(x = left, by = "id", y = right)
+reordered$v.x + 1

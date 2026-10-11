@@ -619,19 +619,27 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
     )
     .unwrap();
 
-    let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "excluded file must not be checked, got {:?}; stderr={}",
-        output.status,
-        stderr
-    );
-    assert!(
-        !stderr.contains("RY040"),
-        "RY040 from excluded file must not appear: {}",
-        stderr
-    );
+    // Relative roots must match the same config-relative patterns as
+    // absolute ones.
+    for root in [
+        tmp.path(),
+        std::path::Path::new("."),
+        std::path::Path::new("./fixtures"),
+    ] {
+        let output = ry_check_in(tmp.path(), root);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "excluded file must not be checked from {root:?}, got {:?}; stderr={}",
+            output.status,
+            stderr
+        );
+        assert!(
+            !stderr.contains("RY040"),
+            "RY040 from excluded file must not appear from {root:?}: {}",
+            stderr
+        );
+    }
 }
 
 #[test]

@@ -1,45 +1,21 @@
-//! CLI checks for native ignore lists at the comment parsing boundary.
+//! CLI check for native ignore lists at the comment parsing boundary. The
+//! comment grammar itself is unit-tested in the checker.
 
-use std::fs;
-use std::process::Command;
+use ry_testkit::ry;
 
 #[test]
-fn spaced_native_commas_validate_all_codes_and_keep_prose() {
+fn colon_after_native_ignore_is_not_a_suppression() {
     let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("example.R");
-    let check = |source: &str| {
-        fs::write(&path, source).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_ry"))
-            .arg("check")
-            .arg(&path)
-            .output()
-            .unwrap();
-        String::from_utf8(output.stdout).unwrap()
-    };
-
-    for source in [
-        "1L == NA # ry: ignore RY034 , RX034\n",
-        "1L == NA # ry: ignore RY034 ,RX034\n",
-        "# ry: ignore RY034 , RX034\n1L == NA\n",
-    ] {
-        let output = check(source);
-        assert!(output.contains("[RY034]"), "{source}: {output}");
-        assert!(output.contains("[RY112]"), "{source}: {output}");
-    }
-
-    for source in [
-        "list(\"a\" <- (1L == NA)) # ry: ignore RY034 , RY102\n",
-        "# ry: ignore RY034 ,RY102\nlist(\"a\" <- (1L == NA))\n",
-        "1L == NA # ry: ignore RY034 reason documented under RY102\n",
-        "1L == NA # ry: ignore[RY034] reason documented under RY102\n",
-    ] {
-        let output = check(source);
-        assert!(!output.contains("[RY034]"), "{source}: {output}");
-        assert!(!output.contains("[RY102]"), "{source}: {output}");
-        assert!(!output.contains("[RY112]"), "{source}: {output}");
-    }
-
-    let output = check("1L == NA # ry: ignore: RY034 reason\n");
-    assert!(output.contains("[RY034]"), "{output}");
-    assert!(output.contains("[RY112]"), "{output}");
+    std::fs::write(
+        tmp.path().join("example.R"),
+        "1L == NA # ry: ignore: RY034 reason\n",
+    )
+    .unwrap();
+    let output = ry!()
+        .cwd(tmp.path())
+        .args(["check", "example.R", "--output-format", "json"])
+        .run();
+    let mut codes = output.codes();
+    codes.sort();
+    assert_eq!(codes, ["RY034", "RY112"], "{output:?}");
 }

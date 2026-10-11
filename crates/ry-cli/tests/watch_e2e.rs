@@ -174,13 +174,16 @@ fn watch_stays_alive_on_empty_initial_set_and_picks_up_first_file() {
 }
 
 /// A `ry.toml` edit mid-watch takes effect without touching an R file:
-/// ignoring RY010 quiets the finding, un-ignoring it brings the finding
-/// back (#530). Appearance-awaiting works on the accumulating pipe;
-/// quieting is asserted after the reload lands (see below).
+/// a path-scoped ignore quiets RY010, and dropping it brings the finding
+/// back. Appearance-awaiting works on the accumulating pipe.
 #[test]
 fn watch_reloads_config_without_r_file_touch() {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("ry.toml"), "ignore = [\"RY010\"]\n").unwrap();
+    std::fs::write(
+        tmp.path().join("ry.toml"),
+        "[[rule-overrides]]\npaths = [\"*.R\"]\nignore = [\"RY010\"]\n",
+    )
+    .unwrap();
     std::fs::write(
         tmp.path().join("watched.R"),
         "result <- genuinely_missing_config_name\n",
@@ -210,33 +213,6 @@ fn watch_reloads_config_without_r_file_touch() {
         session.stdout.lock().unwrap()
     );
     session.assert_alive("after config reload");
-}
-
-#[test]
-fn watch_reloads_path_rule_policy_without_r_file_touch() {
-    let temp = tempfile::tempdir().unwrap();
-    std::fs::create_dir(temp.path().join("R")).unwrap();
-    std::fs::write(
-        temp.path().join("ry.toml"),
-        "[[rule-overrides]]\npaths = [\"R/**\"]\nignore = [\"RY040\"]\n",
-    )
-    .unwrap();
-    std::fs::write(temp.path().join("R/main.R"), "\"a\" + 1L\n").unwrap();
-    let mut session = WatchSession::spawn(temp.path());
-    wait_for(&session.stderr, "watching 1 file(s)", "initial scoped pass");
-    assert!(!session.stdout.lock().unwrap().contains("RY040"));
-
-    std::fs::write(
-        temp.path().join("ry.toml"),
-        "[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
-    )
-    .unwrap();
-    wait_for(
-        &session.stdout,
-        "error: [RY040]",
-        "scoped severity after config reload",
-    );
-    session.assert_alive("after scoped rule reload");
 }
 
 /// A regenerated baseline mid-watch takes effect on the next pass: the

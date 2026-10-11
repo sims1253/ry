@@ -598,10 +598,6 @@ impl Checker {
             };
             // The RHS of `length(x) == 1 && ...` is reached only for a
             // scalar x. This guard is not evidence of an unchecked vector.
-            let is_one = |value: &Expr| {
-                matches!(value, Expr::Integer(1, _))
-                    || matches!(value, Expr::Double(n, _) if *n == 1.0)
-            };
             let base_length = |value: &Expr| {
                 let Expr::Call { func, .. } = value else {
                     return false;
@@ -614,13 +610,13 @@ impl Checker {
                     && call_on_parameter(value, &["length"], scope).is_some()
             };
             if *op == BinOpKind::Eq
-                && ((is_one(rhs) && base_length(lhs)) || (is_one(lhs) && base_length(rhs)))
+                && let Some(length_side) = compared_with_one(lhs, rhs)
+                && base_length(length_side)
             {
                 // The equality guard proves a scalar only when `length`
                 // cannot dispatch to a lying S3 method for the guarded
                 // parameter and the parameter is not reassigned before
                 // its guarded use (docs/scalar-guards.md).
-                let length_side = if is_one(rhs) { lhs } else { rhs };
                 if let Some(parameter) = call_on_parameter(length_side, &["length"], scope)
                     && checker.equality_length_guard_proves_scalar(
                         parameter,
@@ -795,16 +791,7 @@ impl Checker {
                 if ops_chooser::operator_rebound(self, "==", scope) {
                     return None;
                 }
-                let (length_call, literal) =
-                    if matches!(rhs.as_ref(), Expr::Integer(1, _) | Expr::Double(1.0, _)) {
-                        (lhs.as_ref(), rhs.as_ref())
-                    } else {
-                        (rhs.as_ref(), lhs.as_ref())
-                    };
-                if !matches!(literal, Expr::Integer(1, _) | Expr::Double(1.0, _)) {
-                    return None;
-                }
-                let Expr::Call { func, args, .. } = length_call else {
+                let Expr::Call { func, args, .. } = compared_with_one(lhs, rhs)? else {
                     return None;
                 };
                 let callee = ident_name(func)?;
@@ -997,8 +984,9 @@ impl Checker {
 
     /// Whether any `length.<class>` S3 method is registered, defined, or
     /// imported by the project, so a value of unknown class could
-    /// dispatch `length` away from base semantics. S4 methods only gate the
-    /// stricter `stopifnot` scalar facts, keeping this guard as on main.
+    /// dispatch `length` away from base semantics. The equality guard's
+    /// documented boundary (docs/scalar-guards.md) is S3 `length.*`
+    /// methods; S4 methods gate only the stricter `stopifnot` facts.
     fn project_defines_length_method(&self) -> bool {
         self.method_screens().length_s3
     }

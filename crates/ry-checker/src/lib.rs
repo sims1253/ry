@@ -108,18 +108,10 @@ use std::sync::{Arc, OnceLock};
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
         Expr::String(value, _) => vec![value.clone()],
-        Expr::Call { func, args, .. } => {
-            let Some(name) = ident_name(func) else {
-                return Vec::new();
-            };
-            let bare = crate::semantic_lists::bare_name(name);
-            if bare != "c" {
-                return Vec::new();
-            }
-            args.iter()
-                .flat_map(|arg| string_literals(&arg.value))
-                .collect()
-        }
+        Expr::Call { func, args, .. } if is_c_call_head(func) => args
+            .iter()
+            .flat_map(|arg| string_literals(&arg.value))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -129,6 +121,11 @@ fn ident_name(expr: &Expr) -> Option<&str> {
         Expr::Ident { name, .. } => Some(name),
         _ => None,
     }
+}
+
+/// `c` or a namespace-qualified `base::c` in call position.
+fn is_c_call_head(func: &Expr) -> bool {
+    ident_name(func).is_some_and(|name| crate::semantic_lists::bare_name(name) == "c")
 }
 
 fn binding_name(expr: &Expr) -> Option<&str> {

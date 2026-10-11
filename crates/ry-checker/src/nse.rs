@@ -41,9 +41,8 @@ impl Checker {
                 // A known custom class/method may replace join's result.
                 return Some(RType::unknown());
             }
-            // Keep the existing incomplete join modeling for a receiver
-            // with unknown class: it carries source column facts used by
-            // checks later in the same pipeline.
+            // A receiver of unknown class still gets the join's column
+            // facts, which later checks in the same pipeline use.
             let matched = match_args_to_params(&sig.params, args, &arg_types);
             return Some(infer_dplyr_join(&matched));
         }
@@ -224,10 +223,7 @@ impl Checker {
                 let _ = self.infer_tidyselect_expr(expr, scope, None);
                 RType::unknown()
             }
-            Expr::Call { func, args, .. }
-                if ident_name(func)
-                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
-            {
+            Expr::Call { func, args, .. } if is_c_call_head(func) => {
                 for a in args {
                     let _ = self.infer_tidyselect_expr(&a.value, scope, None);
                 }
@@ -245,7 +241,7 @@ impl Checker {
     /// machinery so both mask families resolve free names the same way: a
     /// known schema's columns shadow lexical bindings and scope functions,
     /// and an unenumerable schema keeps bare symbols opaque instead of
-    /// borrowing a scope function's type (#369). On top of the shared
+    /// borrowing a scope function's type. On top of the shared
     /// pronouns, data.table's j position also binds `.SD` and friends;
     /// `.SD`'s columns depend on `by` and `.SDcols`, so only the table
     /// shape is retained.
@@ -271,16 +267,11 @@ impl Checker {
         scope.insert(".I", RType::new(Mode::Integer, Length::Unknown));
         scope.insert(".BY", RType::unknown());
         scope.insert(".GRP", RType::scalar(Mode::Integer));
-        let schema_proves_absence = table.columns.as_ref().is_some_and(|schema| schema.complete)
-            && (table.class.contains("data.frame") || matches!(table.mode, Mode::List));
-        if !schema_proves_absence {
-            // #369: inside this table `[` mask, a bare value-position
-            // symbol is a column candidate before it is a scope function.
+        if !complete_frame(table) {
+            // Inside this table `[` mask, a bare value-position symbol is
+            // a column candidate before it is a scope function.
             scope.insert(DATA_MASK_COLUMNS_FIRST, RType::unknown());
-            let carries_table_evidence = table.class.contains("data.frame")
-                || table.columns.is_some()
-                || matches!(table.mode, Mode::List);
-            if !carries_table_evidence {
+            if !frame_like(table) && table.columns.is_none() {
                 scope.data_mask_unknown = base_scope.data_mask_unknown;
             }
         }
@@ -303,9 +294,7 @@ impl Checker {
         scope.insert(DATA_MASK_ACTIVE, RType::unknown());
         // Some selection APIs take a character vector of column names.
         // The pronoun represents a mask, never that input's atomic storage.
-        let pronoun = if df_type.columns.is_some()
-            && (df_type.mode == Mode::List || df_type.class.contains("data.frame"))
-        {
+        let pronoun = if df_type.columns.is_some() && frame_like(df_type) {
             df_type.clone()
         } else {
             RType::unknown()
@@ -315,19 +304,20 @@ impl Checker {
         for (name, ty) in lexical_bindings {
             scope.insert(format!("{DATA_MASK_ENV_PREFIX}{name}"), ty);
         }
-        let schema_is_complete = df_type
-            .columns
-            .as_ref()
-            .map(|schema| {
-                schema.complete
-                    && (df_type.class.contains("data.frame") || matches!(df_type.mode, Mode::List))
-            })
-            .unwrap_or(false);
-        if !schema_is_complete {
+        if !complete_frame(df_type) {
             scope = scope.with_unknown_data_mask();
         }
         scope
     }
+}
+
+fn frame_like(ty: &RType) -> bool {
+    ty.class.contains("data.frame") || ty.mode == Mode::List
+}
+
+/// A frame whose schema enumerates every column, so it proves a name absent.
+fn complete_frame(ty: &RType) -> bool {
+    ty.columns.as_ref().is_some_and(|schema| schema.complete) && frame_like(ty)
 }
 
 fn incomplete_schema(mut data_type: RType) -> RType {
@@ -383,18 +373,31 @@ fn drop_column(mut data_type: RType, name: &str) -> RType {
     data_type
 }
 
+/// A named data-mask result replaces its column; a NULL result drops it.
+fn assign_named_results(mut data_type: RType, named: &[(&str, RType)]) -> RType {
+    for (name, ty) in named {
+        data_type = if ty.mode == Mode::Null {
+            drop_column(data_type, name)
+        } else {
+            type_with_assigned_column(data_type, name, ty.clone())
+        };
+    }
+    data_type
+}
+
+/// An unnamed bare symbol naming an atomic source column, which data-mask
+/// verbs keep under its own name.
+fn passthrough_column<'a>(arg: &'a Arg, source: &RType) -> Option<(&'a str, RType)> {
+    let Expr::Ident { name, .. } = &arg.value else {
+        return None;
+    };
+    let ty = source.columns.as_ref()?.get(name)?;
+    (arg.name.is_none() && name != "..." && ty.columns.is_none()).then_some((name, ty))
+}
+
 fn masked_output_is_dynamic(args: &[&Arg], source: &RType) -> bool {
-    args.iter().any(|arg| {
-        arg.name.is_none()
-            && !matches!(
-                &arg.value,
-                Expr::Ident { name, .. }
-                    if name != "..."
-                        && source.columns.as_ref().is_some_and(|schema| {
-                            schema.get(name).is_some_and(|ty| ty.columns.is_none())
-                        })
-            )
-    })
+    args.iter()
+        .any(|arg| arg.name.is_none() && passthrough_column(arg, source).is_none())
 }
 
 fn selected_columns_from_source(data_type: &RType, expr: &Expr) -> Option<Vec<(String, RType)>> {
@@ -444,11 +447,7 @@ fn collect_ordered_tidy_selection(
             expr,
             ..
         } if !excluded => collect_ordered_tidy_selection(expr, true, inside_combine, operations),
-        Expr::Call { func, args, .. }
-            if !inside_combine
-                && ident_name(func)
-                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
-        {
+        Expr::Call { func, args, .. } if !inside_combine && is_c_call_head(func) => {
             args.iter().all(|arg| {
                 arg.name.is_none()
                     && collect_ordered_tidy_selection(&arg.value, excluded, true, operations)
@@ -498,22 +497,14 @@ fn schema_mutated_type(
         }
     }
     if mutate_controls {
-        for arg in masked_args.iter().filter(|arg| arg.name.is_none()) {
-            if let Expr::Ident { name, .. } = &arg.value
-                && let Some(ty) = source.columns.as_ref().and_then(|schema| schema.get(name))
-                && ty.columns.is_none()
-            {
-                data_type = type_with_assigned_column(data_type, name, ty);
-            }
+        for (name, ty) in masked_args
+            .iter()
+            .filter_map(|arg| passthrough_column(arg, &source))
+        {
+            data_type = type_with_assigned_column(data_type, name, ty);
         }
     }
-    for (name, ty) in named {
-        data_type = if ty.mode == Mode::Null {
-            drop_column(data_type, name)
-        } else {
-            type_with_assigned_column(data_type, name, ty.clone())
-        };
-    }
+    data_type = assign_named_results(data_type, named);
     if masked_output_is_dynamic(masked_args, &source) {
         data_type = incomplete_schema(data_type);
     }
@@ -543,24 +534,11 @@ fn schema_transmuted_type(
             }
         }
     }
-    for (name, ty) in named {
-        data_type = if ty.mode == Mode::Null {
-            drop_column(data_type, name)
-        } else {
-            type_with_assigned_column(data_type, name, ty.clone())
-        };
-    }
+    data_type = assign_named_results(data_type, named);
     if masked_output_is_dynamic(masked_args, &source_type) {
         data_type = incomplete_schema(data_type);
     }
     data_type
-}
-
-fn selected_name(expr: &Expr) -> Option<&str> {
-    match expr {
-        Expr::Ident { name, .. } | Expr::String(name, _) => Some(name),
-        _ => None,
-    }
 }
 
 fn schema_renamed_type(
@@ -575,7 +553,7 @@ fn schema_renamed_type(
     let mut schema = (**source).clone();
     let mut selected = Vec::new();
     for arg in args {
-        let Some(old_name) = selected_name(&arg.value) else {
+        let Some(old_name) = binding_name(&arg.value) else {
             schema.complete = false;
             continue;
         };
@@ -643,7 +621,7 @@ fn schema_selected_type(mut data_type: RType, args: &[&Arg], rename_named: bool)
     let mut excludes = Vec::new();
     for arg in args {
         if let Some(name) = arg.name.as_deref().filter(|_| rename_named) {
-            let Some(old_name) = selected_name(&arg.value) else {
+            let Some(old_name) = binding_name(&arg.value) else {
                 return incomplete_schema(data_type);
             };
             includes.push((semantic_argument_name(name).to_owned(), old_name.to_owned()));
@@ -719,26 +697,12 @@ fn schema_aggregate_type(
         .with_class(class)
         .with_columns(Arc::new(schema));
     for arg in masked_args.iter().filter(|arg| arg.name.is_none()) {
-        if let Expr::Ident { name, .. } = &arg.value
-            && let Some(ty) = data_type
-                .columns
-                .as_ref()
-                .and_then(|source| source.get(name))
-            && ty.columns.is_none()
-        {
-            result = type_with_assigned_column(result, name, ty);
-        } else {
-            result = incomplete_schema(result);
-        }
-    }
-    for (name, ty) in named {
-        result = if ty.mode == Mode::Null {
-            drop_column(result, name)
-        } else {
-            type_with_assigned_column(result, name, ty.clone())
+        result = match passthrough_column(arg, &data_type) {
+            Some((name, ty)) => type_with_assigned_column(result, name, ty),
+            None => incomplete_schema(result),
         };
     }
-    result
+    assign_named_results(result, named)
 }
 
 fn infer_dplyr_join(arg_types: &[RType]) -> RType {
@@ -806,14 +770,9 @@ fn collect_tidy_selection(
             expr,
             ..
         } => collect_tidy_selection(expr, true, inside_combine, includes, excludes),
-        Expr::Call { func, args, .. }
-            if !inside_combine
-                && ident_name(func)
-                    .is_some_and(|name| crate::semantic_lists::bare_name(name) == "c") =>
-        {
-            args.iter()
-                .all(|arg| collect_tidy_selection(&arg.value, excluded, true, includes, excludes))
-        }
+        Expr::Call { func, args, .. } if !inside_combine && is_c_call_head(func) => args
+            .iter()
+            .all(|arg| collect_tidy_selection(&arg.value, excluded, true, includes, excludes)),
         _ => false,
     }
 }

@@ -1674,6 +1674,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_dplyr_join_schema.R
 - diagnostics: []
+  fixture: ok_dplyr_join_suffixes.R
+- diagnostics: []
   fixture: ok_dplyr_sequential_columns.R
 - diagnostics: []
   fixture: ok_dplyr_unknown_schema_data_mask.R

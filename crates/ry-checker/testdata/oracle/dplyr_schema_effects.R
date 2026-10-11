@@ -120,3 +120,6 @@ stopifnot(identical(base::with(base::subset(small, select = x), x + 1L), 2L))
 # A leading negative selector starts from every column.
 wide <- data.frame(x = 1L, y = 2L, g = 3L)
 stopifnot(identical(names(dplyr::select(wide, -x, y)), c("y", "g")))
+# Shared non-key join columns are suffixed.
+joined <- dplyr::left_join(data.frame(id = 1L, v = 2), data.frame(id = 1L, v = "a"), by = "id")
+stopifnot(identical(names(joined), c("id", "v.x", "v.y")))

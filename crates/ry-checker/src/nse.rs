@@ -44,7 +44,7 @@ impl Checker {
             // A receiver of unknown class still gets the join's column
             // facts, which later checks in the same pipeline use.
             let matched = match_args_to_params(&sig.params, args, &arg_types);
-            return Some(infer_dplyr_join(&matched));
+            return Some(infer_dplyr_join(&matched, args));
         }
 
         let mut local = self.dplyr_data_mask_scope(scope, &data_type);
@@ -705,7 +705,41 @@ fn schema_aggregate_type(
     assign_named_results(result, named)
 }
 
-fn infer_dplyr_join(arg_types: &[RType]) -> RType {
+/// Whether a column `x` and `y` share is a join key, which appears once.
+/// Without `by`, a natural join uses every shared column as a key. Unknown
+/// keys, `suffix`, and `keep` leave every shared column possibly renamed.
+fn shared_join_key(args: &[Arg]) -> impl Fn(&str) -> bool {
+    let mut by = None;
+    let mut known = true;
+    for arg in args.iter().skip(2) {
+        match arg.name.as_deref().map(semantic_argument_name) {
+            Some("by") => by = Some(&arg.value),
+            Some("suffix" | "keep") | None => known = false,
+            Some(_) => {}
+        }
+    }
+    let keys: Option<Vec<String>> = match by {
+        _ if !known => Some(Vec::new()),
+        None => None,
+        Some(Expr::String(name, _)) => Some(vec![name.clone()]),
+        Some(Expr::Call { func, args, .. }) if is_c_call_head(func) => Some(
+            args.iter()
+                .map(|arg| match (&arg.name, &arg.value) {
+                    (None, Expr::String(name, _)) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect::<Option<_>>()
+                .unwrap_or_default(),
+        ),
+        Some(_) => Some(Vec::new()),
+    };
+    move |name| {
+        keys.as_ref()
+            .is_none_or(|keys| keys.iter().any(|key| key == name))
+    }
+}
+
+fn infer_dplyr_join(arg_types: &[RType], args: &[Arg]) -> RType {
     let x_type = arg_types.first().cloned().unwrap_or_else(RType::unknown);
     let y_type = arg_types.get(1).cloned().unwrap_or_else(RType::unknown);
     let mut result =
@@ -720,10 +754,20 @@ fn infer_dplyr_join(arg_types: &[RType]) -> RType {
         complete = false;
     }
     if let Some(schema) = &y_type.columns {
+        let is_key = shared_join_key(args);
+        let mut suffixed = Vec::new();
         for (name, ty) in &schema.columns {
             if !columns.iter().any(|(existing, _)| existing == name) {
                 columns.push((name.clone(), ty.clone()));
+            } else if !is_key(name) {
+                suffixed.push(name);
             }
+        }
+        // A shared non-key column appears as `v.x` and `v.y` (or under
+        // custom suffixes), never as `v`.
+        if !suffixed.is_empty() {
+            columns.retain(|(name, _)| !suffixed.contains(&name));
+            complete = false;
         }
         complete &= schema.complete;
     } else {

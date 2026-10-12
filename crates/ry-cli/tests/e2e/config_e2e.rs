@@ -1485,7 +1485,7 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
     // Generated from two distinct self-referential R environments wrapped
     // in pairlists. The decoder must not compare their cyclic graphs in dedup.
-    // Regenerate in tests/fixtures/ with R:
+    // Regenerate in tests/e2e/fixtures/ with R:
     // a <- new.env(parent = emptyenv()); a$self <- a
     // b <- new.env(parent = emptyenv()); b$self <- b
     // x <- pairlist(a); y <- pairlist(b)
@@ -1628,13 +1628,13 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
     let cases: [(&[u8], Option<&str>, &[&str]); 3] = [
         // Over the parser limit: the file-stem binding stands in.
         (
-            include_bytes!("../../../testdata/serialized/nested-limit.rda"),
+            include_bytes!("../../../../testdata/serialized/nested-limit.rda"),
             Some("serialized parser resource limit exceeded"),
             &["genuinely_missing"],
         ),
         // A repaired, known empty inventory binds nothing.
         (
-            include_bytes!("../../../testdata/serialized/empty.rda"),
+            include_bytes!("../../../../testdata/serialized/empty.rda"),
             None,
             &["sysdata", "genuinely_missing"],
         ),
@@ -1642,7 +1642,7 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
         // XDR inventory cannot read it, but its valid envelope must not be
         // mislabeled as corrupt.
         (
-            include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+            include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
             Some("unsupported serialized input"),
             &["sysdata", "genuinely_missing"],
         ),

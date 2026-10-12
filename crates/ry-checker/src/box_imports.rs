@@ -8,13 +8,38 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmt, walk_stmts};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 const MAX_MODULE_BYTES: u64 = 1_048_576;
-const MAX_MODULE_DEPTH: u8 = 4;
 
 /// Project buffers by physical identity. `None` marks an open buffer that
 /// this check does not read, whose disk copy may be stale.
 pub(crate) type BoxSources = HashMap<PathBuf, Option<Arc<SourceFile>>>;
+
+/// Relative module state shared by every checker of one run, including the
+/// checkers of nested modules, so each module is analysed once per run.
+#[derive(Default)]
+pub(crate) struct BoxModules {
+    /// Editor/project buffers, which take precedence over a module's disk
+    /// copy. Keys use the existing ancestor's identity.
+    sources: BoxSources,
+    /// `None` marks a module that reaches an import cycle. Its inventory
+    /// would depend on which module was loaded first, so it stays opaque.
+    inventories: Mutex<HashMap<PathBuf, Option<Arc<BoxInventory>>>>,
+}
+
+impl BoxModules {
+    pub(crate) fn new(sources: BoxSources) -> Self {
+        Self {
+            sources,
+            inventories: Mutex::default(),
+        }
+    }
+
+    pub(crate) fn forget_inventories(&self) {
+        self.inventories.lock().unwrap().clear();
+    }
+}
 
 /// Box provenance of a binding, stored beside its value type.
 #[derive(Debug, Clone, PartialEq)]
@@ -725,15 +750,18 @@ impl Checker {
     }
 
     fn box_module_inventory(&mut self, segments: &[String]) -> Option<Arc<BoxInventory>> {
-        if self.box_depth >= MAX_MODULE_DEPTH {
-            return None;
-        }
         for candidate in module_candidates(self.box_caller(), segments)? {
             let identity = path_identity(&candidate)?;
-            if let Some(inventory) = self.box_module_cache.get(&identity) {
-                return Some(Arc::clone(inventory));
+            // A module that is still loading closes an import cycle.
+            if self.box_loading.contains(&identity) {
+                self.box_cycle = true;
+                return None;
             }
-            let mut file = match self.box_sources.get(&identity) {
+            if let Some(inventory) = self.box_modules.inventories.lock().unwrap().get(&identity) {
+                self.box_cycle |= inventory.is_none();
+                return inventory.clone();
+            }
+            let mut file = match self.box_modules.sources.get(&identity) {
                 Some(Some(source)) => Arc::clone(source),
                 // An open buffer outside this check: its disk copy may be stale.
                 Some(None) => return None,
@@ -762,21 +790,28 @@ impl Checker {
                 canonical.native_path = Some(identity.clone());
                 file = Arc::new(canonical);
             }
-            let inventory = Arc::new(self.analyze_box_module(&file));
-            self.box_module_cache
-                .insert(identity, Arc::clone(&inventory));
-            return Some(inventory);
+            let (inventory, cycle) = self.analyze_box_module(&file, &identity);
+            let inventory = (!cycle).then(|| Arc::new(inventory));
+            self.box_cycle |= cycle;
+            self.box_modules
+                .inventories
+                .lock()
+                .unwrap()
+                .insert(identity, inventory.clone());
+            return inventory;
         }
         None
     }
 
-    fn analyze_box_module(&self, file: &SourceFile) -> BoxInventory {
+    /// The module's inventory, and whether its analysis met an import cycle.
+    fn analyze_box_module(&self, file: &SourceFile, identity: &Path) -> (BoxInventory, bool) {
         let load = module_load(file);
         let stable_functions = load.stable_functions();
         let (exported, complete) = load.exports();
         let mut nested = Checker::new(&file.path);
-        nested.box_depth = self.box_depth + 1;
-        nested.box_sources = Arc::clone(&self.box_sources);
+        nested.box_modules = Arc::clone(&self.box_modules);
+        nested.box_loading = self.box_loading.clone();
+        nested.box_loading.push(identity.to_path_buf());
         nested.set_user_stubs(Arc::clone(&self.user_stubs));
         let (_, scope) = nested.check_with_scope(file);
         let mut inventory = BoxInventory {
@@ -827,7 +862,7 @@ impl Checker {
                 .exports
                 .insert(name, BoxExport { value, callable });
         }
-        inventory
+        (inventory, nested.box_cycle)
     }
 
     fn infer_box_use(&mut self, args: &[Arg], scope: &mut Scope) -> RType {

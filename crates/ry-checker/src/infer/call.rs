@@ -1778,6 +1778,7 @@ impl Checker {
                 && !self
                     .fn_table
                     .was_rebound_after_capture(&function.source_path, function.definition_span)
+                && self.runs_only_stub_code(function)
         }) else {
             return Vec::new();
         };
@@ -1791,6 +1792,68 @@ impl Checker {
             .iter()
             .map(|formal| formal.is_some_and(|formal| function.params[formal].unforced))
             .collect()
+    }
+
+    /// Whether evaluating `function` runs no project code, which could reach
+    /// its caller's frame (`get("x", envir = parent.frame())`). Every call
+    /// head must name a typeshed function the project does not bind, no
+    /// project function may be passed by value or by name, and no call or
+    /// operator may dispatch while the project defines methods.
+    fn runs_only_stub_code(&self, function: &UserFn) -> bool {
+        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
+        let mut dispatches = false;
+        let mut visit = |node: AstNode<'_>, _| {
+            let closed = match node {
+                AstNode::Expr(Expr::Call { func, .. }) => {
+                    dispatches = true;
+                    match func.as_ref() {
+                        Expr::Ident { name, .. } => {
+                            let name = semantic_argument_name(name);
+                            !project_function(name)
+                                && !project_function(&format!("{name}<-"))
+                                && !self.fn_table.known_vars.contains(name)
+                                && self.resolve_typeshed_sig(name).is_some()
+                        }
+                        _ => false,
+                    }
+                }
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    !project_function(semantic_argument_name(name))
+                }
+                AstNode::Expr(Expr::String(text, _)) => !project_function(text),
+                AstNode::Expr(Expr::BinOp { .. } | Expr::UnaryOp { .. } | Expr::Index { .. }) => {
+                    dispatches = true;
+                    true
+                }
+                _ => true,
+            };
+            if closed {
+                ControlFlow::Continue(Descend::Into)
+            } else {
+                ControlFlow::Break(())
+            }
+        };
+        let closed = function
+            .source_params
+            .iter()
+            .filter_map(|parameter| parameter.default.as_ref())
+            .all(|default| walk_expr(default, Walk::ALL, &mut visit).is_continue())
+            && walk_stmts(&function.body, Walk::ALL, &mut visit).is_continue();
+        closed && !(dispatches && self.project_defines_methods())
+    }
+
+    /// Whether any project function is named like a method of a typeshed or
+    /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
+    fn project_defines_methods(&self) -> bool {
+        self.fn_table.fns.keys().any(|name| {
+            let name = semantic_argument_name(name);
+            name.starts_with("__s4__")
+                || name.match_indices('.').any(|(end, _)| {
+                    end > 0
+                        && (crate::semantic_lists::is_group_generic(&name[..end])
+                            || self.resolve_typeshed_sig(&name[..end]).is_some())
+                })
+        })
     }
 
     /// The definition whose adopted contract a call checks: the exact

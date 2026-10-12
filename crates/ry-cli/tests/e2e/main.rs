@@ -17,5 +17,6 @@ mod suppression_e2e;
 mod testkit;
 mod typehint_e2e;
 mod typeshed_e2e;
+mod user_call_arguments;
 mod uvr_interop;
 mod watch_e2e;

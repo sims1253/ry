@@ -1278,6 +1278,15 @@
       "severity": "error",
       "message": "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
     },
+    "ggplot2::RY091::tests/testthat/test-utilities.R:108:25": {
+      "package": "ggplot2",
+      "code": "RY091",
+      "path": "tests/testthat/test-utilities.R",
+      "line": 108,
+      "column": 25,
+      "severity": "warning",
+      "message": "missing required argument `df` in call to `remove_missing`"
+    },
     "ggplot2::RY100::tests/testthat/test-axis-secondary.R:36:23": {
       "package": "ggplot2",
       "code": "RY100",
@@ -1395,6 +1404,24 @@
       "severity": "error",
       "message": "$ operator is invalid for atomic vectors of mode `character`"
     },
+    "gt::RY090::tests/testthat/test-fmt.R:549:41": {
+      "package": "gt",
+      "code": "RY090",
+      "path": "tests/testthat/test-fmt.R",
+      "line": 549,
+      "column": 41,
+      "severity": "warning",
+      "message": "unknown argument `x_right` to `paste_left`"
+    },
+    "gt::RY090::tests/testthat/test-fmt.R:551:52": {
+      "package": "gt",
+      "code": "RY090",
+      "path": "tests/testthat/test-fmt.R",
+      "line": 551,
+      "column": 52,
+      "severity": "warning",
+      "message": "unknown argument `x_right` to `paste_left`"
+    },
     "gt::RY106::R/format_data.R:4057:3": {
       "package": "gt",
       "code": "RY106",
@@ -1494,6 +1521,24 @@
       "severity": "warning",
       "message": "parameter `config` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
     },
+    "infer::RY090::tests/testthat/test-hypothesize.R:164:53": {
+      "package": "infer",
+      "code": "RY090",
+      "path": "tests/testthat/test-hypothesize.R",
+      "line": 164,
+      "column": 53,
+      "severity": "warning",
+      "message": "unknown argument `mean` to `hypothesize`; did you mean `med`?"
+    },
+    "infer::RY090::tests/testthat/test-hypothesize.R:219:59": {
+      "package": "infer",
+      "code": "RY090",
+      "path": "tests/testthat/test-hypothesize.R",
+      "line": 219,
+      "column": 59,
+      "severity": "warning",
+      "message": "unknown argument `mean` to `hypothesize`; did you mean `med`?"
+    },
     "infer::RY109::R/calculate.R:741:42": {
       "package": "infer",
       "code": "RY109",
@@ -1511,6 +1556,24 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+    },
+    "keras3::RY091::R/applications.R:4055:34": {
+      "package": "keras3",
+      "code": "RY091",
+      "path": "R/applications.R",
+      "line": 4055,
+      "column": 34,
+      "severity": "warning",
+      "message": "missing required argument `model` in call to `not_found_errors`"
+    },
+    "keras3::RY091::R/applications.R:4085:36": {
+      "package": "keras3",
+      "code": "RY091",
+      "path": "R/applications.R",
+      "line": 4085,
+      "column": 36,
+      "severity": "warning",
+      "message": "missing required argument `model` in call to `not_found_errors`"
     },
     "learnr::RY010::R/question_text.R:122:7": {
       "package": "learnr",
@@ -1601,6 +1664,24 @@
       "column": 73,
       "severity": "warning",
       "message": "comparison with `NA` always produces `NA`; use `is.na()` instead"
+    },
+    "lintr::RY090::tests/testthat/test-methods.R:27:21": {
+      "package": "lintr",
+      "code": "RY090",
+      "path": "tests/testthat/test-methods.R",
+      "line": 27,
+      "column": 21,
+      "severity": "warning",
+      "message": "unknown argument `linter` to `Lint`; did you mean `line`?"
+    },
+    "lintr::RY091::tests/testthat/test-with.R:3:5": {
+      "package": "lintr",
+      "code": "RY091",
+      "path": "tests/testthat/test-with.R",
+      "line": 3,
+      "column": 5,
+      "severity": "warning",
+      "message": "missing required argument `defaults` in call to `modify_defaults`"
     },
     "lubridate::RY001::R/accessors-day.r:98:7": {
       "package": "lubridate",
@@ -1853,6 +1934,15 @@
       "column": 16,
       "severity": "warning",
       "message": "parameter `caller_env` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
+    },
+    "recipes::RY091::tests/testthat/test-roles.R:254:40": {
+      "package": "recipes",
+      "code": "RY091",
+      "path": "tests/testthat/test-roles.R",
+      "line": 254,
+      "column": 40,
+      "severity": "warning",
+      "message": "missing required argument `old_role` in call to `remove_role`"
     },
     "renv::RY001::R/parse.R:3:7": {
       "package": "renv",

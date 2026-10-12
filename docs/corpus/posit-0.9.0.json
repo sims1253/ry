@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "70e5df4434a8531665d0bcb0317df84e254fce3ff3a07a4f8a5588ddde0033f9",
-  "ry_commit": "1d63029d108b7f5520afe1dfa94f35b025f31005",
+  "source_sha256": "c6984253fcc310495242136a8574e2e3163fd7bb89c7e347e0afacc7f720c759",
+  "ry_commit": "566dbc23a08291cb53681fd78cbb404e42c0f824",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -12,7 +12,7 @@
       "repo": "tidyverse/ggplot2",
       "stars": 6982,
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 15
+      "diagnostics": 16
     },
     {
       "name": "shiny-r",
@@ -33,7 +33,7 @@
       "repo": "rstudio/gt",
       "stars": 2161,
       "commit": "caa074012b9825ddd71996f40e309c00f7b9e180",
-      "diagnostics": 13
+      "diagnostics": 15
     },
     {
       "name": "blogdown",
@@ -82,7 +82,7 @@
       "repo": "r-lib/lintr",
       "stars": 1289,
       "commit": "990e57870498634ce67d1fa0e53311f385b4b3d4",
-      "diagnostics": 9
+      "diagnostics": 11
     },
     {
       "name": "renv",
@@ -131,7 +131,7 @@
       "repo": "rstudio/keras3",
       "stars": 856,
       "commit": "753ffeeb4b9a76ae37388cf63be64a45a5a8ef20",
-      "diagnostics": 1
+      "diagnostics": 3
     },
     {
       "name": "flexdashboard",
@@ -159,7 +159,7 @@
       "repo": "tidymodels/infer",
       "stars": 795,
       "commit": "0b9c910e658a5d4ed9f6b13e4978b9c23a225cad",
-      "diagnostics": 1
+      "diagnostics": 3
     },
     {
       "name": "pkgdown",
@@ -208,7 +208,7 @@
       "repo": "tidymodels/recipes",
       "stars": 618,
       "commit": "92704cb072b1bb4951061034be6bfa4678e0e43a",
-      "diagnostics": 0
+      "diagnostics": 1
     },
     {
       "name": "ellmer",
@@ -1686,6 +1686,15 @@
       "audit_group": "s3-method-dispatch"
     },
     {
+      "package": "ggplot2",
+      "code": "RY091",
+      "path": "tests/testthat/test-utilities.R",
+      "line": 108,
+      "column": 25,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
       "package": "glue",
       "code": "RY107",
       "path": "R/utils.R",
@@ -1839,11 +1848,47 @@
       "audit_group": "ry109-self-defaults"
     },
     {
+      "package": "infer",
+      "code": "RY090",
+      "path": "tests/testthat/test-hypothesize.R",
+      "line": 164,
+      "column": 53,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "infer",
+      "code": "RY090",
+      "path": "tests/testthat/test-hypothesize.R",
+      "line": 219,
+      "column": 59,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
       "package": "keras3",
       "code": "RY032",
       "path": "R/install.R",
       "line": 315,
       "column": 7,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
+    },
+    {
+      "package": "keras3",
+      "code": "RY091",
+      "path": "R/applications.R",
+      "line": 4055,
+      "column": 34,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
+    },
+    {
+      "package": "keras3",
+      "code": "RY091",
+      "path": "R/applications.R",
+      "line": 4085,
+      "column": 36,
       "label": "true_positive",
       "audit_group": "upstream-package"
     },
@@ -1936,6 +1981,24 @@
       "column": 73,
       "label": "true_positive",
       "audit_group": "upstream-package"
+    },
+    {
+      "package": "lintr",
+      "code": "RY090",
+      "path": "tests/testthat/test-methods.R",
+      "line": 27,
+      "column": 21,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
+    },
+    {
+      "package": "lintr",
+      "code": "RY091",
+      "path": "tests/testthat/test-with.R",
+      "line": 3,
+      "column": 5,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
     },
     {
       "package": "lubridate",
@@ -3954,6 +4017,24 @@
       "audit_group": "test-fixture"
     },
     {
+      "package": "gt",
+      "code": "RY090",
+      "path": "tests/testthat/test-fmt.R",
+      "line": 549,
+      "column": 41,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
+    },
+    {
+      "package": "gt",
+      "code": "RY090",
+      "path": "tests/testthat/test-fmt.R",
+      "line": 551,
+      "column": 52,
+      "label": "true_positive",
+      "audit_group": "upstream-package"
+    },
+    {
       "package": "sparklyr",
       "code": "RY111",
       "path": "R/stream_data.R",
@@ -3961,11 +4042,20 @@
       "column": 15,
       "label": "false_positive",
       "audit_group": "manual-audit"
+    },
+    {
+      "package": "recipes",
+      "code": "RY091",
+      "path": "tests/testthat/test-roles.R",
+      "line": 254,
+      "column": 40,
+      "label": "true_positive",
+      "audit_group": "test-fixture"
     }
   ],
   "classification": {
     "false_positive": 306,
-    "true_positive": 85
+    "true_positive": 95
   },
   "audit_group_counts": {
     "reassign-scope": 4,
@@ -3973,11 +4063,11 @@
     "manual-audit": 138,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
-    "test-fixture": 74,
+    "test-fixture": 80,
     "s3-method-dispatch": 3,
     "delayed-assign": 1,
     "function-shadowing": 3,
-    "upstream-package": 28,
+    "upstream-package": 32,
     "ifelse-mode": 3,
     "numeric-if-idiom": 3,
     "namespace-on-load": 46,
@@ -4020,6 +4110,7 @@
     "Dplyr schema effects (#353) remove the two reviewed RY060 false positives at pinned dplyr d5e94e7 tests/testthat/test-group-by.R:26:16 and :40:16: group_by(big = <expression>) creates big before out$big is read. Literal verb effects and conservative unknown/custom S3 fallbacks were checked against the full pinned hermetic corpus; no identity was added and all reviewed true positives remain.",
     "RY032 scalar-flow correction (#351, PR #605): the sole Posit identity removed is purrr@481e829 R/deprec-prepend.R:34:7 (reviewed false_positive, historical manual-audit group). Its earlier base stopifnot rejects vector before values before the later || can run. The exact source and R witnesses justify this one-row removal; all 85 reviewed true positives and every other identity remain. The 62 hermetic Posit root reports were hashed in filename order after removing this line from posit.purrr.root.txt; the matching message-ledger entry is removed.",
     "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): 20 reviewed false positives are removed and no identity is added. The whole delayed-assign RY010 group except renv's RY001 disappears (dplyr R/conditions.R:310 and keras3's 13 lazily bound helpers), base delayedAssign() now binding its target with an unevaluated promise. lubridate R/vctrs.R:64/107/112/117 (manual-audit) read namespace-level delayedAssign() bindings. purrr tests/testthat/test-map.R:82 and test-parallel.R:120 (type-narrowing) are map_chr(NA, ...) calls, which purrr's coerce layer widens to NA_character_. Every true positive remains.",
-    "local() deferred captures and package base lookup (#568, PR stacked on #628): 19 reviewed false positives disappear: 18 of the 19 local-closure-forward-ref entries (cli R/defer.R and R/errors.R, pak R/compat-vctrs.R, R/config.R and R/errors.R) and the type-narrowing entry rlang R/import-standalone-defer.R:91:23. pak R/pak-sitrep-data.R:27:20 remains in the group. Each removed closure is defined inside a local() block and reads a helper the block assigns later; local() blocks now give their assignments to nested closures as deferred captures, as function bodies do. Resolving base switch() in import-free package R/ code adds no identity. Every true positive remains."
+    "local() deferred captures and package base lookup (#568, PR stacked on #628): 19 reviewed false positives disappear: 18 of the 19 local-closure-forward-ref entries (cli R/defer.R and R/errors.R, pak R/compat-vctrs.R, R/config.R and R/errors.R) and the type-narrowing entry rlang R/import-standalone-defer.R:91:23. pak R/pak-sitrep-data.R:27:20 remains in the group. Each removed closure is defined inside a local() block and reads a helper the block assigns later; local() blocks now give their assignments to nested closures as deferred captures, as function bodies do. Resolving base switch() in import-free package R/ code adds no identity. Every true positive remains.",
+    "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Ten true positives are added. Four are upstream-package bugs in two packages: keras3 R/applications.R:4055:34 and 4085:36 call not_found_errors() without its forced model argument, so users see a missing-argument error instead of the intended message; gt tests/testthat/test-fmt.R:549:41 and 551:52 pass x_right to paste_left(x, x_left), and their expect_error() passes on that unused-argument error, not the length check the test describes. The remaining six are test-fixture calls inside error-expecting tests that R rejects: ggplot2 tests/testthat/test-utilities.R:108:25, infer tests/testthat/test-hypothesize.R:164:53 and 219:59 (no mean formal), lintr tests/testthat/test-methods.R:27:21 (no linter formal) and test-with.R:3:5, and recipes tests/testthat/test-roles.R:254:40. No identity is removed; every true positive remains."
   ]
 }

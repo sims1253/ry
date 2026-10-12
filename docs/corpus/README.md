@@ -11,18 +11,18 @@ each label. `posit-0.9.0.json` has 16 groups; most name a cause
 (`type-narrowing`, `test-fixture`, `ifelse-mode`, `ry001-null-union`,
 `ry111-constant-shadowing`), one an owner (`upstream-package`), and the
 largest, `manual-audit`, is the manually classified batch.
-`tidyverse-0.7.1.json` has 16 groups: 9 are batch ids
+`tidyverse-0.7.1.json` has 17 groups: 9 are batch ids
 (`P2`, `P4a`, `P4b`, `P4c`, `P7a`, `P7b`, `P8`, `plan-32-33`,
 `pr195-nse-stubs`), kept verbatim because the planning records that defined
 them were local-only and no longer exist; `upstream-ggplot2` and
 `upstream-glue` name upstream packages and `ifelse-mode`, `seq-defaulted`,
-`ry109-self-defaults`, `ry001-null-union`, and `ry111-constant-shadowing`
-causes.
+`ry109-self-defaults`, `ry001-null-union`, `ry111-constant-shadowing`, and
+`test-fixture` (shared with the Posit ledger) causes.
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 90 | 36 / 36 / 0 (+18 unowned) | hermetic (strict CI gate) |
-| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 391 | 85 / 306 / 0 | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 92 | 38 / 36 / 0 (+18 unowned) | hermetic (strict CI gate) |
+| [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 401 | 95 / 306 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.

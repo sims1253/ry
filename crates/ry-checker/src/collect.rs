@@ -717,34 +717,26 @@ impl Checker {
 
     // Pass 2: refine one function's inferred return type by walking its
     // body once. Returns are collected from `return(...)` calls and from
-    // the trailing expression of the body, then joined.
-    pub(crate) fn refine_fn_return(&mut self, name: &str) -> bool {
-        let function = match self.fn_table.fns.get(name) {
-            Some(function) => function.clone(),
-            None => return false,
-        };
-        let Some(joined) = self.infer_definition_return(name, &function) else {
-            return false;
-        };
-        let changed = self.return_slots.0.get(function.return_slot) != Some(&joined);
-        if changed {
-            Arc::make_mut(&mut self.return_slots).set(function.return_slot, joined);
-        }
-        changed
+    // the trailing expression of the body, then joined. `None` means no
+    // path produced a value.
+    pub(crate) fn refine_fn_return(&mut self, name: &str) -> Option<RType> {
+        let function = self.fn_table.fns.get(name)?.clone();
+        self.infer_definition_return(name, &function)
     }
 
     /// Infer one exact definition independently of its adopted contract.
     /// The ordinary fixpoint calls this for the name-indexed live function;
     /// declaration checking can also call it for an earlier same-name literal
     /// whose return slot the ordinary last-definition table never refines.
+    /// `None` when the function is already being inferred or no path
+    /// through the body returns a value.
     pub(crate) fn infer_definition_return(
         &mut self,
         name: &str,
         function: &UserFn,
     ) -> Option<RType> {
         // Cycle detection: if this function is already on the inference
-        // stack, leave its return as UNKNOWN and bail out. The fixpoint
-        // will converge on subsequent iterations.
+        // stack, leave its return unchanged. The fixpoint revisits it.
         if self.inferring.iter().any(|n| n == name) {
             return None;
         }
@@ -766,9 +758,8 @@ impl Checker {
         for parameter in params {
             scope.insert_parameter(parameter.name.clone(), parameter.type_.clone());
         }
-        // The function's own name is in scope as a function value, so
-        // recursive calls resolve to a user-fn lookup.
-        scope.insert(name.to_string(), RType::scalar(Mode::Function));
+        // The function's own name stays unbound here, so recursive calls
+        // resolve through the function table and read its return slot.
         insert_s3_dispatch_context(name, &mut scope, &self.typeshed.globals);
 
         // Keep deferred expressions (notably `on.exit(expr)`) in the same
@@ -795,22 +786,14 @@ impl Checker {
             returns.push(t);
         }
 
-        // Fold the collected return types. We start from the first
-        // element rather than UNKNOWN because join() treats Opaque as
-        // absorbing (correct for control-flow merge but wrong for an
-        // empty-fold identity).
-        let joined = if returns.is_empty() {
-            RType::unknown()
-        } else {
-            let mut iter = returns.into_iter();
-            let first = iter.next().unwrap_or(RType::unknown());
-            iter.fold(first, |acc, t| acc.join(t))
-        };
+        // Fold the collected return types without an UNKNOWN identity:
+        // join() treats Opaque as absorbing.
+        let joined = returns.into_iter().reduce(RType::join);
         self.deferred_captures.pop();
         self.inferring.pop();
         self.path = previous_path;
         self.native_path = previous_native_path;
-        Some(joined)
+        joined
     }
 }
 

@@ -1305,6 +1305,9 @@ pub struct Checker {
     pub(crate) return_slots: Arc<ReturnSlots>,
     // Slot reads during one refinement, including signature-only dependencies.
     refinement_reads: std::cell::RefCell<Option<Vec<usize>>>,
+    // Return slots the running fixpoint has not computed yet (bottom).
+    // Empty outside the fixpoint, so diagnostics never observe bottom.
+    uncomputed_returns: FxSet<usize>,
     // Optional named dependencies for the next incremental project check.
     refinement_dependencies: Option<HashMap<String, HashSet<String>>>,
     #[cfg(test)]
@@ -1548,6 +1551,7 @@ impl Checker {
             known_vars: Arc::new(HashSet::new()),
             return_slots,
             refinement_reads: std::cell::RefCell::new(None),
+            uncomputed_returns: FxSet::default(),
             refinement_dependencies: None,
             #[cfg(test)]
             refinement_counts: HashMap::new(),

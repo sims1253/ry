@@ -775,7 +775,10 @@ impl Checker {
                                 .first()
                                 .map(|a| self.infer(&a.value, scope))
                                 .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero));
-                            if let Some(r) = returns {
+                            // An argument that cannot finish yields no value.
+                            if let Some(r) = returns
+                                && !scope.unreachable
+                            {
                                 r.push(t);
                             }
                             if bare == "return" {
@@ -890,7 +893,9 @@ impl Checker {
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
                     let t = self.infer(v, scope);
-                    if let Some(r) = returns {
+                    if let Some(r) = returns
+                        && !scope.unreachable
+                    {
                         r.push(t);
                     }
                 } else if let Some(r) = returns {
@@ -2045,7 +2050,8 @@ impl Checker {
                 if is_return_call(e) {
                     None
                 } else {
-                    Some(self.infer_discarding(e, scope))
+                    let t = self.infer_discarding(e, scope);
+                    (!scope.unreachable).then_some(t)
                 }
             }
             Stmt::FunctionDef { params, body, .. } => {

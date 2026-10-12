@@ -7292,9 +7292,8 @@
       "schema_effect": "select",
       "return": "arg0",
       "return_length": {
-        "kind": "zero_if_all_params_zero",
+        "kind": "zero_if_any_param_zero",
         "params": [
-          "x",
           "subset"
         ]
       }
@@ -7787,10 +7786,8 @@
       ],
       "return": "arg0",
       "return_length": {
-        "kind": "zero_if_any_param_zero",
-        "params": [
-          "x"
-        ]
+        "kind": "same_emptiness",
+        "param": "x"
       }
     },
     "uniroot": {

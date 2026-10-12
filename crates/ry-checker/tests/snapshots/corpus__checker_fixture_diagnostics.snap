@@ -1395,17 +1395,25 @@ expression: snapshots
       severity: warning
       span:
         column: 4
-        end: 194
+        end: 201
         line: 4
-        start: 177
+        start: 184
     - code: RY040
       message: "cannot apply arithmetic op to `character` and `double`"
       severity: error
       span:
         column: 5
-        end: 236
+        end: 243
         line: 5
-        start: 216
+        start: 223
+    - code: RY119
+      message: "`as.integer()` converts a proven out-of-range value to `NA_integer_`"
+      severity: warning
+      span:
+        column: 5
+        end: 382
+        line: 8
+        start: 349
   fixture: err_selection_lengths.R
 - diagnostics:
     - code: RY109

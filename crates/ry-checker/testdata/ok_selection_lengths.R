@@ -17,3 +17,7 @@ y <- head(1:10, 3) + c(1, 2, 3)
 df <- data.frame(a = 1:3, b = c("x", "y", "z"))
 z <- head(df, 2)$a + c(10, 20)
 w <- subset(df, a > 1)$a + c(10, 20)
+
+# A selection may drop the out-of-range element, so no cast is proven.
+b <- as.integer(head(c(1, 1e10), 1))
+d <- as.integer(setdiff(c(1e10, 1), 1e10))

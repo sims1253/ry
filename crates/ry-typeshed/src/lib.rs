@@ -114,6 +114,10 @@ pub enum ReturnLengthSpec {
     ZeroIfAllParamsZero {
         params: Vec<String>,
     },
+    /// Empty exactly when the argument is empty (`unique`).
+    SameEmptiness {
+        param: String,
+    },
     RecycledValues(Box<RecycledValuesLengthSpec>),
 }
 
@@ -1333,7 +1337,8 @@ fn validate_function_semantics(
                 .any(|(index, param)| params[..index].contains(param))
         };
         match length {
-            ReturnLengthSpec::ParamValue { param, .. } => {
+            ReturnLengthSpec::ParamValue { param, .. }
+            | ReturnLengthSpec::SameEmptiness { param } => {
                 validate_param(report, "return_length.param", param);
             }
             ReturnLengthSpec::ZeroIfAnyParamZero { params }

@@ -68,7 +68,9 @@ All notable changes to ry are documented in this file.
   `window` no longer produce false RY002 and RY041 reports such as
   `if (head(x, 1) > 0)` on a length-3 `x`. Stubs can declare
   `zero_if_any_param_zero` with one parameter and the new
-  `zero_if_all_params_zero` rule.
+  `zero_if_all_params_zero` and `same_emptiness` rules; a selection proven
+  nonempty from a known constant vector keeps its value, so
+  `as.integer(unique(c(1e10, 1e10)))` still reports RY119.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).

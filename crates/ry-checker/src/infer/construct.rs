@@ -1021,11 +1021,22 @@ impl Checker {
 
 /// A slot result whose elements a `return_length` rule re-counts (`head`,
 /// `unique`, set operations): mode and class carry over, but facts about the
-/// whole value no longer hold. A data frame keeps its columns, and so its
-/// length, while the selection changes its row count; any other record loses
-/// its shape, since its elements are what was selected.
+/// whole value no longer hold, except that a nonempty selection from a fully
+/// known, NA-free constant vector still holds exactly that value. A data
+/// frame keeps its columns, and so its length, while the selection changes
+/// its row count; any other record loses its shape, since its elements are
+/// what was selected.
 pub(crate) fn with_selected_elements(mut value: RType, length: Length) -> RType {
-    value.value_facts = value.value_facts.for_subset();
+    let facts = value.value_facts;
+    let constant = facts.all_values_known
+        && !facts.prior_na
+        && facts.new_na == ry_core::types::NewNaProvenance::None
+        && facts.numeric_bounds.is_some_and(|(low, high)| low == high);
+    if constant && matches!(length, Length::One | Length::Nonempty) {
+        value.value_facts.cast_site = None;
+    } else {
+        value.value_facts = facts.for_subset();
+    }
     match value.columns.take() {
         Some(schema) if value.class.contains("data.frame") => {
             let mut schema = (*schema).clone();
@@ -1122,6 +1133,17 @@ pub(crate) fn semantic_return_length(
                 Some(Length::Unknown)
             }
         }
+        ReturnLengthSpec::SameEmptiness { param } => Some(
+            match bound_args(param)
+                .next()
+                .and_then(|index| arg_types.get(index))
+                .map(|ty| ty.length)
+            {
+                Some(Length::Zero | Length::Known(0)) => Length::Zero,
+                Some(Length::One | Length::Known(_) | Length::Nonempty) => Length::Nonempty,
+                _ => Length::Unknown,
+            },
+        ),
         // An unbound parameter proves nothing about its default's length.
         ReturnLengthSpec::ZeroIfAllParamsZero { params } => {
             if params.iter().all(|param| {

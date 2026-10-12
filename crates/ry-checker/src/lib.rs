@@ -1312,9 +1312,9 @@ pub struct Checker {
     // Stack of function names currently being inferred (cycle detection).
     pub(crate) inferring: Vec<String>,
     // Packages attached via `library(pkg)` / `require(pkg)`, plus any
-    // declared in `ry.toml`'s
-    // `packages` key (threaded in via `set_loaded`). The dplyr NSE
-    // verbs are gated on `dplyr` (or `tidyverse`) being present here,
+    // declared in `ry.toml`'s `packages` key (threaded in via
+    // `set_loaded`), each with the packages it attaches in turn. The dplyr
+    // NSE verbs are gated on `dplyr` being present here,
     // so a bare `filter(df, ...)` only gets dplyr NSE treatment when
     // dplyr is in scope; otherwise it falls through to regular
     // resolution. Pass-3 emitters share the project-wide set by Arc; the
@@ -1635,7 +1635,9 @@ impl Checker {
                     && matches!(binding_name(func), Some("library" | "require"))
                     && let Some(package) = attached_package_name(args)
                 {
-                    attached.insert(package.to_string());
+                    attached.extend(
+                        ry_workspace::attaching(package, &self.user_stubs).map(str::to_owned),
+                    );
                 }
                 ControlFlow::Continue(Descend::Into)
             },

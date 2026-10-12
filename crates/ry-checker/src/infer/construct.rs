@@ -892,16 +892,19 @@ impl Checker {
         let first = matched.first().cloned().unwrap_or(RType::unknown());
         match &sig.return_ {
             ReturnSpec::Slot(slot) => {
-                let mut result = match slot {
+                let result = match slot {
                     ReturnSlot::Arg0 => first,
                     ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types),
                 };
-                if let Some(length) =
-                    semantic_return_length(sig.return_length.as_ref(), &sig.params, args, arg_types)
-                {
-                    result.length = length;
+                match semantic_return_length(
+                    sig.return_length.as_ref(),
+                    &sig.params,
+                    args,
+                    arg_types,
+                ) {
+                    Some(length) => with_selected_elements(result, length),
+                    None => result,
                 }
-                result
             }
             ReturnSpec::Concrete(c) => {
                 let mode = if let Some(mode) = concrete_json_mode(&c.mode) {
@@ -1016,6 +1019,27 @@ impl Checker {
     }
 }
 
+/// A slot result whose elements a `return_length` rule re-counts (`head`,
+/// `unique`, set operations): mode and class carry over, but facts about the
+/// whole value no longer hold. A data frame keeps its columns, and so its
+/// length, while the selection changes its row count; any other record loses
+/// its shape, since its elements are what was selected.
+fn with_selected_elements(mut value: RType, length: Length) -> RType {
+    value.value_facts = value.value_facts.for_subset();
+    match value.columns.take() {
+        Some(schema) if value.class.contains("data.frame") => {
+            let mut schema = (*schema).clone();
+            for (_, column) in &mut schema.columns {
+                column.length = Length::Unknown;
+                column.value_facts = column.value_facts.for_subset();
+            }
+            value.columns = Some(Arc::new(schema));
+        }
+        _ => value.length = length,
+    }
+    value
+}
+
 /// Resolve a `rep` repetition count.
 ///
 /// `None` (argument not supplied) is R's default of 1. A supplied non-literal
@@ -1093,6 +1117,22 @@ fn semantic_return_length(
                 .filter_map(|index| arg_types.get(index))
                 .any(|ty| matches!(ty.length, Length::Zero))
             {
+                Some(Length::Zero)
+            } else {
+                Some(Length::Unknown)
+            }
+        }
+        // An unbound parameter proves nothing about its default's length.
+        ReturnLengthSpec::ZeroIfAllParamsZero { params } => {
+            if params.iter().all(|param| {
+                let mut bound = bound_args(param).peekable();
+                bound.peek().is_some()
+                    && bound.all(|index| {
+                        arg_types
+                            .get(index)
+                            .is_some_and(|ty| matches!(ty.length, Length::Zero))
+                    })
+            }) {
                 Some(Length::Zero)
             } else {
                 Some(Length::Unknown)

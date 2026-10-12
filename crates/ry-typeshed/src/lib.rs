@@ -110,6 +110,10 @@ pub enum ReturnLengthSpec {
     ZeroIfAnyParamZero {
         params: Vec<String>,
     },
+    /// Zero only when every listed argument is empty; otherwise unknown.
+    ZeroIfAllParamsZero {
+        params: Vec<String>,
+    },
     RecycledValues(Box<RecycledValuesLengthSpec>),
 }
 
@@ -621,6 +625,10 @@ pub struct Typeshed {
     /// fallback for any class without a more specific method.
     #[serde(default)]
     pub s3_methods: std::collections::BTreeMap<(String, String), FunctionSig>,
+    /// Packages that attaching this one also attaches, as a meta-package
+    /// such as tidyverse attaches its core packages.
+    #[serde(default)]
+    pub attaches: Vec<String>,
 }
 
 /// One `s3_methods` entry: the `(generic, class)` key that becomes the
@@ -710,6 +718,8 @@ struct RawFile {
     datasets: BTreeMap<String, JsonRType>,
     #[serde(default)]
     s3_methods: Vec<RawS3Method>,
+    #[serde(default)]
+    attaches: Vec<String>,
 }
 
 fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
@@ -744,6 +754,7 @@ fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
         globals: raw.globals,
         datasets: raw.datasets,
         s3_methods,
+        attaches: raw.attaches,
     })
 }
 
@@ -794,7 +805,7 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
 /// Whether a package name is known to ry's embedded typeshed. Used by
 /// the checker to decide whether a `library(pkg)` contributes
 /// signatures (unknown packages are still recorded as loaded for NSE
-/// gating, e.g. `tidyverse`, but contribute no function signatures).
+/// gating, e.g. `forcats`, but contribute no function signatures).
 pub fn is_known_package(name: &str) -> bool {
     PACKAGE_SPECS.iter().any(|spec| spec.name == name)
 }
@@ -998,6 +1009,19 @@ fn validate_stub_file(path: &Path, report: &mut ValidationReport) {
             format!("package `{actual}` does not match file name `{expected}.json`"),
         ),
         _ => {}
+    }
+
+    for (index, attached) in typeshed.attaches.iter().enumerate() {
+        if attached.is_empty()
+            || typeshed.package.as_ref() == Some(attached)
+            || typeshed.attaches[..index].contains(attached)
+        {
+            validation_error(
+                report,
+                path,
+                format!("attaches[{index}]: `{attached}` must name another package once"),
+            );
+        }
     }
 
     let mut owners: HashMap<&str, &str> = typeshed
@@ -1312,13 +1336,14 @@ fn validate_function_semantics(
             ReturnLengthSpec::ParamValue { param, .. } => {
                 validate_param(report, "return_length.param", param);
             }
-            ReturnLengthSpec::ZeroIfAnyParamZero { params } => {
-                if params.len() < 2 || has_duplicates(params) {
+            ReturnLengthSpec::ZeroIfAnyParamZero { params }
+            | ReturnLengthSpec::ZeroIfAllParamsZero { params } => {
+                if params.is_empty() || has_duplicates(params) {
                     validation_error(
                         report,
                         path,
                         format!(
-                            "{location}.return_length.params: require at least two distinct parameters"
+                            "{location}.return_length.params: require at least one parameter, without duplicates"
                         ),
                     );
                 }
@@ -1899,8 +1924,8 @@ mod tests {
             ),
             (
                 "/functions/intersect_like/return_length/params",
-                json!(["x"]),
-                "require at least two distinct parameters",
+                json!([]),
+                "require at least one parameter, without duplicates",
             ),
             (
                 "/functions/check_string/assertion/provenance/fingerprint_params",
@@ -1945,7 +1970,7 @@ mod tests {
             (
                 "/functions/intersect_like/return_length/params",
                 json!(["x", "y", "x"]),
-                "require at least two distinct parameters",
+                "require at least one parameter, without duplicates",
             ),
             (
                 "/functions/recycle/return_length/value_params",
@@ -2042,6 +2067,26 @@ mod tests {
                     )
                 );
             }
+        }
+    }
+
+    #[test]
+    fn attaches_name_other_packages_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        for (attaches, errors) in [
+            (serde_json::json!(["dplyr", "tidyr"]), 0),
+            (serde_json::json!(["dplyr", "dplyr"]), 1),
+            (serde_json::json!(["fixture"]), 1),
+            (serde_json::json!([""]), 1),
+        ] {
+            let stub = serde_json::json!({
+                "schema_version": "2", "package": "fixture", "version": "test", "functions": {},
+                "attaches": attaches
+            });
+            std::fs::write(&path, stub.to_string()).unwrap();
+            let report = validate_stub_dirs(&[dir.path().to_path_buf()]);
+            assert_eq!(report.error_count(), errors, "{attaches}: {report:?}");
         }
     }
 
@@ -2289,7 +2334,7 @@ mod tests {
         assert!(is_known_package("survival"));
         assert!(is_known_package("brms"));
         assert!(is_known_package("posterior"));
-        assert!(!is_known_package("tidyverse"));
+        assert!(!is_known_package("forcats"));
         assert!(!is_known_package("doesnotexist"));
     }
 }

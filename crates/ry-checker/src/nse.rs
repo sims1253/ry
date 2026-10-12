@@ -10,7 +10,7 @@ pub(crate) const DATA_MASK_COLUMNS_FIRST: &str = "\0ry_data_mask_columns_first";
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
     /// Resolution itself preserves package attachment, qualification,
-    /// importFrom, and tidyverse gating.
+    /// importFrom, and meta-package attachment.
     pub(crate) fn infer_schema_call(
         &mut self,
         name: &str,

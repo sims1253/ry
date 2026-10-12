@@ -1392,16 +1392,21 @@ impl Checker {
         // `library(foo)` and `require(foo)` take a package name as a bare
         // symbol, not an expression. Inferring their args would trigger
         // spurious RY010 on every `library(magrittr)` etc. We ALSO record
-        // the package name into `self.loaded` so the dplyr NSE gating can
-        // treat dplyr/tidyverse as in scope after either call.
+        // the package, and any packages it attaches in turn, into
+        // `self.loaded` so the dplyr NSE gating sees them after either call.
         if semantic_name == "library" || semantic_name == "require" {
             if let Some(pkg) = crate::attached_package_name(args) {
-                Arc::make_mut(&mut self.loaded).insert(pkg.to_string());
-                Arc::make_mut(&mut self.bare_loaded).insert(pkg.to_string());
-                // An attached package without a stub can contribute any
-                // export or lazy-loaded dataset to the search path.
-                if !self.package_is_known(pkg) {
-                    scope.mark_search_path_unknown();
+                let attached: Vec<String> = ry_workspace::attaching(pkg, &self.user_stubs)
+                    .map(str::to_owned)
+                    .collect();
+                for package in attached {
+                    // An attached package without a stub can contribute any
+                    // export or lazy-loaded dataset to the search path.
+                    if !self.package_is_known(&package) {
+                        scope.mark_search_path_unknown();
+                    }
+                    Arc::make_mut(&mut self.loaded).insert(package.clone());
+                    Arc::make_mut(&mut self.bare_loaded).insert(package);
                 }
             } else if crate::character_only(args) {
                 // `library(pkg, character.only = TRUE)` evaluates its

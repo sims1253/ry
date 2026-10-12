@@ -133,15 +133,12 @@ impl Checker {
             .filter(move |package| self.bare_loaded.contains(*package))
     }
 
-    /// The other gate: `loaded` (the project-wide union) plus the
-    /// tidyverse expansion — `library(tidyverse)` makes dplyr and tidyr's
-    /// declarative verbs resolvable everywhere, exactly like the dplyr
-    /// NSE gating they share inference with.
+    /// The other gate: `loaded`, the project-wide union, which makes
+    /// declarative verbs resolvable everywhere, exactly like the dplyr NSE
+    /// gating they share inference with.
     pub(crate) fn schema_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names().filter(move |package| {
-            self.loaded.contains(*package)
-                || (self.loaded.contains("tidyverse") && matches!(*package, "dplyr" | "tidyr"))
-        })
+        self.available_package_names()
+            .filter(move |package| self.loaded.contains(*package))
     }
 
     /// Resolve only signatures that declare checker schema semantics. Unlike

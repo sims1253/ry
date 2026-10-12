@@ -829,11 +829,9 @@ impl Checker {
         args: &[Arg],
         scope: &mut Scope,
     ) -> Option<RType> {
-        let formals = match lookup_name {
-            "test_that" => &["desc", "code"][..],
-            "describe" | "it" => &["description", "code"][..],
-            _ => return None,
-        };
+        if !matches!(lookup_name, "test_that" | "describe" | "it") {
+            return None;
+        }
         use crate::resolve::SpecialCallProvenance;
         match self.special_call_provenance(
             name,
@@ -865,17 +863,28 @@ impl Checker {
             }
             SpecialCallProvenance::Proven => {}
         }
-        let bindings = match_arguments(formals, args);
+        let formals: Vec<String> = self
+            .package_typeshed("testthat")?
+            .functions
+            .get(lookup_name)?
+            .param_names()
+            .map(str::to_owned)
+            .collect();
+        let formals: Vec<&str> = formals.iter().map(String::as_str).collect();
+        let bindings = match_arguments(&formals, args);
         if bindings.param_for_arg.iter().any(Option::is_none) {
             return None;
         }
+        let code_formal = formals.iter().position(|formal| *formal == "code");
         // The description promise is forced in the caller's frame.
-        if let Some(description) = bindings.arg_for_param(0) {
-            self.infer(&args[description].value, scope);
+        for (argument, formal) in args.iter().zip(&bindings.param_for_arg) {
+            if *formal != code_formal {
+                self.infer(&argument.value, scope);
+            }
         }
         // The body's value is discarded; test_that returns its own
         // (invisible) logical outcome, which no caller pattern relies on.
-        let Some(code) = bindings.arg_for_param(1) else {
+        let Some(code) = code_formal.and_then(|formal| bindings.arg_for_param(formal)) else {
             return Some(RType::unknown());
         };
         let mut child = scope.function_execution_scope();

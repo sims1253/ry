@@ -1449,6 +1449,34 @@ fn describe_and_it_blocks_isolate_sibling_bindings() {
     );
 }
 
+/// Verified in R: a wrapper that forwards its own `code` formal hands
+/// test_that the symbol `code`, whose evaluation forces the wrapper's
+/// promise in the wrapper's caller. The forwarded body is ordinary code
+/// there: its errors are reported and its bindings reach that caller.
+#[test]
+fn test_that_wrapper_argument_is_ordinary_caller_code() {
+    let diagnostics = check(
+        "check_case <- function(desc, code) test_that(desc, code)\n\
+         check_case(\"a\", { zz <- 1L })\n\
+         zz + \"s\"\n\
+         check_case(\"b\", 1L + \"s\")\n",
+    );
+    let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec!["RY040", "RY040"], "{diagnostics:?}");
+}
+
+/// The block verbs bind their formals from the testthat stub, so named
+/// and reordered arguments still isolate the body.
+#[test]
+fn named_testthat_block_arguments_isolate_the_body() {
+    let diagnostics = check(
+        "f <- function(x) x\n\
+         it(code = { f <- 1L }, description = \"a\")\n\
+         f(2)\n",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
 /// Sequencing inside one test body is unchanged: local assignments stay
 /// visible to later expectations in the same block.
 #[test]

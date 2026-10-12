@@ -617,6 +617,16 @@ impl Project {
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
         refiner.set_box_sources(Arc::clone(box_sources));
+        // Pass 2 has no per-file context. Without the registrations, a
+        // package's own method for a stub generic (`group_by.tbl_lazy`)
+        // would be read as the stub's default-receiver return.
+        refiner.set_external_s3_methods(
+            self.external_s3_methods
+                .values()
+                .flatten()
+                .cloned()
+                .collect(),
+        );
         refiner.refinement_dependencies = Some(HashMap::new());
         refiner
     }

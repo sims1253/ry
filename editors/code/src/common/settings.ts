@@ -84,8 +84,7 @@ export function getExtensionSettings(namespace: string): ISettings[] {
 /**
  * Determine whether a configuration change requires a server restart
  * (vs. a live `didChangeConfiguration` update). Restart-triggering
- * settings are those that affect which binary runs or how the server
- * starts.
+ * settings are those that affect which binary runs or its command line.
  */
 export function checkIfConfigurationChanged(
   oldSettings: ISettings,
@@ -94,7 +93,6 @@ export function checkIfConfigurationChanged(
   return (
     JSON.stringify(oldSettings.path) !== JSON.stringify(newSettings.path) ||
     oldSettings.importStrategy !== newSettings.importStrategy ||
-    oldSettings.configuration !== newSettings.configuration ||
     oldSettings.logLevel !== newSettings.logLevel
   );
 }

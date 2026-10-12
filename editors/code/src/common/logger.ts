@@ -30,11 +30,6 @@ class ExtensionLogger implements vscode.Disposable {
     this.channel.error(util.format(...messages));
   }
 
-  warn(...messages: unknown[]): void {
-    this.logForCI(...messages);
-    this.channel.warn(util.format(...messages));
-  }
-
   info(...messages: unknown[]): void {
     this.logForCI(...messages);
     this.channel.info(util.format(...messages));
@@ -44,18 +39,7 @@ class ExtensionLogger implements vscode.Disposable {
     this.logForCI(...messages);
     this.channel.debug(util.format(...messages));
   }
-
-  trace(...messages: unknown[]): void {
-    this.logForCI(...messages);
-    this.channel.trace(util.format(...messages));
-  }
 }
-
-// Public logging surface; tests can provide a stub.
-export type Logger = Pick<
-  ExtensionLogger,
-  "channel" | "error" | "warn" | "info" | "debug" | "trace"
->;
 
 // Client logs, mirrored to the console in CI. Server stderr uses its own channel.
 export const logger = new ExtensionLogger();

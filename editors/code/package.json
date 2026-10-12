@@ -190,7 +190,7 @@
             "debug",
             "trace"
           ],
-          "markdownDescription": "Server tracing filter level.",
+          "markdownDescription": "Log level for ry's own server crates (`--log-level ry=<level>`).",
           "scope": "window",
           "type": "string"
         }

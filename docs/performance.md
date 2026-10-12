@@ -75,42 +75,17 @@ measurements with potentially warm OS caches, not cold-disk startup timings.
 
 ## Server edit replay
 
-The versioned fixture in `crates/ry-lsp/testdata/server-replay/v1.json` opens
-four R files in a real release `ry server` process. It measures three edits:
-a local diagnostic clear, a helper signature change that produces a diagnostic
-in an unchanged caller, and a diagnostic in an unrelated file. The unchanged
-caller is the completion target for the cross-file case; an earlier publication
-for the edited helper cannot stop that timer.
-
-For a warm sample, the timer starts just before the client sends the complete
-`didChange` JSON-RPC frame. It stops on the first publication for the scenario's
-completion file after that edit. The test requires the analyzed open-document
-version and the expected findings in that notification. For a nonempty result,
-it also requires diagnostic origin data with an analysis generation newer than
-the previous accepted result. This disambiguates identical findings in the
-unchanged caller across repetitions, whose document version stays fixed.
-The stop timestamp is taken when the client receives and decodes the target
-notification, so the duration includes client receive, JSON decoding, and
-notification routing overhead. The test then drains other notifications and
-compares the entire observed diagnostic state with a fresh
-CLI check of equivalent source bytes in an isolated tree. That independent
-comparison, fixture writes, and reset edits occur outside the timed interval.
-The clean case requires a versioned empty analysis publication, distinct from
-the unversioned clear sent on document close. A missing, stale, or incorrect
-completion fails the test rather than contributing a fast sample.
-
-The workflow runs 31 warm samples per scenario after resetting the project to
-the fixture's initial bytes, and five fresh-process startup observations.
-Startup runs from process spawn through the first versioned diagnostic; it does
-not claim cold disk caches. The report shows a median for startup and a median
-and nearest-rank p95 for each warm scenario (the value at sorted one-based rank
-`ceil(0.95 × n)`). It never derives a startup tail estimate from five samples.
-Raw nanosecond durations, per-sample snapshot hashes, document versions,
-nonempty-result analysis generations, fixture and binary SHA-256 hashes,
-binary/Rust versions, Rayon setting, and
-sample counts are retained in `server-replay.json`. These server timings are
-advisory, like the other hosted-runner measurements; confirm suspected changes
-with repeated runs on the same machine.
+`crates/ry-lsp/tests/server_replay.rs` drives a real release `ry server` over
+the versioned fixture in `crates/ry-lsp/testdata/server-replay/v1.json`. It
+times three edits, from sending `didChange` to receiving the matching
+diagnostics: a local diagnostic clear, a helper signature change that surfaces
+a diagnostic in an unchanged caller, and a diagnostic in an unrelated file.
+Each publication is compared with a fresh CLI check, so a stale or wrong result
+fails the test instead of counting as a fast sample. The workflow reports the
+startup median of five fresh processes and, per scenario, the median and
+nearest-rank p95 of 31 warm samples; raw samples stay in `server-replay.json`.
+These timings are advisory; confirm a suspected change with repeated runs on
+the same machine.
 
 ## Run locally
 

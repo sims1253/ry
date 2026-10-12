@@ -117,11 +117,9 @@ paths = ["R/**"]
 ```
 
 All three settings are required when adoption is enabled. The path globs use
-the same configuration-root-relative physical path matching described above.
-The matcher refuses native filenames it cannot represent as UTF-8; a lossy
-display name cannot make an excluded file eligible. No comment is adopted by
-default. The [declaration guide](declarations.md) explains the supported class
-subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
+the same configuration-root-relative matching described above. No comment is
+adopted by default. The [declaration guide](declarations.md) explains the
+supported class subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
 ordinary comments, and strings do not create typehint contracts.
 
 Explicit CLI values override scalar settings such as `output-format`.
@@ -148,44 +146,18 @@ warn = ["RY040"]
 ```
 
 Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
-elsewhere. Each table accepts `error`, `warn`, and `ignore` rule lists by code,
-name, or `"all"`; `paths` is required. Globs use forward slashes relative to
-the directory containing `ry.toml`, including when checking a nested package.
-`*` matches one path component, while `**` includes descendants. For paths
-representable as UTF-8, the CLI, watch mode, and editor use the same matcher
-and filesystem identity for the config root and each source: existing symlinks
-and `..` components resolve before matching.
-For an unsaved file, the deepest existing ancestor resolves first and the
-remaining ordinary path components keep their names. On Unix, a `..` after a
-missing ancestor cannot be resolved and does not match. Windows non-verbatim
-paths use native normalization, which removes `..` before filesystem lookup.
-A symlink that points outside the config root is scoped by its target location,
-not its textual alias.
-On Unix, a backslash in a pattern is a literal filename character; use
-forward slashes to separate directories.
-The CLI and watch mode retain native paths when selecting rule policy. Path
-scopes do not match filenames that cannot be represented as UTF-8 in those
-modes; the files keep the global rule settings even if their displayed names
-contain a replacement character. The editor's existing document and index keys
-use Unicode display strings, which can lose a non-UTF-8 filename's original
-identity. That native-path guarantee does not extend to editor diagnostics for
-such filenames.
+elsewhere. Each table requires `paths` and accepts `error`, `warn`, and
+`ignore` lists by code, name, or `"all"`. Globs use forward slashes relative
+to the directory containing `ry.toml`, matched like environment profile
+paths: `*` matches one path component, `**` includes descendants,
+and existing paths are resolved through symlinks first.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global
-policy. A rule ignored by the effective global policy remains disabled even
-when a path table enables it. Editor `lint.ignore` replaces the config's
-`ignore` list, including when set to `[]`; scopes preserve that replacement.
-Explicit CLI `--error`/`--warn`/`--ignore` and editor `lint.error`/
-`lint.warn`/`lint.ignore` lists take priority over path tables for the rules
-they name, while retaining the existing global bucket precedence (`ignore` >
-`error` > `warn`). A path table can enable a rule disabled by `select`, unless
-a global ignore or explicit CLI/editor choice prevents it. The policy changes
-reported findings only: every discovered file still contributes bindings and
-types to project analysis. Inline suppression, severity, path confidence
-demotion, baseline subtraction, and minimum confidence filtering keep their
-existing order. A file's effective policy also controls whether the optional
-RY113 unused-ignore audit and its target rule are eligible.
+policy, and a globally ignored rule stays disabled. Explicit CLI
+`--error`/`--warn`/`--ignore` and editor `lint.*` lists take priority over
+path tables for the rules they name. Overrides change reported findings only;
+every file still contributes bindings and types to project analysis.
 
 In the editor, open documents that are ineligible for analysis (excluded by
 `exclude` patterns, over `max-file-bytes`, or below a pruned `max-depth`)
@@ -227,39 +199,20 @@ x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 # ry: ignore-file                      # file-level, anywhere in the file
 ```
 
-Selective `ry: ignore[...]` lists must contain registered `RY` codes.
-The older unbracketed code-list form (`ry: ignore RY040 RY010`) is also
-selective when its first word resembles a rule code. Commas may have spaces
-on either side. Code-like words before trailing prose must name registered
-rules; after the first ordinary word, the rest is explanation and may itself
-mention rule codes. The colon form
-requires only code tokens. Brackets make the boundary between codes and an
-explanation explicit.
-Unknown codes and malformed brackets produce RY112 at the comment and do
-not suppress findings. A `noqa` list can also name another tool's codes;
-ry uses only its registered `RY` entries. A foreign-only list suppresses
-nothing in ry. Bare `ry: ignore` (including explanatory prose) and bare
-`noqa` suppress all rules on their target line. Any nonempty text after
-`noqa` is interpreted as a code list; if it contains no registered `RY`
-codes, it suppresses nothing in ry. Put explanatory prose after a native
-`ry: ignore` instead. `ignore[ ]` is an alias for
-`ignore[]`. Use `--ignore RY112` or the corresponding severity
-configuration to disable directive validation; a bare ignore cannot hide
-its own RY112 finding.
+Selective `ry: ignore[...]` lists must contain registered `RY` codes; an
+unknown code or malformed bracket produces RY112 at the comment and
+suppresses nothing. Text after the codes is treated as explanation. A `noqa`
+list may name other tools' codes; ry uses only its registered `RY` entries,
+so a list without any suppresses nothing in ry. Bare `ry: ignore` and bare
+`noqa` suppress all rules on their target line.
 
-Enable the unused-ignore audit with `--warn RY113` or `warn = ["RY113"]` in
-`ry.toml`. It checks valid `ry: ignore[...]` comments, including standalone
-ones, one code at a time. The initial audit covers RY034 and RY102, whose
-premises are local syntax; ignores for inference-dependent rules remain
-unaudited until the checker can prove their analysis was complete. A code is
-considered used if the checker found it on the target line before inline
-suppression, severity filtering, baseline subtraction, or confidence
-thresholds. Disabled rules, files with parse errors, excluded files, bare
-ignores, `noqa`, and file ignores receive no unused finding. Anonymous
-function bodies and unmodeled expression regions are unaudited; direct named
-function bodies remain eligible. RY113 points to the comment. Use
-`--ignore RY113` or `ignore = ["RY113"]` to disable it;
-an inline ignore cannot hide the audit itself.
+Enable the unused-ignore audit with `--warn RY113` or `warn = ["RY113"]`. It
+reports a code in a valid `ry: ignore[...]` comment when the checker found no
+such finding on the target line, before any filtering. It currently audits
+RY034 and RY102, whose premises are local syntax; files with parse errors,
+bare ignores, `noqa`, and file ignores are not audited. An ignore comment
+cannot hide its own RY112 or RY113 finding; disable those rules by
+configuration instead.
 
 Prefer a rule-specific inline suppression or `globals` entry for dynamic
 workspaces. ry intentionally does not suppress diagnostics merely because an

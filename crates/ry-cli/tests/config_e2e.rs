@@ -2299,3 +2299,24 @@ fn plain_check_subtracts_counts_against_regenerated_baseline() {
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0]["code"], "RY040");
 }
+
+#[test]
+fn ry_toml_exclude_patterns_apply_to_relative_roots() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("ry.toml"), "exclude = [\"fixtures/**\"]\n").unwrap();
+    fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
+    fs::write(tmp.path().join("fixtures/bad.R"), "x <- \"a\" + 1L\n").unwrap();
+    fs::write(tmp.path().join("good.R"), "x <- 1L + 2L\n").unwrap();
+    for root in [".", "./fixtures"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
+            .current_dir(tmp.path())
+            .args(["check", root])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && !stderr.contains("RY040"),
+            "excluded file was checked from {root:?}: {stderr}"
+        );
+    }
+}

@@ -15,7 +15,11 @@ fn is_file_eligible_with_excludes(
     // Match the workspace entry name, not a canonicalized symlink target: an
     // explicit exclude for `linked.R` must exclude that entry regardless of
     // where it points.
-    let relative = path.strip_prefix(root).unwrap_or(path);
+    // `absolute` only joins the working directory, so a relative walk root
+    // such as `.` still lines up with the config root.
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let relative = path.strip_prefix(&root).unwrap_or(&path);
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 

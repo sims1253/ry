@@ -1,4 +1,4 @@
-mod harness;
+use crate::harness;
 
 use harness::{file_uri, join_session, normalize_diagnostics, spawn_session};
 use ry_testkit::FixtureProject;

@@ -3,17 +3,15 @@
 //! Two halves, one module:
 //!
 //! * the session plumbing — the client-session type, the source variants
-//!   the properties edit between, and the spawn/quiesce helpers — used by
-//!   `session_state_machine.rs` (the extended-alphabet convergence
-//!   property plus the deterministic transcript tests) and
-//!   `configuration_refresh.rs`;
+//!   the properties edit between, the spawn/quiesce helpers, and the
+//!   publication predicates the suites share;
 //! * the cross-mode protocol gates — the `Published` normalization and
-//!   the CLI/LSP comparison plumbing — used by `protocol.rs` and
-//!   `protocol_contract.rs`, so the contract stays
+//!   the CLI/LSP comparison plumbing — used by `protocol.rs`,
+//!   `protocol_contract.rs`, and `server_replay.rs`, so the contract stays
 //!   "LSP published diagnostics equal `ry check` run independently in
 //!   the same root".
 
-// Each test binary uses a different subset of this module.
+// `server_replay.rs` includes this module too and uses only the protocol half.
 #![allow(dead_code)]
 
 use ry_testkit::LspSession;
@@ -100,6 +98,42 @@ pub fn normalize_diagnostics(publish: &Value) -> Vec<Value> {
             .map(Vec::as_slice)
             .unwrap_or(&[]),
     )
+}
+
+/// Number of diagnostics with `code` in a publishDiagnostics notification.
+pub fn count_code(publish: &Value, code: &str) -> usize {
+    publish["params"]["diagnostics"]
+        .as_array()
+        .expect("publishDiagnostics array")
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == code)
+        .count()
+}
+
+pub fn has_ry040(publish: &Value) -> bool {
+    count_code(publish, "RY040") > 0
+}
+
+/// A live server's publication must match a fresh server's on the final
+/// filesystem.
+pub fn assert_converges(live: &Value, fresh: &Value, context: &str) {
+    assert_eq!(
+        normalize_diagnostics(live),
+        normalize_diagnostics(fresh),
+        "{context}: live server must match a fresh server on the final filesystem"
+    );
+}
+
+/// Deliver a watched creation event for `uri`, the way the client reports
+/// a file generated outside the editor.
+pub async fn notify_created(session: &mut ClientSession, uri: &str) {
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": uri, "type": 1}]}),
+        )
+        .await
+        .unwrap();
 }
 
 /// Spawn a fresh server on a duplex pair and initialize the client

@@ -23,7 +23,7 @@
 //! closed file on its own), so without `other.R` the never-opened and
 //! post-close publications under test would never happen at all.
 
-mod harness;
+use crate::harness;
 
 use harness::{file_uri, join_session, spawn_session, sync_barrier};
 use ry_testkit::FixtureProject;

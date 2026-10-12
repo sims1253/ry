@@ -1,5 +1,5 @@
 //! The editor checks the original report coordinates through the shared mask.
-mod harness;
+use crate::harness;
 
 use harness::{ClientSession, join_session, spawn_session, sync_barrier};
 use ry_testkit::{FixtureProject, file_uri};

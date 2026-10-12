@@ -22,9 +22,11 @@
 //! arrival order, so the no-op edit whose publication is asserted is
 //! published after the watched refresh before it decided.
 
-mod harness;
+use crate::harness;
 
-use harness::{file_uri, join_session, normalize_diagnostics, spawn_session, sync_barrier};
+use harness::{
+    count_code, file_uri, has_ry040, join_session, notify_created, spawn_session, sync_barrier,
+};
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
@@ -33,30 +35,6 @@ use serde_json::{Value, json};
 const USE2: &str = "x <- never_bound_here\n";
 /// A definition of that name which, once indexed, would clear the RY010.
 const NEWDEFS: &str = "never_bound_here <- function() 1L\n";
-
-fn count_ry010(publish: &Value) -> usize {
-    normalize_diagnostics(publish)
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == json!("RY010"))
-        .count()
-}
-
-fn has_ry040(publish: &Value) -> bool {
-    normalize_diagnostics(publish)
-        .iter()
-        .any(|diagnostic| diagnostic["code"] == json!("RY040"))
-}
-
-/// Deliver a watched creation event for `uri`.
-async fn notify_created(session: &mut harness::ClientSession, uri: &str) {
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": uri, "type": 1}]}),
-        )
-        .await
-        .unwrap();
-}
 
 /// Deliver a watched change event for `uri`.
 async fn notify_changed(session: &mut harness::ClientSession, uri: &str) {
@@ -140,7 +118,7 @@ async fn create_past_cap_is_refused() {
     let use2_uri = file_uri(&fixture.path("use2.R"));
     let first = open_use2_settled(&mut session, &use2_uri).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "the name must be unbound before d.R exists: {first}"
     );
@@ -150,7 +128,7 @@ async fn create_past_cap_is_refused() {
     notify_watched(&mut session, &d_uri, true).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "d.R is past the max-files budget and must stay out of the index: {after}"
     );
@@ -183,7 +161,7 @@ async fn change_of_undiscovered_file_past_cap_is_refused() {
     let use2_uri = file_uri(&fixture.path("use2.R"));
     let first = open_use2_settled(&mut session, &use2_uri).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "the name must be unbound before d.R shrinks: {first}"
     );
@@ -195,7 +173,7 @@ async fn change_of_undiscovered_file_past_cap_is_refused() {
     notify_watched(&mut session, &d_uri, false).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "d.R is past the max-files budget and must stay out of the index: {after}"
     );
@@ -294,7 +272,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     let use2_uri = file_uri(&fixture.path("use2.R"));
     let first = open_use2_settled(&mut session, &use2_uri).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "the outer name must be unbound before c.R exists: {first}"
     );
@@ -310,7 +288,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&obs_first),
+        count_code(&obs_first, "RY010"),
         1,
         "the inner name must be unbound before b.R exists: {obs_first}"
     );
@@ -322,7 +300,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     notify_watched(&mut session, &b_uri, true).await;
     let inner_after = observe_current_index_with(&mut session, &obs_uri, 2, OBSERVER_INNER).await;
     assert_eq!(
-        count_ry010(&inner_after),
+        count_code(&inner_after, "RY010"),
         0,
         "b.R is within the inner root's own budget and must land: {inner_after}"
     );
@@ -336,7 +314,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     notify_watched(&mut session, &c_uri, true).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         0,
         "c.R is within the outer root's own budget and must land: {after}"
     );

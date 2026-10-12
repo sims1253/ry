@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 
-mod harness;
+use crate::harness;
 
 use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 

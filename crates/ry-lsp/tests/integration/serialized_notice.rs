@@ -1,7 +1,7 @@
 //! A serialized scope the inventory cannot enumerate is reported once per
 //! failure, with the same reason the CLI prints.
 
-mod harness;
+use crate::harness;
 
 use harness::{ClientSession, file_uri, join_session, spawn_session};
 use ry_testkit::FixtureProject;
@@ -54,7 +54,7 @@ async fn indexing_reports_byte_limit_with_the_source_path() {
 #[tokio::test]
 async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports_again() {
     const LIMIT: &str = "serialized parser resource limit exceeded";
-    let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
+    let nested = include_bytes!("../../../../testdata/serialized/nested-limit.rda");
     let fixture = package(nested, "max-serialized-bytes = 4096\n");
     let data_path = fixture.path("R/sysdata.rda");
     let main = file_uri(&fixture.path("R/main.R"));
@@ -71,7 +71,7 @@ async fn repaired_serialized_scope_clears_the_notice_and_a_later_failure_reports
 
     std::fs::write(
         &data_path,
-        include_bytes!("../../../testdata/serialized/empty.rda"),
+        include_bytes!("../../../../testdata/serialized/empty.rda"),
     )
     .unwrap();
     let mark = session.publication_mark();

@@ -23,9 +23,12 @@
 //! file lands and the RY010 disappears); the override test passes both
 //! ways and guards against over-correction.
 
-mod harness;
+use crate::harness;
 
-use harness::{file_uri, join_session, normalize_diagnostics, spawn_session, sync_barrier};
+use harness::{
+    assert_converges, count_code, file_uri, join_session, notify_created, spawn_session,
+    sync_barrier,
+};
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
@@ -35,13 +38,6 @@ const MAIN: &str = "x <- foo\n";
 /// A definition of `foo` that, once indexed, resolves the read in
 /// `main.R` and clears its RY010.
 const DEFS: &str = "foo <- function() 1\n";
-
-fn count_ry010(publish: &Value) -> usize {
-    normalize_diagnostics(publish)
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == json!("RY010"))
-        .count()
-}
 
 /// Open `main.R` (whose content never changes) and return the fresh
 /// publication for it after `mark`.
@@ -69,26 +65,6 @@ async fn fresh_main_diagnostics(fixture: &FixtureProject) -> Value {
     publish
 }
 
-fn assert_converges(live: &Value, fresh: &Value, context: &str) {
-    assert_eq!(
-        normalize_diagnostics(live),
-        normalize_diagnostics(fresh),
-        "{context}: live server must match a fresh server on the final filesystem"
-    );
-}
-
-/// Deliver a watched creation event for `uri`, the way the client reports
-/// a file generated outside the editor.
-async fn notify_created(session: &mut harness::ClientSession, uri: &str) {
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": uri, "type": 1}]}),
-        )
-        .await
-        .unwrap();
-}
-
 /// A watched creation under a directory pruned by a bare `exclude`
 /// pattern must not enter the index: the RY010 on `main.R` survives.
 #[tokio::test]
@@ -106,7 +82,7 @@ async fn vendor_excluded_directory_stays_out_of_the_watched_index() {
     let mark = session.publication_mark();
     let first = open_main_and_observe(&mut session, &main_uri, mark).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "foo must be unbound before vendor/ exists: {first}"
     );
@@ -122,7 +98,7 @@ async fn vendor_excluded_directory_stays_out_of_the_watched_index() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "vendor/defs.R is pruned by the walk and must stay out of the index: {after}"
     );
@@ -151,7 +127,7 @@ async fn vendor_nested_grandchild_stays_out_of_the_watched_index() {
     let mark = session.publication_mark();
     let first = open_main_and_observe(&mut session, &main_uri, mark).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "foo must be unbound before vendor/ exists: {first}"
     );
@@ -165,7 +141,7 @@ async fn vendor_nested_grandchild_stays_out_of_the_watched_index() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "vendor/nested/deep.R is pruned by the walk and must stay out of the index: {after}"
     );
@@ -198,7 +174,7 @@ async fn buildignored_directory_stays_out_of_the_watched_index() {
     let mark = session.publication_mark();
     let first = open_main_and_observe(&mut session, &main_uri, mark).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "foo must be unbound before vignettes/ exists: {first}"
     );
@@ -212,7 +188,7 @@ async fn buildignored_directory_stays_out_of_the_watched_index() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "vignettes/drop.R is build-ignored by the walk and must stay out of the index: {after}"
     );
@@ -253,7 +229,7 @@ async fn include_build_ignored_override_still_admits_watched_files() {
     let mark = session.publication_mark();
     let first = open_main_and_observe(&mut session, &main_uri, mark).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "foo must be unbound before vignettes/ exists: {first}"
     );
@@ -267,7 +243,7 @@ async fn include_build_ignored_override_still_admits_watched_files() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         0,
         "vignettes/keep.R is rescued by include_build_ignored and must enter the index: {after}"
     );
@@ -300,7 +276,7 @@ async fn through_symlink_directory_stays_out_of_the_watched_index() {
     let mark = session.publication_mark();
     let first = open_main_and_observe(&mut session, &main_uri, mark).await;
     assert_eq!(
-        count_ry010(&first),
+        count_code(&first, "RY010"),
         1,
         "foo must be unbound before link/ exists: {first}"
     );
@@ -318,7 +294,7 @@ async fn through_symlink_directory_stays_out_of_the_watched_index() {
         .await
         .unwrap();
     assert_eq!(
-        count_ry010(&after),
+        count_code(&after, "RY010"),
         1,
         "link/defs.R is skipped by the walk and must stay out of the index: {after}"
     );

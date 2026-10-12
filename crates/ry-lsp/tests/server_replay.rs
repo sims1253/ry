@@ -1,6 +1,7 @@
 //! Real-process edit replay. The default one-sample run is a correctness gate;
 //! the Performance workflow requests enough warm samples for latency metrics.
 
+#[path = "integration/harness.rs"]
 mod harness;
 
 use harness::{Published, published_from_cli_value, published_from_lsp, ry_binary};

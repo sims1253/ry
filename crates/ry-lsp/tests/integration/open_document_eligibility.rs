@@ -22,9 +22,9 @@
 //! `f`, so the leak is observable as an RY040 in `use.R`, exactly the
 //! shadowing-observable idiom `cross_file_shadowing.rs` uses.
 
-mod harness;
+use crate::harness;
 
-use harness::{file_uri, join_session, spawn_session, sync_barrier};
+use harness::{file_uri, has_ry040, join_session, spawn_session, sync_barrier};
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -39,17 +39,6 @@ const DRAIN: std::time::Duration = std::time::Duration::from_millis(500);
 /// the oversized tests configure.
 const DEF_CHAR: &str = "f <- function(argument) \"str_value\"\n";
 const USE: &str = "x <- f() + 1L\n";
-
-fn has_ry040(publish: &Value) -> bool {
-    publish
-        .pointer("/params/diagnostics")
-        .and_then(Value::as_array)
-        .is_some_and(|diagnostics| {
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic["code"] == json!("RY040"))
-        })
-}
 
 fn last_publication<'a>(store: &'a BTreeMap<String, Vec<Value>>, uri: &str) -> &'a [Value] {
     store.get(uri).map(Vec::as_slice).unwrap_or(&[])

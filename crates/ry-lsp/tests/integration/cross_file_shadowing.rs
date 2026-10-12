@@ -16,10 +16,10 @@
 //! integer `f` wins, `f() + 1L` is clean; when `a.R`'s character `f`
 //! wins, `use.R` carries RY040 — the observable that flips.
 
-mod harness;
+use crate::harness;
 
 use harness::{
-    Published, file_uri, join_session, normalize_diagnostics, published_from_cli_value,
+    Published, file_uri, has_ry040, join_session, normalize_diagnostics, published_from_cli_value,
     spawn_session, spawn_watching_session, sync_barrier,
 };
 use ry_testkit::FixtureProject;
@@ -36,12 +36,6 @@ const F_INT: &str = "f <- function() 1L\n";
 /// Calls the shadowed `f` in a shape that only mismatches for the
 /// character variant.
 const USE: &str = "x <- f() + 1L\n";
-
-fn has_ry040(publish: &Value) -> bool {
-    normalize_diagnostics(publish)
-        .iter()
-        .any(|diagnostic| diagnostic["code"] == json!("RY040"))
-}
 
 /// `ry check --output-format json` on the fixture tree, normalized for
 /// comparison with LSP publications. The CLI is the fresh-project oracle

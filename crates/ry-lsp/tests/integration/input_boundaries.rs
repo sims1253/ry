@@ -1,4 +1,4 @@
-mod harness;
+use crate::harness;
 
 use harness::{
     file_uri, join_session, normalize_diagnostics, ry_binary, spawn_session, sync_barrier,

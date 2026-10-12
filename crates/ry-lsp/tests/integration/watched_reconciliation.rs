@@ -9,7 +9,7 @@
 //! `a.R`/`b.R`/`c.R` carry directly checkable errors (`never_bound_*`,
 //! RY010) and every final state is checked against `ry check`.
 
-mod harness;
+use crate::harness;
 
 use harness::{
     ClientSession, Published, file_uri, join_session, normalize_diagnostics,
@@ -330,7 +330,7 @@ async fn package_edits_queued_behind_a_scan_converge_its_load_inventory() {
             ("pkgA/DESCRIPTION", b"Package: pkgA\nVersion: 0.0.1\n"),
             (
                 "pkgA/data.rda",
-                include_bytes!("../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
+                include_bytes!("../../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
             ),
         ],
     )

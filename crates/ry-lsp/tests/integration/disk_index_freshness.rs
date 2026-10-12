@@ -19,10 +19,10 @@
 //! `use.R` — so which file's content the server analyzes is directly
 //! visible in the published diagnostics.
 
-mod harness;
+use crate::harness;
 
 use harness::{
-    file_uri, join_session, normalize_diagnostics, spawn_session, spawn_watching_session,
+    assert_converges, file_uri, has_ry040, join_session, spawn_session, spawn_watching_session,
     sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
@@ -36,12 +36,6 @@ const F_INT: &str = "f <- function() 1L\n";
 /// Calls the shadowed `f` in a shape that only mismatches for the
 /// character variant.
 const USE: &str = "x <- f() + 1L\n";
-
-fn has_ry040(publish: &Value) -> bool {
-    normalize_diagnostics(publish)
-        .iter()
-        .any(|diagnostic| diagnostic["code"] == json!("RY040"))
-}
 
 /// Open only `use.R` (whose content never changes) and return the fresh
 /// publication for it after `mark`.
@@ -67,14 +61,6 @@ async fn fresh_use_diagnostics(fixture: &FixtureProject) -> Value {
     let publish = open_use_and_observe(&mut session, &use_uri, mark).await;
     join_session(session, server).await;
     publish
-}
-
-fn assert_converges(live: &Value, fresh: &Value, context: &str) {
-    assert_eq!(
-        normalize_diagnostics(live),
-        normalize_diagnostics(fresh),
-        "{context}: live server must match a fresh server on the final filesystem"
-    );
 }
 
 /// The server must actually watch R sources and reports: the registration

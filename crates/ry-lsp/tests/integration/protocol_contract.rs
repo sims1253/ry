@@ -9,7 +9,7 @@
 //! Shared infrastructure reuses `ry-testkit` (`FixtureProject`,
 //! `LspSession`, `AsyncJsonRpcClient`) and the `ry_lsp::run_with` in-memory
 //! server seam, plus the `Published` comparison helpers shared with
-//! `tests/protocol.rs` in `tests/harness`, so the contract is "LSP published
+//! `protocol.rs` in `harness.rs`, so the contract is "LSP published
 //! diagnostics equal `ry check` run independently in the same root."
 //!
 //! No test below adds package-import or filtering differences to `normalise()`.
@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Command;
 
-mod harness;
+use crate::harness;
 
 use harness::{Published, file_uri, published_from_cli_value, published_from_lsp, ry_binary};
 
@@ -117,7 +117,7 @@ async fn assignment_hints_refresh_when_local_stubs_change() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Shared helpers (adapted from tests/protocol.rs for multi-root support)
+// Shared helpers (adapted from protocol.rs for multi-root support)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Run `ry check` in `dir` (as the working directory) and return normalized

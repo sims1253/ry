@@ -774,12 +774,7 @@ async fn version_stamped_tree_cache_rejects_stale_parse() {
 // Watch events rebuild the context outside the write lock and swap it
 // atomically; a failed reload retains the last valid context and emits a
 // visible error.
-//
-// `ry_lsp::baseline_disk_reads()` is a process-global counter. Only the baseline-reload
-// tests configure a baseline, so they serialize on this guard so the
-// no-I/O assertion sees only its own server's reads.
 // ──────────────────────────────────────────────────────────────────────────
-static BASELINE_IO_TEST_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// (#45): a failed baseline reload must retain the last valid
 /// context, not silently clear the baseline. The test:
@@ -794,9 +789,6 @@ static BASELINE_IO_TEST_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::cons
 #[tokio::test]
 async fn baseline_reload_retains_context_on_corruption() {
     use ry_testkit::LspSession;
-    // Serialize against the other baseline-I/O tests so the global baseline-read
-    // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().await;
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -909,9 +901,6 @@ async fn baseline_reload_retains_context_on_corruption() {
 #[tokio::test]
 async fn baseline_reload_converges_to_new_value() {
     use ry_testkit::LspSession;
-    // Serialize against the other baseline-I/O tests so the global baseline-read
-    // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().await;
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -1050,14 +1039,12 @@ async fn baseline_reload_converges_to_new_value() {
 }
 
 /// (#45): the publish/inlay-hint hot path performs ZERO
-/// baseline file reads. `baseline_disk_reads()` counts every disk read by
-/// the context loader; a publish that touches it betrays a regression.
+/// baseline file reads. `baseline_disk_reads(path)` counts every disk read
+/// of the fixture's baseline by the context loader; a publish that touches
+/// it betrays a regression.
 #[tokio::test]
 async fn publish_path_performs_no_baseline_disk_io() {
     use ry_testkit::LspSession;
-    // Serialize against the other baseline-I/O tests so the global baseline-read
-    // counter is not polluted by a concurrently-running server.
-    let _io_guard = BASELINE_IO_TEST_GUARD.lock().await;
 
     let fixture = FixtureProject::empty().unwrap();
     fixture
@@ -1083,7 +1070,11 @@ async fn publish_path_performs_no_baseline_disk_io() {
     // Snapshot AFTER initialize: the baseline is loaded once into the
     // per-folder context during initialize and must not be re-read by
     // any subsequent request.
-    let reads_before = ry_lsp::baseline_disk_reads();
+    let reads_before = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
+    assert!(
+        reads_before > 0,
+        "initialize must have loaded this fixture's baseline"
+    );
 
     // Exercise inlay hints (read path) and publish (diagnostic path).
     live.request(
@@ -1117,7 +1108,7 @@ async fn publish_path_performs_no_baseline_disk_io() {
         .await
         .unwrap();
 
-    let reads_after = ry_lsp::baseline_disk_reads();
+    let reads_after = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
     let _ = live.shutdown().await;
     drop(live);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;

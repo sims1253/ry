@@ -22,21 +22,13 @@ struct PendingRefresh {
 }
 
 pub(super) const RECONCILE_ROUNDS_BEFORE_PACING: u32 = 8;
-const RECONCILE_PACE_BASE_MILLIS: u64 = 40;
-const RECONCILE_PACE_CAP_MILLIS: u64 = 320;
 
+/// 40 ms at the first paced round, doubling to a 320 ms cap.
 fn reconcile_pace_delay(rounds_without_progress: u32) -> std::time::Duration {
-    const RECONCILE_PACE_LADDER_DEPTH: u32 = 3;
-    const _: () = assert!(
-        RECONCILE_PACE_BASE_MILLIS << RECONCILE_PACE_LADDER_DEPTH == RECONCILE_PACE_CAP_MILLIS
-    );
     let doublings = rounds_without_progress
         .saturating_sub(RECONCILE_ROUNDS_BEFORE_PACING)
-        // The base already sits at rung 0; the ladder's depth reaches
-        // the cap, and every later paced round stays there.
-        .min(RECONCILE_PACE_LADDER_DEPTH);
-    let millis = (RECONCILE_PACE_BASE_MILLIS << doublings).min(RECONCILE_PACE_CAP_MILLIS);
-    std::time::Duration::from_millis(millis)
+        .min(3);
+    std::time::Duration::from_millis(40 << doublings)
 }
 
 pub(super) enum ReconcileRoundProgress {
@@ -318,27 +310,24 @@ mod reconcile_accounting_tests {
     fn pace_delay_ladder_is_bounded() {
         assert_eq!(
             reconcile_pace_delay(RECONCILE_ROUNDS_BEFORE_PACING),
-            std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS)
+            std::time::Duration::from_millis(40)
         );
         assert_eq!(
             reconcile_pace_delay(RECONCILE_ROUNDS_BEFORE_PACING + 1),
-            std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS * 2)
+            std::time::Duration::from_millis(40 * 2)
         );
         assert_eq!(
             reconcile_pace_delay(RECONCILE_ROUNDS_BEFORE_PACING + 2),
-            std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS * 4)
+            std::time::Duration::from_millis(40 * 4)
         );
         for stalled in RECONCILE_ROUNDS_BEFORE_PACING..(RECONCILE_ROUNDS_BEFORE_PACING + 50) {
-            assert!(
-                reconcile_pace_delay(stalled)
-                    <= std::time::Duration::from_millis(RECONCILE_PACE_CAP_MILLIS)
-            );
+            assert!(reconcile_pace_delay(stalled) <= std::time::Duration::from_millis(320));
         }
         // Below the bound the driver does not sleep at all; rung 0
         // still computes the base delay, pinning the ladder's floor.
         assert_eq!(
             reconcile_pace_delay(0),
-            std::time::Duration::from_millis(RECONCILE_PACE_BASE_MILLIS)
+            std::time::Duration::from_millis(40)
         );
     }
 

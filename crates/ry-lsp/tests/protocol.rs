@@ -112,12 +112,8 @@ fn settings(fixture: &FixtureProject, relative: &str) -> Value {
     }
 }
 
-#[test]
-fn cli_and_run_with_publish_the_same_single_root_matrix() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+#[tokio::test]
+async fn cli_and_run_with_publish_the_same_single_root_matrix() {
     let cases = [
         ("filtering/ignore", "diagnostic.R", &[][..]),
         ("filtering/select", "diagnostic.R", &[][..]),
@@ -149,7 +145,7 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
             .into_iter()
             .filter(|d| d.path == target)
             .collect::<Vec<_>>();
-        let lsp = runtime.block_on(run_with_diagnostics(&fixture, target, settings));
+        let lsp = run_with_diagnostics(&fixture, target, settings).await;
         assert_eq!(lsp, cli, "published diagnostics differ for {fixture_name}");
     }
 }
@@ -165,12 +161,8 @@ fn cli_and_run_with_publish_the_same_single_root_matrix() {
 /// pin: every finding on the key shares the code-derived confidence,
 /// so the quiet outcome holds under either order of subtraction and
 /// threshold (the order pins live in the `post_process` unit tests).
-#[test]
-fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+#[tokio::test]
+async fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
     let cases = [
         ("filtering/baseline-suppression", &[][..]),
         (
@@ -183,7 +175,7 @@ fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
         let settings = settings(&fixture, "lsp-settings.json");
         let cli = cli_diagnostics(&fixture, cli_args);
         assert!(cli.is_empty(), "{fixture_name}: `ry check` must be quiet");
-        let lsp = runtime.block_on(run_with_diagnostics(&fixture, "diagnostic.R", settings));
+        let lsp = run_with_diagnostics(&fixture, "diagnostic.R", settings).await;
         assert_eq!(
             lsp, cli,
             "{fixture_name}: the editor must go quiet exactly when `ry check` does"
@@ -201,12 +193,8 @@ fn baseline_budget_is_consumed_after_suppression_and_threshold_in_both_modes() {
 /// `non-source-plain-tests` holds the same file in a `tests/`
 /// directory with no `DESCRIPTION` above it: no package root, no
 /// demotion, the finding stays visible in both modes.
-#[test]
-fn non_source_trees_demote_before_the_threshold_in_both_modes() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+#[tokio::test]
+async fn non_source_trees_demote_before_the_threshold_in_both_modes() {
     let cases = [
         ("filtering/non-source-demotion", "R/control.R", true),
         ("filtering/non-source-demotion", "subpkg/R/control.R", true),
@@ -238,7 +226,7 @@ fn non_source_trees_demote_before_the_threshold_in_both_modes() {
             visible,
             "{fixture_name}/{target}: `ry check` visibility is wrong"
         );
-        let lsp = runtime.block_on(run_with_diagnostics(&fixture, target, settings));
+        let lsp = run_with_diagnostics(&fixture, target, settings).await;
         assert_eq!(
             lsp, cli,
             "{fixture_name}/{target}: the editor must demote exactly when `ry check` does"
@@ -249,157 +237,138 @@ fn non_source_trees_demote_before_the_threshold_in_both_modes() {
 /// (#46): diagnostics for indexed files that were never opened use
 /// the checked source for their UTF-16 ranges, not the (absent) in-memory
 /// document text.
-#[test]
-fn indexed_unopened_diagnostics_use_the_checked_source_for_utf16_ranges() {
+#[tokio::test]
+async fn indexed_unopened_diagnostics_use_the_checked_source_for_utf16_ranges() {
     let fixture = FixtureProject::empty().unwrap();
     fixture
         .write_file("disk.R", "emoji <- \"😀\"; length(xx = 1L)\r\n")
         .unwrap();
     fixture.write_file("trigger.R", "ok <- 1L\n").unwrap();
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let server = tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
+    let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
+    let root_uri = file_uri(fixture.root());
+    let initialize_id = client
+        .request(
+            "initialize",
+            json!({
+                "processId": null,
+                "rootUri": root_uri,
+                "capabilities": {},
+                "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
+            }),
+        )
+        .await
         .unwrap();
-    runtime.block_on(async {
-        let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-        let (client_reader, client_writer) = tokio::io::split(client_stream);
-        let (server_reader, server_writer) = tokio::io::split(server_stream);
-        let server =
-            tokio::spawn(async move { ry_lsp::run_with(server_reader, server_writer).await });
-        let mut client = AsyncJsonRpcClient::new(client_reader, client_writer);
-        let root_uri = file_uri(fixture.root());
-        let initialize_id = client
-            .request(
-                "initialize",
-                json!({
-                    "processId": null,
-                    "rootUri": root_uri,
-                    "capabilities": {},
-                    "workspaceFolders": [{"uri": root_uri, "name": "fixture"}]
-                }),
-            )
-            .await
-            .unwrap();
-        client
-            .receive_until(
-                |message| message.get("id") == Some(&json!(initialize_id)),
-                16,
-            )
-            .await
-            .unwrap();
-        client.notify("initialized", json!({})).await.unwrap();
+    client
+        .receive_until(
+            |message| message.get("id") == Some(&json!(initialize_id)),
+            16,
+        )
+        .await
+        .unwrap();
+    client.notify("initialized", json!({})).await.unwrap();
 
-        let trigger_path = fixture.path("trigger.R");
-        let trigger_uri = file_uri(&trigger_path);
-        let trigger_text = std::fs::read_to_string(&trigger_path).unwrap();
-        client
-            .notify(
-                "textDocument/didOpen",
-                json!({"textDocument": {
-                    "uri": trigger_uri,
-                    "languageId": "r",
-                    "version": 1,
-                    "text": trigger_text
-                }}),
-            )
-            .await
-            .unwrap();
+    let trigger_path = fixture.path("trigger.R");
+    let trigger_uri = file_uri(&trigger_path);
+    let trigger_text = std::fs::read_to_string(&trigger_path).unwrap();
+    client
+        .notify(
+            "textDocument/didOpen",
+            json!({"textDocument": {
+                "uri": trigger_uri,
+                "languageId": "r",
+                "version": 1,
+                "text": trigger_text
+            }}),
+        )
+        .await
+        .unwrap();
 
-        let disk_uri = file_uri(&fixture.path("disk.R"));
-        let publication = client
-            .receive_until(
-                |message| {
-                    message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                        && message.pointer("/params/uri") == Some(&json!(disk_uri))
-                },
-                64,
-            )
-            .await
-            .unwrap();
-        let diagnostics = publication["params"]["diagnostics"].as_array().unwrap();
-        let diagnostic = |code: &str| {
-            diagnostics
-                .iter()
-                .find(|diagnostic| diagnostic["code"] == code)
-                .unwrap_or_else(|| panic!("missing {code} in {diagnostics:?}"))
-        };
+    let disk_uri = file_uri(&fixture.path("disk.R"));
+    let publication = client
+        .receive_until(
+            |message| {
+                message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
+                    && message.pointer("/params/uri") == Some(&json!(disk_uri))
+            },
+            64,
+        )
+        .await
+        .unwrap();
+    let diagnostics = publication["params"]["diagnostics"].as_array().unwrap();
+    let diagnostic = |code: &str| {
+        diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == code)
+            .unwrap_or_else(|| panic!("missing {code} in {diagnostics:?}"))
+    };
 
-        let unknown_argument = diagnostic("RY090");
-        assert_eq!(
-            unknown_argument["range"],
-            json!({
-                "start": {"line": 0, "character": 22},
-                "end": {"line": 0, "character": 29}
-            })
-        );
+    let unknown_argument = diagnostic("RY090");
+    assert_eq!(
+        unknown_argument["range"],
+        json!({
+            "start": {"line": 0, "character": 22},
+            "end": {"line": 0, "character": 29}
+        })
+    );
 
-        let missing_argument = diagnostic("RY091");
-        assert_eq!(
-            missing_argument["range"],
-            json!({
-                "start": {"line": 0, "character": 15},
-                "end": {"line": 0, "character": 30}
-            })
-        );
+    let missing_argument = diagnostic("RY091");
+    assert_eq!(
+        missing_argument["range"],
+        json!({
+            "start": {"line": 0, "character": 15},
+            "end": {"line": 0, "character": 30}
+        })
+    );
 
-        let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
-        client
-            .receive_until(|message| message.get("id") == Some(&json!(shutdown_id)), 16)
-            .await
-            .unwrap();
-        client.notify("exit", Value::Null).await.unwrap();
-        drop(client);
-        tokio::time::timeout(std::time::Duration::from_secs(3), server)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-    });
+    let shutdown_id = client.request("shutdown", Value::Null).await.unwrap();
+    client
+        .receive_until(|message| message.get("id") == Some(&json!(shutdown_id)), 16)
+        .await
+        .unwrap();
+    client.notify("exit", Value::Null).await.unwrap();
+    drop(client);
+    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }
 
-#[test]
-fn default_disabled_rules_are_absent_in_both_modes() {
+#[tokio::test]
+async fn default_disabled_rules_are_absent_in_both_modes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture
         .write_file("diagnostic.R", "if (1L) print(1)\n")
         .unwrap();
     let cli = cli_diagnostics(&fixture, &[]);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let lsp = runtime.block_on(run_with_diagnostics(&fixture, "diagnostic.R", json!({})));
+    let lsp = run_with_diagnostics(&fixture, "diagnostic.R", json!({})).await;
     assert_eq!(lsp, cli);
     assert!(lsp.is_empty());
 }
 
-#[test]
-fn explicit_empty_select_disables_default_rules_in_both_modes() {
+#[tokio::test]
+async fn explicit_empty_select_disables_default_rules_in_both_modes() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", "select = []\n").unwrap();
     fixture
         .write_file("diagnostic.R", "x <- missing_name\n")
         .unwrap();
     let cli = cli_diagnostics(&fixture, &[]);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let lsp = runtime.block_on(run_with_diagnostics(&fixture, "diagnostic.R", json!({})));
+    let lsp = run_with_diagnostics(&fixture, "diagnostic.R", json!({})).await;
     assert_eq!(lsp, cli);
     assert!(lsp.is_empty());
 }
 
-#[test]
-fn package_import_from_value_position_is_clean_in_both_modes() {
+#[tokio::test]
+async fn package_import_from_value_position_is_clean_in_both_modes() {
     let fixture = FixtureProject::from_fixture("complete-package").unwrap();
     let cli = cli_diagnostics(&fixture, &[]);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let lsp = runtime.block_on(run_with_diagnostics(&fixture, "R/imports.R", json!({})));
+    let lsp = run_with_diagnostics(&fixture, "R/imports.R", json!({})).await;
     assert!(
         !cli.iter()
             .any(|d| d.code == "RY010" && d.message.contains("imported_helper"))
@@ -527,65 +496,58 @@ fn ry_executable_from_cargo_json_anchors_relative_paths() {
     );
 }
 
-#[test]
-fn file_suppression_actions_follow_the_current_document_comments() {
+#[tokio::test]
+async fn file_suppression_actions_follow_the_current_document_comments() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("actions.R", "").unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(async {
-        let (mut session, server) =
-            harness::spawn_session(&[fixture.root()], json!({}), None).await;
-        let uri = file_uri(&fixture.path("actions.R"));
-        for (index, (text, offered)) in [
-            (
-                "x <- \"# ry: ignore-file\"\ny <- never_defined_name\n",
-                true,
-            ),
-            ("# RY:IGNORE-FILE\ny <- never_defined_name\n", false),
-            (
-                "# See ry: ignore-file in the docs\ny <- never_defined_name\n",
-                true,
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let mark = session.publication_mark();
-            if index == 0 {
-                session.open(&uri, 1, text).await.unwrap();
-            } else {
-                session
-                    .change(&uri, index as i32 + 1, json!([{"text": text}]))
-                    .await
-                    .unwrap();
-            }
-            let published = session
-                .published_diagnostics_after(&uri, mark)
+    let (mut session, server) = harness::spawn_session(&[fixture.root()], json!({}), None).await;
+    let uri = file_uri(&fixture.path("actions.R"));
+    for (index, (text, offered)) in [
+        (
+            "x <- \"# ry: ignore-file\"\ny <- never_defined_name\n",
+            true,
+        ),
+        ("# RY:IGNORE-FILE\ny <- never_defined_name\n", false),
+        (
+            "# See ry: ignore-file in the docs\ny <- never_defined_name\n",
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mark = session.publication_mark();
+        if index == 0 {
+            session.open(&uri, 1, text).await.unwrap();
+        } else {
+            session
+                .change(&uri, index as i32 + 1, json!([{"text": text}]))
                 .await
                 .unwrap();
-            let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
-            assert_eq!(!diagnostics.is_empty(), offered);
-            let actions = session.request("textDocument/codeAction", json!({
-                "textDocument": {"uri": uri},
-                "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}},
-                "context": {"diagnostics": diagnostics}
-            })).await.unwrap();
-            let file_action = actions.as_array().and_then(|actions| {
-                actions
-                    .iter()
-                    .find(|action| action["title"] == "Ignore all diagnostics in this file")
-            });
-            assert_eq!(file_action.is_some(), offered, "{text}");
-            if let Some(action) = file_action {
-                assert_eq!(
-                    action["edit"]["changes"][&uri][0]["newText"],
-                    "# ry: ignore-file\n"
-                );
-            }
         }
-        harness::join_session(session, server).await;
-    });
+        let published = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
+        assert_eq!(!diagnostics.is_empty(), offered);
+        let actions = session.request("textDocument/codeAction", json!({
+            "textDocument": {"uri": uri},
+            "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}},
+            "context": {"diagnostics": diagnostics}
+        })).await.unwrap();
+        let file_action = actions.as_array().and_then(|actions| {
+            actions
+                .iter()
+                .find(|action| action["title"] == "Ignore all diagnostics in this file")
+        });
+        assert_eq!(file_action.is_some(), offered, "{text}");
+        if let Some(action) = file_action {
+            assert_eq!(
+                action["edit"]["changes"][&uri][0]["newText"],
+                "# ry: ignore-file\n"
+            );
+        }
+    }
+    harness::join_session(session, server).await;
 }

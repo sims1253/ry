@@ -242,6 +242,30 @@ where
         .await
     }
 
+    /// Wait for the first `method` notification after `mark` that satisfies
+    /// `predicate`.
+    pub async fn notification_after(
+        &mut self,
+        mark: u64,
+        method: &str,
+        predicate: impl Fn(&Value) -> bool,
+    ) -> io::Result<Value> {
+        self.receive_matching(mark.saturating_add(1), |message| {
+            message.get("method").and_then(Value::as_str) == Some(method)
+                && message.get("id").is_none()
+                && predicate(message)
+        })
+        .await
+    }
+
+    /// Whether a message already read after `mark` satisfies `predicate`,
+    /// without waiting for more.
+    pub fn routed_after(&self, mark: u64, predicate: impl Fn(&Value) -> bool) -> bool {
+        self.pending
+            .iter()
+            .any(|message| message.sequence > mark && predicate(&message.value))
+    }
+
     /// Wait for the target URI's `publishDiagnostics` after `mark`,
     /// then drain every other `publishDiagnostics` that arrives within
     /// `idle_timeout` of the previous message. Returns a `BTreeMap` of

@@ -1,99 +1,114 @@
+//! The line quick-fix through the protocol: a repair keeps the existing
+//! comment and reason, merges into an existing rule list, repairs an invalid
+//! code, and removes only its target; a malformed directive withholds it.
+//! The marker table lives with the unit tests.
+
 mod harness;
 
-use harness::{file_uri, join_session, normalize_diagnostics, spawn_session};
+use harness::{ClientSession, file_uri, join_session, normalize_diagnostics, spawn_session};
 use ry_testkit::FixtureProject;
-use serde_json::json;
+use serde_json::{Value, json};
 
-#[test]
-fn suppression_edits_remove_only_the_target_and_preserve_source() {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-        for (source, target_line, code, editable) in [
-            ("x <- never_bound_here # explanation\ny <- other\n", 0, "RY010", true),
-            ("x <- never_bound_here # noqa: RY040 [note]\ny <- other\n", 0, "RY010", true),
-            ("x <- never_bound_here # noqa RY040 reason\ny <- other\n", 0, "RY010", true),
-            ("x <- never_bound_here # ry:ignore RY040 reason\ny <- other\n", 0, "RY010", true),
-            ("x <- 1L + \"s\"; y <- never_bound_here # ry: ignore[RY040] reason\nz <- other\n", 0, "RY010", true),
-            ("x <- \"café # text\nlast\"\ny <- never_bound_here # explanation\nz <- other\n", 2, "RY010", true),
-            ("x <- \"first\nlast\" + 1L\ny <- other\n", 0, "RY040", false),
-        ] {
-            let fixture = FixtureProject::empty().unwrap();
-            let path = fixture.write_file("main.R", source).unwrap();
-            let uri = file_uri(&path);
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            let mark = session.publication_mark();
-            session.open(&uri, 1, source).await.unwrap();
-            let before = session.published_diagnostics_after(&uri, mark).await.unwrap();
-            let diagnostics = normalize_diagnostics(&before);
-            let diagnostic = diagnostics.iter().find(|d| d["code"] == code && d["range"]["start"]["line"] == target_line).unwrap_or_else(|| panic!("target diagnostic: {before}"));
-            let request = json!({"textDocument":{"uri":uri}, "range":diagnostic["range"], "context":{"diagnostics":[diagnostic]}});
-            let mut foreign = request.clone();
-            foreign["context"]["diagnostics"][0]["source"] = json!("lintr");
-            assert!(session.request("textDocument/codeAction", foreign).await.unwrap().is_null());
-            let actions = session.request("textDocument/codeAction", request).await.unwrap();
-            let title = format!("Ignore {code} on this line");
-            let action = actions.as_array().unwrap().iter().find(|action| action["title"] == title);
-            assert_eq!(action.is_some(), editable, "{actions}");
-            if let Some(action) = action {
-                let edit = &action["edit"]["changes"][&uri][0];
-                let line = target_line as usize;
-                let old_line = source.lines().nth(line).unwrap();
-                assert_eq!(edit["range"]["start"], json!({"line":line,"character":0}));
-                assert_eq!(edit["range"]["end"], json!({"line":line,"character":old_line.encode_utf16().count()}));
-                let start: usize = source.split_inclusive('\n').take(line).map(str::len).sum();
-                let mut updated = source.to_string();
-                updated.replace_range(start..start + old_line.len(), edit["newText"].as_str().unwrap());
-                if old_line.contains("# ry: ignore[") {
-                    assert!(updated.contains("# ry: ignore[RY010, RY040] reason"));
-                    assert_eq!(updated.matches("# ry: ignore[").count(), 1);
-                } else if let Some(comment) = old_line.find("# ") {
-                    assert!(updated.contains(&old_line[comment..]));
-                }
-                assert_eq!(&updated[..start], &source[..start]);
-                let mark = session.publication_mark();
-                session.change(&uri, 2, json!([{"text":updated}])).await.unwrap();
-                let after = session.published_diagnostics_after(&uri, mark).await.unwrap();
-                let expected: Vec<_> = diagnostics.iter().filter(|d| *d != diagnostic).cloned().collect();
-                assert_eq!(normalize_diagnostics(&after), expected, "{updated}");
-            }
-            join_session(session, server).await;
-        }
+async fn line_action(session: &mut ClientSession, uri: &str, diagnostic: &Value) -> Option<Value> {
+    let code = diagnostic["code"].as_str().unwrap();
+    let request = json!({
+        "textDocument": {"uri": uri},
+        "range": diagnostic["range"],
+        "context": {"diagnostics": [diagnostic]}
     });
+    let actions = session
+        .request("textDocument/codeAction", request)
+        .await
+        .unwrap();
+    actions.as_array().and_then(|actions| {
+        actions
+            .iter()
+            .find(|action| action["title"] == format!("Ignore {code} on this line"))
+            .cloned()
+    })
 }
 
-#[test]
-fn malformed_directive_actions_either_repair_or_withhold() {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-        for (marker, repairs) in [
-            ("ry: ignore[RX040] reason", true),
-            ("ry: ignore[RY040]]", false),
-            ("ry: ignore[RY040] ]", false),
-            ("noqa[RY040]]", false),
-        ] {
-            let source = format!("\"a\" + 1L # {marker}\n");
-            let fixture = FixtureProject::empty().unwrap();
-            let path = fixture.write_file("main.R", &source).unwrap();
-            let uri = file_uri(&path);
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            let mark = session.publication_mark();
-            session.open(&uri, 1, &source).await.unwrap();
-            let before = session.published_diagnostics_after(&uri, mark).await.unwrap();
-            let diagnostics = normalize_diagnostics(&before);
-            let target = diagnostics.iter().find(|diag| diag["code"] == "RY040").unwrap_or_else(|| panic!("{marker}: {before}"));
-            let request = json!({"textDocument":{"uri":uri}, "range":target["range"], "context":{"diagnostics":[target]}});
-            let actions = session.request("textDocument/codeAction", request).await.unwrap();
-            let action = actions.as_array().and_then(|actions| actions.iter().find(|action| action["title"] == "Ignore RY040 on this line"));
-            assert_eq!(action.is_some(), repairs, "{marker}: {actions}");
-            if let Some(action) = action {
-                let new_text = action["edit"]["changes"][&uri][0]["newText"].as_str().unwrap();
-                assert!(new_text.ends_with("# ry: ignore[RY040] reason"));
-                let updated = format!("{new_text}\n");
-                let mark = session.publication_mark();
-                session.change(&uri, 2, json!([{"text":updated}])).await.unwrap();
-                let after = session.published_diagnostics_after(&uri, mark).await.unwrap();
-                let after = normalize_diagnostics(&after);
-                assert!(!after.iter().any(|diag| diag["code"] == "RY040" || diag["code"] == "RY112"), "{marker}: {after:?}");
-            }
-            join_session(session, server).await;
-        }
-    });
+fn find(diagnostics: &[Value], code: &str, line: u64) -> Value {
+    diagnostics
+        .iter()
+        .find(|diag| diag["code"] == code && diag["range"]["start"]["line"] == line)
+        .unwrap_or_else(|| panic!("{code} on line {line}: {diagnostics:?}"))
+        .clone()
+}
+
+#[tokio::test]
+async fn suppression_edits_repair_merge_and_withhold() {
+    let mut text = concat!(
+        "x <- never_bound_here # explanation\n",
+        "\"a\" + 1L # ry: ignore[RY040]]\n",
+        "y <- 1L + \"s\"; z <- never_bound_here # ry: ignore[RY040] reason\n",
+        "\"b\" + 1L # ry: ignore[RX040] reason\n",
+    )
+    .to_string();
+    let fixture = FixtureProject::empty().unwrap();
+    let uri = file_uri(&fixture.write_file("main.R", &text).unwrap());
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let mark = session.publication_mark();
+    session.open(&uri, 1, &text).await.unwrap();
+    let publish = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    let mut diagnostics = normalize_diagnostics(&publish);
+
+    let mut foreign = find(&diagnostics, "RY010", 0);
+    foreign["source"] = json!("lintr");
+    assert!(line_action(&mut session, &uri, &foreign).await.is_none());
+    let malformed = find(&diagnostics, "RY040", 1);
+    assert!(line_action(&mut session, &uri, &malformed).await.is_none());
+
+    for (version, (code, line, expected)) in [
+        ("RY010", 0, "# explanation"),
+        ("RY010", 2, "# ry: ignore[RY010, RY040] reason"),
+        ("RY040", 3, "# ry: ignore[RY040] reason"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let target = find(&diagnostics, code, line);
+        let action = line_action(&mut session, &uri, &target)
+            .await
+            .unwrap_or_else(|| panic!("{code} on line {line}"));
+        let edit = &action["edit"]["changes"][&uri][0];
+        let old_line = text.lines().nth(line as usize).unwrap().to_string();
+        assert_eq!(
+            edit["range"]["start"],
+            json!({"line": line, "character": 0})
+        );
+        assert_eq!(
+            edit["range"]["end"],
+            json!({"line": line, "character": old_line.encode_utf16().count()})
+        );
+        let new_line = edit["newText"].as_str().unwrap();
+        assert!(new_line.contains(expected), "{new_line}");
+        assert_eq!(new_line.matches("# ry: ignore[").count(), 1);
+        text = text.replacen(&old_line, new_line, 1);
+        let mark = session.publication_mark();
+        session
+            .change(&uri, version as i32 + 2, json!([{"text": text}]))
+            .await
+            .unwrap();
+        let publish = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        let after = normalize_diagnostics(&publish);
+        // Only the target leaves, plus the RY112 of the repaired directive.
+        let expected: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                **diag != target
+                    && !(diag["code"] == "RY112" && diag["range"]["start"]["line"] == line)
+            })
+            .cloned()
+            .collect();
+        assert_eq!(after, expected, "{text}");
+        diagnostics = after;
+    }
+    join_session(session, server).await;
 }

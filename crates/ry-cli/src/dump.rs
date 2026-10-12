@@ -530,11 +530,7 @@ pub(crate) fn run_dump_types(
         // note on stderr here too so a dump over the same project reports
         // the same precision loss without polluting the JSON on stdout.
         for (path, reason) in &group.degraded_scopes {
-            eprintln!(
-                "ry: {}: degraded scope ({}); serialized inventory unavailable",
-                path.display(),
-                reason.description()
-            );
+            eprintln!("{}", reason.notice(path));
         }
         let captured = pipeline::check_project_with_facts_capture(group.check_input, false, vec![]);
         for (path, records) in captured.scopes {

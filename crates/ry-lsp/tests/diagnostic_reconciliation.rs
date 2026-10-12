@@ -34,17 +34,6 @@ use std::collections::BTreeMap;
 /// server's 180ms debounce so a multi-URI burst is fully collected.
 const DRAIN: std::time::Duration = std::time::Duration::from_millis(500);
 
-fn run<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(future)
-}
-
 /// RY010 (unbound name) occurrences in one URI's stored publication.
 fn ry010_count(diagnostics: &[Value]) -> usize {
     diagnostics
@@ -77,69 +66,67 @@ fn assert_ry010(store: &BTreeMap<String, Vec<Value>>, uri: &str) {
 /// cleared; the other kept its squiggles indefinitely. Re-enabling
 /// must restore both, proving the clear was a publication and not a
 /// permanent silencing.
-#[test]
-fn disabling_the_folder_clears_every_open_document() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("a.R", "x <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("b.R", "y <- never_bound_here\n")
-            .unwrap();
-        let a_uri = file_uri(&fixture.path("a.R"));
-        let b_uri = file_uri(&fixture.path("b.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+#[tokio::test]
+async fn disabling_the_folder_clears_every_open_document() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("a.R", "x <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("b.R", "y <- never_bound_here\n")
+        .unwrap();
+    let a_uri = file_uri(&fixture.path("a.R"));
+    let b_uri = file_uri(&fixture.path("b.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-        sync_barrier(&mut session, &a_uri).await;
-        let mark = session.publication_mark();
-        session
-            .open(&a_uri, 1, "x <- never_bound_here\n")
-            .await
-            .unwrap();
-        session
-            .open(&b_uri, 1, "y <- never_bound_here\n")
-            .await
-            .unwrap();
-        let initial = session
-            .quiesce_diagnostics(&a_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_ry010(&initial, &a_uri);
-        assert_ry010(&initial, &b_uri);
+    sync_barrier(&mut session, &a_uri).await;
+    let mark = session.publication_mark();
+    session
+        .open(&a_uri, 1, "x <- never_bound_here\n")
+        .await
+        .unwrap();
+    session
+        .open(&b_uri, 1, "y <- never_bound_here\n")
+        .await
+        .unwrap();
+    let initial = session
+        .quiesce_diagnostics(&a_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&initial, &a_uri);
+    assert_ry010(&initial, &b_uri);
 
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeConfiguration",
-                json!({ "settings": { "ry": { "enable": false } } }),
-            )
-            .await
-            .unwrap();
-        let disabled = session
-            .quiesce_diagnostics(&a_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_cleared(&disabled, &a_uri);
-        assert_cleared(&disabled, &b_uri);
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": { "ry": { "enable": false } } }),
+        )
+        .await
+        .unwrap();
+    let disabled = session
+        .quiesce_diagnostics(&a_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&disabled, &a_uri);
+    assert_cleared(&disabled, &b_uri);
 
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeConfiguration",
-                json!({ "settings": { "ry": { "enable": true } } }),
-            )
-            .await
-            .unwrap();
-        let enabled = session
-            .quiesce_diagnostics(&a_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_ry010(&enabled, &a_uri);
-        assert_ry010(&enabled, &b_uri);
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": { "ry": { "enable": true } } }),
+        )
+        .await
+        .unwrap();
+    let enabled = session
+        .quiesce_diagnostics(&a_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&enabled, &a_uri);
+    assert_ry010(&enabled, &b_uri);
 
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }
 
 /// The mixed case: excluding two of three open documents. Both excluded
@@ -148,67 +135,65 @@ fn disabling_the_folder_clears_every_open_document() {
 /// one, the surviving debounce task could carry exactly that URI and
 /// mask the bug, while main clears at most the single URI the
 /// surviving task carries.
-#[test]
-fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("a.R", "x <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("c.R", "z <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("b.R", "y <- never_bound_here\n")
-            .unwrap();
-        let a_uri = file_uri(&fixture.path("a.R"));
-        let b_uri = file_uri(&fixture.path("b.R"));
-        let c_uri = file_uri(&fixture.path("c.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+#[tokio::test]
+async fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("a.R", "x <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("c.R", "z <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("b.R", "y <- never_bound_here\n")
+        .unwrap();
+    let a_uri = file_uri(&fixture.path("a.R"));
+    let b_uri = file_uri(&fixture.path("b.R"));
+    let c_uri = file_uri(&fixture.path("c.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-        sync_barrier(&mut session, &a_uri).await;
-        let mark = session.publication_mark();
-        session
-            .open(&a_uri, 1, "x <- never_bound_here\n")
-            .await
-            .unwrap();
-        session
-            .open(&b_uri, 1, "y <- never_bound_here\n")
-            .await
-            .unwrap();
-        session
-            .open(&c_uri, 1, "z <- never_bound_here\n")
-            .await
-            .unwrap();
-        let initial = session
-            .quiesce_diagnostics(&a_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_ry010(&initial, &a_uri);
-        assert_ry010(&initial, &b_uri);
-        assert_ry010(&initial, &c_uri);
+    sync_barrier(&mut session, &a_uri).await;
+    let mark = session.publication_mark();
+    session
+        .open(&a_uri, 1, "x <- never_bound_here\n")
+        .await
+        .unwrap();
+    session
+        .open(&b_uri, 1, "y <- never_bound_here\n")
+        .await
+        .unwrap();
+    session
+        .open(&c_uri, 1, "z <- never_bound_here\n")
+        .await
+        .unwrap();
+    let initial = session
+        .quiesce_diagnostics(&a_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&initial, &a_uri);
+    assert_ry010(&initial, &b_uri);
+    assert_ry010(&initial, &c_uri);
 
-        fixture
-            .write_file("ry.toml", "exclude = [\"a.R\", \"c.R\"]\n")
-            .unwrap();
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeConfiguration",
-                json!({ "settings": {} }),
-            )
-            .await
-            .unwrap();
-        let excluded = session
-            .quiesce_diagnostics(&b_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_cleared(&excluded, &a_uri);
-        assert_cleared(&excluded, &c_uri);
-        assert_ry010(&excluded, &b_uri);
+    fixture
+        .write_file("ry.toml", "exclude = [\"a.R\", \"c.R\"]\n")
+        .unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": {} }),
+        )
+        .await
+        .unwrap();
+    let excluded = session
+        .quiesce_diagnostics(&b_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&excluded, &a_uri);
+    assert_cleared(&excluded, &c_uri);
+    assert_ry010(&excluded, &b_uri);
 
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }
 
 /// Removing a workspace folder must also clear the closed, previously
@@ -216,58 +201,56 @@ fn excluding_two_of_three_open_documents_clears_only_the_excluded_ones() {
 /// documents. `keep.R` in the surviving folder stays open and drives
 /// the republish; `B/a.R` was published through the background index
 /// while the folder existed.
-#[test]
-fn removing_a_folder_clears_its_closed_disk_files() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("A/keep.R", "w <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("B/a.R", "x <- never_bound_here\n")
-            .unwrap();
-        let folder_a = fixture.path("A");
-        let folder_b = fixture.path("B");
-        let folder_b_uri = file_uri(&folder_b);
-        let a_uri = file_uri(&fixture.path("B/a.R"));
-        let keep_uri = file_uri(&fixture.path("A/keep.R"));
-        let (mut session, server) = spawn_session(&[&folder_a, &folder_b], json!({}), None).await;
+#[tokio::test]
+async fn removing_a_folder_clears_its_closed_disk_files() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("A/keep.R", "w <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("B/a.R", "x <- never_bound_here\n")
+        .unwrap();
+    let folder_a = fixture.path("A");
+    let folder_b = fixture.path("B");
+    let folder_b_uri = file_uri(&folder_b);
+    let a_uri = file_uri(&fixture.path("B/a.R"));
+    let keep_uri = file_uri(&fixture.path("A/keep.R"));
+    let (mut session, server) = spawn_session(&[&folder_a, &folder_b], json!({}), None).await;
 
-        sync_barrier(&mut session, &keep_uri).await;
-        let mark = session.publication_mark();
-        session
-            .open(&keep_uri, 1, "w <- never_bound_here\n")
-            .await
-            .unwrap();
-        let initial = session
-            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_ry010(&initial, &a_uri);
-        assert_ry010(&initial, &keep_uri);
+    sync_barrier(&mut session, &keep_uri).await;
+    let mark = session.publication_mark();
+    session
+        .open(&keep_uri, 1, "w <- never_bound_here\n")
+        .await
+        .unwrap();
+    let initial = session
+        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&initial, &a_uri);
+    assert_ry010(&initial, &keep_uri);
 
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeWorkspaceFolders",
-                json!({
-                    "event": {
-                        "added": [],
-                        "removed": [{"uri": folder_b_uri, "name": "B"}]
-                    }
-                }),
-            )
-            .await
-            .unwrap();
-        let removed = session
-            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_cleared(&removed, &a_uri);
-        assert_ry010(&removed, &keep_uri);
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeWorkspaceFolders",
+            json!({
+                "event": {
+                    "added": [],
+                    "removed": [{"uri": folder_b_uri, "name": "B"}]
+                }
+            }),
+        )
+        .await
+        .unwrap();
+    let removed = session
+        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&removed, &a_uri);
+    assert_ry010(&removed, &keep_uri);
 
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }
 
 /// Closed disk files a rescan drops — deleted from disk, or newly
@@ -275,80 +258,149 @@ fn removing_a_folder_clears_its_closed_disk_files() {
 /// and drives the publish; `a.R` and `c.R` are never opened, so their
 /// diagnostics arrive through the background index while `keep.R` is
 /// open.
-#[test]
-fn closed_disk_files_dropped_by_a_rescan_get_an_empty_publication() {
-    run(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("ry.toml", "\n").unwrap();
-        fixture
-            .write_file("a.R", "x <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("c.R", "z <- never_bound_here\n")
-            .unwrap();
-        fixture
-            .write_file("keep.R", "w <- never_bound_here\n")
-            .unwrap();
-        let a_uri = file_uri(&fixture.path("a.R"));
-        let c_uri = file_uri(&fixture.path("c.R"));
-        let keep_uri = file_uri(&fixture.path("keep.R"));
-        let config_uri = file_uri(&fixture.path("ry.toml"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+#[tokio::test]
+async fn closed_disk_files_dropped_by_a_rescan_get_an_empty_publication() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("ry.toml", "\n").unwrap();
+    fixture
+        .write_file("a.R", "x <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("c.R", "z <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("keep.R", "w <- never_bound_here\n")
+        .unwrap();
+    let a_uri = file_uri(&fixture.path("a.R"));
+    let c_uri = file_uri(&fixture.path("c.R"));
+    let keep_uri = file_uri(&fixture.path("keep.R"));
+    let config_uri = file_uri(&fixture.path("ry.toml"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
-        sync_barrier(&mut session, &keep_uri).await;
+    sync_barrier(&mut session, &keep_uri).await;
+    let mark = session.publication_mark();
+    session
+        .open(&keep_uri, 1, "w <- never_bound_here\n")
+        .await
+        .unwrap();
+    let initial = session
+        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&initial, &a_uri);
+    assert_ry010(&initial, &c_uri);
+    assert_ry010(&initial, &keep_uri);
+
+    // Deletion: the rescan drops a.R from the index. A plain .R
+    // deletion is not itself a watched-file trigger, so the
+    // notification rides the ry.toml change the state machine's
+    // DeleteFile operation uses.
+    std::fs::remove_file(fixture.path("a.R")).unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({ "changes": [{ "uri": config_uri, "type": 2 }] }),
+        )
+        .await
+        .unwrap();
+    let deleted = session
+        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&deleted, &a_uri);
+    assert_ry010(&deleted, &keep_uri);
+
+    // New exclusion: c.R stays on disk and indexed, but the
+    // config change drops it from the eligible set.
+    fixture
+        .write_file("ry.toml", "exclude = [\"c.R\"]\n")
+        .unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": {} }),
+        )
+        .await
+        .unwrap();
+    let excluded = session
+        .quiesce_diagnostics(&keep_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&excluded, &c_uri);
+    assert_ry010(&excluded, &keep_uri);
+
+    join_session(session, server).await;
+}
+
+/// Removing the last workspace folder stops analysis of its closed files.
+/// The client's `rootUri` named the removed folder, and neither a later
+/// configuration change (a rescan) nor a watched-file event may index the
+/// removed directory again through that root.
+#[tokio::test]
+async fn removing_every_folder_never_reindexes_the_removed_root() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("open.R", "w <- never_bound_here\n")
+        .unwrap();
+    fixture
+        .write_file("closed.R", "x <- never_bound_here\n")
+        .unwrap();
+    let root_uri = file_uri(fixture.root());
+    let open_uri = file_uri(&fixture.path("open.R"));
+    let closed_uri = file_uri(&fixture.path("closed.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+
+    sync_barrier(&mut session, &open_uri).await;
+    let mark = session.publication_mark();
+    session
+        .open(&open_uri, 1, "w <- never_bound_here\n")
+        .await
+        .unwrap();
+    let initial = session
+        .quiesce_diagnostics(&open_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_ry010(&initial, &closed_uri);
+
+    let mark = session.publication_mark();
+    session
+        .notify(
+            "workspace/didChangeWorkspaceFolders",
+            json!({"event": {"added": [], "removed": [{"uri": root_uri, "name": "root"}]}}),
+        )
+        .await
+        .unwrap();
+    let removed = session
+        .quiesce_diagnostics(&closed_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert_cleared(&removed, &closed_uri);
+
+    // The still-open buffer is analyzed as a loose file; its publication
+    // marks the end of each pass.
+    for (method, params) in [
+        (
+            "workspace/didChangeConfiguration",
+            json!({ "settings": {} }),
+        ),
+        (
+            "workspace/didChangeWatchedFiles",
+            json!({ "changes": [{ "uri": closed_uri, "type": 2 }] }),
+        ),
+    ] {
         let mark = session.publication_mark();
-        session
-            .open(&keep_uri, 1, "w <- never_bound_here\n")
+        session.notify(method, params).await.unwrap();
+        let store = session
+            .quiesce_diagnostics(&open_uri, mark, DRAIN)
             .await
             .unwrap();
-        let initial = session
-            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_ry010(&initial, &a_uri);
-        assert_ry010(&initial, &c_uri);
-        assert_ry010(&initial, &keep_uri);
+        assert!(
+            store.get(&closed_uri).is_none_or(Vec::is_empty),
+            "{method} re-indexed the removed folder: {store:?}"
+        );
+    }
 
-        // Deletion: the rescan drops a.R from the index. A plain .R
-        // deletion is not itself a watched-file trigger, so the
-        // notification rides the ry.toml change the state machine's
-        // DeleteFile operation uses.
-        std::fs::remove_file(fixture.path("a.R")).unwrap();
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeWatchedFiles",
-                json!({ "changes": [{ "uri": config_uri, "type": 2 }] }),
-            )
-            .await
-            .unwrap();
-        let deleted = session
-            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_cleared(&deleted, &a_uri);
-        assert_ry010(&deleted, &keep_uri);
-
-        // New exclusion: c.R stays on disk and indexed, but the
-        // config change drops it from the eligible set.
-        fixture
-            .write_file("ry.toml", "exclude = [\"c.R\"]\n")
-            .unwrap();
-        let mark = session.publication_mark();
-        session
-            .notify(
-                "workspace/didChangeConfiguration",
-                json!({ "settings": {} }),
-            )
-            .await
-            .unwrap();
-        let excluded = session
-            .quiesce_diagnostics(&keep_uri, mark, DRAIN)
-            .await
-            .unwrap();
-        assert_cleared(&excluded, &c_uri);
-        assert_ry010(&excluded, &keep_uri);
-
-        join_session(session, server).await;
-    })
+    join_session(session, server).await;
 }

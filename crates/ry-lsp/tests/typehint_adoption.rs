@@ -3,6 +3,7 @@
 mod harness;
 
 use harness::{join_session, spawn_session, sync_barrier};
+use ry_lsp::test_seam::Seam;
 use ry_testkit::{FixtureProject, file_uri};
 use serde_json::{Value, json};
 
@@ -264,7 +265,7 @@ async fn change_transition_to_collision_keeps_the_edit_with_its_original_uri() {
 
     // A's edit waits after the handler has received it. B opens at
     // the same display key before A's edit commits.
-    ry_lsp::test_seam::arm_change_transition();
+    ry_lsp::test_seam::arm(Seam::ChangeTransition);
     session
         .change(
             &uris[0],
@@ -278,7 +279,7 @@ async fn change_transition_to_collision_keeps_the_edit_with_its_original_uri() {
         .unwrap();
     tokio::time::timeout(
         Duration::from_secs(10),
-        ry_lsp::test_seam::wait_change_transition(),
+        ry_lsp::test_seam::wait_arrived(Seam::ChangeTransition),
     )
     .await
     .unwrap();
@@ -295,10 +296,10 @@ async fn change_transition_to_collision_keeps_the_edit_with_its_original_uri() {
             .count(),
         1
     );
-    ry_lsp::test_seam::release_change_transition();
+    ry_lsp::test_seam::release(Seam::ChangeTransition);
     tokio::time::timeout(
         Duration::from_secs(10),
-        ry_lsp::test_seam::wait_change_transition_landed(),
+        ry_lsp::test_seam::wait_landed(Seam::ChangeTransition),
     )
     .await
     .unwrap();
@@ -333,14 +334,14 @@ async fn change_waiting_on_a_close_cannot_recreate_the_closed_document() {
         .await
         .unwrap();
 
-    ry_lsp::test_seam::arm_change_transition();
+    ry_lsp::test_seam::arm(Seam::ChangeTransition);
     session
         .change(&uri, 2, json!([{"text": "x <- FALSE\n"}]))
         .await
         .unwrap();
     tokio::time::timeout(
         Duration::from_secs(10),
-        ry_lsp::test_seam::wait_change_transition(),
+        ry_lsp::test_seam::wait_arrived(Seam::ChangeTransition),
     )
     .await
     .unwrap();
@@ -361,10 +362,10 @@ async fn change_waiting_on_a_close_cannot_recreate_the_closed_document() {
             .as_array()
             .is_some_and(Vec::is_empty)
     );
-    ry_lsp::test_seam::release_change_transition();
+    ry_lsp::test_seam::release(Seam::ChangeTransition);
     tokio::time::timeout(
         Duration::from_secs(10),
-        ry_lsp::test_seam::wait_change_transition_landed(),
+        ry_lsp::test_seam::wait_landed(Seam::ChangeTransition),
     )
     .await
     .unwrap();
@@ -396,11 +397,15 @@ async fn same_version_collision_rejects_a_parse_from_the_previous_uri() {
     }
     let uris = paths.map(|path| file_uri(&path).unwrap());
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    ry_lsp::test_seam::arm();
+    ry_lsp::test_seam::arm(Seam::Parse);
+    ry_lsp::test_seam::arm(Seam::DidChange);
     session.open(&uris[0], 1, sources[0]).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), ry_lsp::test_seam::wait_arrived())
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        ry_lsp::test_seam::wait_arrived(Seam::Parse),
+    )
+    .await
+    .unwrap();
 
     // Both native buffers carry version 1, but have different ASTs.
     // B's publication parses B while A's earlier parse is parked.
@@ -410,10 +415,10 @@ async fn same_version_collision_rejects_a_parse_from_the_previous_uri() {
         .published_diagnostics_after(&uris[1], mark)
         .await
         .unwrap();
-    ry_lsp::test_seam::release_barrier();
+    ry_lsp::test_seam::release(Seam::Parse);
     tokio::time::timeout(
         Duration::from_secs(10),
-        ry_lsp::test_seam::wait_parse_landed(),
+        ry_lsp::test_seam::wait_landed(Seam::Parse),
     )
     .await
     .unwrap();

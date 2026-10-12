@@ -40,8 +40,8 @@ pub struct FolderSettings {
     pub configuration: Option<String>,
     /// Lint rule selection and severity overrides.
     pub lint: LintSettings,
-    /// Mirrors `--min-confidence`. One of "low", "medium", "high".
-    pub min_confidence: Option<String>,
+    /// Mirrors `--min-confidence`: "low", "medium", or "high".
+    pub min_confidence: Option<ry_checker::Confidence>,
     /// Mirrors `--baseline`.
     pub baseline: Option<String>,
     /// Whether ry is enabled for this folder. When `false`, the server
@@ -65,4 +65,24 @@ pub struct LintSettings {
     pub error: Option<Vec<String>>,
     /// Rules to treat as warnings.
     pub warn: Option<Vec<String>>,
+}
+
+impl LintSettings {
+    /// `config` with every rule list the editor set replacing its own.
+    pub fn apply(&self, config: &ry_config::Config) -> ry_config::Config {
+        let mut config = config.clone();
+        let replace = |target: &mut Vec<String>, value: &Option<Vec<String>>| {
+            if let Some(value) = value {
+                target.clone_from(value);
+            }
+        };
+        replace(&mut config.error, &self.error);
+        replace(&mut config.warn, &self.warn);
+        replace(&mut config.ignore, &self.ignore);
+        replace(&mut config.extend_select, &self.extend_select);
+        if self.select.is_some() {
+            config.select.clone_from(&self.select);
+        }
+        config
+    }
 }

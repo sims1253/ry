@@ -8,8 +8,8 @@
 //!   property plus the deterministic transcript tests) and
 //!   `configuration_refresh.rs`;
 //! * the cross-mode protocol gates — the `Published` normalization and
-//!   the CLI/LSP comparison plumbing — used by `protocol.rs`,
-//!   `protocol_contract.rs`, and `testkit.rs`, so the contract stays
+//!   the CLI/LSP comparison plumbing — used by `protocol.rs` and
+//!   `protocol_contract.rs`, so the contract stays
 //!   "LSP published diagnostics equal `ry check` run independently in
 //!   the same root".
 
@@ -148,11 +148,48 @@ pub async fn spawn_session(
     (session, server)
 }
 
-/// Shut down a session and bounded-join its server.
+/// Shut down a session and require the server to stop within 3s.
 pub async fn join_session(mut session: ClientSession, server: tokio::task::JoinHandle<()>) {
-    let _ = session.shutdown().await;
+    session.shutdown().await.expect("clean shutdown");
     drop(session);
-    let _ = tokio::time::timeout(Duration::from_secs(3), server).await;
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .expect("server stops after exit")
+        .expect("server task completes");
+}
+
+pub fn watching_capabilities() -> Value {
+    json!({"workspace": {"didChangeWatchedFiles": {"dynamicRegistration": true}}})
+}
+
+/// Answer the `client/registerCapability` request a watching client must
+/// receive, returning the registered watchers.
+pub async fn answer_watcher_registration(session: &mut ClientSession) -> Vec<Value> {
+    let request = session
+        .respond_to_request("client/registerCapability", Value::Null)
+        .await
+        .expect("a watching session must request watcher registration");
+    request["params"]["registrations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|registration| {
+            registration["registerOptions"]["watchers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Spawn a session advertising dynamic watched-file registration and
+/// answer the registration request.
+pub async fn spawn_watching_session(
+    roots: &[&Path],
+) -> (ClientSession, tokio::task::JoinHandle<()>) {
+    let (mut session, server) = spawn_session(roots, watching_capabilities(), None).await;
+    answer_watcher_registration(&mut session).await;
+    (session, server)
 }
 
 /// Synchronization barrier: a request/response round-trip that drains

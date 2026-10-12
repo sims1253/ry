@@ -10,49 +10,23 @@ use std::path::Path;
 
 /// Inventory of a serialized R data file (`.rda`/`.rdata`). `bindings`
 /// are the enumerated object names, or a conservative fallback when
-/// enumeration fails. The status distinguishes a known empty workspace,
-/// an absent path, and an inventory that could not be recovered.
+/// enumeration fails; `failure` is set when they are not the full inventory.
 #[derive(Clone)]
 pub(super) struct SerializedInventory {
     pub(super) bindings: HashSet<String>,
-    pub(super) status: InventoryStatus,
+    pub(super) failure: Option<InventoryFailure>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum InventoryStatus {
-    Complete,
-    /// The requested path did not exist when the single open was attempted.
-    Missing,
-    Unavailable(InventoryFailure),
-}
-
-impl InventoryStatus {
-    /// The degradation to report; a missing file reads as a read failure.
-    pub(super) fn failure(self) -> Option<InventoryFailure> {
-        match self {
-            Self::Complete => None,
-            Self::Missing => Some(InventoryFailure::ReadFailure),
-            Self::Unavailable(reason) => Some(reason),
-        }
-    }
-}
-
-/// Bounded cause of an unavailable serialized inventory. Adding a cause
-/// requires choosing its user message and whether a file-stem fallback is
-/// justified in `description` and `uses_file_stem` below.
+/// Why a serialized inventory is unavailable. Only resource limits justify
+/// the file-stem fallback binding.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-#[non_exhaustive]
 pub enum InventoryFailure {
     DecodedByteLimit,
     ParserResourceLimit,
-    /// The decoded bytes reached the parser but did not form valid input.
-    MalformedInput,
-    UnsupportedInput,
-    /// The serialized file could not be opened.
-    ReadFailure,
-    /// The opened file could not be read or decompressed.
-    DecodeFailure,
-    ParserFailure,
+    /// A valid serialization this reader does not handle (ASCII or native
+    /// binary encodings, or a non-pairlist object).
+    Unsupported,
+    Unreadable,
 }
 
 impl InventoryFailure {
@@ -60,16 +34,23 @@ impl InventoryFailure {
         match self {
             Self::DecodedByteLimit => "decoded-byte limit exceeded",
             Self::ParserResourceLimit => "serialized parser resource limit exceeded",
-            Self::MalformedInput => "malformed serialized input",
-            Self::UnsupportedInput => "unsupported serialized input",
-            Self::ReadFailure => "serialized input could not be read",
-            Self::DecodeFailure => "serialized input could not be decoded",
-            Self::ParserFailure => "serialized parser failed (cause unavailable)",
+            Self::Unsupported => "unsupported serialized input",
+            Self::Unreadable => "serialized input could not be read",
         }
     }
 
-    fn uses_file_stem(self) -> bool {
-        matches!(self, Self::DecodedByteLimit | Self::ParserResourceLimit)
+    /// The user-facing notice for a degraded scope at `path`.
+    pub fn notice(self, path: &Path) -> String {
+        let hint = if self == Self::DecodedByteLimit {
+            " Raise max-serialized-bytes in ry.toml to enumerate it."
+        } else {
+            ""
+        };
+        format!(
+            "ry: {}: degraded scope ({}); serialized inventory unavailable.{hint}",
+            path.display(),
+            self.description()
+        )
     }
 }
 
@@ -79,30 +60,30 @@ impl InventoryFailure {
 /// decompressed in-process; no R runtime or project code is executed.
 ///
 /// Resource limits use a single file-stem fallback ([`file_stem_binding`])
-/// so unbound-variable analysis (RY010) stays live. Malformed, unsupported,
-/// and unreadable inputs keep the existing empty-binding fallback, but are
-/// explicitly reported as unavailable rather than known empty.
-pub(super) fn serialized_inventory(path: &Path, cap: u64) -> SerializedInventory {
+/// so unbound-variable analysis (RY010) stays live. Other failures keep the
+/// empty-binding fallback but are reported as unavailable rather than known
+/// empty. `None` means the path does not exist.
+pub(super) fn serialized_inventory(path: &Path, cap: u64) -> Option<SerializedInventory> {
     let file = match File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return SerializedInventory {
-                bindings: HashSet::new(),
-                status: InventoryStatus::Missing,
-            };
-        }
-        Err(_) => {
-            return SerializedInventory {
-                bindings: HashSet::new(),
-                status: InventoryStatus::Unavailable(InventoryFailure::ReadFailure),
-            };
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return Some(unavailable(InventoryFailure::Unreadable)),
     };
     let mut inventory = cached_inventory(path, cap, file);
-    if matches!(inventory.status, InventoryStatus::Unavailable(reason) if reason.uses_file_stem()) {
+    if matches!(
+        inventory.failure,
+        Some(InventoryFailure::DecodedByteLimit | InventoryFailure::ParserResourceLimit)
+    ) {
         inventory.bindings = file_stem_binding(path);
     }
-    inventory
+    Some(inventory)
+}
+
+pub(super) fn unavailable(failure: InventoryFailure) -> SerializedInventory {
+    SerializedInventory {
+        bindings: HashSet::new(),
+        failure: Some(failure),
+    }
 }
 
 fn cached_inventory(path: &Path, cap: u64, file: File) -> SerializedInventory {
@@ -163,34 +144,31 @@ fn cached_inventory(path: &Path, cap: u64, file: File) -> SerializedInventory {
 }
 
 fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
-    let unavailable = |reason| SerializedInventory {
-        bindings: HashSet::new(),
-        status: InventoryStatus::Unavailable(reason),
-    };
     let bytes = match read_serialized(file, cap) {
         Decoded::Bytes(bytes) => bytes,
         Decoded::OverCap => return unavailable(InventoryFailure::DecodedByteLimit),
-        Decoded::Failed => return unavailable(InventoryFailure::DecodeFailure),
+        Decoded::Failed => return unavailable(InventoryFailure::Unreadable),
     };
     let payload = bytes
         .strip_prefix(b"RDX2\n")
         .or_else(|| bytes.strip_prefix(b"RDX3\n"))
         .unwrap_or(&bytes);
-    // R's A/B envelopes are valid serialization formats, but the reader
-    // accepts XDR only. Classify the encoding from its explicit magic
-    // before the upstream parser's generic InvalidFormat("Expected X") can
-    // incorrectly call a valid ASCII workspace malformed.
+    // The reader accepts XDR only; name R's other valid encodings instead of
+    // letting the parser's generic error call them unreadable.
     if [b"RDA2\n".as_slice(), b"RDA3\n", b"RDB2\n", b"RDB3\n"]
         .iter()
         .any(|magic| bytes.starts_with(magic))
         || payload.starts_with(b"A\n")
         || payload.starts_with(b"B\n")
     {
-        return unavailable(InventoryFailure::UnsupportedInput);
+        return unavailable(InventoryFailure::Unsupported);
     }
     let parsed = match rds2rust::read_rds_lazy(payload) {
         Ok(parsed) => parsed,
-        Err(error) => return unavailable(classify_parser_error(&error)),
+        Err(error) if is_resource_limit(&error) => {
+            return unavailable(InventoryFailure::ParserResourceLimit);
+        }
+        Err(_) => return unavailable(InventoryFailure::Unreadable),
     };
     let bindings = match parsed.object.into_concrete() {
         rds2rust::RObject::Pairlist(elements) => elements
@@ -198,38 +176,26 @@ fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
             .filter_map(|element| element.tag.map(|tag| tag.to_string()))
             .collect(),
         rds2rust::RObject::Null => HashSet::new(),
-        _ => return unavailable(InventoryFailure::UnsupportedInput),
+        _ => return unavailable(InventoryFailure::Unsupported),
     };
     SerializedInventory {
         bindings,
-        status: InventoryStatus::Complete,
+        failure: None,
     }
 }
 
-fn classify_parser_error(error: &rds2rust::Error) -> InventoryFailure {
+/// rds2rust 0.3 reports its parser limits only as `InvalidFormat` text.
+fn is_resource_limit(error: &rds2rust::Error) -> bool {
     match error {
-        rds2rust::Error::InvalidFormat(message)
-            if message.starts_with("Parser nesting limit ")
+        rds2rust::Error::MemoryBudgetExceeded { .. } => true,
+        rds2rust::Error::InvalidFormat(message) => {
+            message.starts_with("Parser nesting limit ")
                 || message.starts_with("Materialized allocation of ")
-                || message.starts_with("Allocation of ")
-                    && message.contains(" bytes exceeds cap")
-                || message.starts_with("Length ") && message.contains(" exceeds safe limit ")
-                || message.starts_with("Allocation size overflow while parsing ")
-                || message.starts_with("Length overflow while parsing ") =>
-        {
-            InventoryFailure::ParserResourceLimit
+                || message.contains(" bytes exceeds cap")
+                || message.contains(" exceeds safe limit ")
+                || message.contains(" overflow while parsing ")
         }
-        rds2rust::Error::MemoryBudgetExceeded { .. } => InventoryFailure::ParserResourceLimit,
-        rds2rust::Error::UnsupportedVersion(_) | rds2rust::Error::Unsupported(_) => {
-            InventoryFailure::UnsupportedInput
-        }
-        rds2rust::Error::InvalidFormat(_)
-        | rds2rust::Error::UnexpectedEof
-        | rds2rust::Error::UnexpectedEofDetail { .. }
-        | rds2rust::Error::Utf8(_)
-        | rds2rust::Error::InvalidReference(_)
-        | rds2rust::Error::TruncatedLazyPayload { .. } => InventoryFailure::MalformedInput,
-        _ => InventoryFailure::ParserFailure,
+        _ => false,
     }
 }
 
@@ -408,18 +374,14 @@ mod tests {
     fn multi_mib_workspace_enumerates_under_the_default_cap() {
         // gt ships an 8 MB decoded R/sysdata.rda; a default cap below real
         // sysdata sizes degrades every such package to a file-stem binding
-        // and re-flags all internal lookup tables as unbound (#378).
+        // and re-flags all internal lookup tables as unbound.
         let cap = ry_config::Config::default().max_serialized_bytes;
         let (_guard, path) = gzipped_sysdata(&[
             ("locales", ProbeValue::Doubles(200_000)),
             ("currencies", ProbeValue::Doubles(200_000)),
         ]);
-        let inventory = serialized_inventory(&path, cap);
-        assert_eq!(
-            inventory.status,
-            InventoryStatus::Complete,
-            "3.2 MB workspace must enumerate"
-        );
+        let inventory = serialized_inventory(&path, cap).unwrap();
+        assert_eq!(inventory.failure, None, "3.2 MB workspace must enumerate");
         assert!(inventory.bindings.contains("locales"));
         assert!(inventory.bindings.contains("currencies"));
     }
@@ -429,11 +391,8 @@ mod tests {
         // An explicit cap always wins over the raised default: users keep a
         // hard bound for adversarial or huge files.
         let (_guard, path) = gzipped_sysdata(&[("locales", ProbeValue::Doubles(4))]);
-        let inventory = serialized_inventory(&path, 64);
-        assert_eq!(
-            inventory.status,
-            InventoryStatus::Unavailable(InventoryFailure::DecodedByteLimit)
-        );
+        let inventory = serialized_inventory(&path, 64).unwrap();
+        assert_eq!(inventory.failure, Some(InventoryFailure::DecodedByteLimit));
         assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
     }
 
@@ -463,11 +422,8 @@ mod tests {
             "fixture should sit just past the cap, not far beyond it"
         );
         let (_guard, path) = gzipped_sysdata(&[("a", ProbeValue::Doubles(doubles))]);
-        let inventory = serialized_inventory(&path, cap);
-        assert_eq!(
-            inventory.status,
-            InventoryStatus::Unavailable(InventoryFailure::DecodedByteLimit)
-        );
+        let inventory = serialized_inventory(&path, cap).unwrap();
+        assert_eq!(inventory.failure, Some(InventoryFailure::DecodedByteLimit));
         assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
     }
 
@@ -478,89 +434,41 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sysdata.rda");
         std::fs::write(&path, b"not a serialization stream").expect("write garbage");
-        let inventory = serialized_inventory(&path, 1 << 20);
-        assert_eq!(
-            inventory.status,
-            InventoryStatus::Unavailable(InventoryFailure::MalformedInput)
-        );
+        let inventory = serialized_inventory(&path, 1 << 20).unwrap();
+        assert_eq!(inventory.failure, Some(InventoryFailure::Unreadable));
         assert!(inventory.bindings.is_empty());
     }
 
     #[test]
-    fn missing_path_is_distinct_from_empty_and_failed_reads() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sysdata.rda");
-        let inventory = serialized_inventory(&path, 4096);
-        assert_eq!(inventory.status, InventoryStatus::Missing);
-        assert!(inventory.bindings.is_empty());
-
-        std::fs::write(
-            &path,
-            include_bytes!("../../../testdata/serialized/empty.rda"),
-        )
-        .unwrap();
-        let inventory = serialized_inventory(&path, 4096);
-        assert_eq!(inventory.status, InventoryStatus::Complete);
-        assert!(inventory.bindings.is_empty());
-    }
-
-    #[test]
-    fn parser_message_classifier_distinguishes_limits_from_truncation() {
-        // These are the InvalidFormat message families in rds2rust 0.3.0.
-        // The real nested-limit fixture separately proves one path through
-        // the upstream parser. Constructed messages protect this classifier,
-        // but cannot detect a future upstream reword on their own.
-        let limits = [
-            "Parser nesting limit 64 exceeded",
-            "Materialized allocation of 1 bytes exceeds limits while parsing x",
-            "Allocation of 1 bytes exceeds cap while parsing x",
-            "Length 1 exceeds safe limit 1 while parsing x",
-            "Allocation size overflow while parsing x",
-            "Length overflow while parsing x",
-        ];
-        for message in limits {
-            assert_eq!(
-                classify_parser_error(&rds2rust::Error::InvalidFormat(message.into())),
-                InventoryFailure::ParserResourceLimit,
-                "{message}"
-            );
-        }
-        for message in [
-            "Length 1 (1 bytes) exceeds remaining 1 bytes while parsing x",
-            "invalid R serialization header",
+    fn parser_limit_messages_are_limits_and_truncation_is_not() {
+        // The InvalidFormat message families of rds2rust 0.3; a reword
+        // upstream would surface as a lost file-stem fallback.
+        for (message, limit) in [
+            ("Parser nesting limit 64 exceeded", true),
+            (
+                "Materialized allocation of 1 bytes exceeds limits while parsing x",
+                true,
+            ),
+            ("Allocation of 1 bytes exceeds cap while parsing x", true),
+            ("Length 1 exceeds safe limit 1 while parsing x", true),
+            ("Allocation size overflow while parsing x", true),
+            ("Length overflow while parsing x", true),
+            (
+                "Length 1 (1 bytes) exceeds remaining 1 bytes while parsing x",
+                false,
+            ),
+            ("invalid R serialization header", false),
         ] {
-            assert_eq!(
-                classify_parser_error(&rds2rust::Error::InvalidFormat(message.into())),
-                InventoryFailure::MalformedInput,
-                "{message}"
-            );
+            let error = rds2rust::Error::InvalidFormat(message.into());
+            assert_eq!(is_resource_limit(&error), limit, "{message}");
         }
-        assert_eq!(
-            classify_parser_error(&rds2rust::Error::MemoryBudgetExceeded {
-                needed: 2,
-                available: 1,
-            }),
-            InventoryFailure::ParserResourceLimit
-        );
-        assert_eq!(
-            classify_parser_error(&rds2rust::Error::ParseError("opaque".into())),
-            InventoryFailure::ParserFailure
-        );
-    }
-
-    #[test]
-    fn valid_ascii_workspace_is_unsupported_not_malformed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sysdata.rda");
-        let ascii = include_bytes!("../../../testdata/serialized/empty-ascii.rda");
-        assert!(ascii.starts_with(b"RDA2\nA\n"));
-        std::fs::write(&path, ascii).unwrap();
-        let inventory = serialized_inventory(&path, 4096);
-        assert_eq!(
-            inventory.status,
-            InventoryStatus::Unavailable(InventoryFailure::UnsupportedInput)
-        );
-        assert!(inventory.bindings.is_empty());
+        assert!(is_resource_limit(&rds2rust::Error::MemoryBudgetExceeded {
+            needed: 2,
+            available: 1,
+        }));
+        assert!(!is_resource_limit(&rds2rust::Error::ParseError(
+            "opaque".into()
+        )));
     }
 
     #[test]
@@ -568,10 +476,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sysdata.rda");
         let cap = 4096;
+        assert!(serialized_inventory(&path, cap).is_none());
         let empty = include_bytes!("../../../testdata/serialized/empty.rda");
         std::fs::write(&path, empty).unwrap();
-        let inventory = serialized_inventory(&path, cap);
-        assert_eq!(inventory.status, InventoryStatus::Complete);
+        let inventory = serialized_inventory(&path, cap).unwrap();
+        assert_eq!(inventory.failure, None);
         assert!(inventory.bindings.is_empty());
 
         let nested = include_bytes!("../../../testdata/serialized/nested-limit.rda");
@@ -581,16 +490,16 @@ mod tests {
             Decoded::Bytes(bytes) if bytes.len() < cap as usize
         ));
         std::fs::write(&path, nested).unwrap();
-        let inventory = serialized_inventory(&path, cap);
+        let inventory = serialized_inventory(&path, cap).unwrap();
         assert_eq!(
-            inventory.status,
-            InventoryStatus::Unavailable(InventoryFailure::ParserResourceLimit)
+            inventory.failure,
+            Some(InventoryFailure::ParserResourceLimit)
         );
         assert_eq!(inventory.bindings, HashSet::from(["sysdata".to_string()]));
 
         std::fs::write(&path, empty).unwrap();
-        let repaired = serialized_inventory(&path, cap);
-        assert_eq!(repaired.status, InventoryStatus::Complete);
+        let repaired = serialized_inventory(&path, cap).unwrap();
+        assert_eq!(repaired.failure, None);
         assert!(repaired.bindings.is_empty());
     }
 
@@ -610,10 +519,15 @@ mod tests {
             .set_modified(time)
             .unwrap();
         assert_eq!(
-            serialized_inventory(&path, 1).status,
-            InventoryStatus::Unavailable(InventoryFailure::DecodedByteLimit)
+            serialized_inventory(&path, 1).unwrap().failure,
+            Some(InventoryFailure::DecodedByteLimit)
         );
-        assert!(serialized_inventory(&path, 4096).bindings.contains("first"));
+        assert!(
+            serialized_inventory(&path, 4096)
+                .unwrap()
+                .bindings
+                .contains("first")
+        );
         let replacement = dir.path().join("new.rda");
         std::fs::write(&replacement, second).unwrap();
         std::fs::File::options()
@@ -625,7 +539,7 @@ mod tests {
         std::fs::rename(replacement, &path).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), time);
         assert_eq!(
-            serialized_inventory(&path, 4096).bindings,
+            serialized_inventory(&path, 4096).unwrap().bindings,
             HashSet::from(["other".into()])
         );
         #[cfg(unix)]
@@ -634,18 +548,30 @@ mod tests {
             std::os::unix::fs::symlink(&path, &alias).unwrap();
             assert!(
                 serialized_inventory(&alias, 4096)
+                    .unwrap()
                     .bindings
                     .contains("other")
             );
             assert_eq!(
-                serialized_inventory(&alias, 1).bindings,
+                serialized_inventory(&alias, 1).unwrap().bindings,
                 HashSet::from(["alias".into()])
             );
             assert_eq!(
-                serialized_inventory(&path, 1).bindings,
+                serialized_inventory(&path, 1).unwrap().bindings,
                 HashSet::from(["data".into()])
             );
         }
+    }
+
+    #[test]
+    fn only_the_byte_limit_notice_suggests_raising_the_cap() {
+        let path = Path::new("/project/R/sysdata.rda");
+        let byte_limit = InventoryFailure::DecodedByteLimit.notice(path);
+        assert!(byte_limit.contains("R/sysdata.rda"));
+        assert!(byte_limit.contains("max-serialized-bytes in ry.toml"));
+        let parser_limit = InventoryFailure::ParserResourceLimit.notice(path);
+        assert!(parser_limit.contains("serialized parser resource limit exceeded"));
+        assert!(!parser_limit.contains("Raise max-serialized-bytes"));
     }
 
     #[test]
@@ -657,7 +583,7 @@ mod tests {
             ("data_like", ProbeValue::Doubles(2)),
             ("flag_like", ProbeValue::Logicals(2)),
         ]);
-        let inventory = serialized_inventory(&path, 1 << 20);
+        let inventory = serialized_inventory(&path, 1 << 20).unwrap();
         assert_eq!(
             inventory.bindings,
             HashSet::from(["data_like".to_string(), "flag_like".to_string()])

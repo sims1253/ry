@@ -3,84 +3,80 @@ mod harness;
 use harness::{
     file_uri, join_session, normalize_diagnostics, ry_binary, spawn_session, sync_barrier,
 };
+use ry_lsp::test_seam::Seam;
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 use std::process::Command;
 
-#[test]
-fn first_diagnostics_wait_for_initial_workspace_bindings() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            fixture
-                .write_file(
-                    "ry.toml",
-                    "[[environments]]\nname = 'host'\nbindings = ['profile_binding']\npaths = ['main.R']\n",
-                )
-                .unwrap();
-            fixture.write_file("main.R", "profile_binding\n").unwrap();
-            let uri = file_uri(&fixture.path("main.R"));
-            ry_lsp::test_seam::arm_initial_index();
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            ry_lsp::test_seam::wait_initial_index().await;
-            let mark = session.publication_mark();
-            session.open(&uri, 1, "profile_binding\n").await.unwrap();
-            ry_lsp::test_seam::wait_initial_diagnostic_cycle().await;
-            ry_lsp::test_seam::release_initial_index();
-            let first = session.published_diagnostics_after(&uri, mark).await.unwrap();
-            assert!(
-                !normalize_diagnostics(&first).iter().any(|d| d["code"] == "RY010"),
-                "the first publication must use the configured host bindings: {first}"
-            );
-            join_session(session, server).await;
-        });
+#[tokio::test]
+async fn first_diagnostics_wait_for_initial_workspace_bindings() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file(
+            "ry.toml",
+            "[[environments]]\nname = 'host'\nbindings = ['profile_binding']\npaths = ['main.R']\n",
+        )
+        .unwrap();
+    fixture.write_file("main.R", "profile_binding\n").unwrap();
+    let uri = file_uri(&fixture.path("main.R"));
+    ry_lsp::test_seam::arm(Seam::InitialIndex);
+    ry_lsp::test_seam::arm(Seam::DiagnosticCycle);
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    ry_lsp::test_seam::wait_arrived(Seam::InitialIndex).await;
+    let mark = session.publication_mark();
+    session.open(&uri, 1, "profile_binding\n").await.unwrap();
+    ry_lsp::test_seam::wait_landed(Seam::DiagnosticCycle).await;
+    ry_lsp::test_seam::release(Seam::InitialIndex);
+    let first = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        !normalize_diagnostics(&first)
+            .iter()
+            .any(|d| d["code"] == "RY010"),
+        "the first publication must use the configured host bindings: {first}"
+    );
+    join_session(session, server).await;
 }
 
-#[test]
-fn removing_all_folders_during_initial_index_releases_diagnostics() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            let outside = FixtureProject::empty().unwrap();
-            let source = "1L + 'bad'\n";
-            outside.write_file("main.R", source).unwrap();
-            let uri = file_uri(&outside.path("main.R"));
-            ry_lsp::test_seam::arm_initial_index();
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            ry_lsp::test_seam::wait_initial_index().await;
-            let mark = session.publication_mark();
-            session.open(&uri, 1, source).await.unwrap();
-            ry_lsp::test_seam::wait_initial_diagnostic_cycle().await;
-            session
-                .notify(
-                    "workspace/didChangeWorkspaceFolders",
-                    json!({"event": {"added": [], "removed": [{
-                        "uri": file_uri(fixture.root()), "name": "removed"
-                    }]}}),
-                )
-                .await
-                .unwrap();
-            // No replacement scan runs after the last folder is removed.
-            // The outside document must become checkable without releasing
-            // the superseded scan first.
-            let publish = session
-                .published_diagnostics_after(&uri, mark)
-                .await
-                .unwrap();
-            assert!(
-                normalize_diagnostics(&publish)
-                    .iter()
-                    .any(|d| d["code"] == "RY040")
-            );
-            ry_lsp::test_seam::release_initial_index();
-            join_session(session, server).await;
-        });
+#[tokio::test]
+async fn removing_all_folders_during_initial_index_releases_diagnostics() {
+    let fixture = FixtureProject::empty().unwrap();
+    let outside = FixtureProject::empty().unwrap();
+    let source = "1L + 'bad'\n";
+    outside.write_file("main.R", source).unwrap();
+    let uri = file_uri(&outside.path("main.R"));
+    ry_lsp::test_seam::arm(Seam::InitialIndex);
+    ry_lsp::test_seam::arm(Seam::DiagnosticCycle);
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    ry_lsp::test_seam::wait_arrived(Seam::InitialIndex).await;
+    let mark = session.publication_mark();
+    session.open(&uri, 1, source).await.unwrap();
+    ry_lsp::test_seam::wait_landed(Seam::DiagnosticCycle).await;
+    session
+        .notify(
+            "workspace/didChangeWorkspaceFolders",
+            json!({"event": {"added": [], "removed": [{
+                "uri": file_uri(fixture.root()), "name": "removed"
+            }]}}),
+        )
+        .await
+        .unwrap();
+    // No replacement scan runs after the last folder is removed.
+    // The outside document must become checkable without releasing
+    // the superseded scan first.
+    let publish = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        normalize_diagnostics(&publish)
+            .iter()
+            .any(|d| d["code"] == "RY040")
+    );
+    ry_lsp::test_seam::release(Seam::InitialIndex);
+    join_session(session, server).await;
 }
 
 fn cli(fixture: &FixtureProject, target: &str) -> Vec<Value> {
@@ -97,119 +93,107 @@ fn cli(fixture: &FixtureProject, target: &str) -> Vec<Value> {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-#[test]
-fn latin1_sibling_survives_open_and_close() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            let source = "value <- make_label() + 1\n";
-            fixture.write_file("main.R", source).unwrap();
-            fixture
-                .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
-                .unwrap();
-            assert!(cli(&fixture, ".").iter().any(|d| d["code"] == "RY040"));
-            let uri = file_uri(&fixture.path("main.R"));
-            let helper_uri = file_uri(&fixture.path("helper.R"));
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            let mark = session.publication_mark();
-            session.open(&uri, 1, source).await.unwrap();
-            let first = session
-                .published_diagnostics_after(&uri, mark)
+#[tokio::test]
+async fn latin1_sibling_survives_open_and_close() {
+    let fixture = FixtureProject::empty().unwrap();
+    let source = "value <- make_label() + 1\n";
+    fixture.write_file("main.R", source).unwrap();
+    fixture
+        .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
+        .unwrap();
+    assert!(cli(&fixture, ".").iter().any(|d| d["code"] == "RY040"));
+    let uri = file_uri(&fixture.path("main.R"));
+    let helper_uri = file_uri(&fixture.path("helper.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let mark = session.publication_mark();
+    session.open(&uri, 1, source).await.unwrap();
+    let first = session
+        .published_diagnostics_after(&uri, mark)
+        .await
+        .unwrap();
+    let expected = normalize_diagnostics(&first);
+    assert!(expected.iter().any(|d| d["code"] == "RY040"), "{first}");
+    for (version, open) in [(2, true), (3, false)] {
+        if open {
+            session
+                .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
                 .await
                 .unwrap();
-            let expected = normalize_diagnostics(&first);
-            assert!(expected.iter().any(|d| d["code"] == "RY040"), "{first}");
-            for (version, open) in [(2, true), (3, false)] {
-                if open {
-                    session
-                        .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
-                        .await
-                        .unwrap();
-                } else {
-                    session
-                        .notify(
-                            "textDocument/didClose",
-                            json!({"textDocument":{"uri":helper_uri}}),
-                        )
-                        .await
-                        .unwrap();
-                }
-                sync_barrier(&mut session, &uri).await;
-                let mark = session.publication_mark();
-                session
-                    .change(&uri, version, json!([{"text":source}]))
-                    .await
-                    .unwrap();
-                let publish = session
-                    .published_diagnostics_after(&uri, mark)
-                    .await
-                    .unwrap();
-                assert_eq!(normalize_diagnostics(&publish), expected);
-            }
-            join_session(session, server).await;
-        });
+        } else {
+            session
+                .notify(
+                    "textDocument/didClose",
+                    json!({"textDocument":{"uri":helper_uri}}),
+                )
+                .await
+                .unwrap();
+        }
+        sync_barrier(&mut session, &uri).await;
+        let mark = session.publication_mark();
+        session
+            .change(&uri, version, json!([{"text":source}]))
+            .await
+            .unwrap();
+        let publish = session
+            .published_diagnostics_after(&uri, mark)
+            .await
+            .unwrap();
+        assert_eq!(normalize_diagnostics(&publish), expected);
+    }
+    join_session(session, server).await;
 }
 
 /// The decode-time encoding flag (#376) must reach the LSP through the
 /// same on-disk index the CLI uses: an unopened Latin-1 sibling is
 /// published with an RY000 encoding diagnostic, and opening it with
 /// client-decoded text (which is genuinely Unicode) clears the flag.
-#[test]
-fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            let source = "value <- make_label() + 1\n";
-            fixture.write_file("main.R", source).unwrap();
-            fixture
-                .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
-                .unwrap();
-            assert!(
-                cli(&fixture, "helper.R")
-                    .iter()
-                    .any(|d| d["code"] == "RY000"),
-                "the CLI must flag the non-UTF-8 sibling"
-            );
-            let main_uri = file_uri(&fixture.path("main.R"));
-            let helper_uri = file_uri(&fixture.path("helper.R"));
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            let mark = session.publication_mark();
-            session.open(&main_uri, 1, source).await.unwrap();
-            let published = session
-                .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
-                .await
-                .unwrap();
-            let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
-            assert!(
-                helper.iter().any(|d| d["code"] == "RY000"),
-                "the unopened Latin-1 sibling must carry the encoding flag: {helper:?}"
-            );
+#[tokio::test]
+async fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
+    let fixture = FixtureProject::empty().unwrap();
+    let source = "value <- make_label() + 1\n";
+    fixture.write_file("main.R", source).unwrap();
+    fixture
+        .write_file("helper.R", b"make_label <- function() \"caf\xe9\"\n")
+        .unwrap();
+    assert!(
+        cli(&fixture, "helper.R")
+            .iter()
+            .any(|d| d["code"] == "RY000"),
+        "the CLI must flag the non-UTF-8 sibling"
+    );
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let helper_uri = file_uri(&fixture.path("helper.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let mark = session.publication_mark();
+    session.open(&main_uri, 1, source).await.unwrap();
+    let published = session
+        .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
+        .await
+        .unwrap();
+    let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
+    assert!(
+        helper.iter().any(|d| d["code"] == "RY000"),
+        "the unopened Latin-1 sibling must carry the encoding flag: {helper:?}"
+    );
 
-            let mark = session.publication_mark();
-            session
-                .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
-                .await
-                .unwrap();
-            let republished = session
-                .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
-                .await
-                .unwrap();
-            let helper = republished
-                .get(&helper_uri)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            assert!(
-                helper.iter().all(|d| d["code"] != "RY000"),
-                "an opened buffer is client-supplied Unicode and must not be flagged: {helper:?}"
-            );
-            join_session(session, server).await;
-        });
+    let mark = session.publication_mark();
+    session
+        .open(&helper_uri, 1, "make_label <- function() \"café\"\n")
+        .await
+        .unwrap();
+    let republished = session
+        .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
+        .await
+        .unwrap();
+    let helper = republished
+        .get(&helper_uri)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    assert!(
+        helper.iter().all(|d| d["code"] != "RY000"),
+        "an opened buffer is client-supplied Unicode and must not be flagged: {helper:?}"
+    );
+    join_session(session, server).await;
 }
 
 /// The leading-BOM flag (#474) rides the same on-disk index path as the
@@ -217,64 +201,57 @@ fn unopened_latin1_sibling_is_flagged_in_both_frontends() {
 /// with an RY000 in the LSP exactly like in the CLI, and opening it
 /// with client-supplied buffer text (the client owns decoding) clears
 /// the disk-derived flag.
-#[test]
-fn unopened_bom_sibling_is_flagged_in_both_frontends() {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-        .block_on(async {
-            let fixture = FixtureProject::empty().unwrap();
-            let source = "value <- make_label() + 1\n";
-            fixture.write_file("main.R", source).unwrap();
-            fixture
-                .write_file("helper.R", b"\xef\xbb\xbfmake_label <- function() 1\n")
-                .unwrap();
-            assert!(
-                cli(&fixture, "helper.R")
-                    .iter()
-                    .any(|d| d["code"] == "RY000"),
-                "the CLI must flag the BOM-prefixed sibling"
-            );
-            let main_uri = file_uri(&fixture.path("main.R"));
-            let helper_uri = file_uri(&fixture.path("helper.R"));
-            let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-            let mark = session.publication_mark();
-            session.open(&main_uri, 1, source).await.unwrap();
-            let published = session
-                .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
-                .await
-                .unwrap();
-            let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
-            assert!(
-                helper.iter().any(|d| d["code"] == "RY000"),
-                "the unopened BOM sibling must carry the encoding flag: {helper:?}"
-            );
+#[tokio::test]
+async fn unopened_bom_sibling_is_flagged_in_both_frontends() {
+    let fixture = FixtureProject::empty().unwrap();
+    let source = "value <- make_label() + 1\n";
+    fixture.write_file("main.R", source).unwrap();
+    fixture
+        .write_file("helper.R", b"\xef\xbb\xbfmake_label <- function() 1\n")
+        .unwrap();
+    assert!(
+        cli(&fixture, "helper.R")
+            .iter()
+            .any(|d| d["code"] == "RY000"),
+        "the CLI must flag the BOM-prefixed sibling"
+    );
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let helper_uri = file_uri(&fixture.path("helper.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let mark = session.publication_mark();
+    session.open(&main_uri, 1, source).await.unwrap();
+    let published = session
+        .quiesce_diagnostics(&main_uri, mark, std::time::Duration::from_millis(60))
+        .await
+        .unwrap();
+    let helper = published.get(&helper_uri).map(Vec::as_slice).unwrap_or(&[]);
+    assert!(
+        helper.iter().any(|d| d["code"] == "RY000"),
+        "the unopened BOM sibling must carry the encoding flag: {helper:?}"
+    );
 
-            let mark = session.publication_mark();
-            session
-                .open(&helper_uri, 1, "make_label <- function() 1\n")
-                .await
-                .unwrap();
-            let republished = session
-                .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
-                .await
-                .unwrap();
-            let helper = republished
-                .get(&helper_uri)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            assert!(
-                helper.iter().all(|d| d["code"] != "RY000"),
-                "an opened buffer is client-supplied text and carries no disk-derived flag: {helper:?}"
-            );
-            join_session(session, server).await;
-        });
+    let mark = session.publication_mark();
+    session
+        .open(&helper_uri, 1, "make_label <- function() 1\n")
+        .await
+        .unwrap();
+    let republished = session
+        .quiesce_diagnostics(&helper_uri, mark, std::time::Duration::from_millis(60))
+        .await
+        .unwrap();
+    let helper = republished
+        .get(&helper_uri)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    assert!(
+        helper.iter().all(|d| d["code"] != "RY000"),
+        "an opened buffer is client-supplied text and carries no disk-derived flag: {helper:?}"
+    );
+    join_session(session, server).await;
 }
 
-#[test]
-fn environment_paths_are_anchored_globs_in_both_frontends() {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+#[tokio::test]
+async fn environment_paths_are_anchored_globs_in_both_frontends() {
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", "[[environments]]\nname = 'shiny'\nbindings = ['profile_binding']\npaths = ['pkg/inst/shiny/**', 'pkg/exact.R']\n").unwrap();
     fixture
@@ -315,5 +292,4 @@ fn environment_paths_are_anchored_globs_in_both_frontends() {
         );
     }
     join_session(session, server).await;
-    });
 }

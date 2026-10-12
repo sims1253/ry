@@ -24,9 +24,8 @@ pub(super) fn diagnostic_origin(path: &str, version: i32, generation: u64) -> se
 }
 
 /// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
-/// span's pre-resolved `line` / `col` and a single-character range. Used
-/// as a fallback (tests, missing source text); the production
-/// diagnostics path uses [`diagnostic_to_lsp_with_source`].
+/// span's pre-resolved `line` / `col` and a single-character range.
+#[cfg(test)]
 pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
     let start = Position {
         line: d.span.line as u32,

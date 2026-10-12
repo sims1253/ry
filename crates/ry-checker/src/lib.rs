@@ -18,6 +18,7 @@ mod declaration_check;
 pub mod diagnostics;
 mod fixpoint;
 pub mod format;
+pub mod frontend;
 mod higher_order;
 mod infer;
 mod literal_values;

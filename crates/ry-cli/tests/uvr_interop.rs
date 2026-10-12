@@ -3,7 +3,7 @@
 //! run R, activate uvr, or mutate the test process environment.
 
 use ry_testkit::{FixtureProject, JsonRpcProcess, file_uri};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -111,56 +111,10 @@ impl UvrFixture {
     fn lsp_diagnostics(&self, library: &Path) -> Vec<Value> {
         let mut command = self.command();
         command.arg("server").env("R_LIBS", library);
-        let mut client = JsonRpcProcess::spawn(&mut command).unwrap();
-        let root_uri = file_uri(&self.project).unwrap();
-        let source_uri = file_uri(&self.source()).unwrap();
-        let initialize = client
-            .request(
-                "initialize",
-                json!({
-                    "processId": null,
-                    "rootUri": root_uri,
-                    "capabilities": {},
-                    "workspaceFolders": [{"uri": root_uri, "name": "uvr fixture"}]
-                }),
-            )
-            .unwrap();
-        client
-            .receive_until(|message| message.get("id") == Some(&json!(initialize)), 32)
-            .unwrap();
-        client.notify("initialized", json!({})).unwrap();
-        client
-            .notify(
-                "textDocument/didOpen",
-                json!({
-                    "textDocument": {
-                        "uri": source_uri,
-                        "languageId": "r",
-                        "version": 1,
-                        "text": SOURCE
-                    }
-                }),
-            )
-            .unwrap();
-        let publication = client
-            .receive_until(
-                |message| {
-                    message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                        && message.pointer("/params/uri") == Some(&json!(source_uri))
-                },
-                64,
-            )
-            .unwrap();
-        let diagnostics = publication["params"]["diagnostics"]
-            .as_array()
+        JsonRpcProcess::spawn(&mut command)
             .unwrap()
-            .clone();
-        let shutdown = client.request("shutdown", Value::Null).unwrap();
-        client
-            .receive_until(|message| message.get("id") == Some(&json!(shutdown)), 16)
-            .unwrap();
-        client.notify("exit", Value::Null).unwrap();
-        diagnostics
+            .open_and_publish(&self.project, &file_uri(&self.source()).unwrap(), SOURCE)
+            .unwrap()
     }
 }
 

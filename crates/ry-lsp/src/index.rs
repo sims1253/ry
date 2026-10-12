@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 
 use rayon::prelude::*;
 use ry_config::Config;
-use ry_core::{RParser, SourceFile};
+use ry_core::SourceFile;
 
 /// Result of discovering and parsing all on-disk R files under a root.
 pub(crate) struct IndexOutcome {
@@ -23,13 +23,10 @@ pub(crate) struct IndexOutcome {
     pub truncated: Vec<ry_workspace::TruncationReport>,
 }
 
-/// Discover and parse all eligible R files under `root`, honouring
+/// Discover and parse all eligible sources under `walk_root`, honouring
 /// `exclude` patterns and bounded caps. `exclude_root` anchors those
-/// patterns and `include-build-ignored`: it is the directory of the
-/// `ry.toml` the config was loaded from (the CLI's config root), which
-/// only equals `root` when the config lives in the folder itself (#493).
-/// Returns parsed files plus any cap reports for the caller to surface
-/// as warnings.
+/// patterns and `include-build-ignored` at the config's directory, as the
+/// CLI does. Returns parsed files plus any cap reports to surface.
 pub(crate) fn index_workspace(
     walk_root: &Path,
     exclude_root: Option<&Path>,
@@ -75,72 +72,28 @@ fn index_pool() -> Option<&'static rayon::ThreadPool> {
 }
 
 /// Parse every discovered path on the lazily built [`index_pool`], in
-/// parallel when the pool is available and serially when it is not.
-///
-/// Error tolerance is unchanged from the previous serial loop: a file
-/// that cannot be read or parsed is skipped, never fatal to the index.
+/// parallel when the pool is available and serially when it is not. A
+/// file that cannot be read or parsed is skipped, never fatal to the index.
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
     parse_paths_with(paths, index_pool())
 }
 
-/// Parse `paths` with an explicit pool (or `None` to parse inline), so
-/// the serial fallback is exercisable without thread exhaustion.
-///
-/// Mirrors the CLI's `ry-cli::pipeline::parse_files`: each worker reuses
-/// a thread-local `RParser` (tree-sitter parsers are Send but neither
-/// Sync nor cheap to construct, so one per worker is the right
-/// granularity). When no pool could be built, the same per-file logic
-/// runs inline.
+/// Parse `paths` with an explicit pool, or inline without one.
 fn parse_paths_with(
     paths: &[PathBuf],
     pool: Option<&rayon::ThreadPool>,
 ) -> HashMap<String, Arc<SourceFile>> {
-    let parse_one = |path: &PathBuf| {
-        let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
-        let path_str = path.to_string_lossy().into_owned();
-        let mut file = parse_with_worker_parser(&path_str, &decoded.text)?;
-        file.native_path = Some(path.clone());
-        // Record where the on-disk bytes were not valid UTF-8, and
-        // whether they started with a BOM, so checks over the on-disk
-        // index flag files R's parser rejects (#376, #474).
-        decoded.attach_boundary_findings(&mut file);
-        Some((path_str, Arc::new(file)))
+    let parse_one = |path: &PathBuf| match ry_workspace::parse_source_file(path, None) {
+        Ok(file) => Some((file.path.clone(), Arc::new(file))),
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "index parse failed; skipping file");
+            None
+        }
     };
     match pool {
         Some(pool) => pool.install(|| paths.par_iter().filter_map(parse_one).collect()),
         None => paths.iter().filter_map(parse_one).collect(),
     }
-}
-
-/// Parse one file with this worker thread's cached parser, constructing
-/// it on first use. A construction failure skips this file (and leaves
-/// the slot empty so the next file retries) rather than failing the
-/// whole index.
-fn parse_with_worker_parser(path: &str, source: &str) -> Option<SourceFile> {
-    thread_local! {
-        static PARSER: std::cell::RefCell<Option<RParser>> =
-            const { std::cell::RefCell::new(None) };
-    }
-    PARSER.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let parser = match slot.as_mut() {
-            Some(parser) => parser,
-            None => match RParser::new() {
-                Ok(parser) => slot.insert(parser),
-                Err(error) => {
-                    tracing::warn!(path, %error, "index parser init failed; skipping file");
-                    return None;
-                }
-            },
-        };
-        match ry_workspace::reports::parse_source(parser, path, source) {
-            Ok(file) => Some(file),
-            Err(error) => {
-                tracing::debug!(path, %error, "index parse failed; skipping file");
-                None
-            }
-        }
-    })
 }
 
 #[cfg(test)]

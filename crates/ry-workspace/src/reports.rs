@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::path::Path;
 
 use ry_core::ast::{Expr, InputIssue, Stmt};
-use ry_core::parser::unquote_r_string;
+use ry_core::parser::{decode_r_quoted_name, unquote_r_string};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_core::{ParseError, RParser, SourceFile, Span, Tree};
 
@@ -174,36 +174,30 @@ fn simple_key(key: &str) -> Result<&str, ()> {
     }
 }
 
-fn execution_option(key: &str, value: &str, r_header: bool) -> Result<Option<bool>, ()> {
-    // knitr reads a dashed YAML option name as the dotted R name.
-    let key = simple_key(key)?;
-    let key = if r_header {
-        key.to_owned()
-    } else {
-        key.replace('-', ".")
-    };
-    // R headers need the uppercase literals; YAML booleans ignore case.
-    let value = value.trim();
-    let literal = |truth: &str| {
-        if r_header {
-            value == truth
-        } else {
-            value.eq_ignore_ascii_case(truth)
-        }
-    };
-    let boolean = if literal("TRUE") {
-        Ok(true)
-    } else if literal("FALSE") {
-        Ok(false)
-    } else {
-        Err(())
-    };
-    match key.as_str() {
+/// Classify one chunk option. `value` is the option's boolean literal, when
+/// it is one.
+fn execution_option(key: &str, value: Option<bool>) -> Result<Option<bool>, ()> {
+    match key {
         "child" | "ref.label" | "opts.label" | "engine" | "file" | "code" | "dependson" => Err(()),
-        "eval" => boolean.map(Some),
-        "include" | "echo" => boolean.map(|_| None),
+        "eval" => value.map(Some).ok_or(()),
+        "include" | "echo" => value.map(|_| None).ok_or(()),
         _ => Ok(None),
     }
+}
+
+/// A YAML chunk option. knitr reads a dashed name as the dotted R name, and
+/// YAML booleans ignore case.
+fn yaml_execution_option(key: &str, value: &str) -> Result<Option<bool>, ()> {
+    let key = simple_key(key)?.replace('-', ".");
+    let value = value.trim();
+    let boolean = if value.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if value.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    };
+    execution_option(&key, boolean)
 }
 
 /// Extract a YAML key without mistaking a colon inside a quoted key or value
@@ -278,40 +272,8 @@ fn execution_key(key: &str) -> bool {
     )
 }
 
-/// The end of an R raw string (`r"(...)"`, `R'--[...]--'`) opening at
-/// `pos`: `None` if no raw string opens there, `Some(None)` if it is never
-/// closed. An `r` that continues a name (`xr"(a)"`) opens nothing.
-fn raw_string_end(bytes: &[u8], pos: usize) -> Option<Option<usize>> {
-    let continues_name = pos.checked_sub(1).is_some_and(|before| {
-        let before = bytes[before];
-        before.is_ascii_alphanumeric() || matches!(before, b'.' | b'_') || !before.is_ascii()
-    });
-    if !matches!(bytes[pos], b'r' | b'R') || continues_name {
-        return None;
-    }
-    let quote = *bytes.get(pos + 1).filter(|&&b| b == b'"' || b == b'\'')?;
-    let dashes = bytes[pos + 2..].iter().take_while(|&&b| b == b'-').count();
-    let close = match bytes.get(pos + 2 + dashes)? {
-        b'(' => b')',
-        b'[' => b']',
-        b'{' => b'}',
-        _ => return None,
-    };
-    let mut terminator = vec![close];
-    terminator.extend(std::iter::repeat_n(b'-', dashes));
-    terminator.push(quote);
-    let content = pos + 3 + dashes;
-    Some(
-        bytes[content..]
-            .windows(terminator.len())
-            .position(|window| window == terminator)
-            .map(|offset| content + offset + terminator.len()),
-    )
-}
-
-/// Split only at header commas outside ordinary quotes and nested syntax.
-/// With `r_syntax`, R raw strings are single values as well.
-fn header_fields(inner: &str, r_syntax: bool) -> Result<Vec<&str>, HeaderError> {
+/// Split a YAML flow mapping only at commas outside quotes and nesting.
+fn header_fields(inner: &str) -> Result<Vec<&str>, HeaderError> {
     let bytes = inner.as_bytes();
     let mut fields = Vec::new();
     let mut start = 0;
@@ -320,13 +282,6 @@ fn header_fields(inner: &str, r_syntax: bool) -> Result<Vec<&str>, HeaderError> 
     let mut pos = 0;
     while pos < bytes.len() {
         let byte = bytes[pos];
-        if quote.is_none()
-            && r_syntax
-            && let Some(end) = raw_string_end(bytes, pos)
-        {
-            pos = end.ok_or(HeaderError::Unsupported)?;
-            continue;
-        }
         if let Some(delimiter) = quote {
             if byte == b'\\' {
                 pos = (pos + 2).min(bytes.len());
@@ -340,11 +295,10 @@ fn header_fields(inner: &str, r_syntax: bool) -> Result<Vec<&str>, HeaderError> 
                 b'\'' | b'"' | b'`' => {
                     // A YAML quote opens only a whole scalar; inside a plain
                     // scalar (`a"b`) it is text, so refuse to guess fields.
-                    let opens = r_syntax
-                        || matches!(
-                            inner[..pos].trim_end().bytes().next_back(),
-                            None | Some(b'{' | b'[' | b',' | b':')
-                        );
+                    let opens = matches!(
+                        inner[..pos].trim_end().bytes().next_back(),
+                        None | Some(b'{' | b'[' | b',' | b':')
+                    );
                     if !opens {
                         return Err(HeaderError::Unsupported);
                     }
@@ -395,7 +349,7 @@ fn root_flow_execution(line: &str) -> Result<bool, ()> {
     if inner.len() > MAX_HEADER_BYTES {
         return Err(());
     }
-    for field in header_fields(inner, false).map_err(|_| ())? {
+    for field in header_fields(inner).map_err(|_| ())? {
         let (key, _) = yaml_key_value(field)?.ok_or(())?;
         if !plain_key(key) {
             return Err(());
@@ -426,40 +380,70 @@ fn header_options(
     if !inner.is_empty() && !inner.starts_with([',', ' ']) {
         return Err(HeaderError::Unsupported);
     }
-    r_options(parser, path, inner, true)
+    r_options(parser, path, strip_label(inner), true)
 }
 
-/// Read comma-separated `key = value` R options. A header may carry a chunk
-/// label and bare fields; `#|` cell options must be plain assignments.
+/// Drop a chunk label the way knitr's `quote_label` reads it: an unquoted
+/// first field without `=`. A quoted label stays as a bare argument.
+fn strip_label(inner: &str) -> &str {
+    let rest = inner.trim_start();
+    let rest = rest.strip_prefix(',').unwrap_or(rest);
+    if rest.trim_start().starts_with(['"', '\'']) {
+        return rest;
+    }
+    let end = rest.find(',').unwrap_or(rest.len());
+    if rest[..end].contains('=') {
+        rest
+    } else {
+        &rest[end..]
+    }
+}
+
+/// Read comma-separated `key = value` R options as knitr does: as the
+/// arguments of `alist(...)`. A header may carry bare fields; `#|` cell
+/// options must be named.
 fn r_options(
     parser: &mut RParser,
     path: &str,
     fields: &str,
     header: bool,
 ) -> Result<Option<bool>, HeaderError> {
+    let file = parser
+        .parse(path, &format!("alist({fields})"))
+        .map_err(|_| HeaderError::Unsupported)?;
+    let [Stmt::Expr(Expr::Call { args, .. })] = file.stmts.as_slice() else {
+        return Err(HeaderError::Unsupported);
+    };
+    if !file.parse_errors.is_empty() || has_runtime_chunk_options(&file.stmts) {
+        return Err(HeaderError::Unsupported);
+    }
+    if args.len() > MAX_HEADER_FIELDS {
+        return Err(HeaderError::Budget);
+    }
     let mut eval = None;
-    for field in header_fields(fields, true)? {
-        let (words, value) = match field.split_once('=') {
-            Some(pair) => pair,
-            None if header || field.trim().is_empty() => continue,
-            None => return Err(HeaderError::Unsupported),
-        };
-        // A header's leading label (`setup eval = FALSE`) is not part of the key.
-        let mut words = words.split_whitespace();
-        let key = words.next_back().unwrap_or("");
-        if !header && words.next().is_some() {
+    for arg in args {
+        let Some(name) = &arg.name else {
+            if header || matches!(arg.value, Expr::Missing(_)) {
+                continue;
+            }
             return Err(HeaderError::Unsupported);
-        }
-        if let Some(value) =
-            execution_option(key, value, true).map_err(|()| HeaderError::Unsupported)?
+        };
+        let raw =
+            name.len() > 1 && name.starts_with(['r', 'R']) && name[1..].starts_with(['"', '\'']);
+        let key = if raw {
+            unquote_r_string(name)
+        } else if is_quoted(name) {
+            decode_r_quoted_name(name).ok_or(HeaderError::Unsupported)?
+        } else {
+            name.clone()
+        };
+        let value = match arg.value {
+            Expr::Logical(value, _) => Some(value),
+            _ => None,
+        };
+        if let Some(value) = execution_option(&key, value).map_err(|()| HeaderError::Unsupported)?
             && eval.replace(value).is_some()
         {
-            return Err(HeaderError::Unsupported);
-        }
-        let expression = parser
-            .parse(path, value.trim())
-            .map_err(|_| HeaderError::Unsupported)?;
-        if !expression.parse_errors.is_empty() || has_runtime_chunk_options(&expression.stmts) {
             return Err(HeaderError::Unsupported);
         }
     }
@@ -505,7 +489,7 @@ fn cell_options(
         {
             return Err(unsupported);
         }
-        if let Some(value) = execution_option(key, value, false).map_err(|()| unsupported)?
+        if let Some(value) = yaml_execution_option(key, value).map_err(|()| unsupported)?
             && eval.replace(value).is_some()
         {
             return Err(unsupported);
@@ -1083,6 +1067,12 @@ mod tests {
             ),
             // Quoted keys are recognized; option names are case-sensitive.
             ("```{r, \"eval\"=FALSE}\nx <- 'a'\n```\n", 0, None),
+            ("```{r, r\"(eval)\"=FALSE}\nx <- 'a'\n```\n", 0, None),
+            (
+                "```{r, r\"(child)\"='other.Rmd'}\nx <- 1L\n```\n",
+                0,
+                Some("RY121"),
+            ),
             ("```{r}\n#| \"eval\": false\nx <- 'a'\n```\n", 0, None),
             ("```{r, Eval=FALSE}\n'x' + 1L\n```\n", 1, None),
             ("```{r}\n#| Eval: false\n'x' + 1L\n```\n", 1, None),

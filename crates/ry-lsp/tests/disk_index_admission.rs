@@ -91,156 +91,138 @@ async fn notify_created(session: &mut harness::ClientSession, uri: &str) {
 
 /// A watched creation under a directory pruned by a bare `exclude`
 /// pattern must not enter the index: the RY010 on `main.R` survives.
-#[test]
-fn vendor_excluded_directory_stays_out_of_the_watched_index() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+#[tokio::test]
+async fn vendor_excluded_directory_stays_out_of_the_watched_index() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "exclude = [\"vendor\"]\n")
         .unwrap();
-    runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("ry.toml", "exclude = [\"vendor\"]\n")
-            .unwrap();
-        fixture.write_file("main.R", MAIN).unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &main_uri).await;
+    fixture.write_file("main.R", MAIN).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &main_uri).await;
 
-        // `foo` is unbound: the initial index holds only `main.R`.
-        let mark = session.publication_mark();
-        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
-        assert_eq!(
-            count_ry010(&first),
-            1,
-            "foo must be unbound before vendor/ exists: {first}"
-        );
+    // `foo` is unbound: the initial index holds only `main.R`.
+    let mark = session.publication_mark();
+    let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+    assert_eq!(
+        count_ry010(&first),
+        1,
+        "foo must be unbound before vendor/ exists: {first}"
+    );
 
-        // Generate `vendor/defs.R` outside the editor and deliver the
-        // watched creation the client reports for it.
-        fixture.write_file("vendor/defs.R", DEFS).unwrap();
-        let defs_uri = file_uri(&fixture.path("vendor/defs.R"));
-        let event_mark = session.publication_mark();
-        notify_created(&mut session, &defs_uri).await;
-        let after = session
-            .published_diagnostics_after(&main_uri, event_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            count_ry010(&after),
-            1,
-            "vendor/defs.R is pruned by the walk and must stay out of the index: {after}"
-        );
-        assert_converges(
-            &after,
-            &fresh_main_diagnostics(&fixture).await,
-            "vendor exclusion",
-        );
+    // Generate `vendor/defs.R` outside the editor and deliver the
+    // watched creation the client reports for it.
+    fixture.write_file("vendor/defs.R", DEFS).unwrap();
+    let defs_uri = file_uri(&fixture.path("vendor/defs.R"));
+    let event_mark = session.publication_mark();
+    notify_created(&mut session, &defs_uri).await;
+    let after = session
+        .published_diagnostics_after(&main_uri, event_mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_ry010(&after),
+        1,
+        "vendor/defs.R is pruned by the walk and must stay out of the index: {after}"
+    );
+    assert_converges(
+        &after,
+        &fresh_main_diagnostics(&fixture).await,
+        "vendor exclusion",
+    );
 
-        join_session(session, server).await;
-    });
+    join_session(session, server).await;
 }
 
 /// The ancestor check must climb past the parent: a watched file nested
 /// two levels under the excluded directory stays out too.
-#[test]
-fn vendor_nested_grandchild_stays_out_of_the_watched_index() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+#[tokio::test]
+async fn vendor_nested_grandchild_stays_out_of_the_watched_index() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "exclude = [\"vendor\"]\n")
         .unwrap();
-    runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("ry.toml", "exclude = [\"vendor\"]\n")
-            .unwrap();
-        fixture.write_file("main.R", MAIN).unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &main_uri).await;
+    fixture.write_file("main.R", MAIN).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &main_uri).await;
 
-        let mark = session.publication_mark();
-        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
-        assert_eq!(
-            count_ry010(&first),
-            1,
-            "foo must be unbound before vendor/ exists: {first}"
-        );
+    let mark = session.publication_mark();
+    let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+    assert_eq!(
+        count_ry010(&first),
+        1,
+        "foo must be unbound before vendor/ exists: {first}"
+    );
 
-        fixture.write_file("vendor/nested/deep.R", DEFS).unwrap();
-        let deep_uri = file_uri(&fixture.path("vendor/nested/deep.R"));
-        let event_mark = session.publication_mark();
-        notify_created(&mut session, &deep_uri).await;
-        let after = session
-            .published_diagnostics_after(&main_uri, event_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            count_ry010(&after),
-            1,
-            "vendor/nested/deep.R is pruned by the walk and must stay out of the index: {after}"
-        );
-        assert_converges(
-            &after,
-            &fresh_main_diagnostics(&fixture).await,
-            "nested vendor exclusion",
-        );
+    fixture.write_file("vendor/nested/deep.R", DEFS).unwrap();
+    let deep_uri = file_uri(&fixture.path("vendor/nested/deep.R"));
+    let event_mark = session.publication_mark();
+    notify_created(&mut session, &deep_uri).await;
+    let after = session
+        .published_diagnostics_after(&main_uri, event_mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_ry010(&after),
+        1,
+        "vendor/nested/deep.R is pruned by the walk and must stay out of the index: {after}"
+    );
+    assert_converges(
+        &after,
+        &fresh_main_diagnostics(&fixture).await,
+        "nested vendor exclusion",
+    );
 
-        join_session(session, server).await;
-    });
+    join_session(session, server).await;
 }
 
 /// A watched creation under a `.Rbuildignore`-pruned directory must not
 /// enter the index either: the walk never descends into `vignettes/`
 /// here, so neither may the per-file path.
-#[test]
-fn buildignored_directory_stays_out_of_the_watched_index() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+#[tokio::test]
+async fn buildignored_directory_stays_out_of_the_watched_index() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: example\n")
         .unwrap();
-    runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("DESCRIPTION", "Package: example\n")
-            .unwrap();
-        fixture
-            .write_file(".Rbuildignore", "^vignettes$\n")
-            .unwrap();
-        fixture.write_file("main.R", MAIN).unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &main_uri).await;
+    fixture
+        .write_file(".Rbuildignore", "^vignettes$\n")
+        .unwrap();
+    fixture.write_file("main.R", MAIN).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &main_uri).await;
 
-        let mark = session.publication_mark();
-        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
-        assert_eq!(
-            count_ry010(&first),
-            1,
-            "foo must be unbound before vignettes/ exists: {first}"
-        );
+    let mark = session.publication_mark();
+    let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+    assert_eq!(
+        count_ry010(&first),
+        1,
+        "foo must be unbound before vignettes/ exists: {first}"
+    );
 
-        fixture.write_file("vignettes/drop.R", DEFS).unwrap();
-        let drop_uri = file_uri(&fixture.path("vignettes/drop.R"));
-        let event_mark = session.publication_mark();
-        notify_created(&mut session, &drop_uri).await;
-        let after = session
-            .published_diagnostics_after(&main_uri, event_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            count_ry010(&after),
-            1,
-            "vignettes/drop.R is build-ignored by the walk and must stay out of the index: {after}"
-        );
-        assert_converges(
-            &after,
-            &fresh_main_diagnostics(&fixture).await,
-            "buildignore exclusion",
-        );
+    fixture.write_file("vignettes/drop.R", DEFS).unwrap();
+    let drop_uri = file_uri(&fixture.path("vignettes/drop.R"));
+    let event_mark = session.publication_mark();
+    notify_created(&mut session, &drop_uri).await;
+    let after = session
+        .published_diagnostics_after(&main_uri, event_mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_ry010(&after),
+        1,
+        "vignettes/drop.R is build-ignored by the walk and must stay out of the index: {after}"
+    );
+    assert_converges(
+        &after,
+        &fresh_main_diagnostics(&fixture).await,
+        "buildignore exclusion",
+    );
 
-        join_session(session, server).await;
-    });
+    join_session(session, server).await;
 }
 
 /// The explicit override keeps working through the shared policy: a
@@ -248,60 +230,54 @@ fn buildignored_directory_stays_out_of_the_watched_index() {
 /// clears the RY010, matching a fresh server. This passes against the old
 /// per-file check too — it guards the new verdict against
 /// over-correction rather than discriminating the fix.
-#[test]
-fn include_build_ignored_override_still_admits_watched_files() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+#[tokio::test]
+async fn include_build_ignored_override_still_admits_watched_files() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("DESCRIPTION", "Package: example\n")
         .unwrap();
-    runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture
-            .write_file("DESCRIPTION", "Package: example\n")
-            .unwrap();
-        fixture
-            .write_file(".Rbuildignore", "^vignettes$\n")
-            .unwrap();
-        fixture
-            .write_file(
-                "ry.toml",
-                "include-build-ignored = [\"vignettes/keep.R\"]\n",
-            )
-            .unwrap();
-        fixture.write_file("main.R", MAIN).unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &main_uri).await;
+    fixture
+        .write_file(".Rbuildignore", "^vignettes$\n")
+        .unwrap();
+    fixture
+        .write_file(
+            "ry.toml",
+            "include-build-ignored = [\"vignettes/keep.R\"]\n",
+        )
+        .unwrap();
+    fixture.write_file("main.R", MAIN).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &main_uri).await;
 
-        let mark = session.publication_mark();
-        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
-        assert_eq!(
-            count_ry010(&first),
-            1,
-            "foo must be unbound before vignettes/ exists: {first}"
-        );
+    let mark = session.publication_mark();
+    let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+    assert_eq!(
+        count_ry010(&first),
+        1,
+        "foo must be unbound before vignettes/ exists: {first}"
+    );
 
-        fixture.write_file("vignettes/keep.R", DEFS).unwrap();
-        let keep_uri = file_uri(&fixture.path("vignettes/keep.R"));
-        let event_mark = session.publication_mark();
-        notify_created(&mut session, &keep_uri).await;
-        let after = session
-            .published_diagnostics_after(&main_uri, event_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            count_ry010(&after),
-            0,
-            "vignettes/keep.R is rescued by include_build_ignored and must enter the index: {after}"
-        );
-        assert_converges(
-            &after,
-            &fresh_main_diagnostics(&fixture).await,
-            "include_build_ignored override",
-        );
+    fixture.write_file("vignettes/keep.R", DEFS).unwrap();
+    let keep_uri = file_uri(&fixture.path("vignettes/keep.R"));
+    let event_mark = session.publication_mark();
+    notify_created(&mut session, &keep_uri).await;
+    let after = session
+        .published_diagnostics_after(&main_uri, event_mark)
+        .await
+        .unwrap();
+    assert_eq!(
+        count_ry010(&after),
+        0,
+        "vignettes/keep.R is rescued by include_build_ignored and must enter the index: {after}"
+    );
+    assert_converges(
+        &after,
+        &fresh_main_diagnostics(&fixture).await,
+        "include_build_ignored override",
+    );
 
-        join_session(session, server).await;
-    });
+    join_session(session, server).await;
 }
 
 /// A watched event addressed through a symlinked directory must not
@@ -313,45 +289,39 @@ fn include_build_ignored_override_still_admits_watched_files() {
 /// RY010 survives because the through-link spelling never lands — is
 /// what the refusal guarantees.
 #[cfg(unix)]
-#[test]
-fn through_symlink_directory_stays_out_of_the_watched_index() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
+#[tokio::test]
+async fn through_symlink_directory_stays_out_of_the_watched_index() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("main.R", MAIN).unwrap();
+    let main_uri = file_uri(&fixture.path("main.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &main_uri).await;
+
+    let mark = session.publication_mark();
+    let first = open_main_and_observe(&mut session, &main_uri, mark).await;
+    assert_eq!(
+        count_ry010(&first),
+        1,
+        "foo must be unbound before link/ exists: {first}"
+    );
+
+    // The bytes exist under their real spelling; the client watches
+    // the through-link spelling (built without the canonicalizing
+    // `file_uri`, which would resolve the link away).
+    fixture.write_file("real/defs.R", DEFS).unwrap();
+    std::os::unix::fs::symlink(fixture.path("real"), fixture.path("link")).unwrap();
+    let link_uri = format!("{}/link/defs.R", file_uri(fixture.root()).as_str());
+    let event_mark = session.publication_mark();
+    notify_created(&mut session, &link_uri).await;
+    let after = session
+        .published_diagnostics_after(&main_uri, event_mark)
+        .await
         .unwrap();
-    runtime.block_on(async {
-        let fixture = FixtureProject::empty().unwrap();
-        fixture.write_file("main.R", MAIN).unwrap();
-        let main_uri = file_uri(&fixture.path("main.R"));
-        let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-        sync_barrier(&mut session, &main_uri).await;
+    assert_eq!(
+        count_ry010(&after),
+        1,
+        "link/defs.R is skipped by the walk and must stay out of the index: {after}"
+    );
 
-        let mark = session.publication_mark();
-        let first = open_main_and_observe(&mut session, &main_uri, mark).await;
-        assert_eq!(
-            count_ry010(&first),
-            1,
-            "foo must be unbound before link/ exists: {first}"
-        );
-
-        // The bytes exist under their real spelling; the client watches
-        // the through-link spelling (built without the canonicalizing
-        // `file_uri`, which would resolve the link away).
-        fixture.write_file("real/defs.R", DEFS).unwrap();
-        std::os::unix::fs::symlink(fixture.path("real"), fixture.path("link")).unwrap();
-        let link_uri = format!("{}/link/defs.R", file_uri(fixture.root()).as_str());
-        let event_mark = session.publication_mark();
-        notify_created(&mut session, &link_uri).await;
-        let after = session
-            .published_diagnostics_after(&main_uri, event_mark)
-            .await
-            .unwrap();
-        assert_eq!(
-            count_ry010(&after),
-            1,
-            "link/defs.R is skipped by the walk and must stay out of the index: {after}"
-        );
-
-        join_session(session, server).await;
-    });
+    join_session(session, server).await;
 }

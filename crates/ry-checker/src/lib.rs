@@ -917,9 +917,8 @@ pub struct ScopeRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct UserFn {
     pub(crate) params: Vec<UserParam>,
-    /// Original default expressions, needed only when an adopted contract
-    /// asks for the possible effects of a known helper invocation.
-    pub(crate) source_params: Option<Arc<[Param]>>,
+    /// The source formals, for the effect summary of an invoked helper.
+    pub(crate) source_params: Arc<[Param]>,
     /// Definition identity, independent of a same-spelled binding elsewhere.
     pub(crate) source_path: String,
     pub(crate) definition_span: Span,
@@ -932,9 +931,9 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
-    /// Bounded writes outside this function's frame. Shared clones compute
-    /// the summary only if an opted-in declaration call needs it.
-    outward_writes: Arc<OnceLock<FxSet<String>>>,
+    /// Writes outside this function's frame. Shared clones compute the
+    /// summary only if an opted-in declaration call needs it.
+    outward_writes: Arc<OnceLock<collect::WriteSet>>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -964,13 +963,14 @@ pub(crate) struct CallerVisibleSignature {
 }
 
 impl UserFn {
-    pub(crate) fn outward_writes(&self) -> &FxSet<String> {
-        self.outward_writes.get_or_init(|| {
-            collect::called_function_outward_writes(
-                self.source_params.as_deref().unwrap_or(&[]),
-                &self.body,
-            )
-        })
+    fn definition_key(&self) -> (String, usize, usize) {
+        let span = self.definition_span;
+        (self.source_path.clone(), span.start, span.end)
+    }
+
+    pub(crate) fn outward_writes(&self) -> &collect::WriteSet {
+        self.outward_writes
+            .get_or_init(|| collect::function_outward_writes(&self.source_params, &self.body))
     }
 
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
@@ -1030,10 +1030,11 @@ impl ReturnSlots {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
     pub(crate) fns: FxMap<String, UserFn>,
-    /// Every direct literal, including definitions later replaced in `fns`.
-    /// Declaration checks address this map by source identity; ordinary
-    /// inference still uses the name-indexed last-definition table.
-    pub(crate) definition_fns: FxMap<(String, usize, usize), UserFn>,
+    /// Source identity of each live `fns` entry.
+    live_definitions: FxMap<(String, usize, usize), String>,
+    /// Direct literals a later same-name definition replaced in `fns`.
+    /// Declaration checks still address them by source identity.
+    replaced_fns: FxMap<(String, usize, usize), UserFn>,
     /// Global-frame direct literal bindings addressable by declaration
     /// source identity. Kept by binding name for cross-file invalidation;
     /// nested local literals cannot be changed by another file's global
@@ -1043,12 +1044,10 @@ pub(crate) struct FnTable {
     /// later assignment in that environment can replace a literal, its
     /// captured identity cannot prove a deferred call contract.
     pub(crate) rebound_after_capture: FxSet<(String, usize, usize)>,
-    /// Ordinary writes in this file's global frame, including expressions,
-    /// control tests, and `for` binders. Nested local writes are excluded.
-    pub(crate) global_capture_writes: FxSet<String>,
-    /// Explicit `<<-` may reach an enclosing/global frame. Kept separately
-    /// because ordinary nested locals must not invalidate other files.
-    pub(crate) outward_capture_writes: FxSet<String>,
+    /// Writes that may reach the global frame: ordinary writes there
+    /// (including expressions, control tests, and `for` binders) and
+    /// outward writes from any depth. Nested local writes are excluded.
+    pub(crate) capture_writes: collect::WriteSet,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -1080,15 +1079,63 @@ pub(crate) struct FnTable {
     forwarded_calls: Vec<ForwardedCall>,
 }
 
+/// Mark the literals a write set may rebind as no longer captured.
+fn rebind_captured(
+    rebound: &mut FxSet<(String, usize, usize)>,
+    writes: &collect::WriteSet,
+    literals: &FxMap<String, FxSet<(String, usize, usize)>>,
+) {
+    for (name, definitions) in literals {
+        if writes.may_write(name) {
+            rebound.extend(definitions.iter().cloned());
+        }
+    }
+}
+
 impl FnTable {
+    /// Any recorded direct literal, live or replaced, by source identity.
     pub(crate) fn definition(&self, path: &str, span: Span) -> Option<&UserFn> {
-        self.definition_fns
-            .get(&(path.to_string(), span.start, span.end))
+        let key = (path.to_string(), span.start, span.end);
+        match self.live_definitions.get(&key) {
+            Some(name) => self.fns.get(name),
+            None => self.replaced_fns.get(&key),
+        }
+    }
+
+    /// Whether the literal is still the last definition of some name.
+    pub(crate) fn is_live_definition(&self, path: &str, span: Span) -> bool {
+        self.live_definitions
+            .contains_key(&(path.to_string(), span.start, span.end))
+    }
+
+    /// Bind `name` to `function`, keeping a replaced literal addressable.
+    /// Returns the replaced entry's return slot.
+    fn insert_fn(&mut self, name: String, function: UserFn) -> Option<usize> {
+        let key = function.definition_key();
+        let prev = self.fns.insert(name.clone(), function);
+        if let Some(prev) = &prev {
+            let prev_key = prev.definition_key();
+            // Another name may still bind the same literal (`f <- g <- function() ...`).
+            if prev_key != key && self.live_definitions.get(&prev_key) == Some(&name) {
+                self.live_definitions.remove(&prev_key);
+                self.replaced_fns.insert(prev_key, prev.clone());
+            }
+        }
+        self.live_definitions.insert(key, name);
+        prev.map(|prev| prev.return_slot)
     }
 
     pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
         self.rebound_after_capture
             .contains(&(path.to_string(), span.start, span.end))
+    }
+
+    /// Note a bound name for the conservative escaped-spelling guards.
+    pub(crate) fn note_bound_name(&mut self, name: &str) {
+        self.has_escaped_binding_names |= name.contains('\\');
+        self.has_escaped_operator_names |=
+            infer::custom_operator::escaped_name_may_mask_operator(name);
+        self.has_escaped_slot_names |= infer::custom_operator::escaped_name_may_mask_slot(name);
     }
 
     fn append_collected(
@@ -1104,39 +1151,16 @@ impl FnTable {
         // not prove execution order. Broader syntactic writes come from the
         // scope-aware mutation scan, not `known_vars` (which deliberately
         // omits expression-position assignments and loop binders).
-        for name in collected
-            .global_capture_writes
-            .iter()
-            .chain(&collected.outward_capture_writes)
-        {
-            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
-                self.rebound_after_capture.extend(
-                    self.capture_literal_bindings
-                        .values()
-                        .flat_map(|definitions| definitions.iter().cloned()),
-                );
-            } else if let Some(definitions) = self.capture_literal_bindings.get(name) {
-                self.rebound_after_capture
-                    .extend(definitions.iter().cloned());
-            }
-        }
-        for name in self
-            .global_capture_writes
-            .iter()
-            .chain(&self.outward_capture_writes)
-        {
-            if name == crate::collect::UNKNOWN_CAPTURE_BINDING {
-                self.rebound_after_capture.extend(
-                    collected
-                        .capture_literal_bindings
-                        .values()
-                        .flat_map(|definitions| definitions.iter().cloned()),
-                );
-            } else if let Some(definitions) = collected.capture_literal_bindings.get(name) {
-                self.rebound_after_capture
-                    .extend(definitions.iter().cloned());
-            }
-        }
+        rebind_captured(
+            &mut self.rebound_after_capture,
+            &collected.capture_writes,
+            &self.capture_literal_bindings,
+        );
+        rebind_captured(
+            &mut self.rebound_after_capture,
+            &self.capture_writes,
+            &collected.capture_literal_bindings,
+        );
 
         let replaced: HashSet<_> = collected
             .fns
@@ -1150,13 +1174,13 @@ impl FnTable {
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
-        self.fns.extend(collected.fns.iter().map(|(name, f)| {
-            let mut f = f.clone();
-            f.return_slot += slot_offset;
-            (name.clone(), f)
-        }));
-        self.definition_fns
-            .extend(collected.definition_fns.iter().map(|(key, function)| {
+        for (name, function) in &collected.fns {
+            let mut function = function.clone();
+            function.return_slot += slot_offset;
+            self.insert_fn(name.clone(), function);
+        }
+        self.replaced_fns
+            .extend(collected.replaced_fns.iter().map(|(key, function)| {
                 let mut function = function.clone();
                 function.return_slot += slot_offset;
                 (key.clone(), function)
@@ -1169,10 +1193,7 @@ impl FnTable {
         }
         self.rebound_after_capture
             .extend(collected.rebound_after_capture.iter().cloned());
-        self.global_capture_writes
-            .extend(collected.global_capture_writes.iter().cloned());
-        self.outward_capture_writes
-            .extend(collected.outward_capture_writes.iter().cloned());
+        self.capture_writes.extend(collected.capture_writes.clone());
         self.s3_methods.extend(
             collected
                 .s3_methods
@@ -1227,7 +1248,7 @@ pub(crate) struct EnclosingFormals {
     pub(crate) literal_defaults_only: bool,
     /// A forced default may install one of these names in this frame at
     /// runtime; a same-named outward declaration is then not certain.
-    pub(crate) possible_default_writes: FxSet<String>,
+    pub(crate) possible_default_writes: collect::WriteSet,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,

@@ -410,13 +410,12 @@ impl AssignmentSemantics {
     }
 }
 
+/// The local function literal a declaration attaches to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeclarationTarget {
-    LocalFunction {
-        path: String,
-        definition: Span,
-        display_name: Option<String>,
-    },
+pub struct DeclarationTarget {
+    pub path: String,
+    pub definition: Span,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

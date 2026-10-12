@@ -3365,9 +3365,9 @@ impl Checker {
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
         let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
-            FxSet::default()
+            crate::collect::WriteSet::default()
         } else {
-            crate::collect::collect_default_writes(params).0
+            crate::collect::default_local_writes(params)
         };
         self.enclosing_formals.push(EnclosingFormals {
             names: params

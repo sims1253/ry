@@ -5,9 +5,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use ry_core::Span;
 use ry_core::declarations::{
-    AssignmentSemantics, AtomicMode, DeclarationRecord, DeclarationTarget, DeclaredLength,
-    DeclaredSignature, EvaluationSemantics, EvidenceUse, ParameterForm, SupplyStatus, Translation,
-    TypeExpr,
+    AssignmentSemantics, AtomicMode, DeclarationRecord, DeclaredLength, DeclaredSignature,
+    EvaluationSemantics, EvidenceUse, ParameterForm, SupplyStatus, Translation, TypeExpr,
 };
 use ry_core::types::{ClassVector, Length, MAX_UNION_MEMBERS, Mode, RType};
 
@@ -113,28 +112,35 @@ pub(crate) struct TargetDecision {
 pub(crate) struct DeclarationSet {
     records: Vec<DeclarationRecord>,
     targets: BTreeMap<TargetKey, TargetDecision>,
+    /// Whether any target selected a contract; checked on hot paths.
+    has_contracts: bool,
 }
 
 impl DeclarationSet {
     pub(crate) fn new(records: Vec<DeclarationRecord>) -> Self {
         let mut grouped: BTreeMap<TargetKey, Vec<&DeclarationRecord>> = BTreeMap::new();
         for record in &records {
-            let DeclarationTarget::LocalFunction {
-                path, definition, ..
-            } = &record.source.target;
+            let target = &record.source.target;
             grouped
-                .entry(TargetKey::new(path, *definition))
+                .entry(TargetKey::new(&target.path, target.definition))
                 .or_default()
                 .push(record);
         }
         let targets = grouped
             .into_iter()
             .map(|(key, records)| {
-                let DeclarationTarget::LocalFunction { definition, .. } = records[0].source.target;
+                let definition = records[0].source.target.definition;
                 (key, decide_target(definition, &records))
             })
-            .collect();
-        Self { records, targets }
+            .collect::<BTreeMap<_, _>>();
+        let has_contracts = targets
+            .values()
+            .any(|decision| decision.signature.is_some());
+        Self {
+            records,
+            targets,
+            has_contracts,
+        }
     }
 
     pub(crate) fn records(&self) -> &[DeclarationRecord] {
@@ -142,9 +148,7 @@ impl DeclarationSet {
     }
 
     pub(crate) fn has_contracts(&self) -> bool {
-        self.targets
-            .values()
-            .any(|decision| decision.signature.is_some())
+        self.has_contracts
     }
 
     pub(crate) fn target(&self, path: &str, span: Span) -> Option<&TargetDecision> {
@@ -343,29 +347,26 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
         };
         return combine_all(members.iter().map(|member| compare(member, constraint)));
     }
-    if let TypeExpr::ExactClass(expected) = constraint {
+    match constraint {
         // `RType::class` describes an explicit class attribute. An empty
         // attribute does not establish effective `class(x)`: dimensions and
         // implicit atomic classes may still determine that result. A class
         // test proves only that the value passed it.
-        return if !ty.class.known || ty.class.guarded || ty.class.len == 0 || ty.class.len >= 4 {
-            Evidence::Insufficient
-        } else if ty.class.len == 1
-            && ty.class.names[0]
-                .as_deref()
-                .is_some_and(|name| name == expected)
-        {
-            Evidence::Compatible
-        } else {
-            Evidence::Incompatible
-        };
-    }
-    if ty.mode == Mode::Opaque {
-        return Evidence::Insufficient;
-    }
-    match constraint {
+        TypeExpr::ExactClass(expected) => {
+            if !ty.class.known || ty.class.guarded || ty.class.len == 0 || ty.class.len >= 4 {
+                Evidence::Insufficient
+            } else if ty.class.len == 1
+                && ty.class.names[0]
+                    .as_deref()
+                    .is_some_and(|name| name == expected)
+            {
+                Evidence::Compatible
+            } else {
+                Evidence::Incompatible
+            }
+        }
+        _ if ty.mode == Mode::Opaque => Evidence::Insufficient,
         TypeExpr::Unknown => Evidence::Insufficient,
-        TypeExpr::ExactClass(_) => unreachable!("handled before mode comparison"),
         TypeExpr::Union(alternatives) => {
             combine_any(alternatives.iter().map(|part| compare(ty, part)))
         }
@@ -397,20 +398,21 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
 /// on RType's empty explicit-class attribute (which may hide dimensions).
 fn direct_literal_class(expr: &ry_core::ast::Expr) -> Option<&'static str> {
     use ry_core::ast::Expr;
-    match expr {
-        Expr::Logical(..) => Some("logical"),
-        Expr::Integer(..) => Some("integer"),
-        Expr::Double(..) => Some("numeric"),
-        Expr::String(..) => Some("character"),
-        Expr::Null(..) => Some("NULL"),
-        Expr::Na(ty, _) => match ty.mode {
-            Mode::Logical => Some("logical"),
-            Mode::Integer => Some("integer"),
-            Mode::Double => Some("numeric"),
-            Mode::Complex => Some("complex"),
-            Mode::Character => Some("character"),
-            _ => None,
-        },
+    let mode = match expr {
+        Expr::Logical(..) => Mode::Logical,
+        Expr::Integer(..) => Mode::Integer,
+        Expr::Double(..) => Mode::Double,
+        Expr::String(..) => Mode::Character,
+        Expr::Null(..) => return Some("NULL"),
+        Expr::Na(ty, _) => ty.mode,
+        _ => return None,
+    };
+    match mode {
+        Mode::Logical => Some("logical"),
+        Mode::Integer => Some("integer"),
+        Mode::Double => Some("numeric"),
+        Mode::Complex => Some("complex"),
+        Mode::Character => Some("character"),
         _ => None,
     }
 }
@@ -588,24 +590,21 @@ impl crate::Checker {
                 ),
             ));
         }
-        let entry = if supplied_only {
-            None
-        } else {
-            body_entry_type(declared)
-        };
+        // A supplied-only constraint and an effective-class predicate never
+        // establish a body type; that is their meaning, not a checking gap.
+        if supplied_only || matches!(declared, TypeExpr::ExactClass(_)) {
+            return None;
+        }
+        let entry = body_entry_type(declared);
         if entry.is_none() {
-            let reason = if supplied_only {
-                "only explicitly supplied arguments are constrained; no unconditional body entry type is assumed"
-            } else if matches!(declared, TypeExpr::ExactClass(_)) {
-                "effective class does not establish a storage mode; no body entry type is assumed"
-            } else {
-                "constraint cannot be represented by body inference; no entry type is assumed"
-            };
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
                 parameter.span,
-                format!("constraint for `{}`: {reason}", parameter.name),
+                format!(
+                    "constraint for `{}` cannot be represented by body inference; no entry type is assumed",
+                    parameter.name
+                ),
             ));
         }
         entry
@@ -630,12 +629,7 @@ impl crate::Checker {
             ));
             return;
         };
-        let live_definition = self
-            .fn_table
-            .fns
-            .values()
-            .any(|live| live.source_path == self.path && live.definition_span == span);
-        let inferred = if live_definition {
+        let inferred = if self.fn_table.is_live_definition(&self.path, span) {
             self.return_slots.get(function.return_slot)
         } else {
             // Pass 2 only refines the last function assigned to each name.

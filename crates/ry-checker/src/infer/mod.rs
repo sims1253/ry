@@ -316,9 +316,12 @@ pub(crate) struct UnionGuardViews<'a> {
 /// the NA repair `name[is.na(name)] <- value`, the cast's new NA is
 /// handled where it was introduced and the warning is dropped.
 pub(crate) struct HeldCast {
-    name: String,
     /// The `as.integer()` call.
     span: Span,
+    /// The next statement's subassignment target. Only that target can
+    /// repair the cast; an assignment nested in its value or subscript,
+    /// including a quoted one that never runs, cannot.
+    repair: Span,
     /// The cast proved an out-of-range input.
     warned: bool,
 }
@@ -337,6 +340,7 @@ fn held_cast_site(statement: &Stmt, next: Option<&Stmt>) -> Option<HeldCast> {
             Expr::Index {
                 base,
                 kind: IndexKind::Single,
+                span: repair,
                 ..
             },
         ..
@@ -346,13 +350,12 @@ fn held_cast_site(statement: &Stmt, next: Option<&Stmt>) -> Option<HeldCast> {
     };
     let cast = call::callee_name(func)
         .is_some_and(|callee| callee == "as.integer" || callee == "base::as.integer");
-    (cast && matches!(base.as_ref(), Expr::Ident { name: repaired, .. } if repaired == name)).then(
-        || HeldCast {
-            name: name.clone(),
+    (cast && matches!(base.as_ref(), Expr::Ident { name: repaired, .. } if repaired == name))
+        .then_some(HeldCast {
             span: *span,
+            repair: *repair,
             warned: false,
-        },
-    )
+        })
 }
 
 /// Which arms of an `if` contribute state to its continuation in the
@@ -2697,7 +2700,7 @@ impl Checker {
                 if self
                     .held_cast
                     .as_ref()
-                    .is_some_and(|held| held.warned && held.name == *base_name)
+                    .is_some_and(|held| held.warned && held.repair == span)
                 {
                     // The block's previous statement introduced these NAs.
                     self.held_cast = None;

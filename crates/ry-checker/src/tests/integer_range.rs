@@ -149,6 +149,9 @@ fn na_repair_must_be_the_next_statement_of_the_casts_block() {
         "x <- as.integer(1e10)\nif (scan()) {\n  x[is.na(x)] <- 0L\n}",
         "x <- as.integer(1e10)\nf <- function() {\n  x[is.na(x)] <- 0L\n}",
         "x <- as.integer(1e10)\ny <- as.integer(1e10)\ny[is.na(y)] <- 0L\nx[is.na(x)] <- 0L",
+        // A quoted repair never runs.
+        "capture <- function(expr) { substitute(expr); 1L }\nx <- as.integer(1e10)\nx[2] <- capture(x[is.na(x)] <- 0L)",
+        "x <- as.integer(1e10)\nx[c(x[is.na(x)] <- 0L)] <- 1L",
     ] {
         assert_eq!(range_warnings(source), 1, "{source}");
     }

@@ -1532,6 +1532,24 @@ expression: snapshots
         start: 57
   fixture: err_user_fn_missing_required.R
 - diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 695
+        line: 13
+        start: 680
+    - code: RY050
+      message: "S3 generic `lbl` called on value with classes [triangle] but no matching method is defined"
+      severity: warning
+      span:
+        column: 0
+        end: 733
+        line: 16
+        start: 720
+  fixture: err_user_generic_dispatch.R
+- diagnostics:
     - code: RY110
       message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `sqrt()` cannot use as numeric; guard the emptiness too: `is.numeric(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
       severity: warning
@@ -2001,6 +2019,8 @@ expression: snapshots
   fixture: ok_user_fn_missing_lazy_formal.R
 - diagnostics: []
   fixture: ok_user_fn_return.R
+- diagnostics: []
+  fixture: ok_user_generic_dispatch.R
 - diagnostics: []
   fixture: ok_vacuous_all_guard.R
 - diagnostics: []

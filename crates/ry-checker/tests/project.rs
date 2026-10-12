@@ -169,6 +169,105 @@ fn cross_file_s3_method_dispatches() {
 }
 
 #[test]
+fn cross_file_user_generic_dispatches_to_project_methods() {
+    // The usage file sorts and collects before the generic and its methods.
+    let mut project = Project::new();
+    project.add_file(
+        "a_usage.R".to_string(),
+        parse(
+            "a_usage.R",
+            "circle <- structure(list(), class = \"circle\")\n\
+             square <- structure(list(), class = c(\"square\", \"rect\"))\n\
+             triangle <- structure(list(), class = \"triangle\")\n\
+             lbl(circle) + 1\n\
+             lbl(square) + 1\n\
+             lbl(triangle)\n\
+             f <- function(value) lbl(value) + 1\n\
+             area(triangle) + 1\n",
+        ),
+    );
+    project.add_file(
+        "z_generic.R".to_string(),
+        parse(
+            "z_generic.R",
+            "lbl <- function(x, ...) UseMethod(\"lbl\")\n\
+             area <- function(shape) UseMethod(\"area\")\n",
+        ),
+    );
+    project.add_file(
+        "methods.R".to_string(),
+        parse(
+            "methods.R",
+            "lbl.circle <- function(shape, ...) \"a circle\"\n\
+             lbl.rect <- function(obj, ...) 4L\n\
+             area.default <- function(shape) 0\n",
+        ),
+    );
+    let diags = project.check();
+    let mut usage: Vec<_> = diags
+        .into_iter()
+        .filter(|(path, _)| path == "a_usage.R")
+        .flat_map(|(_, d)| d)
+        .map(|d| (d.code, d.span.line))
+        .collect();
+    usage.sort();
+    assert_eq!(
+        usage,
+        vec![("RY040", 3), ("RY050", 5)],
+        "cross-file dispatch must reach `lbl.circle`/`lbl.rect`, report the \
+         unhandled class, and stay silent on unknown classes and defaults"
+    );
+}
+
+#[test]
+fn registered_stub_generic_method_keeps_helper_return_class_open() {
+    // `expand` is a tidyr generic; with this package's `expand.tbl_lazy`
+    // registered, the helper's result need not carry the stub's
+    // data-frame class, so dispatching on it proves no missing method.
+    let check = |registered: bool| {
+        let mut project = Project::new();
+        project.add_file(
+            "R/verbs.R".to_string(),
+            parse(
+                "R/verbs.R",
+                "op_vars <- function(op) UseMethod(\"op_vars\")\n\
+                 op_vars.tbl_lazy <- function(op) op$vars\n\
+                 expand_vars <- function(data) tidyr::expand(data, a)\n",
+            ),
+        );
+        project.add_file(
+            "tests/use.R".to_string(),
+            parse("tests/use.R", "op_vars(expand_vars(lazy))\n"),
+        );
+        let methods =
+            std::collections::HashSet::from([("expand".to_string(), "tbl_lazy".to_string())]);
+        project.set_external_s3_methods(
+            ["R/verbs.R", "tests/use.R"]
+                .into_iter()
+                .map(|path| {
+                    (
+                        path.to_string(),
+                        if registered {
+                            methods.clone()
+                        } else {
+                            Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        project
+            .check()
+            .into_iter()
+            .flat_map(|(_, d)| d)
+            .filter(|d| d.code == "RY050")
+            .count()
+    };
+    assert_eq!(check(false), 1, "the stub class alone is the control case");
+    assert_eq!(check(true), 0, "a registered method must reach pass 2");
+}
+
+#[test]
 fn cross_file_s3_ops_method_precedes_storage_mode_error() {
     let mut project = Project::new();
     project.add_file(

@@ -446,6 +446,15 @@ impl Checker {
         }
         self.apply_assertion_predicates(&name, args, scope);
 
+        // A project `UseMethod` generic returns whatever its selected method
+        // returns, so dispatch before the lexical stage reads the generic's
+        // own opaque return.
+        if self.calls_user_generic(&name, &lookup_name, &call, args, scope)
+            && let Some(rt) = self.try_s3_dispatch(&lookup_name, &call.arg_types, span)
+        {
+            return rt;
+        }
+
         // The lexical-callable stage. Must run before the constructor and
         // dispatch stages below so a local binding shadows a same-named
         // builtin (R's lexical scoping).
@@ -2074,6 +2083,41 @@ impl Checker {
             return CallHeadFunctionEvidence::Diagnose;
         }
         CallHeadFunctionEvidence::Suppress
+    }
+
+    /// Whether this call reaches the project's `UseMethod` generic and its
+    /// first actual is the dispatch object: no local definition shadows the
+    /// table entry, and the first argument binds the generic's first formal.
+    fn calls_user_generic(
+        &self,
+        name: &str,
+        lookup_name: &str,
+        call: &CallResolution,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> bool {
+        let Some(generic) = call.user_function.as_ref() else {
+            return false;
+        };
+        if name.contains("::") || scope.is_parameter(lookup_name) {
+            return false;
+        }
+        if scope
+            .get(lookup_name)
+            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+            && (generic.source_path != self.path
+                || scope.lexical_definition(lookup_name) != Some(generic.definition_span))
+        {
+            return false;
+        }
+        let first_formal = generic.params.first().map(|param| param.name.as_str());
+        let names_first_formal = |arg: &Arg| arg.name.as_deref() == first_formal;
+        self.is_user_generic(lookup_name)
+            && args.first().is_some_and(|arg| {
+                first_formal == Some("...")
+                    || names_first_formal(arg)
+                    || (arg.name.is_none() && !args.iter().any(names_first_formal))
+            })
     }
 
     /// The lexical-callable stage: a `Function`-typed scope binding with an

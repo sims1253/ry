@@ -7,3 +7,5 @@ tests/testthat/dummy_packages/cp1252/R/cp1252.R:4:1 RY000
 tests/testthat/dummy_packages/package/R/default_linter_testcode.R:25:73 RY034
 tests/testthat/dummy_packages/package/data-raw/default_linter_testcode.R:25:73 RY034
 tests/testthat/dummy_packages/package/inst/data-raw/default_linter_testcode.R:25:73 RY034
+tests/testthat/test-methods.R:27:21 RY090
+tests/testthat/test-with.R:3:5 RY091

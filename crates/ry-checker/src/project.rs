@@ -17,10 +17,6 @@
 //! tests rely on this).
 
 use crate::declaration_check::DeclarationSet;
-use crate::trace::{
-    ProjectTrace, TraceEventKind, TraceFileId, TraceFunctionId, TraceOptions, TraceReason,
-    TraceRecorder,
-};
 use crate::{
     CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
 };
@@ -165,13 +161,6 @@ pub struct Project {
     /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
     #[doc(hidden)]
     pub emit_count: usize,
-    trace_options: Option<TraceOptions>,
-    last_trace: Option<ProjectTrace>,
-    trace_run_id: u64,
-    trace_function_ids: HashMap<String, TraceFunctionId>,
-    /// Trace-only definition transitions survive a full `check()` resetting
-    /// the production invalidation set before trace emission.
-    trace_definition_transitions: HashSet<String>,
 }
 
 #[derive(Clone)]
@@ -224,98 +213,6 @@ impl Project {
         &self.declaration_findings
     }
 
-    /// Enable bounded execution telemetry on subsequent `check` and
-    /// `check_incremental` calls. The synchronous Project API has no
-    /// cancellation input; its traces report convergence or the depth bound.
-    /// Enabling after a full `check()` may collect each source once to recover
-    /// definition identities because that entry point keeps no pass-1 cache.
-    pub fn enable_trace(&mut self, options: TraceOptions) -> Result<(), &'static str> {
-        options.validate()?;
-        self.trace_options = Some(options);
-        self.last_trace = None;
-        // An existing Project may enable tracing only after a successful
-        // untraced check. Snapshot the current winners before the next edit,
-        // so a later removal still has its old file/source identity.
-        self.trace_function_ids = self.snapshot_trace_function_ids();
-        Ok(())
-    }
-
-    fn snapshot_trace_function_ids(&self) -> HashMap<String, TraceFunctionId> {
-        let mut ids = HashMap::new();
-        if !self.has_prev_emit {
-            return ids;
-        }
-        for (index, (path, file)) in self.files.iter().enumerate() {
-            let names: Vec<String> = if let Some(collected) = self.collected_files.get(path) {
-                collected.fn_table.fns.keys().cloned().collect()
-            } else {
-                // `check()` does not keep the pass-1 cache. This opt-in
-                // one-time collection recovers source ownership without
-                // changing the Project's analysis state.
-                let mut collector = Checker::new(path);
-                collector.set_user_stubs(Arc::clone(&self.user_stubs));
-                collector.collect_file_fns(file);
-                collector.into_tables().0.fns.keys().cloned().collect()
-            };
-            let file_id = TraceFileId::from_source(index, path, &file.source);
-            for name in names {
-                ids.insert(
-                    name.clone(),
-                    TraceFunctionId {
-                        file: file_id.clone(),
-                        table_name: name,
-                    },
-                );
-            }
-        }
-        ids
-    }
-
-    /// Disable tracing without changing analysis state.
-    pub fn disable_trace(&mut self) {
-        self.trace_options = None;
-        self.last_trace = None;
-        self.trace_function_ids.clear();
-        self.trace_definition_transitions.clear();
-    }
-
-    /// Take the most recent trace, if tracing was enabled for that run.
-    pub fn take_trace(&mut self) -> Option<ProjectTrace> {
-        self.last_trace.take()
-    }
-
-    fn begin_trace(&mut self) -> Option<TraceRecorder> {
-        let options = self.trace_options.clone()?;
-        self.trace_run_id += 1;
-        Some(TraceRecorder::new(
-            options,
-            self.trace_run_id,
-            self.trace_function_ids.clone(),
-            &self.declared_loaded,
-        ))
-    }
-
-    fn note_trace_definition_transition(&mut self, path: &str) {
-        if self.trace_options.is_none() {
-            return;
-        }
-        if let Some(previous) = self.collected_files.get(path) {
-            // Keep the same names the production incremental path invalidates.
-            // A following full check resets that set before trace emission.
-            self.trace_definition_transitions
-                .extend(previous.fn_table.fns.keys().cloned());
-        } else {
-            // Full checks keep no collection cache. Use the previous winning
-            // definitions, captured when tracing was enabled or last emitted.
-            self.trace_definition_transitions.extend(
-                self.trace_function_ids
-                    .iter()
-                    .filter(|(_, id)| id.file.path == path)
-                    .map(|(name, _)| name.clone()),
-            );
-        }
-    }
-
     /// Add a parsed file to the project. Call this for every file
     /// before calling [`check`](Self::check).
     ///
@@ -324,6 +221,10 @@ impl Project {
     /// added later wins. This mirrors R's `source()` semantics, where
     /// the most recently sourced file's top-level bindings override
     /// earlier ones.
+    ///
+    /// Two files may share a path, since a lossy display path can name
+    /// distinct files: [`check`](Self::check) merges both, while the
+    /// incremental caches key files by path.
     pub fn add_file(&mut self, path: String, file: SourceFile) {
         self.add_file_arc(path, Arc::new(file));
     }
@@ -340,7 +241,6 @@ impl Project {
     /// append it when the path is new. Only that file's pass-1 cache entry is
     /// invalidated; `check_incremental` reuses every other file's collection.
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
-        self.note_trace_definition_transition(&path);
         if let Some(previous) = self.collected_files.remove(&path) {
             self.invalidated_fns
                 .extend(previous.fn_table.fns.keys().cloned());
@@ -371,7 +271,7 @@ impl Project {
     /// remove/re-add cycle moves a file to the end and flips which
     /// same-named definition wins. Callers that need an order independent
     /// of that history — the LSP feeds sorted paths, matching the CLI's
-    /// sorted discovery (#490) — call this after their updates so the
+    /// sorted discovery — call this after their updates so the
     /// merged table follows `order` alone. Paths missing from `order`
     /// sort after the listed ones, keeping their relative order.
     ///
@@ -442,7 +342,6 @@ impl Project {
 
     /// Remove a file and its cached pass-1 collection from the project.
     pub fn remove_file(&mut self, path: &str) {
-        self.note_trace_definition_transition(path);
         self.files.retain(|(existing, _)| existing != path);
         if let Some(previous) = self.collected_files.remove(path) {
             self.invalidated_fns
@@ -584,56 +483,10 @@ impl Project {
     /// For incremental updates, use [`update_file`](Self::update_file)
     /// followed by [`check_incremental`](Self::check_incremental).
     pub fn check(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        let mut trace = self.begin_trace();
-        // Pass 1: one collection walk per file. Each file's functions
-        // AND its `library`/`require` attachments are harvested in the
-        // same pass (issue #178); the attachments are unioned with the
-        // project-declared `loaded` set (from `ry.toml`'s `packages`
-        // key). The union is seeded into every pass-3 emitter so a
-        // `library(dplyr)` in any file makes dplyr NSE verbs resolve
-        // everywhere (matching R's source()-based cross-file semantics).
-        let mut union_loaded = self.declared_loaded.clone();
-        let mut fn_table = FnTable::default();
-        let mut return_slots = ReturnSlots::default();
+        // Discard every collection and refinement cache, so the shared path
+        // below collects all files, refines everything, and emits every file.
+        self.collected_files.clear();
         self.file_known_vars.clear();
-        // Pass 1 collection is independent per file, so it fans out on
-        // rayon's pool (same pool as pass 3); the ordered serial merge
-        // below preserves shadowing semantics exactly — a later file's
-        // same-named function must still replace the earlier one's.
-        let collected_files: Vec<_> = self
-            .files
-            .par_iter()
-            .map(|(path, file)| {
-                let mut collector = Checker::new(path);
-                collector.set_user_stubs(Arc::clone(&self.user_stubs));
-                let loaded = collector.collect_file_fns(file);
-                let (collected, slots) = collector.into_tables();
-                (loaded, collected, slots)
-            })
-            .collect();
-        for (index, ((path, file), (loaded, collected, slots))) in
-            self.files.iter().zip(collected_files).enumerate()
-        {
-            if let Some(trace) = &mut trace {
-                trace.register_file(
-                    index,
-                    path,
-                    &file.source,
-                    collected.fns.keys().map(String::as_str),
-                );
-                trace.collection(path, false);
-            }
-            self.file_known_vars
-                .insert(path.clone(), collected.known_vars.clone());
-            union_loaded.extend(loaded);
-            fn_table.append_collected(&collected, &mut return_slots, &slots);
-        }
-        self.loaded = union_loaded.clone();
-        fn_table.known_vars = self.pooled_known_vars();
-        self.fn_table = fn_table;
-        self.return_slots = return_slots;
-        // Cold check: every file must be emitted, and prior incremental
-        // state (if any) is discarded.
         self.dirty_paths = self.files.iter().map(|(p, _)| p.clone()).collect();
         self.prev_loaded = None;
         self.has_prev_emit = false;
@@ -647,7 +500,12 @@ impl Project {
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
-        self.refine_and_emit(trace)
+        // Merge every entry rather than one cached collection per path: a
+        // lossy display path can name two distinct files.
+        let collected = self.collect_uncached();
+        let merged = self.merge_collected(collected.iter().map(|(_, collected)| collected));
+        self.collected_files.extend(collected);
+        self.install_and_emit(merged)
     }
 
     /// Check after one or more `update_file` calls, reusing pass-1
@@ -655,73 +513,105 @@ impl Project {
     /// tables to a fixpoint and pass 3 still emits every file, preserving
     /// cross-file diagnostic correctness.
     pub fn check_incremental(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
-        let mut trace = self.begin_trace();
-        let mut collected_now = trace.as_ref().map(|_| HashSet::new());
-        for (path, file) in &self.files {
-            if self.collected_files.contains_key(path) {
-                continue;
-            }
-            // Same combined collection walk as the cold `check`: the
-            // file's functions and attachments in one pass (#178).
-            let mut collector = Checker::new(path);
-            collector.set_user_stubs(Arc::clone(&self.user_stubs));
-            let loaded = collector.collect_file_fns(file);
-            let (fn_table, return_slots) = collector.into_tables();
-            self.file_known_vars
-                .insert(path.clone(), fn_table.known_vars.clone());
-            self.collected_files.insert(
-                path.clone(),
-                CollectedFile {
+        let collected = self.collect_uncached();
+        self.collected_files.extend(collected);
+        let merged = self.merge_collected(self.cached_in_order());
+        self.install_and_emit(merged)
+    }
+
+    /// Pass 1: one collection walk per uncached file harvests its functions
+    /// and its `library`/`require` attachments. Files are independent, so
+    /// the walks fan out on rayon's pool; results keep file order.
+    fn collect_uncached(&mut self) -> Vec<(String, CollectedFile)> {
+        let collected: Vec<_> = self
+            .files
+            .par_iter()
+            .filter(|(path, _)| !self.collected_files.contains_key(path))
+            .map(|(path, file)| {
+                let mut collector = Checker::new(path);
+                collector.set_user_stubs(Arc::clone(&self.user_stubs));
+                let loaded = collector.collect_file_fns(file);
+                let (fn_table, return_slots) = collector.into_tables();
+                let collected = CollectedFile {
                     fn_table,
                     return_slots,
                     loaded,
-                },
-            );
-            if let Some(paths) = &mut collected_now {
-                paths.insert(path.clone());
-            }
+                };
+                (path.clone(), collected)
+            })
+            .collect();
+        for (path, collected) in &collected {
+            self.file_known_vars
+                .insert(path.clone(), collected.fn_table.known_vars.clone());
         }
+        collected
+    }
 
+    fn cached_in_order(&self) -> impl Iterator<Item = &CollectedFile> {
+        self.files
+            .iter()
+            .map(|(path, _)| &self.collected_files[path])
+    }
+
+    /// Merge collections in file order, so a later file's same-named
+    /// function replaces the earlier one's. Attachments in any file are
+    /// unioned with the declared packages and seeded into every emitter,
+    /// matching R's source() semantics.
+    fn merge_collected<'a>(
+        &self,
+        collections: impl Iterator<Item = &'a CollectedFile>,
+    ) -> (FnTable, ReturnSlots, HashSet<String>) {
         let mut fn_table = FnTable::default();
         let mut return_slots = ReturnSlots::default();
         let mut loaded = self.declared_loaded.clone();
-        for (index, (path, file)) in self.files.iter().enumerate() {
-            let collected = self
-                .collected_files
-                .get(path)
-                .expect("every project file has a pass-1 cache entry");
-            if let Some(trace) = &mut trace {
-                trace.register_file(
-                    index,
-                    path,
-                    &file.source,
-                    collected.fn_table.fns.keys().map(String::as_str),
-                );
-                trace.collection(
-                    path,
-                    !collected_now
-                        .as_ref()
-                        .is_some_and(|paths| paths.contains(path)),
-                );
-            }
+        for collected in collections {
             loaded.extend(collected.loaded.iter().cloned());
             fn_table.append_collected(
                 &collected.fn_table,
                 &mut return_slots,
                 &collected.return_slots,
             );
-            // Cache the set of function names this file calls, for the
-            // dirty-set computation in refine_and_emit.
-            self.file_called_fns.insert(
-                path.clone(),
-                collected.fn_table.call_sites.keys().cloned().collect(),
-            );
         }
         fn_table.known_vars = self.pooled_known_vars();
+        (fn_table, return_slots, loaded)
+    }
+
+    fn install_and_emit(
+        &mut self,
+        (fn_table, return_slots, loaded): (FnTable, ReturnSlots, HashSet<String>),
+    ) -> Vec<(String, Vec<Diagnostic>)> {
+        // Cache the set of function names each file calls, for the
+        // dirty-set computation in refine_and_emit.
+        for (path, _) in &self.files {
+            self.file_called_fns.insert(
+                path.clone(),
+                self.collected_files[path]
+                    .fn_table
+                    .call_sites
+                    .keys()
+                    .cloned()
+                    .collect(),
+            );
+        }
+        self.loaded = loaded;
         self.fn_table = fn_table;
         self.return_slots = return_slots;
-        self.loaded = loaded;
-        self.refine_and_emit(trace)
+        self.refine_and_emit()
+    }
+
+    /// A pass-2 checker over `fn_table` that records refinement reads.
+    fn refiner(
+        &self,
+        fn_table: FnTable,
+        return_slots: ReturnSlots,
+        box_sources: &Arc<crate::box_imports::BoxSources>,
+    ) -> Checker {
+        let mut refiner = Checker::with_tables("__project_pass2__", fn_table, return_slots);
+        refiner.set_loaded(self.loaded.clone());
+        refiner.set_user_stubs(Arc::clone(&self.user_stubs));
+        refiner.set_box_sources(Arc::clone(box_sources));
+        refiner.refinement_dependencies = Some(HashMap::new());
+        refiner
     }
 
     /// Compute the set of function names that need fixpoint refinement.
@@ -730,100 +620,47 @@ impl Project {
     /// incremental state). Returns `Some(set)` with only the functions whose
     /// return type can have changed: dirty-file definitions and their observed
     /// callers, including forwarding and S3 metadata dependencies.
-    fn compute_fixpoint_scope(
-        &self,
-        mut trace: Option<&mut TraceRecorder>,
-    ) -> Option<HashSet<String>> {
-        if let Some(trace) = trace.as_deref_mut() {
-            let mut paths: Vec<_> = self.dirty_paths.iter().collect();
-            paths.sort_unstable();
-            for path in paths {
-                trace.file_event(
-                    path,
-                    TraceEventKind::Invalidation {
-                        reason: TraceReason::DirtySource,
-                    },
-                );
-            }
-            let mut invalidated: Vec<String> = self
-                .invalidated_fns
-                .iter()
-                .chain(&self.trace_definition_transitions)
-                .cloned()
-                .collect();
-            invalidated.extend(trace.changed_winner_names());
-            invalidated.sort_unstable();
-            invalidated.dedup();
-            for name in invalidated {
-                trace.definition_invalidation(
-                    &name,
-                    if self.fn_table.fns.contains_key(&name) {
-                        TraceReason::ReplacedDefinition
-                    } else {
-                        TraceReason::RemovedDefinition
-                    },
-                );
+    fn compute_fixpoint_scope(&self) -> Option<HashSet<String>> {
+        // First call, or an alias-based attachment discovered last time →
+        // refine everything.
+        if !self.has_prev_emit || self.refinement_discovered_attachments {
+            return None;
+        }
+        // If loaded changed (library() calls appeared/disappeared), the
+        // stub environment changed — full refinement is needed because
+        // package signatures affect return types.
+        if self
+            .prev_loaded
+            .as_ref()
+            .is_some_and(|prev| prev != &self.loaded)
+        {
+            return None;
+        }
+        // A new callable can resolve a previously unknown callback or
+        // alias; no observed dependency exists for that earlier lookup miss.
+        if self.callable_names_changed()
+            || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
+            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+        {
+            return None;
+        }
+        // Nothing changed → nothing to refine.
+        if self.dirty_paths.is_empty() {
+            return Some(HashSet::new());
+        }
+        // Functions defined in dirty files, plus definitions removed or
+        // renamed by those edits, seed the affected set.
+        let mut affected = self.invalidated_fns.clone();
+        for dirty_path in &self.dirty_paths {
+            if let Some(collected) = self.collected_files.get(dirty_path) {
+                affected.extend(collected.fn_table.fns.keys().cloned());
             }
         }
-        let (scope, reason) = 'scope: {
-            // First call → refine everything.
-            if !self.has_prev_emit {
-                break 'scope (None, TraceReason::ColdStart);
-            }
-            if self.refinement_discovered_attachments {
-                break 'scope (None, TraceReason::PriorAttachmentDiscovery);
-            }
-            // If loaded changed (library() calls appeared/disappeared), the
-            // stub environment changed — full refinement is needed because
-            // package signatures affect return types.
-            if self
-                .prev_loaded
-                .as_ref()
-                .is_some_and(|prev| prev != &self.loaded)
-            {
-                break 'scope (None, TraceReason::PackageSetChanged);
-            }
-            // A new callable can resolve a previously unknown callback or
-            // alias; no observed dependency exists for that earlier lookup miss.
-            if self.callable_names_changed()
-                || self.prev_callable_vars != self.fn_table.callable_vars
-                || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
-                || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
-            {
-                break 'scope (None, TraceReason::CallableContextChanged);
-            }
-            // Nothing changed → nothing to refine.
-            if self.dirty_paths.is_empty() {
-                break 'scope (Some(HashSet::new()), TraceReason::NoDirtyWork);
-            }
-            // Functions defined in dirty files, plus definitions removed or
-            // renamed by those edits, seed the affected set.
-            let mut affected = self.invalidated_fns.clone();
-            for dirty_path in &self.dirty_paths {
-                if let Some(collected) = self.collected_files.get(dirty_path) {
-                    affected.extend(collected.fn_table.fns.keys().cloned());
-                }
-            }
-            (
-                Some(self.with_refinement_callers(affected, trace.as_deref_mut())),
-                TraceReason::DirtySource,
-            )
-        };
-        if let Some(trace) = trace {
-            trace.global_event(TraceEventKind::RefinementScope {
-                full: scope.is_none(),
-                size: scope.as_ref().map_or(self.fn_table.fns.len(), HashSet::len),
-                reason,
-            });
-        }
-        scope
+        Some(self.with_refinement_callers(affected))
     }
 
-    fn with_refinement_callers(
-        &self,
-        mut affected: HashSet<String>,
-        mut trace: Option<&mut TraceRecorder>,
-    ) -> HashSet<String> {
+    fn with_refinement_callers(&self, mut affected: HashSet<String>) -> HashSet<String> {
         let methods = crate::fixpoint::s3_evaluation_methods(&self.fn_table);
         let mut callers: HashMap<&str, HashSet<&str>> = HashMap::new();
         for (caller, dependencies) in &self.refinement_dependencies {
@@ -850,34 +687,9 @@ impl Project {
             }
         }
         let mut pending: Vec<_> = affected.iter().cloned().collect();
-        if trace.is_some() {
-            // The set result is unchanged; trace-enabled traversal fixes one
-            // deterministic first cause when several edges reach a caller.
-            pending.sort_unstable_by(|left, right| right.cmp(left));
-        }
         while let Some(callee) = pending.pop() {
-            let mut dependents: Vec<_> = callers
-                .get(callee.as_str())
-                .into_iter()
-                .flatten()
-                .copied()
-                .collect();
-            if trace.is_some() {
-                dependents.sort_unstable();
-            }
-            for caller in dependents {
+            for caller in callers.get(callee.as_str()).into_iter().flatten() {
                 if affected.insert(caller.to_string()) {
-                    if let Some(trace) = trace.as_deref_mut() {
-                        let trigger = trace.function_trigger(&callee);
-                        trace.function_event_with_trigger(
-                            caller,
-                            TraceEventKind::Scheduled {
-                                round: 0,
-                                reason: TraceReason::DependencyRead,
-                            },
-                            Some(trigger),
-                        );
-                    }
                     pending.push(caller.to_string());
                 }
             }
@@ -904,23 +716,6 @@ impl Project {
             .any(|callee| affected.contains(callee))
     }
 
-    /// Select an actual changed dependency from the same read/call sets used
-    /// by `file_depends_on`. Lexical order makes multi-cause traces stable.
-    fn first_changed_file_dependency<'a>(
-        &'a self,
-        path: &str,
-        affected: &HashSet<String>,
-    ) -> Option<&'a str> {
-        self.file_called_fns
-            .get(path)
-            .into_iter()
-            .chain(self.file_read_fns.get(path))
-            .flatten()
-            .filter(|callee| affected.contains(*callee))
-            .map(String::as_str)
-            .min()
-    }
-
     /// Expand a set of changed callees through the cached reverse call graph.
     /// Syntactic calls and observed callable reads are collected per file,
     /// so every function in a dependent file is a conservative caller.
@@ -941,10 +736,7 @@ impl Project {
         affected
     }
 
-    fn refine_and_emit(
-        &mut self,
-        mut trace: Option<TraceRecorder>,
-    ) -> Vec<(String, Vec<Diagnostic>)> {
+    fn refine_and_emit(&mut self) -> Vec<(String, Vec<Diagnostic>)> {
         // Box overlays are keyed by physical identity. A native path keeps
         // a lossy display path from colliding with a distinct Unicode module;
         // unsaved buffers use their logical path.
@@ -973,16 +765,10 @@ impl Project {
         // iterations to re-stabilize after a small edit.
         // Compute scope before moving the current tables into the refiner;
         // S3 generic-to-method dependencies are recorded in `fn_table`.
-        let mut fixpoint_scope = self.compute_fixpoint_scope(trace.as_mut());
-        let mut refiner = Checker::with_tables(
-            "__project_pass2__",
-            std::mem::take(&mut self.fn_table),
-            std::mem::take(&mut self.return_slots),
-        );
-        refiner.set_loaded(self.loaded.clone());
-        refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-        refiner.set_box_sources(Arc::clone(&box_sources));
-        refiner.refinement_dependencies = Some(HashMap::new());
+        let mut fixpoint_scope = self.compute_fixpoint_scope();
+        let fn_table = std::mem::take(&mut self.fn_table);
+        let return_slots = std::mem::take(&mut self.return_slots);
+        let mut refiner = self.refiner(fn_table, return_slots, &box_sources);
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
@@ -994,33 +780,16 @@ impl Project {
             refiner.seed_return_types(&self.prev_fn_returns, scope);
             refiner.seed_caller_visible_signatures(&self.prev_fn_signatures, scope);
         }
-        refiner.run_fixpoint_scoped(fixpoint_scope.as_ref(), trace.as_mut());
+        refiner.run_fixpoint_scoped(fixpoint_scope.as_ref());
         if fixpoint_scope.is_some() && *refiner.loaded != self.loaded {
-            if let Some(trace) = &mut trace {
-                trace.global_event(TraceEventKind::RefinementScope {
-                    full: true,
-                    size: refiner.fn_table.fns.len(),
-                    reason: TraceReason::FullScopeRetry,
-                });
-            }
             // Alias-based library/require calls can change every bare lookup.
             // Rebuild from collection: widening the seeded scope could retain
             // stale recursive returns or argument evaluation metadata.
-            let mut table = FnTable::default();
-            let mut slots = ReturnSlots::default();
-            for (path, _) in &self.files {
-                let collected = &self.collected_files[path];
-                table.append_collected(&collected.fn_table, &mut slots, &collected.return_slots);
-            }
-            table.known_vars = self.pooled_known_vars();
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
-            refiner = Checker::with_tables("__project_pass2__", table, slots);
-            refiner.set_loaded(self.loaded.clone());
-            refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-            refiner.set_box_sources(Arc::clone(&box_sources));
-            refiner.refinement_dependencies = Some(HashMap::new());
-            refiner.run_fixpoint_scoped(None, trace.as_mut());
+            let (table, slots, _) = self.merge_collected(self.cached_in_order());
+            refiner = self.refiner(table, slots, &box_sources);
+            refiner.run_fixpoint_scoped(None);
             #[cfg(test)]
             for (name, count) in attempted_counts {
                 *refiner.refinement_counts.entry(name).or_default() += count;
@@ -1061,9 +830,8 @@ impl Project {
             .is_none_or(|prev| prev != &self.loaded);
 
         // Compute functions whose return type or complete caller-visible
-        // parameter signature changed. Name-keyed snapshots avoid the historic
-        // slot-index defect when functions are inserted or removed.
-        let mut changed_details = trace.as_ref().map(|_| Vec::new());
+        // parameter signature changed. Snapshots are keyed by name because
+        // slot indices shift when functions are inserted or removed.
         let directly_changed_fns: HashSet<String> = self
             .fn_table
             .fns
@@ -1079,28 +847,9 @@ impl Project {
                     .prev_fn_signatures
                     .get(name)
                     .is_none_or(|previous| previous != &current_signature);
-                if return_changed || signature_changed {
-                    if let Some(details) = &mut changed_details {
-                        details.push((name.clone(), return_changed, signature_changed));
-                    }
-                    Some(name.clone())
-                } else {
-                    None
-                }
+                (return_changed || signature_changed).then(|| name.clone())
             })
             .collect();
-        if let (Some(trace), Some(mut details)) = (&mut trace, changed_details) {
-            details.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-            for (name, return_changed, signature_changed) in details {
-                trace.function_event(
-                    &name,
-                    TraceEventKind::FunctionChanged {
-                        return_changed,
-                        signature_changed,
-                    },
-                );
-            }
-        }
         let changed_fns = self.with_transitive_callers(
             directly_changed_fns
                 .into_iter()
@@ -1131,77 +880,21 @@ impl Project {
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
         let capture_rebounds_changed =
             self.prev_capture_rebounds != self.fn_table.rebound_after_capture;
-        let first_call = !self.has_prev_emit;
-        let must_emit: HashSet<&str> = if first_call
+        let must_emit: HashSet<&str> = if !self.has_prev_emit
             || loaded_changed
             || known_vars_changed
             || capture_rebounds_changed
             || self.callable_names_changed()
         {
-            if let Some(trace) = &mut trace {
-                let reason = if first_call {
-                    TraceReason::ColdStart
-                } else if loaded_changed {
-                    TraceReason::PackageSetChanged
-                } else if known_vars_changed {
-                    TraceReason::GlobalContextChanged
-                } else {
-                    TraceReason::CallableContextChanged
-                };
-                for (path, _) in &self.files {
-                    trace.file_event(path, TraceEventKind::Emission { reason });
-                }
-            }
             self.files.iter().map(|(p, _)| p.as_str()).collect()
         } else {
             let mut dirty: HashSet<&str> = self.dirty_paths.iter().map(|s| s.as_str()).collect();
-            if let Some(trace) = &mut trace {
-                for (path, _) in &self.files {
-                    if dirty.contains(path.as_str()) {
-                        trace.file_event(
-                            path,
-                            TraceEventKind::Emission {
-                                reason: TraceReason::DirtySource,
-                            },
-                        );
-                    }
-                }
-            }
             for (path, _) in &self.files {
-                if dirty.contains(path.as_str()) {
-                    continue;
-                }
-                // Does this file call any function whose return type changed?
-                if self.file_depends_on(path, &changed_fns) {
+                // A file re-emits when it reads a changed function. S3
+                // dispatch is dynamic, so a changed S3/S4 method slot
+                // conservatively re-emits every file.
+                if !changed_s3.is_empty() || self.file_depends_on(path, &changed_fns) {
                     dirty.insert(path.as_str());
-                    if let Some(trace) = &mut trace
-                        && let Some(dependency) =
-                            self.first_changed_file_dependency(path, &changed_fns)
-                    {
-                        let trigger = trace.function_trigger(dependency);
-                        trace.file_event_with_trigger(
-                            path,
-                            TraceEventKind::Emission {
-                                reason: TraceReason::DependencyRead,
-                            },
-                            Some(trigger),
-                        );
-                    }
-                }
-                // Conservatively: if any S3/S4 method slot changed, emit
-                // this file. S3 dispatch is dynamic; we cannot cheaply
-                // determine which files trigger changed S3 methods.
-                if !changed_s3.is_empty() {
-                    if dirty.insert(path.as_str()) {
-                        if let Some(trace) = &mut trace {
-                            trace.file_event(
-                                path,
-                                TraceEventKind::Emission {
-                                    reason: TraceReason::S3MethodChanged,
-                                },
-                            );
-                        }
-                    }
                 }
             }
             dirty
@@ -1237,23 +930,6 @@ impl Project {
             .map(|(i, _)| i)
             .collect();
         self.emit_count = emit_indices.len();
-        if let Some(trace) = &mut trace {
-            trace.summary.emitted_files = emit_indices.len();
-            trace.summary.emission_cache_hits = self.files.len() - emit_indices.len();
-            if self.capture_references {
-                for &index in &emit_indices {
-                    let path = &self.files[index].0;
-                    if !must_emit.contains(path.as_str()) {
-                        trace.file_event(
-                            path,
-                            TraceEventKind::Emission {
-                                reason: TraceReason::ReferenceCapture,
-                            },
-                        );
-                    }
-                }
-            }
-        }
         let capture_scopes = self.capture_scopes;
         let capture_references = self.capture_references;
 
@@ -1342,10 +1018,6 @@ impl Project {
         self.load_bindings = Arc::unwrap_or_clone(load_bindings);
         self.bare_loaded = Arc::unwrap_or_clone(bare_loaded);
 
-        // Merge newly-emitted diagnostics with cached diagnostics from
-        // files that were not in the dirty set.
-        let mut result: Vec<(String, Vec<Diagnostic>)> = Vec::with_capacity(self.files.len());
-
         // Scope records replace the previous emission's; files served
         // from cache contribute none (see `scope_records` on the struct).
         let mut per_file = per_file;
@@ -1374,48 +1046,33 @@ impl Project {
                 .collect();
         }
 
-        let mut emitted_map: HashMap<usize, (String, Vec<Diagnostic>, Vec<DeclarationFinding>)> =
-            per_file
-                .into_iter()
-                .map(|emission| {
-                    (
-                        emission.index,
-                        (
-                            emission.path,
-                            emission.diagnostics,
-                            emission.declaration_findings,
-                        ),
-                    )
-                })
-                .collect();
-
-        let mut declaration_findings = Vec::with_capacity(self.files.len());
-        // Reuse warm results by path in one pass. Repeated linear scans here
-        // would make an unchanged project check quadratic in its file count.
+        // Files outside the emit set reuse their previous results, looked
+        // up by path: repeated linear scans would make an unchanged project
+        // check quadratic in its file count. A path added twice shares one
+        // cache entry, so its second copy falls back to empty results.
         let mut cached_diagnostics: HashMap<_, _> =
             std::mem::take(&mut self.diagnostics).into_iter().collect();
         let mut cached_findings: HashMap<_, _> = std::mem::take(&mut self.declaration_findings)
             .into_iter()
             .collect();
-
-        for (i, (path, _)) in self.files.iter().enumerate() {
-            if let Some((p, d, findings)) = emitted_map.remove(&i) {
-                declaration_findings.push((p.clone(), findings));
-                result.push((p, d));
-            } else if let Some(diagnostics) = cached_diagnostics.remove(path) {
-                // The unchanged file reuses its previous emissions.
-                result.push((path.clone(), diagnostics));
-                declaration_findings.push((
-                    path.clone(),
-                    cached_findings.remove(path).unwrap_or_default(),
-                ));
-            } else {
-                // No cached diagnostics and not emitted (shouldn't happen
-                // after the first check, but handle gracefully).
-                result.push((path.clone(), Vec::new()));
-                declaration_findings.push((path.clone(), Vec::new()));
-            }
-        }
+        // `per_file` follows `emit_indices`, which is in file order.
+        let mut emitted = per_file.into_iter().peekable();
+        let (result, declaration_findings): (Vec<_>, Vec<_>) = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(index, (path, _))| {
+                let (diagnostics, findings) =
+                    match emitted.next_if(|emission| emission.index == index) {
+                        Some(emission) => (emission.diagnostics, emission.declaration_findings),
+                        None => (
+                            cached_diagnostics.remove(path).unwrap_or_default(),
+                            cached_findings.remove(path).unwrap_or_default(),
+                        ),
+                    };
+                ((path.clone(), diagnostics), (path.clone(), findings))
+            })
+            .unzip();
         self.declaration_findings = declaration_findings;
 
         // Record state for the next incremental check.
@@ -1442,16 +1099,8 @@ impl Project {
             .collect();
         self.dirty_paths.clear();
         self.invalidated_fns.clear();
-        self.trace_definition_transitions.clear();
 
         self.diagnostics = result.clone();
-        if let Some(trace) = trace {
-            let (report, ids) = trace.finish();
-            self.trace_function_ids = ids;
-            self.last_trace = Some(report);
-        } else {
-            self.last_trace = None;
-        }
         result
     }
 

@@ -288,11 +288,11 @@ async fn two_roots_different_editor_settings_differential() {
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 
     // Each root's LSP output must match its independent CLI run.
     assert_eq!(lsp_a, cli_a, "root-a LSP must match independent CLI run");
@@ -434,11 +434,11 @@ async fn colliding_local_stubs_isolation() {
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 
     assert_eq!(
         lsp_results[0].1, cli_a,
@@ -534,11 +534,11 @@ async fn per_folder_custom_config_path() {
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 
     // RY002 must be absent — the configuration override should load
     // custom.toml and suppress it.
@@ -1387,11 +1387,11 @@ async fn per_file_publication_matches_cli_across_differing_files() {
 
     client.shutdown().await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 
     assert_eq!(
         lsp, cli,
@@ -1504,11 +1504,11 @@ async fn cli_lsp_discovery_set_equality() {
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 
     // The opened file's publication was consumed above; add it back.
     lsp_uris.insert("normal.R".to_string());

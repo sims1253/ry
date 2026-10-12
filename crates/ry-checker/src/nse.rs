@@ -2,11 +2,6 @@ use super::*;
 use crate::infer::*;
 use crate::resolve::SchemaProvider;
 
-pub(crate) const DATA_MASK_ACTIVE: &str = "\0ry_data_mask";
-pub(crate) const DATA_MASK_ENV_PREFIX: &str = "\0ry_data_mask_env:";
-pub(crate) const DATA_MASK_COLUMN_PREFIX: &str = "\0ry_data_mask_column:";
-pub(crate) const DATA_MASK_COLUMNS_FIRST: &str = "\0ry_data_mask_columns_first";
-
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
     /// Resolution itself preserves package attachment, qualification,
@@ -93,10 +88,7 @@ impl Checker {
                     && matches!(column, ".keep" | ".before" | ".after");
                 if mode == EvalMode::DataMask && !schema_control_arg(effect, name, column) {
                     local.insert(column, inferred.clone());
-                    local.insert(
-                        format!("{DATA_MASK_COLUMN_PREFIX}{column}"),
-                        RType::unknown(),
-                    );
+                    local.mark_data_mask_column(column);
                     named_results.push((column, inferred.clone()));
                 }
             }
@@ -256,7 +248,7 @@ impl Checker {
     /// shape is retained.
     ///
     /// When the schema cannot prove a name absent (unknown, incomplete,
-    /// or an opaque receiver), the columns-first sentinel marks bare
+    /// or an opaque receiver), the mask's columns-first flag marks bare
     /// value-position symbols as column candidates before scope
     /// functions. A receiver that is opaque without any table evidence
     /// may equally be an atomic vector whose type degraded
@@ -279,7 +271,9 @@ impl Checker {
         if !complete_frame(table) {
             // Inside this table `[` mask, a bare value-position symbol is
             // a column candidate before it is a scope function.
-            scope.insert(DATA_MASK_COLUMNS_FIRST, RType::unknown());
+            if let Some(frame) = scope.data_mask.as_mut() {
+                Arc::make_mut(frame).columns_first = true;
+            }
             if !frame_like(table) && table.columns.is_none() {
                 scope.data_mask_unknown = base_scope.data_mask_unknown;
             }
@@ -288,19 +282,26 @@ impl Checker {
     }
 
     pub(crate) fn dplyr_data_mask_scope(&self, base_scope: &Scope, df_type: &RType) -> Scope {
-        // Keep a private snapshot of the lexical environment before columns
-        // are overlaid. `.env$x` and `{{ x }}` must bypass data-mask column
-        // shadowing and resolve here instead.
-        let lexical_bindings: Vec<_> = base_scope
-            .bindings
-            .iter()
-            .map(|(name, ty)| (name.clone(), ty.clone()))
-            .collect();
+        let enclosing = base_scope.data_mask.as_deref();
+        let mut frame = DataMaskFrame {
+            columns_first: enclosing.is_some_and(|frame| frame.columns_first),
+            columns: enclosing
+                .map(|frame| frame.columns.clone())
+                .unwrap_or_default(),
+            // Snapshot the lexical environment before columns are overlaid.
+            env: base_scope.bindings.clone(),
+            env_unknown: false,
+        };
         let mut scope = match &df_type.columns {
-            Some(schema) => scope_with_columns(base_scope, schema),
+            Some(schema) => {
+                frame
+                    .columns
+                    .extend(schema.columns.iter().map(|(name, _)| name.clone()));
+                scope_with_columns(base_scope, schema)
+            }
             None => base_scope.independent_execution_scope(),
         };
-        scope.insert(DATA_MASK_ACTIVE, RType::unknown());
+        scope.data_mask = Some(Arc::new(frame));
         // Some selection APIs take a character vector of column names.
         // The pronoun represents a mask, never that input's atomic storage.
         let pronoun = if df_type.columns.is_some() && frame_like(df_type) {
@@ -310,9 +311,6 @@ impl Checker {
         };
         scope.insert(".data", pronoun);
         scope.insert(".env", RType::unknown());
-        for (name, ty) in lexical_bindings {
-            scope.insert(format!("{DATA_MASK_ENV_PREFIX}{name}"), ty);
-        }
         if !complete_frame(df_type) {
             scope = scope.with_unknown_data_mask();
         }
@@ -818,7 +816,6 @@ fn scope_with_columns(base_scope: &Scope, schema: &Arc<ColumnSchema>) -> Scope {
     let mut scope = base_scope.function_execution_scope();
     for (name, ty) in &schema.columns {
         scope.insert(name.clone(), ty.clone());
-        scope.insert(format!("{DATA_MASK_COLUMN_PREFIX}{name}"), RType::unknown());
     }
     scope
 }

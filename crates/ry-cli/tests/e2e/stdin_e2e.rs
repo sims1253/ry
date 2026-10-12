@@ -226,11 +226,11 @@ fn package_context_uses_stdin_instead_of_stale_disk() {
         ("data/copper.rds", b""),
         (
             "data/bronze.rda",
-            include_bytes!("../../../testdata/serialized/empty.rda"),
+            include_bytes!("../../../../testdata/serialized/empty.rda"),
         ),
         (
             "data/platinum.RData",
-            include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+            include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
         ),
     ];
     let cases = [

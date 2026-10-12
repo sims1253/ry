@@ -95,11 +95,11 @@ async fn run_with_diagnostics(
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
     diagnostics
 }
 
@@ -332,11 +332,11 @@ async fn indexed_unopened_diagnostics_use_the_checked_source_for_utf16_ranges() 
         .unwrap();
     client.notify("exit", Value::Null).await.unwrap();
     drop(client);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 }
 
 #[tokio::test]

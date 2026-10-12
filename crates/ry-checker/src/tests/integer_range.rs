@@ -134,6 +134,30 @@ fn immediate_new_na_repair_suppresses_cast_warning_and_clears_fact() {
 }
 
 #[test]
+fn na_repair_must_be_the_next_statement_of_the_casts_block() {
+    for source in [
+        "x <- as.integer(1e10); x[is.na(x)] <- 0L",
+        "f <- function() {\n  x <- as.integer(1e10)\n  x[is.na(x)] <- 0L\n  x\n}",
+        "y <- {\n  x <- as.integer(1e10)\n  x[is.na(x)] <- 0L\n}",
+        "for (i in 1:2) {\n  x <- as.integer(1e10)\n  x[is.na(x)] <- 0L\n}",
+    ] {
+        assert_eq!(range_warnings(source), 0, "{source}");
+    }
+    for source in [
+        "if (scan()) {\n  x <- as.integer(1e10)\n}\nx[is.na(x)] <- 0L",
+        "x <- as.integer(1e10)\nif (scan()) x[is.na(x)] <- 0L",
+        "x <- as.integer(1e10)\nif (scan()) {\n  x[is.na(x)] <- 0L\n}",
+        "x <- as.integer(1e10)\nf <- function() {\n  x[is.na(x)] <- 0L\n}",
+        "x <- as.integer(1e10)\ny <- as.integer(1e10)\ny[is.na(y)] <- 0L\nx[is.na(x)] <- 0L",
+        // A quoted repair never runs.
+        "capture <- function(expr) { substitute(expr); 1L }\nx <- as.integer(1e10)\nx[2] <- capture(x[is.na(x)] <- 0L)",
+        "x <- as.integer(1e10)\nx[c(x[is.na(x)] <- 0L)] <- 1L",
+    ] {
+        assert_eq!(range_warnings(source), 1, "{source}");
+    }
+}
+
+#[test]
 fn control_flow_join_keeps_only_supported_na_claims() {
     let (_, scope) =
         check_with_scope("flag <- scan()\ny <- if (flag) as.integer(1e10) else as.integer(2e10)");
@@ -219,9 +243,11 @@ fn missing_replacement_requires_base_operator_and_nonempty_plain_value() {
     ] {
         assert_eq!(range_warnings(source), 1, "{source}");
     }
+    // The repair handles the first cast's NA; its replacement is out of
+    // range for the second cast.
     assert_eq!(
         range_warnings("x <- as.integer(1e10); x[is.na(x)] <- 1e10; as.integer(x)"),
-        2
+        1
     );
     assert_eq!(
         range_warnings("x <- as.integer(1e10)\nx[is.na(x)] <- c(0L, 1L)"),

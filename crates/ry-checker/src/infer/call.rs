@@ -446,6 +446,21 @@ impl Checker {
         }
         self.apply_assertion_predicates(&name, args, scope);
 
+        // A project `UseMethod` generic returns whatever its selected method
+        // returns, so dispatch before the lexical stage reads the generic's
+        // own opaque return.
+        if let Some(receiver) = self.user_generic_receiver(&name, &lookup_name, &call, args, scope)
+        {
+            if self.caller_method_may_shadow(&lookup_name, &call.arg_types[receiver], scope) {
+                return RType::unknown();
+            }
+            let mut dispatch_args = call.arg_types.clone();
+            dispatch_args[..=receiver].rotate_right(1);
+            if let Some(rt) = self.try_s3_dispatch(&lookup_name, &dispatch_args, span) {
+                return rt;
+            }
+        }
+
         // The lexical-callable stage. Must run before the constructor and
         // dispatch stages below so a local binding shadows a same-named
         // builtin (R's lexical scoping).
@@ -549,7 +564,14 @@ impl Checker {
         // the fixpoint loop in `check()`; refining on demand would risk
         // exponential blowup).
         if let Some(function) = call.user_function.as_ref() {
-            return self.read_return_slot(function.return_slot);
+            let result = self.read_return_slot(function.return_slot);
+            // A callee without a computed return yet has no known way to
+            // return, so this path contributes nothing to merges. A
+            // qualified call may name another package's same-named function.
+            if !name.contains("::") && self.uncomputed_returns.contains(&function.return_slot) {
+                scope.unreachable = true;
+            }
+            return result;
         }
 
         // The literal-length constructor stage: `vector`, `rep`, `seq`.
@@ -646,12 +668,10 @@ impl Checker {
                     None => NewNaProvenance::Possible,
                 };
             if introduced_here {
-                self.emit(
-                    Severity::Warning,
-                    span,
-                    "RY119",
-                    "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
-                );
+                match &mut self.held_cast {
+                    Some(held) if held.span == span => held.warned = true,
+                    _ => self.emit_integer_range_loss(span),
+                }
             }
             return result;
         }
@@ -732,6 +752,9 @@ impl Checker {
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
                 scope.uncertainty.effects |= delta.uncertainty.effects;
+                if delta.data_mask_env_unknown {
+                    scope.invalidate_data_mask_env();
+                }
                 for name in delta.changed.into_keys() {
                     scope.insert(name, RType::unknown());
                 }
@@ -832,6 +855,9 @@ impl Checker {
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
                 scope.uncertainty.effects |= delta.uncertainty.effects;
+                if delta.data_mask_env_unknown {
+                    scope.invalidate_data_mask_env();
+                }
                 for changed in delta.changed.into_keys() {
                     scope.insert(changed, RType::unknown());
                 }
@@ -1634,6 +1660,7 @@ impl Checker {
                 .collect();
             match_arguments(&names, args)
         });
+        let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
         // One match for the resolved signature; the loop below used to redo it
         // for every argument.
         let declared_binding = resolved_sig
@@ -1675,6 +1702,14 @@ impl Checker {
             } else {
                 injection
             };
+            if unforced_args.get(index).copied().unwrap_or(false) {
+                // R never evaluates this actual, so it gets no diagnostics
+                // and no effects on the caller. Its type still serves
+                // declared-contract checks.
+                let mut unevaluated = scope.independent_execution_scope();
+                arg_types.push(self.infer_discarding(&a.value, &mut unevaluated));
+                continue;
+            }
             if let Some(parameter) = user_param
                 && (parameter.quoting
                     || declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)))
@@ -1749,6 +1784,107 @@ impl Checker {
             lexical_callable,
             locally_shadows_stub: false,
         }
+    }
+
+    /// Per actual, whether it binds a formal the called definition can never
+    /// force. Only a direct, unaliased call to one exact literal qualifies,
+    /// and forwarded `...` leaves the positional binding unknown.
+    fn unforced_arguments(
+        &self,
+        name: &str,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Vec<bool> {
+        if name != semantic_name
+            || name.contains("::")
+            || args
+                .iter()
+                .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return Vec::new();
+        }
+        let Some(function) = self.declaration_helper(name, scope).filter(|function| {
+            function.params.iter().any(|parameter| parameter.unforced)
+                && !self
+                    .fn_table
+                    .was_rebound_after_capture(&function.source_path, function.definition_span)
+                && self.runs_only_stub_code(function)
+        }) else {
+            return Vec::new();
+        };
+        let names: Vec<&str> = function
+            .params
+            .iter()
+            .map(|parameter| parameter.name.as_str())
+            .collect();
+        match_arguments(&names, args)
+            .param_for_arg
+            .iter()
+            .map(|formal| formal.is_some_and(|formal| function.params[formal].unforced))
+            .collect()
+    }
+
+    /// Whether evaluating `function` runs no project code, which could reach
+    /// its caller's frame (`get("x", envir = parent.frame())`). Every call
+    /// head must name a typeshed function the project does not bind, no
+    /// project function may be passed by value or by name, and no call or
+    /// operator may dispatch while the project defines methods.
+    fn runs_only_stub_code(&self, function: &UserFn) -> bool {
+        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
+        let mut dispatches = false;
+        let mut visit = |node: AstNode<'_>, _| {
+            let closed = match node {
+                AstNode::Expr(Expr::Call { func, .. }) => {
+                    dispatches = true;
+                    match func.as_ref() {
+                        Expr::Ident { name, .. } => {
+                            let name = semantic_argument_name(name);
+                            !project_function(name)
+                                && !project_function(&format!("{name}<-"))
+                                && !self.fn_table.known_vars.contains(name)
+                                && self.resolve_typeshed_sig(name).is_some()
+                        }
+                        _ => false,
+                    }
+                }
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    !project_function(semantic_argument_name(name))
+                }
+                AstNode::Expr(Expr::String(text, _)) => !project_function(text),
+                AstNode::Expr(Expr::BinOp { .. } | Expr::UnaryOp { .. } | Expr::Index { .. }) => {
+                    dispatches = true;
+                    true
+                }
+                _ => true,
+            };
+            if closed {
+                ControlFlow::Continue(Descend::Into)
+            } else {
+                ControlFlow::Break(())
+            }
+        };
+        let closed = function
+            .source_params
+            .iter()
+            .filter_map(|parameter| parameter.default.as_ref())
+            .all(|default| walk_expr(default, Walk::ALL, &mut visit).is_continue())
+            && walk_stmts(&function.body, Walk::ALL, &mut visit).is_continue();
+        closed && !(dispatches && self.project_defines_methods())
+    }
+
+    /// Whether any project function is named like a method of a typeshed or
+    /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
+    fn project_defines_methods(&self) -> bool {
+        self.fn_table.fns.keys().any(|name| {
+            let name = semantic_argument_name(name);
+            name.starts_with("__s4__")
+                || name.match_indices('.').any(|(end, _)| {
+                    end > 0
+                        && (crate::semantic_lists::is_group_generic(&name[..end])
+                            || self.resolve_typeshed_sig(&name[..end]).is_some())
+                })
+        })
     }
 
     /// The definition whose adopted contract a call checks: the exact
@@ -2081,6 +2217,77 @@ impl Checker {
         CallHeadFunctionEvidence::Suppress
     }
 
+    /// The actual a project `UseMethod` generic dispatches on: the one bound
+    /// to its first formal, when the call reaches the table's generic (no
+    /// local definition shadows it) and that binding is determinable.
+    fn user_generic_receiver(
+        &self,
+        name: &str,
+        lookup_name: &str,
+        call: &CallResolution,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Option<usize> {
+        let generic = call.user_function.as_ref()?;
+        if name.contains("::")
+            || scope.is_parameter(lookup_name)
+            || !self.is_user_generic(lookup_name)
+        {
+            return None;
+        }
+        if scope
+            .get(lookup_name)
+            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+            && (generic.source_path != self.path
+                || scope.lexical_definition(lookup_name) != Some(generic.definition_span))
+        {
+            return None;
+        }
+        // Forwarded dots hide which actual reaches the first formal.
+        if args
+            .iter()
+            .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return None;
+        }
+        let formals: Vec<&str> = generic
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        let matched = match_arguments(&formals, args);
+        if formals.first() == Some(&"...") {
+            matched.param_for_arg.iter().position(Option::is_none)
+        } else {
+            matched.arg_for_param(0)
+        }
+    }
+
+    /// `UseMethod` looks up methods in the calling environment before the
+    /// generic's: a `<generic>.<class>` binding in scope that is not the
+    /// table's definition may be the selected method.
+    fn caller_method_may_shadow(&self, generic: &str, receiver: &RType, scope: &Scope) -> bool {
+        let classes = receiver
+            .class
+            .names
+            .iter()
+            .take(receiver.class.len as usize)
+            .flatten();
+        for class in classes.map(|class| &**class).chain(["default"]) {
+            let method = format!("{generic}.{class}");
+            if scope.get(&method).is_some() {
+                return !self.fn_table.fns.get(&method).is_some_and(|function| {
+                    function.source_path == self.path
+                        && scope.lexical_definition(&method) == Some(function.definition_span)
+                });
+            }
+            if self.s3_lookup_method(generic, class).is_some() {
+                return false;
+            }
+        }
+        false
+    }
+
     /// The lexical-callable stage: a `Function`-typed scope binding with an
     /// inferred `fn_sig` resolves to the signature's return type (this is
     /// what makes `c <- make_counter(); v <- c()` work). Qualified calls
@@ -2344,9 +2551,7 @@ impl Checker {
                 for name in assigned_names_in_body(body) {
                     inner.insert(name, RType::unknown());
                 }
-                for statement in body {
-                    self.walk_stmt(statement, &mut inner, None);
-                }
+                self.walk_block(body, &mut inner, None);
                 RType::scalar(Mode::Function)
             }
             Expr::Call { args, .. } => {
@@ -2356,9 +2561,7 @@ impl Checker {
                 RType::unknown()
             }
             Expr::Block { body, .. } => {
-                for statement in body {
-                    self.walk_stmt(statement, scope, None);
-                }
+                self.walk_block(body, scope, None);
                 RType::unknown()
             }
             _ => self.infer(expr, scope),

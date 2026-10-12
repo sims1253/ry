@@ -198,6 +198,37 @@ fn typeshed_agreement_lists_match_typeshed() {
     }
 }
 
+/// FRAME_REFLECTION names real functions: base and methods ones per R
+/// itself (the methods namespace inherits base), rlang ones per the
+/// vendored rlang typeshed (rlang need not be installed).
+#[test]
+fn frame_reflection_names_are_base_or_rlang_functions() {
+    if !rscript_available() {
+        eprintln!("Rscript not on PATH; skipping oracle check");
+        return;
+    }
+    let rlang = rlang_typeshed_names().unwrap_or_default();
+    let output = r_eval(&format!(
+        "for (n in c({})) cat(n, exists(n, envir = asNamespace('methods'), mode = 'function'), '\\n')",
+        semantic_lists::FRAME_REFLECTION
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    for line in output.lines() {
+        let (name, in_base) = line.trim().split_once(' ').expect("name and flag");
+        assert!(
+            in_base.trim() == "TRUE" || rlang.contains(name),
+            "FRAME_REFLECTION item {name:?} is not a base, methods, or rlang function"
+        );
+    }
+    assert_eq!(
+        output.lines().count(),
+        semantic_lists::FRAME_REFLECTION.len()
+    );
+}
+
 /// OPERATORS matches R's Arith + Compare group members.
 #[test]
 fn operators_match_r_oracle() {

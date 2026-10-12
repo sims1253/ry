@@ -363,9 +363,12 @@ fn main() -> Result<ExitCode> {
             // their synchronous behavior and pay no runtime cost.
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| miette::miette!("failed to start tokio runtime: {}", e))?;
-            rt.block_on(async { ry_lsp::run().await })
-                .map_err(|e| miette::miette!("ry LSP server error: {}", e))?;
-            Ok(ExitCode::SUCCESS)
+            let code = rt.block_on(ry_lsp::run());
+            // Tokio's stdin reader is a blocking read that cannot be
+            // cancelled; waiting for it would keep the process alive until
+            // the client closes stdin.
+            rt.shutdown_background();
+            Ok(code)
         }
         Cmd::Version { output_format } => {
             print_version(&output_format);

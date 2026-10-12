@@ -538,6 +538,31 @@ impl Checker {
         true
     }
 
+    /// Whether `generic` names a project function whose whole body is
+    /// `UseMethod("<generic>")`, so it dispatches on its first argument.
+    pub(crate) fn is_user_generic(&self, generic: &str) -> bool {
+        self.fn_table.fns.get(generic).is_some_and(|function| {
+            matches!(&*function.body, [Stmt::Expr(Expr::Call { args, .. })] if args.len() == 1)
+                && usemethod_generic_name(&function.body).as_deref() == Some(generic)
+        })
+    }
+
+    /// Whether the project binds any `<generic>.<class>` method for a
+    /// project generic, which makes the project own its dispatch surface.
+    pub(crate) fn has_user_generic_method(&self, generic: &str) -> bool {
+        self.is_user_generic(generic)
+            && self
+                .fn_table
+                .fns
+                .keys()
+                .chain(&self.fn_table.known_vars)
+                .any(|name| {
+                    name.strip_prefix(generic)
+                        .and_then(|rest| rest.strip_prefix('.'))
+                        .is_some_and(|class| !class.is_empty())
+                })
+    }
+
     pub(crate) fn user_s3_dispatch_return(&self, generic: &str, first: &RType) -> Option<RType> {
         for class in first
             .class

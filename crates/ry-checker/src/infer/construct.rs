@@ -1034,9 +1034,7 @@ pub(crate) fn with_selected_elements(mut value: RType, length: Length) -> RType 
         && !facts.prior_na
         && facts.new_na == ry_core::types::NewNaProvenance::None
         && facts.numeric_bounds.is_some_and(|(low, high)| low == high);
-    if constant && matches!(length, Length::One | Length::Nonempty) {
-        value.value_facts.cast_site = None;
-    } else {
+    if !(constant && matches!(length, Length::One | Length::Nonempty)) {
         value.value_facts = facts.for_subset();
     }
     match value.columns.take() {

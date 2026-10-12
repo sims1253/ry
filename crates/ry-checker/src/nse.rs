@@ -5,7 +5,7 @@ use crate::resolve::SchemaProvider;
 impl Checker {
     /// Apply schema semantics declared by the resolved package signature.
     /// Resolution itself preserves package attachment, qualification,
-    /// importFrom, and tidyverse gating.
+    /// importFrom, and meta-package attachment.
     pub(crate) fn infer_schema_call(
         &mut self,
         name: &str,
@@ -192,6 +192,15 @@ impl Checker {
             // Escaped tags and unsupported controls cannot prove a complete
             // result shape even for a standard data-frame receiver.
             result = incomplete_schema(result);
+        }
+        // A row-selecting effect (base `subset`) also re-counts elements.
+        if let Some(length) = crate::infer::construct::semantic_return_length(
+            sig.return_length.as_ref(),
+            &sig.params,
+            args,
+            &arg_types,
+        ) {
+            result = crate::infer::construct::with_selected_elements(result, length);
         }
         Some(result)
     }

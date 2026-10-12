@@ -52,9 +52,25 @@ All notable changes to ry are documented in this file.
   degraded scopes instead of silently treating them as empty (#598).
 - `--exit-zero` now also covers file read and discovery failures during a
   check; usage errors still exit nonzero (#604).
+- Read meta-package attachment from the stub's new top-level `attaches`
+  list instead of special-casing tidyverse. `library(tidyverse)` now makes
+  all of its stubbed core packages resolvable (purrr, stringr, tibble,
+  readr, ggplot2, not only dplyr and tidyr's verbs), while forcats and
+  lubridate, which have no stubs, keep the search path open.
 
 ### Fixed
 
+- Stop selections from claiming their input's length. `return: "arg0"`
+  combined with a `return_length` rule now keeps the first argument's mode
+  and class but re-counts its elements, dropping whole-value facts; a data
+  frame keeps its columns with unknown row counts. With the vendored stubs,
+  `head`, `tail`, `unique`, `setdiff`, `union`, `na.omit`, `subset`, and
+  `window` no longer produce false RY002 and RY041 reports such as
+  `if (head(x, 1) > 0)` on a length-3 `x`. Stubs can declare
+  `zero_if_any_param_zero` with one parameter and the new
+  `zero_if_all_params_zero` and `same_emptiness` rules; a selection proven
+  nonempty from a known constant vector keeps its value, so
+  `as.integer(unique(c(1e10, 1e10)))` still reports RY119.
 - Track literal dplyr column additions, removals, and renames through common verbs. This removes two false RY060 missing-column reports for `group_by(big = ...)` in the pinned dplyr corpus while keeping dynamic and custom S3 results conservative (#353).
 - Bind the target of a base `delayedAssign()` without evaluating its promise,
   removing false RY010 reports for lazily bound values (#349).

@@ -26,7 +26,7 @@
 #[cfg(feature = "test-util")]
 pub mod test_seam {
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::Notify;
 
     /// A point where production code can be parked or observed.
@@ -34,34 +34,12 @@ pub mod test_seam {
     pub enum Seam {
         /// `parsed_file` after reading text/version/tree, before parsing.
         Parse,
-        /// One-shot signal after a `didChange` was applied and scheduled.
+        /// One-shot signal after a `didChange` was applied and queued.
         DidChange,
         /// `didChange` before its document transaction.
         ChangeTransition,
-        /// The initial background index, before its walk.
-        InitialIndex,
-        /// One-shot signal after a debounced diagnostics pass published.
-        DiagnosticCycle,
-        /// A per-file disk refresh between its read and its commit lock.
-        RefreshCommit,
-        /// A per-file disk refresh after its commit lock released.
-        PostRefreshCommit,
-        /// A full scan between its walk and its commit lock.
-        ScanCommit,
-        /// A landed-refresh pipeline before acknowledging its obligation.
-        PublicationAck,
-        /// A package-context refresh between resolve and install.
-        ContextInstall,
-        /// The reconciliation driver before deciding to idle.
-        DriverIdle,
-    }
-
-    /// Instrumented event counts since thread start.
-    #[derive(Clone, Copy, Debug)]
-    pub enum Counter {
-        ReconciliationDriverSpawns,
-        ReconciliationRounds,
-        BackgroundIndexSpawns,
+        /// The index writer's full scan, between its walk and its install.
+        Scan,
     }
 
     #[derive(Default)]
@@ -73,11 +51,10 @@ pub mod test_seam {
     }
 
     thread_local! {
-        static GATES: Arc<[Gate; 11]> = Arc::new(Default::default());
-        static COUNTERS: [AtomicUsize; 3] = Default::default();
+        static GATES: Arc<[Gate; 4]> = Arc::new(Default::default());
     }
 
-    fn gates() -> Arc<[Gate; 11]> {
+    fn gates() -> Arc<[Gate; 4]> {
         GATES.with(Arc::clone)
     }
 
@@ -102,10 +79,6 @@ pub mod test_seam {
         gates()[seam as usize].landed.notified().await;
     }
 
-    pub fn count(counter: Counter) -> usize {
-        COUNTERS.with(|counters| counters[counter as usize].load(Ordering::Relaxed))
-    }
-
     /// Park at `seam` when armed. Returns whether the caller parked.
     pub(crate) async fn pause(seam: Seam) -> bool {
         let gates = gates();
@@ -116,15 +89,6 @@ pub mod test_seam {
             return true;
         }
         false
-    }
-
-    /// Park at `seam` when armed and report landing once resumed.
-    pub(crate) async fn pause_and_land(seam: Seam) -> bool {
-        let paused = pause(seam).await;
-        if paused {
-            landed(seam);
-        }
-        paused
     }
 
     /// Report that a caller parked at `seam` made its decision.
@@ -140,10 +104,6 @@ pub mod test_seam {
             gate.landed.notify_one();
         }
     }
-
-    pub(crate) fn bump(counter: Counter) {
-        COUNTERS.with(|counters| counters[counter as usize].fetch_add(1, Ordering::Relaxed));
-    }
 }
 
 mod backend;
@@ -153,11 +113,9 @@ mod index;
 mod positions;
 mod settings;
 
+use backend::Backend;
 #[cfg(feature = "test-util")]
 pub use backend::baseline_disk_reads;
-use backend::{Backend, State};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::{LspService, Server};
 
@@ -181,11 +139,7 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
-    let (service, socket) = LspService::build(|client| Backend {
-        client,
-        state: Arc::new(Mutex::new(State::default())),
-    })
-    .finish();
+    let (service, socket) = LspService::build(Backend::new).finish();
     let server = Server::new(reader, writer, socket);
     // Tests park several handlers at seams at once; tower-lsp's default of
     // four in-flight messages would leave the next notification undelivered.

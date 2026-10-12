@@ -89,7 +89,6 @@ impl LanguageServer for Backend {
         .unwrap_or_default();
 
         let mut state = self.state.lock().await;
-        state.initial_index_pending = true;
         state.fallback = fallback;
         state.server_settings = server_settings;
         state.supports_workspace_configuration = supports_workspace_configuration;
@@ -138,22 +137,18 @@ impl LanguageServer for Backend {
         // If the client supports workspace/configuration, pull the
         // `ry.*` section now. This is the primary settings path for VS
         // Code and supersedes whatever was in initializationOptions.
-        let should_pull = {
-            let state = self.state.lock().await;
-            state.supports_workspace_configuration
+        let should_pull = self.state.lock().await.supports_workspace_configuration;
+        let settings = if should_pull {
+            self.pull_folder_settings().await
+        } else {
+            None
         };
-        if should_pull {
-            self.pull_folder_settings().await;
-            self.reload_folder_contexts().await;
-        }
-
-        self.refresh_watchers().await;
-
-        // didOpen can run while indexing. Replay those documents only after
-        // their workspace bindings and package metadata have been installed.
-        if self.reindex().await {
-            self.republish_all_open_documents().await;
-        }
+        // Documents opened meanwhile publish only after the first scan
+        // installed their workspace bindings and package metadata.
+        self.send(Work::Configure {
+            settings,
+            reload: should_pull,
+        });
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -161,33 +156,32 @@ impl LanguageServer for Backend {
         let path = uri_to_path(&uri);
         let text = params.text_document.text.clone();
         let version = params.text_document.version;
+        let mut state = self.state.lock().await;
         // Clear any stale tree from a previous session for this path.
-        {
-            let mut state = self.state.lock().await;
-            state.trees.remove(&path);
-            let previous = state
-                .docs
-                .get(&path)
-                .cloned()
-                .zip(state.versions.get(&path).copied());
-            let open = state.open_source_paths.entry(path.clone()).or_default();
-            let collides = !open.is_empty() && (!open.contains_key(&uri) || open.len() > 1);
-            if collides && open.len() == 1 {
-                open.values_mut().next().expect("one open source").shadow = previous;
-            }
-            open.insert(
-                uri.clone(),
-                super::OpenSource {
-                    native: uri.to_file_path().ok(),
-                    shadow: collides.then(|| (text.clone(), version)),
-                },
-            );
-            if collides {
-                state.active_collision_uri.insert(path.clone(), uri.clone());
-            }
-            state.update_doc(&path, text, version);
+        state.trees.remove(&path);
+        let previous = state
+            .docs
+            .get(&path)
+            .cloned()
+            .zip(state.versions.get(&path).copied());
+        let open = state.open_source_paths.entry(path.clone()).or_default();
+        let collides = !open.is_empty() && (!open.contains_key(&uri) || open.len() > 1);
+        if collides && open.len() == 1 {
+            open.values_mut().next().expect("one open source").shadow = previous;
         }
-        self.request_pass([path]).await;
+        open.insert(
+            uri.clone(),
+            super::OpenSource {
+                native: uri.to_file_path().ok(),
+                shadow: collides.then(|| (text.clone(), version)),
+            },
+        );
+        if collides {
+            state.active_collision_uri.insert(path.clone(), uri.clone());
+        }
+        state.update_doc(&path, text, version);
+        state.diag_generation = state.diag_generation.wrapping_add(1);
+        self.send(Work::Publish(path));
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -196,294 +190,81 @@ impl LanguageServer for Backend {
         let version = params.text_document.version;
         #[cfg(feature = "test-util")]
         let paused_transition = crate::test_seam::pause(Seam::ChangeTransition).await;
-        let applied = self.state.lock().await.apply_document_changes(
-            &path,
-            &uri,
-            params.content_changes,
-            version,
-        );
+        {
+            let mut state = self.state.lock().await;
+            if state.apply_document_changes(&path, &uri, params.content_changes, version) {
+                state.diag_generation = state.diag_generation.wrapping_add(1);
+                self.send(Work::Publish(path));
+                // Test seam: signals didChange completion (see `test_seam`).
+                #[cfg(feature = "test-util")]
+                crate::test_seam::signal(Seam::DidChange);
+            }
+        }
         #[cfg(feature = "test-util")]
         if paused_transition {
             crate::test_seam::landed(Seam::ChangeTransition);
         }
-        if !applied {
-            return;
-        }
-        self.request_pass([path]).await;
-        // Test seam: signals didChange completion (see `test_seam`).
-        #[cfg(feature = "test-util")]
-        crate::test_seam::signal(Seam::DidChange);
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         // Pull-capable clients re-pull `ry.*`; others send settings inline.
-        let should_pull = {
-            let state = self.state.lock().await;
-            state.supports_workspace_configuration
-        };
-
-        if should_pull {
-            self.pull_folder_settings().await;
+        let should_pull = self.state.lock().await.supports_workspace_configuration;
+        let settings = if should_pull {
+            self.pull_folder_settings().await
         } else {
             // The client sent settings inline. They may be wrapped in
             // an outer "ry" key (VS Code) or be the raw ry settings.
             let raw = &params.settings;
             let ry_section = raw.get("ry").unwrap_or(raw);
-            if let Ok(settings) = serde_json::from_value::<FolderSettings>(ry_section.clone()) {
-                let mut state = self.state.lock().await;
-                let state = &mut *state;
-                for ctx in state
-                    .folder_contexts
-                    .iter_mut()
-                    .chain(std::iter::once(&mut state.fallback))
-                {
-                    ctx.folder_settings = settings.clone();
-                    ctx.refresh_policy();
-                }
-                state.server_settings.global_settings = settings;
-            }
-        }
-
-        self.reload_folder_contexts().await;
-        self.refresh_watchers().await;
-        self.reindex().await;
-
-        self.republish_all_open_documents().await;
+            serde_json::from_value::<FolderSettings>(ry_section.clone())
+                .ok()
+                .map(SettingsUpdate::Inline)
+        };
+        self.send(Work::Configure {
+            settings,
+            reload: true,
+        });
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
-        // Remove all state owned by removed roots, rebuild the sorted
-        // folder contexts, reindex, then republish only after the new
-        // state is installed.
-        let removed_paths: Vec<PathBuf> = params
-            .event
-            .removed
-            .iter()
-            .filter_map(|f| f.uri.to_file_path().ok())
-            .collect();
-        let under_removed_root = |p: &str| {
-            removed_paths
+        let paths = |folders: &[WorkspaceFolder]| -> Vec<PathBuf> {
+            folders
                 .iter()
-                .any(|r| std::path::Path::new(p).starts_with(r))
+                .filter_map(|folder| folder.uri.to_file_path().ok())
+                .collect()
         };
-
-        // Clear every URI under a removed root: open documents and closed
-        // disk files alike, since the tracked map forgets them below.
-        let (docs_to_clear, docs_to_republish): (Vec<Url>, Vec<String>) = {
-            let state = self.state.lock().await;
-            let (keep, clear): (Vec<&String>, Vec<&String>) =
-                state.docs.keys().partition(|p| !under_removed_root(p));
-            let source_uris = |path: &str| source_uris(&state.open_source_paths, path);
-            let mut docs_to_clear: std::collections::HashSet<Url> =
-                clear.into_iter().flat_map(|p| source_uris(p)).collect();
-            for (_, uris) in state
-                .published_uris
-                .iter()
-                .filter(|(path, _)| under_removed_root(path.as_str()))
-            {
-                docs_to_clear.extend(uris.iter().cloned());
-            }
-            (
-                docs_to_clear.into_iter().collect(),
-                keep.into_iter().cloned().collect(),
-            )
-        };
-
-        {
-            let mut state = self.state.lock().await;
-
-            // Remove state owned by removed roots BEFORE rebuilding so
-            // stale state never enters the next check.
-            state.disk_files.retain(|p, _| !under_removed_root(p));
-            state.trees.retain(|p, _| !under_removed_root(p));
-            state.parsed.retain(|p, _| !under_removed_root(p));
-            state.hints.retain(|p, _| !under_removed_root(p));
-            state.reconciliation.cancel_where(under_removed_root);
-            state.published_uris.retain(|p, _| !under_removed_root(p));
-
-            let added_roots: Vec<PathBuf> = params
-                .event
-                .added
-                .iter()
-                .filter_map(|f| f.uri.to_file_path().ok())
-                .collect();
-
-            let new_contexts = if !added_roots.is_empty() {
-                let server_settings = state.server_settings.clone();
-                tokio::task::spawn_blocking(move || {
-                    let added: Vec<_> = added_roots
-                        .into_iter()
-                        .map(|path| (usize::MAX, path))
-                        .collect();
-                    load_folder_contexts(&added, &server_settings)
-                })
-                .await
-                .unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
-            // Replacing removed contexts drops their project caches with
-            // them; surviving contexts keep theirs, new ones start fresh.
-            state
-                .folder_contexts
-                .retain(|ctx| !removed_paths.iter().any(|p| p == &ctx.root));
-            state.folder_contexts.extend(new_contexts);
-            // Sort by root path length descending for longest-prefix matching.
-            state
-                .folder_contexts
-                .sort_by_key(|ctx| std::cmp::Reverse(ctx.root.as_os_str().len()));
-
-            state.index_generation = state.index_generation.wrapping_add(1);
-            if state.folder_contexts.is_empty() {
-                state.initial_index_pending = false;
-            }
-        }
-
-        self.refresh_watchers().await;
-        self.reindex().await;
-
-        for uri in &docs_to_clear {
-            self.client
-                .publish_diagnostics(uri.clone(), Vec::new(), None)
-                .await;
-        }
-
-        self.request_pass(docs_to_republish).await;
+        self.send(Work::Folders {
+            added: paths(&params.event.added),
+            removed: paths(&params.event.removed),
+        });
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        // Refresh configuration and filesystem-backed resolution when any
-        // registered package metadata, data, stub, or config file changes.
-        let config_paths = custom_config_paths(&*self.state.lock().await);
-        let config_or_baseline_changed = params.changes.iter().any(|change| {
-            let path = change.uri.path();
-            path.ends_with("ry.toml")
-                || path.ends_with(".json")
-                || change
-                    .uri
-                    .to_file_path()
-                    .is_ok_and(|path| config_paths.contains(&path))
-        });
-        let resolution_changed = config_or_baseline_changed
-            || params.changes.iter().any(|change| {
-                let path = change.uri.path();
-                path.ends_with("DESCRIPTION")
-                    || path.ends_with("NAMESPACE")
-                    || change.uri.to_file_path().is_ok_and(|path| {
-                        path.parent().and_then(std::path::Path::file_name)
-                            == Some(std::ffi::OsStr::new("src"))
-                            && matches!(
-                                path.extension().and_then(|ext| ext.to_str()),
-                                Some("c" | "cc" | "cpp" | "cxx")
-                            )
-                    })
-                    || path.ends_with(".rda")
-                    || path.ends_with(".RData")
-                    || path.ends_with(".rdata")
-            });
-        // Source events refresh the disk index entry by entry; the refresh
-        // itself skips open buffers.
-        let r_source_paths: Vec<std::path::PathBuf> = params
-            .changes
-            .iter()
-            .filter_map(|change| change.uri.to_file_path().ok())
-            .filter(|path| ry_workspace::is_source_path(path))
-            .collect();
-        if !resolution_changed && r_source_paths.is_empty() {
-            return;
-        }
-
-        if config_or_baseline_changed {
-            self.reload_folder_contexts().await;
-        }
-
-        // Closed files to republish alongside every open document.
-        let mut publish: Vec<String> = Vec::new();
-        if resolution_changed {
-            // A superseded scan leaves the republish to its supplanter.
-            if self.reindex().await {
-                publish.extend(self.state.lock().await.published_uris.keys().cloned());
-            }
-        } else {
-            let mut landed: Vec<(String, u64)> = Vec::new();
-            for path in r_source_paths {
-                let path_string = path.to_string_lossy().into_owned();
-                if let Some(epoch) = self.refresh_disk_entry(path).await {
-                    landed.push((path_string, epoch));
-                }
-            }
-            if landed.is_empty() {
-                // Retained obligations converge through the driver.
-                self.wake_reconciliation().await;
-                return;
-            }
-            // Advance the owning package contexts before publishing.
-            let ctx_settled = self.refresh_package_contexts(&landed).await;
-            publish.extend(landed.into_iter().map(|(path, _)| path));
-            self.acknowledge_publications(&ctx_settled).await;
-        }
-
-        publish.extend(self.state.lock().await.docs.keys().cloned());
-        self.request_pass(publish).await;
-        self.wake_reconciliation().await;
+        self.send(Work::Watched(params.changes));
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
+        let uri = params.text_document.uri;
         let path = uri_to_path(&uri);
-        let (remaining_open_paths, survivor) = {
-            let mut state = self.state.lock().await;
-            let survivor = state.close_open_source(&path, &uri);
-            // The empty publication below clears this URI.
-            if survivor.is_none() {
-                state.docs.remove(&path);
-                state.versions.remove(&path);
-                state.parsed.remove(&path);
-                state.hints.remove(&path);
-                state.trees.remove(&path);
-                state.published_uris.remove(&path);
-            } else if let Some(uris) = state.published_uris.get_mut(&path) {
-                uris.remove(&uri);
-                if uris.is_empty() {
-                    state.published_uris.remove(&path);
-                }
-            }
-            // Invalidate any in-flight debounced publish for this file.
-            state.diag_generation = state.diag_generation.wrapping_add(1);
-            (state.docs.keys().cloned().collect::<Vec<_>>(), survivor)
-        };
-        if let Some(survivor) = survivor {
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
-            self.request_pass([uri_to_path(&survivor)]).await;
-            return;
+        let mut state = self.state.lock().await;
+        let shared = state.close_open_source(&path, &uri).is_some();
+        if !shared {
+            state.docs.remove(&path);
+            state.versions.remove(&path);
+            state.parsed.remove(&path);
+            state.hints.remove(&path);
+            state.trees.remove(&path);
         }
-        // Re-read the closed file so its last-saved bytes become the indexed
-        // snapshot, converging with a fresh server.
-        let refreshed_epoch = self
-            .refresh_disk_entry(std::path::PathBuf::from(&path))
-            .await;
-        if let Some(epoch) = refreshed_epoch {
-            // The close's own publications below carry the publication duty.
-            let ctx_settled = self.refresh_package_contexts(&[(path, epoch)]).await;
-            self.acknowledge_publications(&ctx_settled).await;
-        }
-        self.client
-            .publish_diagnostics(uri.clone(), Vec::new(), None)
-            .await;
-        // Closing a document can change diagnostics in the remaining open
-        // documents (names defined in the closed file become unresolved),
-        // so refresh them.
-        if !remaining_open_paths.is_empty() {
-            self.request_pass(remaining_open_paths).await;
-        }
-        self.wake_reconciliation().await;
+        state.diag_generation = state.diag_generation.wrapping_add(1);
+        self.send(Work::Closed { uri, path, shared });
     }
 
     async fn shutdown(&self) -> LspResult<()> {
-        // Cancel pending work before any driver can claim another refresh.
-        let mut state = self.state.lock().await;
-        state.reconciliation.shutdown();
+        // Answered once the writer finished its current work, so no
+        // publication follows the response.
+        let (done, stopped) = tokio::sync::oneshot::channel();
+        self.send(Work::Shutdown(done));
+        let _ = stopped.await;
         Ok(())
     }
 

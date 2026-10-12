@@ -1,12 +1,10 @@
 //! LSP backend: `Backend`, `State`, the `LanguageServer` impl, and the
-//! document cache / debounce machinery.
+//! document cache. Index maintenance and publication run in [`writer`].
 
 mod handlers;
-mod reconciliation;
+mod writer;
 
-use reconciliation::{
-    RECONCILE_ROUNDS_BEFORE_PACING, ReconcileRoundProgress, Reconciliation, RefreshDuty,
-};
+use writer::{IndexWriter, SettingsUpdate, Work};
 
 use crate::diagnostics::{
     diagnostic_origin, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
@@ -15,7 +13,7 @@ use crate::hints::collect_inlay_hints;
 use crate::positions::{byte_offset_to_point, position_to_byte_offset};
 use crate::settings::{FolderSettings, ServerSettings};
 #[cfg(feature = "test-util")]
-use crate::test_seam::{Counter, Seam};
+use crate::test_seam::Seam;
 
 use ry_checker::Project;
 use ry_core::{RParser, SourceFile};
@@ -43,8 +41,9 @@ pub fn baseline_disk_reads() -> usize {
 
 #[derive(Clone)]
 pub(super) struct Backend {
-    pub(super) client: Client,
-    pub(super) state: Arc<Mutex<State>>,
+    client: Client,
+    state: Arc<Mutex<State>>,
+    writer: tokio::sync::mpsc::UnboundedSender<Work>,
 }
 
 struct CachedHints {
@@ -99,21 +98,10 @@ pub(super) struct State {
     parsed: HashMap<String, (i32, Arc<SourceFile>)>,
     /// Hints belong to one document version and loaded stub snapshot.
     hints: HashMap<String, CachedHints>,
-    /// Workspace-wide debounce generation; see `request_pass`.
+    /// Bumped by every document change and every publication pass. A pass
+    /// publishes only while its own generation holds, and diagnostic data
+    /// carries it so code actions can reject findings from older passes.
     diag_generation: u64,
-    /// Paths with a scheduled-but-unpublished diagnostics request; the task
-    /// holding the latest generation drains the whole set.
-    pending_diag_paths: HashSet<String>,
-    /// Actual URIs whose last publication carried diagnostics, keyed by
-    /// display path. A URI that stops receiving publications is cleared
-    /// with an empty one so stale squiggles cannot linger.
-    published_uris: HashMap<String, HashSet<Url>>,
-    /// Bumped by every index writer; a writer installs only while the
-    /// generation it captured still holds.
-    index_generation: u64,
-    reconciliation: Reconciliation,
-    /// Files opened during initialization wait for the first workspace context.
-    initial_index_pending: bool,
     /// Counts every parse performed by `parsed_file` (cache misses only).
     #[cfg(test)]
     pub(super) parse_count: Arc<std::sync::atomic::AtomicUsize>,
@@ -912,112 +900,60 @@ mod colliding_change_tests {
     }
 }
 
-/// How a background index pass ended. `Installed` is the only outcome
-/// that put new bytes in `disk_files`; `SettledWithoutInstall` cleared
-/// `initial_index_pending` without touching the map (no roots, or a failed
-/// walk); `Superseded` lost the generation race to a newer writer.
-enum BackgroundIndexOutcome {
-    Installed,
-    SettledWithoutInstall,
-    Superseded,
-}
-
-/// Spawn one reconciliation driver task. A plain function boundary keeps
-/// the driver's future out of the wake site's future; an inline spawn
-/// would make the Send obligations of the two futures circular.
-fn spawn_reconciliation_driver(backend: Backend) {
-    tokio::spawn(async move {
-        backend.run_reconciliation().await;
-    });
-}
-
-impl Backend {
-    /// Reload every context off the runtime; each keeps its last valid
-    /// config, baseline, and stubs on failure.
-    async fn reload_folder_contexts(&self) {
-        let (contexts, fallback) = {
-            let state = self.state.lock().await;
-            (state.folder_contexts.clone(), state.fallback.clone())
-        };
-        let reloaded = tokio::task::spawn_blocking(move || {
-            let reload = |ctx: &FolderAnalysisContext| {
-                FolderAnalysisContext::load(
-                    ctx.root.clone(),
-                    ctx.folder_settings.clone(),
-                    Some(ctx),
-                )
-            };
-            (
-                contexts.iter().map(reload).collect::<Vec<_>>(),
-                reload(&fallback),
-            )
-        })
-        .await;
-        let (contexts, fallback) = match reloaded {
-            Ok(reloaded) => reloaded,
-            Err(error) => {
-                tracing::warn!(%error, "folder context reload task failed; retaining previous contexts");
-                return;
-            }
-        };
-        let mut state = self.state.lock().await;
-        state.folder_contexts = contexts;
-        state.fallback = fallback;
-        tracing::info!("workspace config/baseline reloaded");
-    }
-
-    async fn refresh_watchers(&self) {
-        let registered = Arc::clone(&self.state.lock().await.watcher_paths);
-        // Serialize replacement registrations without holding the document lock.
-        let mut registered = registered.lock().await;
-        let (paths, relative) = {
-            let state = self.state.lock().await;
-            if !state.supports_did_change_watched_files {
-                return;
-            }
-            (
-                custom_config_paths(&state),
-                state.supports_relative_patterns,
-            )
-        };
-        if registered.as_ref() == Some(&paths) {
+/// Register the workspace watchers for the current folder settings,
+/// replacing an earlier registration whose custom config paths changed.
+async fn refresh_watchers(client: Client, state: Arc<Mutex<State>>) {
+    let registered = Arc::clone(&state.lock().await.watcher_paths);
+    // Serialize replacement registrations without holding the document lock.
+    let mut registered = registered.lock().await;
+    let (paths, relative) = {
+        let state = state.lock().await;
+        if !state.supports_did_change_watched_files {
             return;
         }
-        if registered.is_some() {
-            if let Err(error) = self
-                .client
-                .unregister_capability(vec![Unregistration {
-                    id: "ry-workspace-watcher".into(),
-                    method: "workspace/didChangeWatchedFiles".into(),
-                }])
-                .await
-            {
-                tracing::warn!(%error, "failed to unregister workspace watcher");
-                return;
-            }
-            *registered = None;
+        (
+            custom_config_paths(&state),
+            state.supports_relative_patterns,
+        )
+    };
+    if registered.as_ref() == Some(&paths) {
+        return;
+    }
+    if registered.is_some() {
+        if let Err(error) = client
+            .unregister_capability(vec![Unregistration {
+                id: "ry-workspace-watcher".into(),
+                method: "workspace/didChangeWatchedFiles".into(),
+            }])
+            .await
+        {
+            tracing::warn!(%error, "failed to unregister workspace watcher");
+            return;
         }
-        let mut watchers = vec![
-            serde_json::json!({"globPattern": "**/ry.toml"}),
-            serde_json::json!({"globPattern": "**/DESCRIPTION"}),
-            serde_json::json!({"globPattern": "**/NAMESPACE"}),
-            serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
-            serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
-            // Sources, so edits to unopened files refresh the disk index;
-            // per-file walk rules apply when the event is processed.
-            serde_json::json!({"globPattern": format!(
-                "**/*.{{{}}}",
-                ry_workspace::source_extension_globs().collect::<Vec<_>>().join(",")
-            )}),
-        ];
-        for path in &paths {
-            let pattern = if relative {
+        *registered = None;
+    }
+    let mut watchers = vec![
+        serde_json::json!({"globPattern": "**/ry.toml"}),
+        serde_json::json!({"globPattern": "**/DESCRIPTION"}),
+        serde_json::json!({"globPattern": "**/NAMESPACE"}),
+        serde_json::json!({"globPattern": "**/src/*.{c,cc,cpp,cxx}"}),
+        serde_json::json!({"globPattern": "**/*.{rda,RData,rdata,json}"}),
+        // Sources, so edits to unopened files refresh the disk index;
+        // per-file walk rules apply when the event is processed.
+        serde_json::json!({"globPattern": format!(
+            "**/*.{{{}}}",
+            ry_workspace::source_extension_globs().collect::<Vec<_>>().join(",")
+        )}),
+    ];
+    for path in &paths {
+        let pattern =
+            if relative {
                 path.parent()
                     .zip(path.file_name())
                     .and_then(|(parent, name)| {
                         Url::from_directory_path(parent).ok().map(|base| serde_json::json!({
-                        "baseUri": base, "pattern": escape_watch_path(&name.to_string_lossy())
-                    }))
+                    "baseUri": base, "pattern": escape_watch_path(&name.to_string_lossy())
+                }))
                     })
             } else {
                 None
@@ -1033,86 +969,111 @@ impl Backend {
                 };
                 serde_json::json!(escape_watch_path(&path))
             });
-            watchers.push(serde_json::json!({"globPattern": pattern}));
-        }
-        let registration = Registration {
-            id: "ry-workspace-watcher".into(),
-            method: "workspace/didChangeWatchedFiles".into(),
-            register_options: Some(serde_json::json!({"watchers": watchers})),
+        watchers.push(serde_json::json!({"globPattern": pattern}));
+    }
+    let registration = Registration {
+        id: "ry-workspace-watcher".into(),
+        method: "workspace/didChangeWatchedFiles".into(),
+        register_options: Some(serde_json::json!({"watchers": watchers})),
+    };
+    match client.register_capability(vec![registration]).await {
+        Ok(()) => *registered = Some(paths),
+        Err(error) => tracing::warn!(%error, "failed to register workspace watcher"),
+    }
+}
+
+/// Return the current AST for `path` together with the exact source
+/// text it was parsed from: handlers use the text for byte-offset /
+/// UTF-16 conversions that must match the AST's span offsets, so a
+/// concurrent `didChange` racing the parse can never yield a stale
+/// text applied to a fresher AST (or vice versa). The parse cache is
+/// read and repopulated under the state lock; parsing happens outside
+/// it. Returns `None` when the path is not open or parsing fails.
+async fn parsed_file(state: &Mutex<State>, path: &str) -> Option<(Arc<SourceFile>, String)> {
+    loop {
+        // One guard reads the parse cache, the document text/version,
+        // and the old tree as one snapshot; parsing happens outside
+        // the lock. Clone the old tree only on a cache miss.
+        let (text, version, old_tree, native) = {
+            let state = state.lock().await;
+            let (Some(text), Some(version)) = (state.docs.get(path), state.versions.get(path))
+            else {
+                return None;
+            };
+            if let Some(file) = state.cached_parse(path) {
+                return Some((file, text.clone()));
+            }
+            // A colliding display key has no single native identity.
+            let native = state
+                .open_source_paths
+                .get(path)
+                .filter(|open| open.len() == 1)
+                .and_then(|open| open.values().next()?.native.clone());
+            (text.clone(), *version, state.tree_for(path), native)
         };
-        match self.client.register_capability(vec![registration]).await {
-            Ok(()) => *registered = Some(paths),
-            Err(error) => tracing::warn!(%error, "failed to register workspace watcher"),
+        // A test can park here to land a newer edit before this parse
+        // installs; the version checks below then reject it.
+        #[cfg(feature = "test-util")]
+        let paused_parse = crate::test_seam::pause(Seam::Parse).await;
+        let mut parser = RParser::new().ok()?;
+        let (mut parsed, new_tree) = ry_workspace::reports::parse_source_with_tree(
+            &mut parser,
+            path,
+            &text,
+            old_tree.as_ref(),
+        )
+        .ok()?;
+        parsed.native_path = native;
+        let file = Arc::new(parsed);
+        let mut state = state.lock().await;
+        // A different original URI can replace this display-keyed source
+        // with the same numeric version. The parsed text and version must
+        // still describe the current snapshot before either cache entry
+        // is installed; a version-only check can publish the first URI's
+        // AST through the second URI's buffer.
+        let stored = if state.versions.get(path).copied() == Some(version)
+            && state.docs.get(path) == Some(&text)
+        {
+            if let Some(tree) = new_tree {
+                state.store_tree(path, version, tree);
+            }
+            state.record_parse(path, version, Arc::clone(&file))
+        } else {
+            false
+        };
+        #[cfg(feature = "test-util")]
+        if paused_parse {
+            crate::test_seam::landed(Seam::Parse);
+        }
+        if stored {
+            return Some((file, text));
+        }
+    }
+}
+
+impl Backend {
+    /// A backend with empty state and its index writer running.
+    pub(super) fn new(client: Client) -> Self {
+        let state = Arc::new(Mutex::new(State::default()));
+        let (writer, work) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(IndexWriter::new(client.clone(), Arc::clone(&state), work).run());
+        Backend {
+            client,
+            state,
+            writer,
         }
     }
 
-    /// Return the current AST for `path` together with the exact source
-    /// text it was parsed from: handlers use the text for byte-offset /
-    /// UTF-16 conversions that must match the AST's span offsets, so a
-    /// concurrent `didChange` racing the parse can never yield a stale
-    /// text applied to a fresher AST (or vice versa). The parse cache is
-    /// read and repopulated under the state lock; parsing happens outside
-    /// it. Returns `None` when the path is not open or parsing fails.
+    /// Queue work for the index writer. Handlers that changed document
+    /// state call this while still holding the state lock, so a pass never
+    /// observes the change without its queued follow-up.
+    fn send(&self, work: Work) {
+        // The writer stops only at shutdown, after which nothing is owed.
+        let _ = self.writer.send(work);
+    }
+
     async fn parsed_file(&self, path: &str) -> Option<(Arc<SourceFile>, String)> {
-        loop {
-            // One guard reads the parse cache, the document text/version,
-            // and the old tree as one snapshot; parsing happens outside
-            // the lock. Clone the old tree only on a cache miss.
-            let (text, version, old_tree, native) = {
-                let state = self.state.lock().await;
-                let (Some(text), Some(version)) = (state.docs.get(path), state.versions.get(path))
-                else {
-                    return None;
-                };
-                if let Some(file) = state.cached_parse(path) {
-                    return Some((file, text.clone()));
-                }
-                // A colliding display key has no single native identity.
-                let native = state
-                    .open_source_paths
-                    .get(path)
-                    .filter(|open| open.len() == 1)
-                    .and_then(|open| open.values().next()?.native.clone());
-                (text.clone(), *version, state.tree_for(path), native)
-            };
-            // A test can park here to land a newer edit before this parse
-            // installs; the version checks below then reject it.
-            #[cfg(feature = "test-util")]
-            let paused_parse = crate::test_seam::pause(Seam::Parse).await;
-            let mut parser = RParser::new().ok()?;
-            let (mut parsed, new_tree) = ry_workspace::reports::parse_source_with_tree(
-                &mut parser,
-                path,
-                &text,
-                old_tree.as_ref(),
-            )
-            .ok()?;
-            parsed.native_path = native;
-            let file = Arc::new(parsed);
-            let mut state = self.state.lock().await;
-            // A different original URI can replace this display-keyed source
-            // with the same numeric version. The parsed text and version must
-            // still describe the current snapshot before either cache entry
-            // is installed; a version-only check can publish the first URI's
-            // AST through the second URI's buffer.
-            let stored = if state.versions.get(path).copied() == Some(version)
-                && state.docs.get(path) == Some(&text)
-            {
-                if let Some(tree) = new_tree {
-                    state.store_tree(path, version, tree);
-                }
-                state.record_parse(path, version, Arc::clone(&file))
-            } else {
-                false
-            };
-            #[cfg(feature = "test-util")]
-            if paused_parse {
-                crate::test_seam::landed(Seam::Parse);
-            }
-            if stored {
-                return Some((file, text));
-            }
-        }
+        parsed_file(&self.state, path).await
     }
 
     /// Return hints from one current parse and its assignment-site inference.
@@ -1160,1265 +1121,37 @@ impl Backend {
 
     /// Pull `ry` settings per folder scope via `workspace/configuration`:
     /// one item per folder root plus a final item for the fallback context.
-    async fn pull_folder_settings(&self) {
-        // Built under the lock, then sent without it.
-        let items: Vec<ConfigurationItem> = {
+    /// `None` when the client request failed.
+    async fn pull_folder_settings(&self) -> Option<SettingsUpdate> {
+        let scopes: Vec<(Option<PathBuf>, PathBuf)> = {
             let state = self.state.lock().await;
             state
                 .folder_contexts
                 .iter()
-                .map(|ctx| ConfigurationItem {
-                    scope_uri: Url::from_file_path(&ctx.root).ok(),
-                    section: Some("ry".to_string()),
-                })
-                .chain(std::iter::once(ConfigurationItem {
-                    scope_uri: Url::from_file_path(&state.fallback.root).ok(),
-                    section: Some("ry".to_string()),
-                }))
+                .map(|ctx| (Some(ctx.root.clone()), ctx.root.clone()))
+                .chain(std::iter::once((None, state.fallback.root.clone())))
                 .collect()
         };
-
-        let values = match self.client.configuration(items).await {
-            Ok(values) => values,
-            Err(e) => {
-                tracing::warn!("workspace/configuration pull failed: {e}");
-                return;
-            }
-        };
-
-        let mut state = self.state.lock().await;
-        let state = &mut *state;
-        let contexts = state
-            .folder_contexts
-            .iter_mut()
-            .chain(std::iter::once(&mut state.fallback));
-        for (ctx, value) in contexts.zip(&values) {
-            if let Ok(settings) = serde_json::from_value::<FolderSettings>(value.clone()) {
-                ctx.folder_settings = settings;
-            }
-            ctx.refresh_policy();
-        }
-        if let Some(value) = values.get(state.folder_contexts.len())
-            && let Ok(settings) = serde_json::from_value::<FolderSettings>(value.clone())
-        {
-            state.server_settings.global_settings = settings;
-        }
-    }
-
-    /// Incrementally update the project and publish diagnostics for every
-    /// checked file: an edit to a definition can change diagnostics in its
-    /// cross-file callers.
-    ///
-    /// `requested` is the set of paths the debounce drained for this
-    /// generation. A requested path that is no longer eligible still gets
-    /// an immediate empty publication (the didOpen acknowledgment for a
-    /// document opened into a disabled folder, an excluded path, or over
-    /// a size/depth cap); every other URI that drops out of the check is
-    /// reconciled at the end of the pass by
-    /// [`Backend::clear_dropped_diagnostics`].
-    async fn publish_diagnostics(&self, requested: HashSet<String>, generation: u64) {
-        // Snapshot under the lock, then check without it so a slow check
-        // does not block other requests.
-        let (
-            doc_versions,
-            requested_ineligible,
-            supports_diagnostic_data,
-            open_source_paths,
-            active_collision_uris,
-            eligible_collision_sources,
-        ) = {
-            let state = self.state.lock().await;
-            if state.initial_index_pending {
-                return;
-            }
-            (
-                state
-                    .docs
-                    .keys()
-                    .filter(|p| state.eligibility_for_path(p))
-                    .filter_map(|p| {
-                        state
-                            .versions
-                            .get(p)
-                            .copied()
-                            .map(|version| (p.clone(), version))
-                    })
-                    .collect::<Vec<_>>(),
-                requested
-                    .iter()
-                    .filter(|p| !state.any_open_source_eligible(p))
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                state.supports_diagnostic_data,
-                state.open_source_paths.clone(),
-                state.active_collision_uri.clone(),
-                state
-                    .open_source_paths
-                    .iter()
-                    .filter(|(_, open)| open.len() > 1)
-                    .map(|(path, open)| {
-                        let eligible: HashMap<Url, (String, i32)> = open
-                            .iter()
-                            .filter_map(|(uri, source)| {
-                                let (text, version) = source.shadow.as_ref()?;
-                                state
-                                    .eligibility_for_path_with_len(path, Some(text.len() as u64))
-                                    .then(|| (uri.clone(), (text.clone(), *version)))
-                            })
-                            .collect();
-                        (path.clone(), state.context_for_path(path).clone(), eligible)
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        };
-        let publication_uris = |path: &str| source_uris(&open_source_paths, path);
-        let colliding = |path: &str| {
-            open_source_paths
-                .get(path)
-                .is_some_and(|open| open.len() > 1)
-        };
-        if !requested_ineligible.is_empty() {
-            let uris_to_clear = {
-                let mut state = self.state.lock().await;
-                let mut uris_to_clear = HashSet::new();
-                for path in &requested_ineligible {
-                    uris_to_clear.extend(publication_uris(path));
-                    uris_to_clear.extend(state.published_uris.remove(path).unwrap_or_default());
-                }
-                uris_to_clear
-            };
-            for uri in uris_to_clear {
-                self.client.publish_diagnostics(uri, Vec::new(), None).await;
-            }
-        }
-
-        let mut open_files = Vec::with_capacity(doc_versions.len());
-        for (doc_path, version) in &doc_versions {
-            let Some((file, _)) = self.parsed_file(doc_path).await else {
-                continue;
-            };
-            open_files.push((doc_path.clone(), *version, file));
-        }
-        // One path-keyed source view: an open buffer owns its path, eligible
-        // or not, so its disk twin never contributes, and an ineligible
-        // buffer contributes nothing. Sorting the union by path gives the
-        // CLI's canonical order, which decides same-name shadowing; each
-        // owner's files keep that order through the grouping below.
-        let mut project_files: Vec<(Option<PathBuf>, PackageFile)> = {
-            let state = self.state.lock().await;
-            let disk = state
-                .disk_files
-                .iter()
-                .filter(|(p, _)| !state.docs.contains_key(p.as_str()))
-                .filter(|(p, _)| state.eligibility_for_path(p))
-                .map(|(p, file)| (p.clone(), 0, Arc::clone(file)));
-            disk.chain(open_files)
-                .map(|file| {
-                    let owner = state
-                        .folder_context_for_path(&file.0)
-                        .map(|ctx| ctx.root.clone());
-                    (owner, file)
-                })
-                .collect()
-        };
-        project_files.sort_by(|a, b| a.1.0.cmp(&b.1.0));
-
-        // A display path can stand for several native URIs. Keep each
-        // admitted buffer's annotation status, comments, and version with
-        // that URI; the active sibling cannot supply any of those values.
-        let mut collision_diagnostics: HashMap<String, HashMap<Url, Vec<LspDiagnostic>>> =
-            HashMap::new();
-        for (path, ctx, sources) in eligible_collision_sources {
-            let mut by_uri = HashMap::new();
-            if let Some(scope) = ctx.config.annotations.typehint.adopted_scope()
-                && !ctx.excludes_path(&path)
-            {
-                for (uri, (text, version)) in sources {
-                    if !text.contains("#|") {
-                        continue;
-                    }
-                    let Some(file) = RParser::new().ok().and_then(|mut parser| {
-                        ry_workspace::reports::parse_source(&mut parser, &path, &text).ok()
-                    }) else {
-                        continue;
-                    };
-                    if ry_checker::typehint::read_records(&file, &scope).is_empty() {
-                        continue;
-                    }
-                    let native = uri.to_file_path().ok();
-                    let warnings = ctx.publish(
-                        vec![ry_checker::frontend::ambiguous_typehint_identity(&path)],
-                        &path,
-                        native.as_deref(),
-                        &file,
-                        supports_diagnostic_data
-                            .then(|| diagnostic_origin(&path, version, generation)),
-                    );
-                    by_uri.insert(uri, warnings);
-                }
-            }
-            collision_diagnostics.insert(path, by_uri);
-        }
-
-        // Partition by owning context, then by package group: each R package
-        // is a separate library scope and checks through its own cache.
-        let mut owners: Vec<(Option<PathBuf>, Vec<PackageFile>)> = Vec::new();
-        for (owner, file) in project_files {
-            match owners.iter_mut().find(|(root, _)| *root == owner) {
-                Some((_, files)) => files.push(file),
-                None => owners.push((owner, vec![file])),
-            }
-        }
-        let partitions: Vec<(Option<PathBuf>, Option<PathBuf>, Vec<PackageFile>)> = owners
-            .into_iter()
-            .flat_map(|(owner, files)| {
-                let groups =
-                    ry_workspace::group_by_package_root(files.iter().map(|file| file.0.as_str()));
-                groups
-                    .into_iter()
-                    .map(|(package_root, indices)| {
-                        let files = indices.iter().map(|&index| files[index].clone()).collect();
-                        (owner.clone(), package_root, files)
-                    })
-                    .collect::<Vec<_>>()
+        let items = scopes
+            .iter()
+            .map(|(_, root)| ConfigurationItem {
+                scope_uri: Url::from_file_path(root).ok(),
+                section: Some("ry".to_string()),
             })
             .collect();
-
-        struct PackageCheckJob {
-            ctx: Arc<FolderAnalysisContext>,
-            workspace: ry_workspace::WorkspaceContext,
-            cache: Arc<Mutex<ProjectCache>>,
-            files: Vec<PackageFile>,
-        }
-        let mut jobs: Vec<PackageCheckJob> = Vec::with_capacity(partitions.len());
-        {
-            let mut state = self.state.lock().await;
-            let mut snapshots: HashMap<Option<PathBuf>, Arc<FolderAnalysisContext>> =
-                HashMap::new();
-            for (owner, package_root, files) in partitions {
-                let ctx = match &owner {
-                    Some(root) => state
-                        .folder_contexts
-                        .iter_mut()
-                        .find(|ctx| &ctx.root == root),
-                    None => Some(&mut state.fallback),
-                };
-                // The owning folder was removed mid-pass; its removal already
-                // cleared these URIs.
-                let Some(ctx) = ctx else {
-                    continue;
-                };
-                let cache = Arc::clone(ctx.package_caches.entry(package_root.clone()).or_default());
-                // A group created after the last index checks against an empty
-                // context until the next index resolves it.
-                let workspace = ctx
-                    .workspace_contexts
-                    .get(&package_root)
-                    .cloned()
-                    .unwrap_or_default();
-                let ctx = Arc::clone(
-                    snapshots
-                        .entry(owner)
-                        .or_insert_with(|| Arc::new(ctx.clone())),
-                );
-                jobs.push(PackageCheckJob {
-                    ctx,
-                    workspace,
-                    cache,
-                    files,
-                });
-            }
-        }
-
-        // Every open buffer, including ineligible ones and those owned by
-        // another partition, hides its possibly stale disk copy from box.
-        let open_paths: HashSet<String> = open_source_paths.keys().cloned().collect();
-        let mut all_results: Vec<(Arc<FolderAnalysisContext>, ProjectCheckResult)> = Vec::new();
-        for job in jobs {
-            // Colliding snapshots are handled by the per-URI pass above.
-            let adoptable: Vec<Arc<SourceFile>> = job
-                .files
-                .iter()
-                .filter(|(path, _, _)| !colliding(path))
-                .map(|(_, _, file)| Arc::clone(file))
-                .collect();
-            let adopted = ry_checker::frontend::adopted_records(&adoptable, &job.ctx.config);
-            let mut project = job.cache.lock().await;
-            let mut result = project.check_with_workspace(
-                job.files,
-                Arc::clone(&job.ctx.stubs),
-                job.workspace,
-                adopted.records,
-                &open_paths,
-            );
-            for diagnostic in adopted.diagnostics {
-                if let Some((_, diagnostics)) = result
-                    .diagnostics
-                    .iter_mut()
-                    .find(|(path, _)| *path == diagnostic.path)
-                {
-                    diagnostics.push(diagnostic);
-                }
-            }
-            all_results.push((job.ctx, result));
-        }
-
-        // An edit that arrived while parsing/checking invalidates this whole
-        // project result because every open document is republished below.
-        if self.state.lock().await.diag_generation != generation {
-            return;
-        }
-
-        let diagnostic_versions: HashMap<_, _> = doc_versions.into_iter().collect();
-
-        // Publish each file through the context it was checked under.
-        // `published` records what this pass sent for the reconciliation below.
-        let mut published: Vec<(String, HashSet<Url>, HashSet<Url>)> = Vec::new();
-        for (ctx, result) in all_results {
-            let ProjectCheckResult {
-                diagnostics: per_file,
-                files: checked_files,
-            } = result;
-            for (diagnostic_path, diagnostics) in per_file {
-                let Some(file) = checked_files.get(&diagnostic_path) else {
-                    continue;
-                };
-                if ctx.excludes_path(&diagnostic_path) {
-                    continue;
-                }
-                let diagnostics = ctx.publish(
-                    diagnostics,
-                    &diagnostic_path,
-                    Some(Path::new(&diagnostic_path)),
-                    file,
-                    diagnostic_versions
-                        .get(&diagnostic_path)
-                        .filter(|_| supports_diagnostic_data)
-                        .map(|version| diagnostic_origin(&diagnostic_path, *version, generation)),
-                );
-                let uris = publication_uris(&diagnostic_path);
-                if uris.len() == 1 {
-                    let uri = uris[0].clone();
-                    let non_empty = if diagnostics.is_empty() {
-                        HashSet::new()
-                    } else {
-                        HashSet::from([uri.clone()])
-                    };
-                    self.client
-                        .publish_diagnostics(
-                            uri,
-                            diagnostics,
-                            diagnostic_versions.get(&diagnostic_path).copied(),
-                        )
-                        .await;
-                    published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
-                    continue;
-                }
-                let mut warnings = collision_diagnostics
-                    .remove(&diagnostic_path)
-                    .unwrap_or_default();
-                let mut non_empty = HashSet::new();
-                for uri in &uris {
-                    // The active display-keyed buffer owns ordinary check
-                    // results. Other native URIs only receive the shared
-                    // ambiguity status, never another buffer's findings.
-                    let mut for_uri = if active_collision_uris.get(&diagnostic_path) == Some(uri) {
-                        diagnostics.clone()
-                    } else {
-                        Vec::new()
-                    };
-                    for_uri.extend(warnings.remove(uri).unwrap_or_default());
-                    if !for_uri.is_empty() {
-                        non_empty.insert(uri.clone());
-                    }
-                    self.client
-                        .publish_diagnostics(
-                            uri.clone(),
-                            for_uri,
-                            (active_collision_uris.get(&diagnostic_path) == Some(uri))
-                                .then(|| diagnostic_versions.get(&diagnostic_path).copied())
-                                .flatten(),
-                        )
-                        .await;
-                }
-                published.push((diagnostic_path, uris.into_iter().collect(), non_empty));
-            }
-        }
-
-        // If the active colliding buffer is over cap, no project file was
-        // checked for this display key. Eligible inactive buffers still own
-        // their annotation warning, so publish them without admitting the
-        // oversized active text into inference or reparsing it.
-        for (path, mut warnings) in collision_diagnostics {
-            let uris = publication_uris(&path);
-            let mut non_empty = HashSet::new();
-            for uri in &uris {
-                let for_uri = warnings.remove(uri).unwrap_or_default();
-                if !for_uri.is_empty() {
-                    non_empty.insert(uri.clone());
-                }
-                self.client
-                    .publish_diagnostics(uri.clone(), for_uri, None)
-                    .await;
-            }
-            published.push((path, uris.into_iter().collect(), non_empty));
-        }
-
-        // A URI this pass no longer publishes to keeps its old squiggles
-        // unless it is explicitly cleared.
-        let previous_uris = {
-            let mut state = self.state.lock().await;
-            let mut previous_uris = Vec::new();
-            for (path, destinations, non_empty) in published {
-                let previous = state.published_uris.remove(&path).unwrap_or_default();
-                previous_uris.extend(previous.difference(&destinations).cloned());
-                if !non_empty.is_empty() {
-                    state.published_uris.insert(path, non_empty);
-                }
-            }
-            previous_uris
-        };
-        for uri in previous_uris {
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
-        }
-        self.clear_dropped_diagnostics().await;
-    }
-
-    /// Publish empty diagnostics for every tracked URI that left the
-    /// analysis set since its last publication: the path is no longer
-    /// eligible, or it is neither open nor in the disk index. Deciding
-    /// against current state, not one pass's snapshot, also heals a slower
-    /// older pass that publishes after a newer one cleared a URI.
-    async fn clear_dropped_diagnostics(&self) {
-        let dropped: Vec<Url> = {
-            let mut state = self.state.lock().await;
-            let dropped: Vec<String> = state
-                .published_uris
-                .keys()
-                .filter(|path| {
-                    !state.any_open_source_eligible(path.as_str())
-                        || (!state.docs.contains_key(path.as_str())
-                            && !state.disk_files.contains_key(path.as_str()))
-                })
-                .cloned()
-                .collect();
-            dropped
-                .iter()
-                .flat_map(|path| state.published_uris.remove(path).unwrap_or_default())
-                .collect()
-        };
-        for uri in dropped {
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
-        }
-    }
-
-    /// Discover and parse every source under the workspace folders and
-    /// install the result in `disk_files`. Never publishes: callers
-    /// republish afterwards. Returns whether this pass settled the index
-    /// duty it owed (installed, or settled without installing while its
-    /// generation held); false when a newer writer superseded it. Callers
-    /// that need to know whether bytes landed use
-    /// [`Backend::background_index_outcome`].
-    async fn reindex(&self) -> bool {
-        matches!(
-            self.background_index_outcome().await,
-            BackgroundIndexOutcome::Installed | BackgroundIndexOutcome::SettledWithoutInstall
-        )
-    }
-
-    async fn background_index_outcome(&self) -> BackgroundIndexOutcome {
-        #[cfg(feature = "test-util")]
-        crate::test_seam::bump(Counter::BackgroundIndexSpawns);
-        // Only workspace folders are indexed: the fallback root never is,
-        // so removing every folder stops indexing its directory.
-        let (roots, index_gen) = {
-            let mut state = self.state.lock().await;
-            state.index_generation = state.index_generation.wrapping_add(1);
-            let roots: Vec<_> = state
-                .folder_contexts
-                .iter()
-                .map(|ctx| {
-                    (
-                        ctx.root.clone(),
-                        ctx.config_root.clone(),
-                        ctx.config.clone(),
-                        Arc::clone(&ctx.stubs),
-                    )
-                })
-                .collect();
-            (roots, state.index_generation)
-        };
-        if roots.is_empty() {
-            let mut state = self.state.lock().await;
-            if state.index_generation == index_gen {
-                state.initial_index_pending = false;
-                return BackgroundIndexOutcome::SettledWithoutInstall;
-            }
-            return BackgroundIndexOutcome::Superseded;
-        }
-
-        #[cfg(feature = "test-util")]
-        crate::test_seam::pause(Seam::InitialIndex).await;
-        let indexed = tokio::task::spawn_blocking(move || {
-            let mut all_disk_files: HashMap<String, Arc<SourceFile>> = HashMap::new();
-            let mut contexts = Vec::new();
-            let mut all_truncated: Vec<(PathBuf, ry_workspace::TruncationReport)> = Vec::new();
-            for (root, config_root, config, stubs) in &roots {
-                let outcome = crate::index::index_workspace(root, config_root.as_deref(), config);
-                for report in outcome.truncated.iter().filter(|t| t.any_hit()) {
-                    all_truncated.push((root.clone(), report.clone()));
-                }
-                // Each package group resolves against its own root; loose
-                // scripts resolve against the folder root.
-                let mut paths: Vec<&String> = outcome.files.keys().collect();
-                paths.sort();
-                let files: Vec<&SourceFile> = paths
-                    .iter()
-                    .map(|path| outcome.files[*path].as_ref())
-                    .collect();
-                let mut folder_contexts = HashMap::new();
-                for group in ry_workspace::resolve_grouped(&files, config, stubs, root) {
-                    match group.context {
-                        Ok(context) => {
-                            folder_contexts.insert(group.key, context);
-                        }
-                        Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
-                    }
-                }
-                contexts.push((root.clone(), folder_contexts));
-                all_disk_files.extend(outcome.files);
-            }
-            (all_disk_files, contexts, all_truncated)
-        })
-        .await;
-        match indexed {
-            Ok((disk_files, contexts, truncated)) => {
-                tracing::info!(
-                    files = disk_files.len(),
-                    "background workspace index complete"
-                );
-                // A cap hit is never silent: structured events below plus
-                // one user-visible warning per scan generation.
-                for (root, report) in &truncated {
-                    if report.max_files_hit {
-                        tracing::warn!(
-                            root = %root.display(),
-                            cap = "index.max-files",
-                            "discovery file-count cap reached; additional R files were not indexed"
-                        );
-                    }
-                    for (path, size) in &report.oversized_files {
-                        tracing::warn!(
-                            root = %root.display(),
-                            path = %path.display(),
-                            size,
-                            cap = "index.max-file-bytes",
-                            "file exceeds per-file size cap and was not indexed"
-                        );
-                    }
-                    for dir in &report.depth_pruned_dirs {
-                        tracing::warn!(
-                            root = %root.display(),
-                            pruned = %dir.display(),
-                            cap = "index.max-depth",
-                            "directory depth cap reached; files below were not indexed"
-                        );
-                    }
-                }
-                let cap_hit = !truncated.is_empty();
-                #[cfg(feature = "test-util")]
-                crate::test_seam::pause(Seam::ScanCommit).await;
-                let mut state = self.state.lock().await;
-                if state.index_generation != index_gen {
-                    tracing::debug!(
-                        gen = index_gen,
-                        current = state.index_generation,
-                        "discarding stale background index results"
-                    );
-                    return BackgroundIndexOutcome::Superseded;
-                }
-                state.disk_files = disk_files;
-                for ctx in &mut state.folder_contexts {
-                    if let Some((_, wc)) = contexts.iter().find(|(root, _)| root == &ctx.root) {
-                        ctx.workspace_contexts = wc.clone();
-                    }
-                }
-                state.initial_index_pending = false;
-                let newly_degraded = state.newly_degraded_scopes();
-                drop(state);
-                for (path, reason) in &newly_degraded {
-                    self.client
-                        .log_message(MessageType::WARNING, reason.notice(path))
-                        .await;
-                }
-                if cap_hit {
-                    let _ = self
-                        .client
-                        .log_message(
-                            tower_lsp::lsp_types::MessageType::WARNING,
-                            "ry: discovery cap reached; some R files were not indexed. See server logs for details (index.max-files / index.max-file-bytes / index.max-depth).",
-                        )
-                        .await;
-                }
-                BackgroundIndexOutcome::Installed
-            }
-            Err(error) => {
-                tracing::warn!(%error, "background workspace index failed");
-                let mut state = self.state.lock().await;
-                if state.index_generation == index_gen {
-                    state.initial_index_pending = false;
-                    BackgroundIndexOutcome::SettledWithoutInstall
-                } else {
-                    BackgroundIndexOutcome::Superseded
-                }
-            }
-        }
-    }
-
-    /// Request a pass for every open document after a global state change
-    /// (settings, watched files), so it takes effect without an edit.
-    async fn republish_all_open_documents(&self) {
-        let open: Vec<String> = self.state.lock().await.docs.keys().cloned().collect();
-        self.request_pass(open).await;
-    }
-
-    /// Start at most one driver under the same lock used to enqueue work.
-    async fn wake_reconciliation(&self) {
-        let spawn_now = self.state.lock().await.reconciliation.start_driver();
-        if !spawn_now {
-            return;
-        }
-        #[cfg(feature = "test-util")]
-        crate::test_seam::bump(Counter::ReconciliationDriverSpawns);
-        spawn_reconciliation_driver(self.clone());
-    }
-
-    /// Retry bytes, context, and publication in order until retained work settles.
-    async fn run_reconciliation(&self) {
-        loop {
-            let Some((round, retired_before)) =
-                self.state.lock().await.reconciliation.begin_round()
-            else {
-                return;
-            };
-            #[cfg(feature = "test-util")]
-            crate::test_seam::bump(Counter::ReconciliationRounds);
-            // A pending initial index would make every refresh lose its
-            // generation race to the completing pass and gate the
-            // publications below; settle that duty first, exactly like
-            // `refresh_package_contexts`.
-            if self.state.lock().await.initial_index_pending {
-                self.reindex().await;
-            }
-            let mut follow_up: Vec<(String, u64)> = Vec::new();
-            let mut did_work = false;
-            for path in round {
-                let duty = self.state.lock().await.reconciliation.drivable_duty(&path);
-                match duty {
-                    // Retired while an earlier path was being driven
-                    // (its own event's refresh completed the follow-up),
-                    // owned by an in-flight refresh, or cancelled by
-                    // shutdown: nothing for this round to do.
-                    None => {}
-                    Some((RefreshDuty::BytesContextPublication, _)) => {
-                        did_work = true;
-                        // The landing's own claim epoch — returned by
-                        // the refresh, never looked up here — is the
-                        // token the follow-up acknowledges with.
-                        if let Some(epoch) = self
-                            .refresh_disk_entry(std::path::PathBuf::from(&path))
-                            .await
-                        {
-                            follow_up.push((path, epoch));
-                        }
-                    }
-                    // Bytes already settled: re-drive only the context
-                    // refresh and the publication it gates, without
-                    // re-reading (a re-landing would also bump the
-                    // generation and retire unrelated in-flight scans).
-                    Some((RefreshDuty::ContextPublication, epoch)) => {
-                        did_work = true;
-                        follow_up.push((path, epoch));
-                    }
-                }
-            }
-            if !did_work {
-                // Test seam: park between the round's duty checks and
-                // the idle decision below, holding no lock, so a test
-                // can interleave a refresh exit exactly inside the
-                // window the re-check below exists for.
-                #[cfg(feature = "test-util")]
-                crate::test_seam::pause(Seam::DriverIdle).await;
-                if self.state.lock().await.reconciliation.idle_if_blocked() {
-                    return;
-                }
-                continue;
-            }
-            if !follow_up.is_empty() {
-                // Shutdown may have landed while the dispatched
-                // refreshes were running: their landings are already
-                // committed index state, but the follow-up publications
-                // belong to the ended session and must not go out. The
-                // round head performs the idle transition on the next
-                // pass.
-                if self.state.lock().await.reconciliation.is_shutting_down() {
-                    continue;
-                }
-                // Same order as the watched handler: advance the contexts,
-                // then publish, then acknowledge.
-                let ctx_settled = self.refresh_package_contexts(&follow_up).await;
-                self.request_pass(follow_up.iter().map(|(path, _)| path.clone()))
-                    .await;
-                self.acknowledge_publications(&ctx_settled).await;
-            }
-            let paced = {
-                let mut state = self.state.lock().await;
-                match state
-                    .reconciliation
-                    .reconcile_round_progress(retired_before)
-                {
-                    // Everything is RETAINED; the driver yields for the
-                    // computed backoff and retries. The retained paths
-                    // ride along only on the round that ENTERS the stall
-                    // episode, so the visible warning fires once per
-                    // episode.
-                    ReconcileRoundProgress::Pacing { delay, warn } => {
-                        Some((warn.then(|| state.reconciliation.pending_paths()), delay))
-                    }
-                    ReconcileRoundProgress::Progress | ReconcileRoundProgress::Stalled => None,
-                }
-            };
-            if let Some((retained, delay)) = paced {
-                if let Some(retained) = retained {
-                    tracing::warn!(
-                        paths = ?retained,
-                        rounds = RECONCILE_ROUNDS_BEFORE_PACING,
-                        "watched-file reconciliation stalled; retaining the obligations and pacing retries (final analysis for these paths may lag until their workspace settles)"
-                    );
-                } else {
-                    // The episode's entry warned; every later paced
-                    // round stays observable at debug level, so an
-                    // operator can still see the driver alive inside a
-                    // permanently pathological episode without warn
-                    // spam per retry.
-                    tracing::debug!(
-                        delay_ms = delay.as_millis() as u64,
-                        "watched-file reconciliation still stalled; retaining the obligations and pacing the retry"
-                    );
-                }
-                // Yield with no lock held, then retry: the pace bounds
-                // rounds per wall-clock while completion stays
-                // impossible, and the coalescing contract is untouched —
-                // the active flag keeps every enqueue-side wake a no-op
-                // for the delay's duration, and the next round
-                // re-snapshots under the lock.
-                tokio::time::sleep(delay).await;
-            }
-        }
-    }
-
-    /// Refresh one `disk_files` entry from disk under the owning folder's
-    /// eligibility and the walk's per-file admission rules, through the same
-    /// loader the indexer uses. A missing, inadmissible, or unreadable file,
-    /// or one no folder owns, leaves the index, so a rescan cannot disagree
-    /// about membership.
-    ///
-    /// Returns the refresh's claim epoch when it landed. The epoch was
-    /// claimed before the read, so the caller's context and publication
-    /// follow-up acknowledges exactly the revision it covered. A landing
-    /// claims the next `index_generation` in its commit critical section,
-    /// retiring in-flight scans; the caller must not bump again. `None` is
-    /// terminal for this event: a newer same-path refresh, an open buffer, a
-    /// cap refusal, or an unlanded backstop owns the publication.
-    async fn refresh_disk_entry(&self, path: PathBuf) -> Option<u64> {
-        let path_string = path.to_string_lossy().into_owned();
-        // Claim once, before the first read: the claim orders same-path
-        // refreshes by start and enqueues the reconciliation obligation
-        // before the read can lose its races. A shutting-down session
-        // claims nothing.
-        let refresh_epoch = self
-            .state
-            .lock()
-            .await
-            .reconciliation
-            .claim_refresh_epoch(&path_string)?;
-        let landed = self.refresh_disk_entry_claimed(path, refresh_epoch).await;
-        let retained_idle = {
-            let mut state = self.state.lock().await;
-            state.reconciliation.note_refresh_exit(&path_string);
-            // Landed refreshes leave context/publication to their caller.
-            matches!(
-                state.reconciliation.drivable_duty(&path_string),
-                Some((RefreshDuty::BytesContextPublication, _))
-            )
-        };
-        if retained_idle {
-            self.wake_reconciliation().await;
-        }
-        landed.then_some(refresh_epoch)
-    }
-
-    /// The read and commit under a claim `refresh_disk_entry` already took.
-    /// A commit that lost a generation race retries once, then converges
-    /// through a full scan.
-    async fn refresh_disk_entry_claimed(&self, path: PathBuf, refresh_epoch: u64) -> bool {
-        let path_string = path.to_string_lossy().into_owned();
-        for attempt in 0..2 {
-            // Snapshot admission and the generation the commit must still
-            // hold, so the checks agree even if a reload lands mid-refresh.
-            let (admission, is_open, superseded, refresh_gen) = {
-                let state = self.state.lock().await;
-                let admission = state
-                    .folder_context_for_path(&path_string)
-                    .filter(|_| state.eligibility_for_path(&path_string))
-                    .map(WalkAdmission::for_folder);
-                (
-                    admission,
-                    state.docs.contains_key(&path_string),
-                    !state.reconciliation.owns_epoch(&path_string, refresh_epoch),
-                    state.index_generation,
-                )
-            };
-            if is_open {
-                // The open buffer owns the path's analysis; a later didClose
-                // re-reads through its own refresh.
-                let mut state = self.state.lock().await;
-                state
-                    .reconciliation
-                    .settle_pending_refresh(&path_string, refresh_epoch, false);
-                return false;
-            }
-            // A newer same-path refresh owns the commit; skip the read it
-            // would discard. The claim stays with the newer refresh.
-            if superseded {
-                return false;
-            }
-            let budget = admission
-                .as_ref()
-                .map(|admission| (admission.root.clone(), admission.limits.max_files));
-            let read_path = path.clone();
-            let parsed = tokio::task::spawn_blocking(move || {
-                admission.filter(|admission| admission.admits(&read_path))?;
-                ry_workspace::parse_source_file(&read_path, None)
-                    .ok()
-                    .map(Arc::new)
-            })
-            .await
-            .ok()
-            .flatten();
-            #[cfg(feature = "test-util")]
-            crate::test_seam::pause_and_land(Seam::RefreshCommit).await;
-            let mut state = self.state.lock().await;
-            // A didOpen landed during the read; its buffer owns the path.
-            if state.docs.contains_key(&path_string) {
-                state
-                    .reconciliation
-                    .settle_pending_refresh(&path_string, refresh_epoch, false);
-                return false;
-            }
-            // A newer writer moved the generation during the read. It may be
-            // unrelated to this path, so retry from current state rather than
-            // strand the event; the re-read postdates every writer that beat
-            // this attempt.
-            if state.index_generation != refresh_gen {
-                drop(state);
-                if attempt == 0 {
-                    tracing::debug!(path = %path_string, "retrying per-file disk refresh after a lost generation race");
-                    continue;
-                }
-                tracing::warn!(
-                    path = %path_string,
-                    "per-file disk refresh lost two generation races; converging through a full scan"
-                );
-                break;
-            }
-            // Only the most recently started refresh for a path commits, so
-            // last-write-wins follows read order, not commit order.
-            if !state.reconciliation.owns_epoch(&path_string, refresh_epoch) {
-                return false;
-            }
-            match (parsed, budget) {
-                (Some(file), Some((budget_root, max_files))) => {
-                    // `index.max-files` is not a path property: refuse a new
-                    // entry once the owning root is at its budget, first come
-                    // first served like the walk. Decided under the lock so
-                    // racing refreshes cannot both grow the map.
-                    let over_budget = !state.disk_files.contains_key(&path_string)
-                        && state
-                            .disk_files
-                            .keys()
-                            .filter(|existing| {
-                                state.entry_consumes_root_budget(Path::new(existing), &budget_root)
-                            })
-                            .count()
-                            >= max_files;
-                    if over_budget {
-                        tracing::warn!(
-                            path = %path_string,
-                            root = %budget_root.display(),
-                            cap = max_files,
-                            "discarding per-file disk refresh over index.max-files"
-                        );
-                        // Terminal refusal: the path stays unindexed, as a
-                        // fresh scan would leave it, and its claim retires.
-                        state.reconciliation.forget_epoch(&path_string);
-                        state.reconciliation.settle_pending_refresh(
-                            &path_string,
-                            refresh_epoch,
-                            false,
-                        );
-                        return false;
-                    }
-                    // The insert, the settlement, and the generation bump
-                    // share one lock hold, so no scan commits in between.
-                    state
-                        .reconciliation
-                        .settle_pending_refresh(&path_string, refresh_epoch, true);
-                    state.disk_files.insert(path_string, file);
-                }
-                _ => {
-                    // Inadmissible or unreadable: like the walk, never indexed.
-                    // The removal lands like an insert, and the claim leaves
-                    // with the entry it ordered.
-                    state
-                        .reconciliation
-                        .settle_pending_refresh(&path_string, refresh_epoch, true);
-                    state.disk_files.remove(&path_string);
-                    state.reconciliation.forget_epoch(&path_string);
-                }
-            }
-            state.index_generation = state.index_generation.wrapping_add(1);
-            drop(state);
-            #[cfg(feature = "test-util")]
-            crate::test_seam::pause_and_land(Seam::PostRefreshCommit).await;
-            return true;
-        }
-        // Two lost races: converge through the generation-guarded full scan,
-        // which re-reads every path. Only an installed scan counts as this
-        // path's landing; anything else leaves the obligation retained for
-        // the reconciliation driver.
-        let landed = matches!(
-            self.background_index_outcome().await,
-            BackgroundIndexOutcome::Installed
-        );
-        if landed {
-            let mut state = self.state.lock().await;
-            state
-                .reconciliation
-                .settle_pending_refresh(&path_string, refresh_epoch, true);
-        }
-        landed
-    }
-
-    /// Retire the obligations whose context and publication settled, each
-    /// against its landing's own epoch, so an older refresh completing late
-    /// cannot retire a newer event's re-armed obligation. Unsettled paths
-    /// stay for the reconciliation driver.
-    async fn acknowledge_publications(&self, settled: &[(String, u64)]) {
-        // Test seam: park between the context/publication settlement and
-        // the obligation acknowledgement (see `test_seam`).
-        #[cfg(feature = "test-util")]
-        crate::test_seam::pause(Seam::PublicationAck).await;
-        let mut state = self.state.lock().await;
-        for (path, epoch) in settled {
-            state
-                .reconciliation
-                .complete_pending_publication(path, *epoch);
-        }
-    }
-
-    /// Re-resolve the owning package group's resolution context after
-    /// per-file disk refreshes landed. A refreshed parse reaches
-    /// `disk_files`, but its per-file resolution entries are otherwise
-    /// rebuilt only by a full background scan. Each affected group re-runs
-    /// the scan's `resolve_workspace_context` pass over the current disk
-    /// index, so an incremental install never disagrees with a fresh scan.
-    ///
-    /// Installs are generation-guarded like every other index writer: a lost
-    /// race retries once from a fresh snapshot, then falls back to a full
-    /// background scan.
-    ///
-    /// Each `(path, epoch)` pair carries its landing's completion token, and
-    /// the returned settled pairs keep it, so the caller acknowledges only
-    /// the revision this work covered (see [`Self::acknowledge_publications`]).
-    ///
-    /// A landed refresh retires any stale in-flight background pass. If that
-    /// was the initial index, a fresh pass takes over first; otherwise
-    /// publications would stay gated for the rest of the session.
-    async fn refresh_package_contexts(&self, landed: &[(String, u64)]) -> Vec<(String, u64)> {
-        if self.state.lock().await.initial_index_pending {
-            self.reindex().await;
-        }
-        // At most one group install per owning folder per package root.
-        // Returns the paths whose context duty is settled — a landed
-        // group install, a vanished owning folder (the removal path
-        // already cleared and republished), or a root-owned partition
-        // (no stored context to advance) — each with the epoch of the
-        // landing that owed it. Paths whose group could not settle keep
-        // their reconciliation obligation, so the driver retries the
-        // group instead of leaving the landed bytes paired with a
-        // stale import context forever.
-        let mut groups: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
-        let mut settled: Vec<(String, u64)> = Vec::new();
-        let mut path_group: Vec<((String, u64), usize)> = Vec::new();
-        {
-            let state = self.state.lock().await;
-            for (path, epoch) in landed {
-                let folder_root = match state.folder_context_for_path(path) {
-                    Some(ctx) => ctx.root.clone(),
-                    // The fallback context stores no package contexts, so
-                    // there is nothing to advance.
-                    None => {
-                        settled.push((path.clone(), *epoch));
-                        continue;
-                    }
-                };
-                let package_root = ry_workspace::analysis_group_key(std::path::Path::new(path));
-                let index = match groups
-                    .iter()
-                    .position(|group| *group == (folder_root.clone(), package_root.clone()))
-                {
-                    Some(index) => index,
-                    None => {
-                        groups.push((folder_root, package_root));
-                        groups.len() - 1
-                    }
-                };
-                path_group.push(((path.clone(), *epoch), index));
-            }
-        }
-        let mut group_settled = vec![false; groups.len()];
-        for (index, (folder_root, package_root)) in groups.iter().enumerate() {
-            group_settled[index] = self
-                .refresh_one_package_context(folder_root, package_root)
-                .await;
-        }
-        for ((path, epoch), index) in path_group {
-            if group_settled[index] {
-                settled.push((path, epoch));
-            }
-        }
-        settled
-    }
-
-    /// Snapshot, resolve, and generation-guarded install for one package
-    /// group, with one retry and a full-scan backstop on lost races (see
-    /// [`Backend::refresh_package_contexts`]). Returns whether the
-    /// group's context duty settled: a landed install, an Installed
-    /// backstop scan (the scan resolves every group wholesale), or a
-    /// vanished owning folder. A superseded or settled-without-install
-    /// backstop and a failed resolve task leave the group unsettled —
-    /// the reconciliation driver retries it rather than letting the
-    /// landed bytes pair with a stale import context.
-    async fn refresh_one_package_context(
-        &self,
-        folder_root: &Path,
-        package_root: &Option<PathBuf>,
-    ) -> bool {
-        for _ in 0..2 {
-            // Snapshot the folder's disk files (open buffers stay out, as in
-            // the scan), config, stubs, and the generation the install must
-            // still hold. Grouping probes the filesystem, so it runs in the
-            // blocking task.
-            struct Snapshot {
-                candidates: Vec<(String, Arc<SourceFile>)>,
-                config: ry_config::Config,
-                stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
-                generation: u64,
-            }
-            let snapshot = {
-                let state = self.state.lock().await;
-                let ctx = match state
-                    .folder_contexts
-                    .iter()
-                    .find(|ctx| ctx.root == *folder_root)
-                {
-                    Some(ctx) => ctx,
-                    // The folder was removed; its removal already cleared
-                    // and republished.
-                    None => return true,
-                };
-                let mut candidates: Vec<(String, Arc<SourceFile>)> = state
-                    .disk_files
-                    .iter()
-                    .filter(|(path, _)| std::path::Path::new(path).starts_with(folder_root))
-                    .map(|(path, file)| (path.clone(), Arc::clone(file)))
-                    .collect();
-                candidates.sort_by(|a, b| a.0.cmp(&b.0));
-                Snapshot {
-                    candidates,
-                    config: ctx.config.clone(),
-                    stubs: Arc::clone(&ctx.stubs),
-                    generation: state.index_generation,
-                }
-            };
-            let generation = snapshot.generation;
-            let (key, root) = (package_root.clone(), folder_root.to_path_buf());
-            let resolved = tokio::task::spawn_blocking(move || {
-                // The full scan's grouping, so a report stays its own group.
-                let groups = ry_workspace::group_by_package_root(
-                    snapshot.candidates.iter().map(|(path, _)| path.as_str()),
-                );
-                let files: Vec<&SourceFile> = groups
-                    .get(&key)
+        match self.client.configuration(items).await {
+            Ok(values) => Some(SettingsUpdate::Pulled(
+                scopes
                     .into_iter()
-                    .flatten()
-                    .map(|&index| snapshot.candidates[index].1.as_ref())
-                    .collect();
-                ry_workspace::resolve_group(
-                    key.as_deref(),
-                    files,
-                    &snapshot.config,
-                    &snapshot.stubs,
-                    &root,
-                )
-                .1
-            })
-            .await;
-            let context = match resolved {
-                Ok(Ok(context)) => context,
-                Ok(Err(error)) => {
-                    // The scan skips failed groups; here a failed group
-                    // would keep the previous context indefinitely, so
-                    // converge through the full scan instead (its commit
-                    // resolves every group from current state). Removing
-                    // the key would punish the group's siblings on a
-                    // transient failure and disagree with the scan's own
-                    // error behavior.
-                    tracing::warn!(%error, "incremental workspace resolution degraded");
-                    break;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "incremental workspace resolution task failed");
-                    // Infrastructure failure (the blocking task itself
-                    // died): unsettled — the driver retries with a
-                    // bounded stall budget instead of looping here.
-                    return false;
-                }
-            };
-            // Test seam: pause here (holding no lock, the resolved
-            // context in hand) so a test can land a generation-moving
-            // writer between this group's snapshot and its install —
-            // the exact window the generation guard below exists for.
-            #[cfg(feature = "test-util")]
-            crate::test_seam::pause(Seam::ContextInstall).await;
-            let newly_degraded = {
-                let mut state = self.state.lock().await;
-                if state.index_generation != generation {
-                    // A newer writer landed during the blocking resolve;
-                    // retry once from current state, else let the full
-                    // scan converge. Drop the lock first: the retry
-                    // re-snapshots below, and the scan backstop blocks.
-                    drop(state);
-                    continue;
-                }
-                if let Some(ctx) = state
-                    .folder_contexts
-                    .iter_mut()
-                    .find(|ctx| ctx.root == *folder_root)
-                {
-                    ctx.workspace_contexts.insert(package_root.clone(), context);
-                } else {
-                    // The owning folder vanished between the snapshot
-                    // and this install; the removal path already
-                    // cleared and republished.
-                    return true;
-                }
-                state.newly_degraded_scopes()
-            };
-            for (path, reason) in &newly_degraded {
-                self.client
-                    .log_message(MessageType::WARNING, reason.notice(path))
-                    .await;
-            }
-            return true;
-        }
-        // Two lost races in a row: a full scan converges every group
-        // through its own generation-guarded commit. Only an Installed
-        // scan settles this group — the walk resolved and installed
-        // every group's context from current disk. A superseded scan
-        // leaves the duty to its supplanter, and a settled-without-
-        // install pass (an errored walk, generation still held)
-        // installed nothing: both stay unsettled for the reconciliation
-        // driver, which retries the group instead of re-scanning once
-        // per event.
-        matches!(
-            self.background_index_outcome().await,
-            BackgroundIndexOutcome::Installed
-        )
-    }
-
-    /// Debounce one project publication pass covering `paths`: every pass
-    /// publishes all checked files, so a burst of requests coalesces into
-    /// the pass of the latest generation, which drains every requested path.
-    /// With nothing requested, only dropped URIs are reconciled.
-    async fn request_pass(&self, paths: impl IntoIterator<Item = String>) {
-        let generation = {
-            let mut state = self.state.lock().await;
-            state.pending_diag_paths.extend(paths);
-            if state.pending_diag_paths.is_empty() {
+                    .map(|(root, _)| root)
+                    .zip(values)
+                    .collect(),
+            )),
+            Err(e) => {
+                tracing::warn!("workspace/configuration pull failed: {e}");
                 None
-            } else {
-                state.diag_generation = state.diag_generation.wrapping_add(1);
-                Some(state.diag_generation)
             }
-        };
-        let Some(generation) = generation else {
-            self.clear_dropped_diagnostics().await;
-            return;
-        };
-        let backend = self.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(180)).await;
-            // Only the latest generation drains, atomically with its check.
-            let requested = {
-                let mut state = backend.state.lock().await;
-                (state.diag_generation == generation)
-                    .then(|| std::mem::take(&mut state.pending_diag_paths))
-            };
-            if let Some(requested) = requested {
-                backend.publish_diagnostics(requested, generation).await;
-                #[cfg(feature = "test-util")]
-                crate::test_seam::signal(Seam::DiagnosticCycle);
-            }
-        });
-    }
-}
-
-/// A folder's walk-admission inputs, snapshotted for one refresh.
-struct WalkAdmission {
-    root: PathBuf,
-    anchor: PathBuf,
-    excludes: ry_config::Excludes,
-    include_build_ignored: Vec<String>,
-    limits: ry_workspace::DiscoveryLimits,
-    check_test_fixtures: bool,
-}
-
-impl WalkAdmission {
-    fn for_folder(ctx: &FolderAnalysisContext) -> Self {
-        WalkAdmission {
-            root: ctx.root.clone(),
-            anchor: ctx.config_root.clone().unwrap_or_else(|| ctx.root.clone()),
-            excludes: ctx.excludes.clone(),
-            include_build_ignored: ctx.config.include_build_ignored.clone(),
-            limits: ry_workspace::DiscoveryLimits::from_config(&ctx.config),
-            check_test_fixtures: ctx.config.check_test_fixtures,
         }
-    }
-
-    /// Whether the walk from this folder's root would admit `path`. The
-    /// `index.max-files` count is enforced at commit instead.
-    fn admits(&self, path: &Path) -> bool {
-        ry_workspace::is_single_file_walk_admitted(
-            path,
-            &self.root,
-            Some(&self.anchor),
-            &self.excludes,
-            &self.include_build_ignored,
-            &self.limits,
-            self.check_test_fixtures,
-        )
     }
 }
 

@@ -30,7 +30,13 @@ fn shared_fixture_reaches_real_lsp_subprocess_without_stdout_corruption() -> Res
 /// exit code reports whether `shutdown` came first.
 #[test]
 fn server_exits_on_exit_notification_with_stdin_open() -> Result<(), DriverError> {
-    for (shutdown_first, expected) in [(true, 0), (false, 1)] {
+    let shutdown = json!({"jsonrpc": "2.0", "id": "shutdown", "method": "shutdown"});
+    let exit = json!({"jsonrpc": "2.0", "method": "exit"});
+    for (case, expected) in [
+        ("shutdown, then exit", 0),
+        ("pipelined", 0),
+        ("exit only", 1),
+    ] {
         let fixture = FixtureProject::empty()?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
         command.arg("server").current_dir(fixture.root());
@@ -41,17 +47,23 @@ fn server_exits_on_exit_notification_with_stdin_open() -> Result<(), DriverError
         )?;
         client.receive_until(|message| message["id"] == id, 32)?;
         client.notify("initialized", json!({}))?;
-        if shutdown_first {
-            let id = client.request("shutdown", Value::Null)?;
-            client.receive_until(|message| message["id"] == id, 32)?;
+        match case {
+            "shutdown, then exit" => {
+                client.send(&shutdown)?;
+                client.receive_until(|message| message["id"] == "shutdown", 32)?;
+                client.send(&exit)?;
+            }
+            // Both messages in one write: the shutdown response must still
+            // reach the client before the process exits.
+            "pipelined" => {
+                client.send_pipelined(&[shutdown.clone(), exit.clone()])?;
+                let response = client.receive_until(|message| message["id"] == "shutdown", 32)?;
+                assert_eq!(response["result"], Value::Null, "{response}");
+            }
+            _ => client.send(&exit)?,
         }
-        client.notify("exit", Value::Null)?;
         let status = client.wait_for_exit(Duration::from_secs(5))?;
-        assert_eq!(
-            status.code(),
-            Some(expected),
-            "shutdown before exit: {shutdown_first}"
-        );
+        assert_eq!(status.code(), Some(expected), "{case}");
     }
     Ok(())
 }

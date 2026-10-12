@@ -156,9 +156,13 @@ mod settings;
 #[cfg(feature = "test-util")]
 pub use backend::baseline_disk_reads;
 use backend::{Backend, State};
+use std::future::Future;
+use std::pin::Pin;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
+use tokio::io::ReadBuf;
 use tokio::sync::{Mutex, oneshot};
 use tower_lsp::jsonrpc::Request;
 use tower_lsp::{LspService, Server};
@@ -192,31 +196,45 @@ where
         state: Arc::new(Mutex::new(State::default())),
     })
     .finish();
-    let (exit_tx, exit_rx) = oneshot::channel();
+    let (code_tx, mut code_rx) = oneshot::channel();
+    let (end_input_tx, end_input_rx) = oneshot::channel();
     let service = ExitSignal {
         inner: service,
         shutdown_requested: false,
-        exit: Some(exit_tx),
+        exit: Some((code_tx, end_input_tx)),
+    };
+    let reader = InputUntilExit {
+        inner: reader,
+        exit: Some(end_input_rx),
     };
     let server = Server::new(reader, writer, socket);
     // Tests park several handlers at seams at once; tower-lsp's default of
     // four in-flight messages would leave the next notification undelivered.
     #[cfg(feature = "test-util")]
     let server = server.concurrency_level(64);
-    // tower-lsp only notices `exit` when the next message arrives; stop on
-    // the signal instead of waiting for the client to close the stream.
+    let serve = server.serve(service);
+    tokio::pin!(serve);
     tokio::select! {
         biased;
-        Ok(code) = exit_rx => code,
-        () = server.serve(service) => ExitCode::SUCCESS,
+        Ok(code) = &mut code_rx => {
+            // Ending the input lets `serve` flush every queued response
+            // before it returns. The bound covers a handler still awaiting
+            // a reply from a client that has already exited.
+            let _ = tokio::time::timeout(EXIT_DRAIN_LIMIT, &mut serve).await;
+            code
+        }
+        () = &mut serve => code_rx.try_recv().unwrap_or(ExitCode::SUCCESS),
     }
 }
 
-/// Reports the `exit` notification, and whether `shutdown` preceded it.
+const EXIT_DRAIN_LIMIT: Duration = Duration::from_secs(2);
+
+/// Reports the `exit` notification, and whether `shutdown` preceded it, to
+/// [`run_with`] and to the input stream.
 struct ExitSignal<S> {
     inner: S,
     shutdown_requested: bool,
-    exit: Option<oneshot::Sender<ExitCode>>,
+    exit: Option<(oneshot::Sender<ExitCode>, oneshot::Sender<()>)>,
 }
 
 impl<S: Service<Request>> Service<Request> for ExitSignal<S> {
@@ -232,18 +250,46 @@ impl<S: Service<Request>> Service<Request> for ExitSignal<S> {
         match request.method() {
             "shutdown" => self.shutdown_requested = true,
             "exit" => {
-                if let Some(exit) = self.exit.take() {
+                if let Some((code_tx, end_input_tx)) = self.exit.take() {
                     let code = if self.shutdown_requested {
                         ExitCode::SUCCESS
                     } else {
                         ExitCode::FAILURE
                     };
-                    let _ = exit.send(code);
+                    let _ = code_tx.send(code);
+                    let _ = end_input_tx.send(());
                 }
             }
             _ => {}
         }
         self.inner.call(request)
+    }
+}
+
+/// Reads the client's input until `exit`, then reports end of stream.
+///
+/// tower-lsp only notices `exit` when the next message arrives, and a client
+/// may keep the stream open after sending it; ending the input here lets the
+/// serve loop wind down without waiting on the client.
+struct InputUntilExit<R> {
+    inner: R,
+    exit: Option<oneshot::Receiver<()>>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for InputUntilExit<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let Some(exit) = self.exit.as_mut() else {
+            return Poll::Ready(Ok(()));
+        };
+        if Pin::new(exit).poll(cx).is_ready() {
+            self.exit = None;
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
     }
 }
 

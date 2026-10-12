@@ -70,8 +70,16 @@ impl JsonRpcProcess {
     }
 
     pub fn send(&mut self, message: &Value) -> io::Result<()> {
-        let frame = encode(message)?;
-        self.writer.write_all(&frame)?;
+        self.send_pipelined(std::slice::from_ref(message))
+    }
+
+    /// Write several messages in one write, as a pipelining client does.
+    pub fn send_pipelined(&mut self, messages: &[Value]) -> io::Result<()> {
+        let mut frames = Vec::new();
+        for message in messages {
+            frames.extend(encode(message)?);
+        }
+        self.writer.write_all(&frames)?;
         self.writer.flush()
     }
 

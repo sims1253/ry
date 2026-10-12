@@ -68,8 +68,23 @@ can run:
 - run: ry check --output-format github .
 ```
 
-For a pinned release install, a project-wide pre-commit/prek hook, and a
-complete workflow, see the [project-check example](examples/project-check/README.md).
+To pin a release in CI, install it with that release's installer
+(`https://github.com/sims1253/ry/releases/download/v<version>/ry-cli-installer.sh`).
+
+For a pre-commit or prek hook, run ry once over the whole project rather than
+per file, so a change to `ry.toml`, a baseline, or `NAMESPACE` is also checked:
+
+``` yaml
+repos:
+  - repo: local
+    hooks:
+      - id: ry-project
+        name: ry project check
+        entry: ry check .
+        language: system
+        pass_filenames: false
+        always_run: true
+```
 
 ## R Markdown and Quarto inputs
 
@@ -219,42 +234,22 @@ $env:R_LIBS = Join-Path (Get-Location) '.uvr\library'
 ry check .
 ```
 
-Both recipes keep a path with spaces as one library root. `uvr sync` provisions
-the packages; ry only reads static package metadata. To give the editor the
-same library, start a new editor process from a shell with the same `R_LIBS`,
-or set `R_LIBS` in the editor's language-server process environment. A desktop
-launcher may not inherit your terminal's variables. After changing that
-environment, restart the editor or language server; changing a shell variable
-does not update a running server.
+ry only reads static package metadata from that library; it does not read uvr
+lockfiles, run `.Rprofile`, or execute package code. For the editor, set the
+same `R_LIBS` in the language server's environment (for example by launching
+the editor from that shell) and restart the server after changing it.
 
-An installed package is not automatically attached. ry uses its installed
-`NAMESPACE` exports when checked source calls `library()` or `require()`, or
-when a source package imports it in its own `NAMESPACE`. A `uvr.toml` or
-`uvr.lock` dependency by itself does not add unqualified names. If the host
-attaches a package outside the checked source, declare it in `ry.toml` with
-`packages = ["name"]`. A stub can supply types, but ry does not verify that
-the stub matches the installed package version or API.
+An installed package is not automatically attached. ry uses its `NAMESPACE`
+exports when checked source calls `library()` or `require()`, or when a source
+package imports it. A `uvr.toml` or `uvr.lock` dependency alone adds no
+unqualified names; declare a package attached by the host with
+`packages = ["name"]` in `ry.toml`.
 
-ry searches a nearby `renv/library` before `R_LIBS`, then searches `R_LIBS_USER`
-and `R_LIBS_SITE` in that order. It checks each variable's paths in their
-listed order. It then checks `R_HOME/library`, platform library locations, and
-home-directory library locations. The first found `NAMESPACE` for a package
-wins; ry does not merge exports from multiple installed versions. A missing
-library path is skipped, so a later root can still supply the package. Within
-a root, a direct package
-directory wins before versioned subdirectories. For a path with a `%`
-placeholder, ry searches a bounded set of subdirectories under the prefix;
-it prefers a directory matching the inferred R minor version when that
-version is available, then uses descending directory names. This static
-search is not a full reproduction of R's `.libPaths()` or uvr's resolution.
-
-Run `ry check . --explain-files` to inspect which source files ry checks.
-The `.uvr/library/` tree supplies metadata and is not recursively checked as
-project source. `ry dump-facts --format json .` records a context hash for the
-library inventory used by an analysis. The same source can have a different
-context hash under a different `R_LIBS`; compare that input when CLI and editor
-results differ. ry does not read uvr lockfiles, activate environments, run
-`.Rprofile`, or execute installed package code.
+ry searches a nearby `renv/library` first, then `R_LIBS`, `R_LIBS_USER`,
+`R_LIBS_SITE`, and the standard R library locations; the first `NAMESPACE`
+found for a package wins. `ry dump-facts --format json .` records a context
+hash for the library inventory, which helps when CLI and editor results
+differ.
 
 ## Data masking and NSE
 

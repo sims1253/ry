@@ -1397,53 +1397,98 @@ fn s4_signature_class(expr: &Expr) -> Option<String> {
     }
 }
 
-/// Return whether evaluating a block must force `name`, and whether control
-/// always falls through it. Both answers come from the same statement walk:
-/// force detection stops at the first forcing or non-falling statement, while
-/// fall-through continues across the whole block.
-fn block_force_flow(statements: &[Stmt], name: &str) -> (bool, bool) {
+/// Return whether evaluating a block must force `name`, whether control
+/// always falls through it, and whether a missing argument may be rebound
+/// in the frame before being forced. All answers come from the same
+/// statement walk: force detection stops at the first forcing,
+/// non-falling, or rebinding statement (later reads see the new value, not
+/// the argument), while fall-through continues across the whole block.
+fn block_force_flow(statements: &[Stmt], name: &str) -> (bool, bool, bool) {
     let mut forces = false;
+    let mut rebinds = false;
     let mut can_still_force = true;
     let mut falls_through = true;
 
     for statement in statements {
-        let (statement_forces, statement_falls_through) = statement_force_flow(statement, name);
+        let (statement_forces, statement_falls_through, statement_rebinds) =
+            statement_force_flow(statement, name);
         if can_still_force {
             if statement_forces {
                 forces = true;
                 can_still_force = false;
-            } else if !statement_falls_through {
+            } else if !statement_falls_through || statement_rebinds {
+                rebinds = statement_rebinds;
                 can_still_force = false;
             }
         }
         falls_through &= statement_falls_through;
     }
 
-    (forces, falls_through)
+    (forces, falls_through, rebinds)
 }
 
-fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
+/// Whether `statement` may bind `name` in the function's own frame. An
+/// undecodable binding target may be any name.
+fn statement_binds(statement: &Stmt, name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    walk_stmt(statement, FRAME_WALK, |node, _| match frame_binding(node) {
+        Some((bound, _)) if bound.is_none_or(|bound| bound == name) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+/// `Some(true)` for `missing(name)`, `Some(false)` for `!missing(name)`.
+fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
+    match condition {
+        Expr::UnaryOp {
+            op: UnaryOpKind::Not,
+            expr,
+            ..
+        } => missing_test(expr, name).map(|missing| !missing),
+        Expr::Call { func, args, .. } => {
+            let [argument] = args.as_slice() else {
+                return None;
+            };
+            (matches!(func.as_ref(), Expr::Ident { name: callee, .. } if bare_name(callee) == "missing")
+                && matches!(&argument.value, Expr::Ident { name: probed, .. } if probed == name))
+            .then_some(true)
+        }
+        _ => None,
+    }
+}
+
+fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool, bool) {
     match statement {
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
             if let Some(returned) = return_call_value(value) {
                 (
                     returned.is_some_and(|value| expression_must_force(value, name)),
                     false,
+                    false,
                 )
             } else {
-                (expression_must_force(value, name), true)
+                let forces = expression_must_force(value, name);
+                (forces, true, !forces && statement_binds(statement, name))
             }
         }
         Stmt::If {
             cond, then, else_, ..
         } => {
-            let (then_forces, then_falls) = block_force_flow(then, name);
-            let (else_forces, else_falls) = else_
+            let (then_forces, then_falls, then_rebinds) = block_force_flow(then, name);
+            let (else_forces, else_falls, else_rebinds) = else_
                 .as_ref()
                 .map(|statements| block_force_flow(statements, name))
-                .unwrap_or((false, true));
+                .unwrap_or((false, true, false));
             let forces = expression_must_force(cond, name) || (then_forces && else_forces);
-            (forces, then_falls && else_falls)
+            // A missing argument takes the `missing(name)` branch; any
+            // other branch only runs with a supplied argument.
+            let rebinds = match missing_test(cond, name) {
+                Some(true) => then_rebinds,
+                Some(false) => else_rebinds,
+                None => then_rebinds && else_rebinds,
+            };
+            (forces, then_falls && else_falls, !forces && rebinds)
         }
         // A `for` loop always falls through for force-flow purposes: an
         // empty iterable never runs the body, so a name forced only
@@ -1452,15 +1497,16 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool) {
         // `return`s on its first iteration). Reporting the body's
         // fall-through as the loop's own could wrongly mark a parameter
         // required.
-        Stmt::For { iter, .. } => (expression_must_force(iter, name), true),
-        Stmt::While { cond, .. } => (expression_must_force(cond, name), false),
+        Stmt::For { iter, .. } => (expression_must_force(iter, name), true, false),
+        Stmt::While { cond, .. } => (expression_must_force(cond, name), false, false),
         Stmt::Return { value, .. } => (
             value
                 .as_ref()
                 .is_some_and(|value| expression_must_force(value, name)),
             false,
+            false,
         ),
-        Stmt::FunctionDef { .. } => (false, true),
+        Stmt::FunctionDef { .. } => (false, true, false),
     }
 }
 

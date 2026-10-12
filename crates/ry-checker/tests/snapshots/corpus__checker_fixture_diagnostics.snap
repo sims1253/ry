@@ -470,6 +470,24 @@ expression: snapshots
         start: 2645
   fixture: err_force_contract_lazy_controls.R
 - diagnostics:
+    - code: RY091
+      message: "missing required argument `df` in call to `trim`"
+      severity: warning
+      span:
+        column: 0
+        end: 111
+        line: 7
+        start: 94
+    - code: RY091
+      message: "missing required argument `x` in call to `coerce`"
+      severity: warning
+      span:
+        column: 0
+        end: 206
+        line: 14
+        start: 198
+  fixture: err_formal_forced_before_branch_rebind.R
+- diagnostics:
     - code: RY010
       message: "variable `undefined_var` is not bound in this scope"
       severity: warning
@@ -1799,6 +1817,8 @@ expression: snapshots
   fixture: ok_mirai_minimal.R
 - diagnostics: []
   fixture: ok_mirai_status_dollar.R
+- diagnostics: []
+  fixture: ok_missing_formal_rebound.R
 - diagnostics: []
   fixture: ok_multi_assign.R
 - diagnostics: []

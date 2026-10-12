@@ -1024,7 +1024,7 @@ impl Checker {
 /// whole value no longer hold. A data frame keeps its columns, and so its
 /// length, while the selection changes its row count; any other record loses
 /// its shape, since its elements are what was selected.
-fn with_selected_elements(mut value: RType, length: Length) -> RType {
+pub(crate) fn with_selected_elements(mut value: RType, length: Length) -> RType {
     value.value_facts = value.value_facts.for_subset();
     match value.columns.take() {
         Some(schema) if value.class.contains("data.frame") => {
@@ -1075,7 +1075,7 @@ fn find_arg(args: &[Arg], name: &str, pos: usize) -> Option<usize> {
     None
 }
 
-fn semantic_return_length(
+pub(crate) fn semantic_return_length(
     semantics: Option<&ReturnLengthSpec>,
     signature_params: &[ParamSpec],
     args: &[Arg],

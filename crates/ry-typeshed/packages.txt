@@ -46,6 +46,7 @@ testthat
 tibble
 tidyr
 tidyselect
+tidyverse
 tinytest
 vctrs
 withr

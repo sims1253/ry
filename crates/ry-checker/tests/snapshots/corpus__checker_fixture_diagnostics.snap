@@ -1390,6 +1390,24 @@ expression: snapshots
         start: 104
   fixture: err_scalar_logical.R
 - diagnostics:
+    - code: RY001
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 4
+        end: 194
+        line: 4
+        start: 177
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 5
+        end: 236
+        line: 5
+        start: 216
+  fixture: err_selection_lengths.R
+- diagnostics:
     - code: RY109
       message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
       severity: warning
@@ -1493,6 +1511,16 @@ expression: snapshots
         line: 4
         start: 216
   fixture: err_switch_mixed.R
+- diagnostics:
+    - code: RY080
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
+      span:
+        column: 6
+        end: 191
+        line: 4
+        start: 152
+  fixture: err_tidyverse_attaches_purrr.R
 - diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `union` and `double`"
@@ -1932,6 +1960,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_scalar_single_bracket_index.R
 - diagnostics: []
+  fixture: ok_selection_lengths.R
+- diagnostics: []
   fixture: ok_seq_defaulted_forward.R
 - diagnostics: []
   fixture: ok_seq_for_loop.R
@@ -1967,6 +1997,8 @@ expression: snapshots
   fixture: ok_testthat_block_scope.R
 - diagnostics: []
   fixture: ok_tidyselect_negative_string.R
+- diagnostics: []
+  fixture: ok_tidyverse_unstubbed_core.R
 - diagnostics: []
   fixture: ok_trycatch.R
 - diagnostics: []

@@ -201,6 +201,15 @@ impl Checker {
             // result shape even for a standard data-frame receiver.
             result = incomplete_schema(result);
         }
+        // A row-selecting effect (base `subset`) also re-counts elements.
+        if let Some(length) = crate::infer::construct::semantic_return_length(
+            sig.return_length.as_ref(),
+            &sig.params,
+            args,
+            &arg_types,
+        ) {
+            result = crate::infer::construct::with_selected_elements(result, length);
+        }
         Some(result)
     }
 

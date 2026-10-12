@@ -1,4 +1,4 @@
-# expect: RY040, RY040, RY040, RY040, RY040, RY040, RY040, RY040
+# expect: RY040, RY040, RY040, RY040, RY040, RY040, RY040, RY040, RY010
 # Actuals stay eagerly checked unless the exact callee provably never
 # forces their formal.
 use <- function(x) x + 1L
@@ -28,3 +28,7 @@ spread <- function(...) pick(..., "oops" + 1L)
 rebound <- function(x) 1L
 rebound <- Vectorize(rebound)
 rebound("oops" + 1L)
+
+# An unforced actual never runs, so its assignment never binds.
+ignore({ assigned <- 1L })
+assigned

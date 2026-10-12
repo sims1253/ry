@@ -47,7 +47,7 @@ const disabledRuntime = (): Runtime => ({
 
 /**
  * Boot the extension runtime: channels, status item, listeners, and the
- * first server start on the next tick.
+ * first server start.
  */
 export function start(context: vscode.ExtensionContext): Runtime {
   const serverId = RY_SETTINGS_NAMESPACE;
@@ -89,7 +89,6 @@ export function start(context: vscode.ExtensionContext): Runtime {
   let resolvedBinary: ResolvedBinary | null = null;
   let settings: ISettings | undefined;
   let shutdownStarted = false;
-  let bootImmediate: NodeJS.Immediate | null = null;
   const readSettings = () => {
     const folder = vscode.workspace.workspaceFolders?.[0];
     return folder
@@ -100,23 +99,16 @@ export function start(context: vscode.ExtensionContext): Runtime {
     logger.error(message);
     if (serverState && resolvedBinary) statusItem.setReady(resolvedBinary);
     else statusItem.setError(message);
-    void (async () => {
-      try {
-        const action = await vscode.window.showErrorMessage(
-          message,
-          "Show Logs",
-          "Configure",
-        );
+    void vscode.window
+      .showErrorMessage(message, "Show Logs", "Configure")
+      .then((action) => {
         if (action === "Show Logs") outputChannel.show();
         else if (action === "Configure")
-          await vscode.commands.executeCommand(
+          void vscode.commands.executeCommand(
             "workbench.action.openSettings",
             "ry.path",
           );
-      } catch (error) {
-        logger.error(errorMessage(error));
-      }
-    })();
+      });
   };
   const runServer = async () => {
     const nextSettings = readSettings();
@@ -155,39 +147,27 @@ export function start(context: vscode.ExtensionContext): Runtime {
   };
 
   // Restart orchestration: at most one restart runs, at most one pends.
-  const requestRestart = async () => {
-    if (shutdownStarted) return;
+  const requestRestart = (): Promise<void> => {
+    if (shutdownStarted) return Promise.resolve();
     if (restartPromise != null) {
-      if (!restartQueued) {
-        logger.info(
-          `${LOG_CHANNEL_NAME} restart requested while another restart is in progress; queuing one more restart.`,
-        );
-        restartQueued = true;
-      }
-      await restartPromise;
-      return;
+      restartQueued = true;
+      return restartPromise;
     }
-
-    restartQueued = false;
     restartPromise = (async () => {
-      // Assign restartPromise before a synchronous failure can clear it.
-      await Promise.resolve();
       try {
         do {
           restartQueued = false;
           try {
             await runServer();
           } catch (error) {
-            reportFailure(
-              `Failed to start the ${LOG_CHANNEL_NAME} server: ${errorMessage(error)}`,
-            );
+            reportFailure(errorMessage(error));
           }
-        } while (restartQueued);
+        } while (restartQueued && !shutdownStarted);
       } finally {
         restartPromise = null;
       }
     })();
-    await restartPromise;
+    return restartPromise;
   };
 
   // Configuration change triggers restart only for settings
@@ -217,16 +197,7 @@ export function start(context: vscode.ExtensionContext): Runtime {
     }),
   );
 
-  // Start the server shortly after boot. shutdown() cancels a still
-  // pending immediate, and the callback is a no-op once shutdown has
-  // begun, so the first start can never recreate state after teardown.
-  bootImmediate = setImmediate(() => {
-    bootImmediate = null;
-    if (shutdownStarted) return;
-    if (serverState == null && restartPromise == null) {
-      void requestRestart();
-    }
-  });
+  void requestRestart();
 
   return {
     requestRestart,
@@ -235,16 +206,13 @@ export function start(context: vscode.ExtensionContext): Runtime {
     debugInformation: () =>
       debugInformationCommand(resolvedBinary ?? undefined, settings),
     explainRule: () =>
-      resolvedBinary
-        ? explainRuleCommand(resolvedBinary.path)
-        : Promise.resolve(),
+      explainRuleCommand(
+        resolvedBinary?.path ??
+          findRyBinaryPath(readSettings(), !vscode.workspace.isTrusted),
+      ),
     shutdown: async () => {
       shutdownStarted = true;
-      if (bootImmediate != null) {
-        clearImmediate(bootImmediate);
-        bootImmediate = null;
-      }
-      await restartPromise?.catch(() => {});
+      await restartPromise;
       if (serverState != null) {
         await stopServer(serverState);
         serverState = null;

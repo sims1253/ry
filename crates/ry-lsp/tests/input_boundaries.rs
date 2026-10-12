@@ -19,14 +19,15 @@ async fn first_diagnostics_wait_for_initial_workspace_bindings() {
         .unwrap();
     fixture.write_file("main.R", "profile_binding\n").unwrap();
     let uri = file_uri(&fixture.path("main.R"));
-    ry_lsp::test_seam::arm(Seam::InitialIndex);
-    ry_lsp::test_seam::arm(Seam::DiagnosticCycle);
+    ry_lsp::test_seam::arm(Seam::Scan);
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    ry_lsp::test_seam::wait_arrived(Seam::InitialIndex).await;
+    ry_lsp::test_seam::wait_arrived(Seam::Scan).await;
+    // The document opens while the initial scan is parked before its
+    // install; its publication must wait for the installed bindings.
     let mark = session.publication_mark();
     session.open(&uri, 1, "profile_binding\n").await.unwrap();
-    ry_lsp::test_seam::wait_landed(Seam::DiagnosticCycle).await;
-    ry_lsp::test_seam::release(Seam::InitialIndex);
+    sync_barrier(&mut session, &uri).await;
+    ry_lsp::test_seam::release(Seam::Scan);
     let first = session
         .published_diagnostics_after(&uri, mark)
         .await
@@ -47,13 +48,11 @@ async fn removing_all_folders_during_initial_index_releases_diagnostics() {
     let source = "1L + 'bad'\n";
     outside.write_file("main.R", source).unwrap();
     let uri = file_uri(&outside.path("main.R"));
-    ry_lsp::test_seam::arm(Seam::InitialIndex);
-    ry_lsp::test_seam::arm(Seam::DiagnosticCycle);
+    ry_lsp::test_seam::arm(Seam::Scan);
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
-    ry_lsp::test_seam::wait_arrived(Seam::InitialIndex).await;
+    ry_lsp::test_seam::wait_arrived(Seam::Scan).await;
     let mark = session.publication_mark();
     session.open(&uri, 1, source).await.unwrap();
-    ry_lsp::test_seam::wait_landed(Seam::DiagnosticCycle).await;
     session
         .notify(
             "workspace/didChangeWorkspaceFolders",
@@ -63,9 +62,10 @@ async fn removing_all_folders_during_initial_index_releases_diagnostics() {
         )
         .await
         .unwrap();
-    // No replacement scan runs after the last folder is removed.
-    // The outside document must become checkable without releasing
-    // the superseded scan first.
+    // The removal queues behind the parked initial scan. Once it runs, no
+    // folder is left to index, and the outside document must become
+    // checkable.
+    ry_lsp::test_seam::release(Seam::Scan);
     let publish = session
         .published_diagnostics_after(&uri, mark)
         .await
@@ -75,7 +75,6 @@ async fn removing_all_folders_during_initial_index_releases_diagnostics() {
             .iter()
             .any(|d| d["code"] == "RY040")
     );
-    ry_lsp::test_seam::release(Seam::InitialIndex);
     join_session(session, server).await;
 }
 

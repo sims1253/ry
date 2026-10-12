@@ -18,16 +18,13 @@
 //! filesystem-dependent, so a fresh server over the final tree may keep a
 //! different subset. These tests pin the live invariant instead — the
 //! index never grows past the cap — which is exactly what the fix
-//! guarantees and what fails without it. The observation rendezvouses
-//! with the refresh commit through the `#526` commit gate (a bare
-//! round-trip would not prove the one-way watched notification was
-//! processed, let alone committed): released plus landed proves the
-//! commit decision precedes the no-op edit whose publication is asserted.
+//! guarantees and what fails without it. The index writer applies work in
+//! arrival order, so the no-op edit whose publication is asserted is
+//! published after the watched refresh before it decided.
 
 mod harness;
 
 use harness::{file_uri, join_session, normalize_diagnostics, spawn_session, sync_barrier};
-use ry_lsp::test_seam::Seam;
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
 
@@ -73,8 +70,7 @@ async fn notify_changed(session: &mut harness::ClientSession, uri: &str) {
 }
 
 /// Drive one fresh publication of the committed index with a no-op edit
-/// and return it. The caller must have rendezvoused with every in-flight
-/// writer first, so the snapshot postdates their commit decisions.
+/// and return it. The edit's pass follows every event sent before it.
 async fn observe_current_index(
     session: &mut harness::ClientSession,
     use2_uri: &str,
@@ -84,7 +80,7 @@ async fn observe_current_index(
 }
 
 /// Drive one fresh publication of the committed index with a no-op edit
-/// carrying `text`, and return it. Same rendezvous contract as
+/// carrying `text`, and return it. Same ordering as
 /// [`observe_current_index`], for observers whose buffer text differs.
 async fn observe_current_index_with(
     session: &mut harness::ClientSession,
@@ -114,19 +110,13 @@ async fn open_use2_settled(session: &mut harness::ClientSession, use2_uri: &str)
         .unwrap()
 }
 
-/// Deliver the watched event for `uri` (created or changed per `notify`)
-/// and rendezvous with its refresh commit through the gate: when this
-/// returns, the commit decision — landed or refused — precedes.
-async fn notify_and_rendezvous(session: &mut harness::ClientSession, uri: &str, created: bool) {
-    ry_lsp::test_seam::arm(Seam::RefreshCommit);
+/// Deliver the watched event for `uri`, created or changed.
+async fn notify_watched(session: &mut harness::ClientSession, uri: &str, created: bool) {
     if created {
         notify_created(session, uri).await;
     } else {
         notify_changed(session, uri).await;
     }
-    ry_lsp::test_seam::wait_arrived(Seam::RefreshCommit).await;
-    ry_lsp::test_seam::release(Seam::RefreshCommit);
-    ry_lsp::test_seam::wait_landed(Seam::RefreshCommit).await;
 }
 
 /// A watched creation past the cap must not grow the index: with two
@@ -157,7 +147,7 @@ async fn create_past_cap_is_refused() {
 
     fixture.write_file("d.R", NEWDEFS).unwrap();
     let d_uri = file_uri(&fixture.path("d.R"));
-    notify_and_rendezvous(&mut session, &d_uri, true).await;
+    notify_watched(&mut session, &d_uri, true).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
         count_ry010(&after),
@@ -202,7 +192,7 @@ async fn change_of_undiscovered_file_past_cap_is_refused() {
     // admission would now pass, but the root is at its file budget.
     std::fs::write(fixture.path("d.R"), NEWDEFS).unwrap();
     let d_uri = file_uri(&fixture.path("d.R"));
-    notify_and_rendezvous(&mut session, &d_uri, false).await;
+    notify_watched(&mut session, &d_uri, false).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
         count_ry010(&after),
@@ -329,7 +319,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // (one of four), which the inner observer proves.
     fixture.write_file("pkg/b.R", INNERDEFS).unwrap();
     let b_uri = file_uri(&fixture.path("pkg/b.R"));
-    notify_and_rendezvous(&mut session, &b_uri, true).await;
+    notify_watched(&mut session, &b_uri, true).await;
     let inner_after = observe_current_index_with(&mut session, &obs_uri, 2, OBSERVER_INNER).await;
     assert_eq!(
         count_ry010(&inner_after),
@@ -343,7 +333,7 @@ async fn nested_inner_entries_do_not_consume_outer_budget() {
     // sits at the cap.
     fixture.write_file("c.R", NEWDEFS).unwrap();
     let c_uri = file_uri(&fixture.path("c.R"));
-    notify_and_rendezvous(&mut session, &c_uri, true).await;
+    notify_watched(&mut session, &c_uri, true).await;
     let after = observe_current_index(&mut session, &use2_uri, 2).await;
     assert_eq!(
         count_ry010(&after),

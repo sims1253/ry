@@ -408,13 +408,19 @@ async fn same_version_collision_rejects_a_parse_from_the_previous_uri() {
     .unwrap();
 
     // Both native buffers carry version 1, but have different ASTs.
-    // B's publication parses B while A's earlier parse is parked.
-    let mark = session.publication_mark();
+    // B's inlay-hint request parses B while A's earlier parse is parked.
     session.open(&uris[1], 1, sources[1]).await.unwrap();
-    let _ = session
-        .published_diagnostics_after(&uris[1], mark)
+    let hints = session
+        .request(
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": {"uri": uris[1]},
+                "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 20}}
+            }),
+        )
         .await
         .unwrap();
+    assert_eq!(hints[0]["label"], ": logical<len=1>", "{hints}");
     ry_lsp::test_seam::release(Seam::Parse);
     tokio::time::timeout(
         Duration::from_secs(10),

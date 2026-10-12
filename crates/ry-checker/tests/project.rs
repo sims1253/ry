@@ -64,6 +64,57 @@ fn cross_file_function_return_type_propagates() {
 }
 
 #[test]
+fn return_chains_cross_files_in_either_name_order() {
+    for descending in [false, true] {
+        let name = |index: usize| {
+            let index = if descending { 13 - index } else { index };
+            format!("f{index:02}")
+        };
+        let mut project = Project::new();
+        let mut uses = String::new();
+        for index in 1..=12 {
+            let body = if index == 12 {
+                "\"x\"".to_string()
+            } else {
+                format!("{}()", name(index + 1))
+            };
+            let path = format!("{}.R", name(index));
+            let source = format!("{} <- function() {body}\n", name(index));
+            project.add_file(path.clone(), parse(&path, &source));
+            uses.push_str(&format!(
+                "r{index:02} <- function() {}() + 1\n",
+                name(index)
+            ));
+        }
+        project.add_file("uses.R".into(), parse("uses.R", &uses));
+        let flagged = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .filter(|diagnostic| diagnostic.code == "RY040")
+            .count();
+        assert_eq!(flagged, 12, "descending names: {descending}");
+    }
+}
+
+#[test]
+fn recursive_returns_keep_their_base_case_across_files() {
+    let mut project = callback_project(&[
+        (
+            "g.R",
+            "g <- function(n) {\n  if (n == 0L) return(\"done\")\n  h(n - 1L)\n}",
+        ),
+        ("h.R", "h <- function(n) g(n)"),
+        ("use.R", "h(2L) + 1L"),
+    ]);
+    let diagnostics: Vec<_> = project.check().into_iter().flat_map(|(_, d)| d).collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn cross_file_fixpoint_rebinding_overrides_null_narrowing() {
     // `make_writer` is opaque in the first fixpoint iteration, then its
     // function return type is refined. The branch assignment must still
@@ -166,6 +217,105 @@ fn cross_file_s3_method_dispatches() {
         "print.foo from methods.R should dispatch on usage.R's x, got: {:?}",
         all
     );
+}
+
+#[test]
+fn cross_file_user_generic_dispatches_to_project_methods() {
+    // The usage file sorts and collects before the generic and its methods.
+    let mut project = Project::new();
+    project.add_file(
+        "a_usage.R".to_string(),
+        parse(
+            "a_usage.R",
+            "circle <- structure(list(), class = \"circle\")\n\
+             square <- structure(list(), class = c(\"square\", \"rect\"))\n\
+             triangle <- structure(list(), class = \"triangle\")\n\
+             lbl(circle) + 1\n\
+             lbl(square) + 1\n\
+             lbl(triangle)\n\
+             f <- function(value) lbl(value) + 1\n\
+             area(triangle) + 1\n",
+        ),
+    );
+    project.add_file(
+        "z_generic.R".to_string(),
+        parse(
+            "z_generic.R",
+            "lbl <- function(x, ...) UseMethod(\"lbl\")\n\
+             area <- function(shape) UseMethod(\"area\")\n",
+        ),
+    );
+    project.add_file(
+        "methods.R".to_string(),
+        parse(
+            "methods.R",
+            "lbl.circle <- function(shape, ...) \"a circle\"\n\
+             lbl.rect <- function(obj, ...) 4L\n\
+             area.default <- function(shape) 0\n",
+        ),
+    );
+    let diags = project.check();
+    let mut usage: Vec<_> = diags
+        .into_iter()
+        .filter(|(path, _)| path == "a_usage.R")
+        .flat_map(|(_, d)| d)
+        .map(|d| (d.code, d.span.line))
+        .collect();
+    usage.sort();
+    assert_eq!(
+        usage,
+        vec![("RY040", 3), ("RY050", 5)],
+        "cross-file dispatch must reach `lbl.circle`/`lbl.rect`, report the \
+         unhandled class, and stay silent on unknown classes and defaults"
+    );
+}
+
+#[test]
+fn registered_stub_generic_method_keeps_helper_return_class_open() {
+    // `expand` is a tidyr generic; with this package's `expand.tbl_lazy`
+    // registered, the helper's result need not carry the stub's
+    // data-frame class, so dispatching on it proves no missing method.
+    let check = |registered: bool| {
+        let mut project = Project::new();
+        project.add_file(
+            "R/verbs.R".to_string(),
+            parse(
+                "R/verbs.R",
+                "op_vars <- function(op) UseMethod(\"op_vars\")\n\
+                 op_vars.tbl_lazy <- function(op) op$vars\n\
+                 expand_vars <- function(data) tidyr::expand(data, a)\n",
+            ),
+        );
+        project.add_file(
+            "tests/use.R".to_string(),
+            parse("tests/use.R", "op_vars(expand_vars(lazy))\n"),
+        );
+        let methods =
+            std::collections::HashSet::from([("expand".to_string(), "tbl_lazy".to_string())]);
+        project.set_external_s3_methods(
+            ["R/verbs.R", "tests/use.R"]
+                .into_iter()
+                .map(|path| {
+                    (
+                        path.to_string(),
+                        if registered {
+                            methods.clone()
+                        } else {
+                            Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        project
+            .check()
+            .into_iter()
+            .flat_map(|(_, d)| d)
+            .filter(|d| d.code == "RY050")
+            .count()
+    };
+    assert_eq!(check(false), 1, "the stub class alone is the control case");
+    assert_eq!(check(true), 0, "a registered method must reach pass 2");
 }
 
 #[test]
@@ -1441,7 +1591,7 @@ fn full_invalidation_keeps_fresh_shadowed_signatures() {
         Operation::RepeatedUpdate {
             file: 2,
             first: SourceModel::UnrelatedInteger,
-            second: SourceModel::IntegerReturn,
+            second: SourceModel::RequiredParameter,
         },
         Operation::RemoveThenReadd {
             file: 1,
@@ -1479,7 +1629,7 @@ fn loaded_change_keeps_fresh_signatures() {
     ];
     let mut project = callback_project(&sources);
     project.check_incremental();
-    sources[0].1 = "library(stats)\ntarget <- function(value) 1L";
+    sources[0].1 = "library(stats)\ntarget <- function(value) value";
     project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
     let incremental = project.check_incremental();
     assert_eq!(incremental, callback_project(&sources).check());
@@ -1689,6 +1839,9 @@ fn check_mode_transitions_match_fresh_projects() {
             _ => format!("f{index:02} <- function() f{:02}()\n", index + 1),
         })
         .collect();
+    let reversed_chain: String = (2..=12)
+        .map(|index| format!("a{index:02} <- function() a{:02}()\n", index - 1))
+        .collect();
     let cases: &[(Files<'_>, &[Edit])] = &[
         (
             PAIR,
@@ -1750,6 +1903,32 @@ fn check_mode_transitions_match_fresh_projects() {
         (
             &[("chain.R", chain.as_str())],
             &[Edit::Update("chain.R", "f11 <- function() 'x'")],
+        ),
+        (
+            &[
+                ("leaf.R", "a01 <- function() 1L"),
+                ("chain.R", reversed_chain.as_str()),
+                ("use.R", "z <- a12() + 1L"),
+            ],
+            &[
+                Edit::Update("leaf.R", "a01 <- function() 'x'"),
+                Edit::Update("leaf.R", "a01 <- function() a12()"),
+            ],
+        ),
+        (
+            &[
+                ("rec.R", "f <- function(n) if (n == 0L) 1L else g(n - 1L)"),
+                ("g.R", "g <- function(n) f(n)"),
+                ("use.R", "x <- f(1L) + 1L\ny <- g(2L) + 1L"),
+            ],
+            &[
+                Edit::Update(
+                    "rec.R",
+                    "f <- function(n) if (n == 0L) 'oops' else g(n - 1L)",
+                ),
+                Edit::Update("rec.R", "f <- function(n) g(n - 1L)"),
+                Edit::Update("g.R", "g <- function(n) 2L"),
+            ],
         ),
     ];
 

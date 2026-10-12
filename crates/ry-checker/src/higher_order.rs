@@ -640,7 +640,7 @@ impl Checker {
     /// For each callback (inline anonymous function literal), we build
     /// a scope with the callback's params bound to the element types
     /// the higher-order function will pass, then walk the body's
-    /// statements via `check_stmt` (which emits diagnostics). Named
+    /// statements via `walk_block` (which emits diagnostics). Named
     /// callbacks (user-fn, typeshed) don't need this: their bodies are
     /// walked during the user-fn fixpoint or are built-in.
     fn walk_callback_for_diagnostics(
@@ -684,9 +684,7 @@ impl Checker {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);
             }
-            for s in body {
-                self.check_stmt(s, &mut fn_scope);
-            }
+            self.walk_block(body, &mut fn_scope, None);
         }
     }
 
@@ -755,6 +753,15 @@ impl Checker {
         if let Some(slot) = self.fn_table.s3_methods.get(&key) {
             return Some(S3MethodSource::Project(*slot));
         }
+        if self.is_user_generic(generic) {
+            let method = format!("{generic}.{class}");
+            if let Some(function) = self.fn_table.fns.get(&method) {
+                return Some(S3MethodSource::Project(function.return_slot));
+            }
+            if self.fn_table.known_vars.contains(&method) {
+                return Some(S3MethodSource::Registered);
+            }
+        }
         if let Some(sig) = self.typeshed.s3_methods.get(&key) {
             return Some(S3MethodSource::Stub(Box::new(sig.clone())));
         }
@@ -799,27 +806,16 @@ impl Checker {
         cv: &ClassVector,
         span: Span,
     ) -> Option<RType> {
-        let has_default = generics.iter().any(|candidate| {
-            let default_key = ((*candidate).to_string(), "default".to_string());
-            self.fn_table.s3_methods.contains_key(&default_key)
-                || self.typeshed.s3_methods.contains_key(&default_key)
-                || self.external_s3_methods.contains(&default_key)
-                || self.available_package_names().into_iter().any(|pkg| {
-                    // Cheap prefilter: same S3 gate as `s3_lookup_method`.
-                    if !self.package_may_declare_s3(pkg) {
-                        return false;
-                    }
-                    self.package_typeshed(pkg)
-                        .is_some_and(|typeshed| typeshed.s3_methods.contains_key(&default_key))
-                })
-        });
-        if has_default {
+        if generics
+            .iter()
+            .any(|candidate| self.s3_lookup_method(candidate, "default").is_some())
+        {
             return Some(RType::unknown());
         }
         let has_known_s3_method =
             self.fn_table.s3_methods.keys().any(|(known_generic, _)| {
                 generics.iter().any(|candidate| known_generic == candidate)
-            });
+            }) || self.has_user_generic_method(generic);
         if !has_known_s3_method {
             return None;
         }
@@ -827,7 +823,12 @@ impl Checker {
         // group method cannot make a class-specific method mandatory. Keep
         // the result opaque: the local inventory cannot rule out registered
         // methods, and their return types need not match the primitive.
-        if s3_group_generic(generic).is_some() {
+        // A guarded or truncated class vector is partial: a method for an
+        // unlisted class may still be selected.
+        if s3_group_generic(generic).is_some()
+            || cv.guarded
+            || usize::from(cv.len) >= cv.names.len()
+        {
             return Some(RType::unknown());
         }
         // The generic has no dispatch target for this class. Emit RY050
@@ -857,8 +858,9 @@ impl Checker {
 /// One method-source hit in the S3 dispatch ladder shared by call and
 /// operator dispatch.
 pub(crate) enum S3MethodSource {
-    /// Registered through package metadata: not analyzable, so dispatch
-    /// can only conclude opaque.
+    /// Registered through package metadata, or a project method bound to a
+    /// non-literal value: not analyzable, so dispatch can only conclude
+    /// opaque.
     Registered,
     /// A project-defined method (`generic.class <- function(...)`) and
     /// its refined return slot.

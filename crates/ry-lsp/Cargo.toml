@@ -14,7 +14,8 @@ ry-typeshed = { path = "../ry-typeshed" }
 ry-config = { path = "../ry-config" }
 ry-workspace = { path = "../ry-workspace" }
 tower-lsp = "0.20"
-tokio = { workspace = true, features = ["rt", "io-std", "sync", "time"] }
+tower-service = "0.3"
+tokio = { workspace = true, features = ["rt", "io-std", "macros", "sync", "time"] }
 # Parallel workspace indexing on a bounded pool. Not a new cost in the
 # shipped `ry` binary: ry-cli already depends on rayon, and the Zed
 # extension does not build this crate.

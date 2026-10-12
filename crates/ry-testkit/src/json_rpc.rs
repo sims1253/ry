@@ -1,7 +1,8 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
@@ -10,7 +11,7 @@ const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub struct JsonRpcProcess {
     child: Child,
     reader: BufReader<ChildStdout>,
-    writer: Option<ChildStdin>,
+    writer: ChildStdin,
     next_id: u64,
 }
 
@@ -43,7 +44,7 @@ impl JsonRpcProcess {
         Ok(Self {
             child,
             reader: BufReader::new(stdout),
-            writer: Some(writer),
+            writer,
             next_id: 1,
         })
     }
@@ -69,17 +70,38 @@ impl JsonRpcProcess {
     }
 
     pub fn send(&mut self, message: &Value) -> io::Result<()> {
-        let frame = encode(message)?;
-        let writer = self
-            .writer
-            .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "server stdin closed"))?;
-        writer.write_all(&frame)?;
-        writer.flush()
+        self.send_pipelined(std::slice::from_ref(message))
+    }
+
+    /// Write several messages in one write, as a pipelining client does.
+    pub fn send_pipelined(&mut self, messages: &[Value]) -> io::Result<()> {
+        let mut frames = Vec::new();
+        for message in messages {
+            frames.extend(encode(message)?);
+        }
+        self.writer.write_all(&frames)?;
+        self.writer.flush()
     }
 
     pub fn receive(&mut self) -> io::Result<Value> {
         decode_blocking(&mut self.reader)
+    }
+
+    /// Wait for the server process to exit on its own, with stdin still open.
+    pub fn wait_for_exit(&mut self, timeout: Duration) -> io::Result<ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            if Instant::now() > deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "server did not exit",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     pub fn receive_until(
@@ -141,23 +163,9 @@ impl JsonRpcProcess {
             return Err(io::Error::other(format!("shutdown failed: {error}")));
         }
         self.send(&json!({"jsonrpc": "2.0", "method": "exit"}))?;
-        // Clients close the server's stdin after `exit`.
-        self.writer = None;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            match self.child.try_wait()? {
-                Some(status) if status.success() => break,
-                Some(status) => {
-                    return Err(io::Error::other(format!("server exited with {status}")));
-                }
-                None if std::time::Instant::now() > deadline => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "server did not exit after shutdown",
-                    ));
-                }
-                None => std::thread::sleep(std::time::Duration::from_millis(10)),
-            }
+        let status = self.wait_for_exit(Duration::from_secs(5))?;
+        if !status.success() {
+            return Err(io::Error::other(format!("server exited with {status}")));
         }
         Ok(publication["params"]["diagnostics"]
             .as_array()

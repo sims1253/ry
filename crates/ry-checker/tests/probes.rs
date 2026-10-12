@@ -59,7 +59,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ),
     // The plain `run` helper intentionally installs no authored records.
     // Opted-in source records exercise these codes end-to-end in
-    // ry-cli/tests/typehint_e2e.rs, including both positive and quiet cases.
+    // ry-cli/tests/e2e/typehint_e2e.rs, including both positive and quiet cases.
     ("RY114", "requires an explicitly adopted declaration record"),
     ("RY115", "requires an explicitly adopted declaration record"),
     ("RY116", "requires conflicting adopted declaration records"),

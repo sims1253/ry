@@ -1472,6 +1472,7 @@ dependencies = [
  "sha2",
  "tokio",
  "tower-lsp",
+ "tower-service",
  "tracing",
 ]
 

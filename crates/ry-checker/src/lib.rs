@@ -951,6 +951,9 @@ pub(crate) struct UserParam {
     /// Whether the function captures this argument as an unevaluated
     /// expression (for example through `substitute(x)`).
     pub(crate) quoting: bool,
+    /// Whether no evaluation of the body can force this argument, so a
+    /// call to this exact definition never evaluates the actual.
+    pub(crate) unforced: bool,
     pub(crate) injection: Option<InjectionMode>,
 }
 

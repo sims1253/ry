@@ -1717,6 +1717,104 @@ expression: snapshots
   fixture: err_switch_mixed.R
 - diagnostics:
     - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 4
+        end: 227
+        line: 4
+        start: 216
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 16
+        end: 320
+        line: 8
+        start: 309
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 17
+        end: 463
+        line: 11
+        start: 452
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 12
+        end: 594
+        line: 15
+        start: 583
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 10
+        end: 659
+        line: 18
+        start: 648
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 11
+        end: 733
+        line: 21
+        start: 722
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 7
+        end: 843
+        line: 27
+        start: 832
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 11
+        end: 1009
+        line: 32
+        start: 998
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 13
+        end: 1252
+        line: 37
+        start: 1241
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 34
+        end: 1393
+        line: 41
+        start: 1382
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 8
+        end: 1471
+        line: 45
+        start: 1460
+    - code: RY010
+      message: "variable `assigned` is not bound in this scope"
+      severity: warning
+      span:
+        column: 0
+        end: 1573
+        line: 49
+        start: 1565
+  fixture: err_unforced_user_argument_controls.R
+- diagnostics:
+    - code: RY040
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
       span:
@@ -2233,6 +2331,8 @@ expression: snapshots
   fixture: ok_unary_minus.R
 - diagnostics: []
   fixture: ok_unary_not.R
+- diagnostics: []
+  fixture: ok_unforced_user_argument.R
 - diagnostics: []
   fixture: ok_union_element_condition.R
 - diagnostics: []

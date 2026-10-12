@@ -1651,6 +1651,7 @@ impl Checker {
                 .collect();
             match_arguments(&names, args)
         });
+        let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
         // One match for the resolved signature; the loop below used to redo it
         // for every argument.
         let declared_binding = resolved_sig
@@ -1692,6 +1693,14 @@ impl Checker {
             } else {
                 injection
             };
+            if unforced_args.get(index).copied().unwrap_or(false) {
+                // R never evaluates this actual, so it gets no diagnostics
+                // and no effects on the caller. Its type still serves
+                // declared-contract checks.
+                let mut unevaluated = scope.independent_execution_scope();
+                arg_types.push(self.infer_discarding(&a.value, &mut unevaluated));
+                continue;
+            }
             if let Some(parameter) = user_param
                 && (parameter.quoting
                     || declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)))
@@ -1766,6 +1775,107 @@ impl Checker {
             lexical_callable,
             locally_shadows_stub: false,
         }
+    }
+
+    /// Per actual, whether it binds a formal the called definition can never
+    /// force. Only a direct, unaliased call to one exact literal qualifies,
+    /// and forwarded `...` leaves the positional binding unknown.
+    fn unforced_arguments(
+        &self,
+        name: &str,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Vec<bool> {
+        if name != semantic_name
+            || name.contains("::")
+            || args
+                .iter()
+                .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return Vec::new();
+        }
+        let Some(function) = self.declaration_helper(name, scope).filter(|function| {
+            function.params.iter().any(|parameter| parameter.unforced)
+                && !self
+                    .fn_table
+                    .was_rebound_after_capture(&function.source_path, function.definition_span)
+                && self.runs_only_stub_code(function)
+        }) else {
+            return Vec::new();
+        };
+        let names: Vec<&str> = function
+            .params
+            .iter()
+            .map(|parameter| parameter.name.as_str())
+            .collect();
+        match_arguments(&names, args)
+            .param_for_arg
+            .iter()
+            .map(|formal| formal.is_some_and(|formal| function.params[formal].unforced))
+            .collect()
+    }
+
+    /// Whether evaluating `function` runs no project code, which could reach
+    /// its caller's frame (`get("x", envir = parent.frame())`). Every call
+    /// head must name a typeshed function the project does not bind, no
+    /// project function may be passed by value or by name, and no call or
+    /// operator may dispatch while the project defines methods.
+    fn runs_only_stub_code(&self, function: &UserFn) -> bool {
+        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
+        let mut dispatches = false;
+        let mut visit = |node: AstNode<'_>, _| {
+            let closed = match node {
+                AstNode::Expr(Expr::Call { func, .. }) => {
+                    dispatches = true;
+                    match func.as_ref() {
+                        Expr::Ident { name, .. } => {
+                            let name = semantic_argument_name(name);
+                            !project_function(name)
+                                && !project_function(&format!("{name}<-"))
+                                && !self.fn_table.known_vars.contains(name)
+                                && self.resolve_typeshed_sig(name).is_some()
+                        }
+                        _ => false,
+                    }
+                }
+                AstNode::Expr(Expr::Ident { name, .. }) => {
+                    !project_function(semantic_argument_name(name))
+                }
+                AstNode::Expr(Expr::String(text, _)) => !project_function(text),
+                AstNode::Expr(Expr::BinOp { .. } | Expr::UnaryOp { .. } | Expr::Index { .. }) => {
+                    dispatches = true;
+                    true
+                }
+                _ => true,
+            };
+            if closed {
+                ControlFlow::Continue(Descend::Into)
+            } else {
+                ControlFlow::Break(())
+            }
+        };
+        let closed = function
+            .source_params
+            .iter()
+            .filter_map(|parameter| parameter.default.as_ref())
+            .all(|default| walk_expr(default, Walk::ALL, &mut visit).is_continue())
+            && walk_stmts(&function.body, Walk::ALL, &mut visit).is_continue();
+        closed && !(dispatches && self.project_defines_methods())
+    }
+
+    /// Whether any project function is named like a method of a typeshed or
+    /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
+    fn project_defines_methods(&self) -> bool {
+        self.fn_table.fns.keys().any(|name| {
+            let name = semantic_argument_name(name);
+            name.starts_with("__s4__")
+                || name.match_indices('.').any(|(end, _)| {
+                    end > 0
+                        && (crate::semantic_lists::is_group_generic(&name[..end])
+                            || self.resolve_typeshed_sig(&name[..end]).is_some())
+                })
+        })
     }
 
     /// The definition whose adopted contract a call checks: the exact

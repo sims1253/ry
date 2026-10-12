@@ -49,6 +49,20 @@ fn has_ry010(diagnostics: &[Value]) -> bool {
     diagnostics.iter().any(|d| d["code"] == json!("RY010"))
 }
 
+/// Whether the diagnostics report the binding `` `a` `` at `line`. A use
+/// after a `load()` call resolves only through the installed package
+/// context's load inventory, which is keyed by the call's byte offset, so
+/// this observes the context refresh, not just the re-parse.
+fn has_ry010_for_a_at_line(diagnostics: &[Value], line: u64) -> bool {
+    diagnostics.iter().any(|d| {
+        d["code"] == json!("RY010")
+            && d["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("`a`"))
+            && d["range"]["start"]["line"].as_u64() == Some(line)
+    })
+}
+
 /// `ry check --output-format json` on the fixture tree: the fresh-analysis
 /// oracle the convergence assertions are measured against.
 fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
@@ -98,19 +112,27 @@ impl Settled {
     }
 }
 
-/// A watching session over `main.R` (clean), `a.R` (`a_initial`), and
-/// clean `b.R`/`c.R`. Opening `main.R` proves the initial index installed
+/// [`settled_in`] with `a.R` at the root and no extra files.
+async fn settled(a_initial: &str) -> Settled {
+    settled_in("a.R", a_initial, &[]).await
+}
+
+/// A watching session over `main.R` (clean), `a_relative` (`a_initial`),
+/// clean `b.R`/`c.R`, and the `extra` files. Opening `main.R` proves the initial index installed
 /// (its pass also publishes `a.R`), and closing it again leaves no
 /// document open; the close's clear is the last thing the writer does
 /// for it, so the writer is idle on return.
-async fn settled(a_initial: &str) -> Settled {
+async fn settled_in(a_relative: &str, a_initial: &str, extra: &[(&str, &[u8])]) -> Settled {
     let fixture = FixtureProject::empty().unwrap();
+    for (relative, bytes) in extra {
+        fixture.write_file(relative, *bytes).unwrap();
+    }
     fixture.write_file("main.R", "w <- 1L\n").unwrap();
-    fixture.write_file("a.R", a_initial).unwrap();
+    fixture.write_file(a_relative, a_initial).unwrap();
     fixture.write_file("b.R", "o <- 1L\n").unwrap();
     fixture.write_file("c.R", "p <- 1L\n").unwrap();
     let main_uri = file_uri(&fixture.path("main.R"));
-    let a_uri = file_uri(&fixture.path("a.R"));
+    let a_uri = file_uri(&fixture.path(a_relative));
     let b_uri = file_uri(&fixture.path("b.R"));
     let c_uri = file_uri(&fixture.path("c.R"));
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
@@ -292,5 +314,59 @@ async fn teardown_with_queued_work_terminates() {
         let uri = settled.uri(name);
         settled.watched(&uri).await;
     }
+    join_session(settled.session, settled.server).await;
+}
+
+/// Two edits to a closed file in its own `DESCRIPTION` package, queued
+/// behind an in-flight scan, converge the package's load inventory: the
+/// final bytes move the `load()` call below one use of `a`, so only the
+/// use above the call reports.
+#[tokio::test]
+async fn package_edits_queued_behind_a_scan_converge_its_load_inventory() {
+    let mut settled = settled_in(
+        "pkgA/a.R",
+        "load(\"data.rda\")\na\n",
+        &[
+            ("pkgA/DESCRIPTION", b"Package: pkgA\nVersion: 0.0.1\n"),
+            (
+                "pkgA/data.rda",
+                include_bytes!("../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
+            ),
+        ],
+    )
+    .await;
+    assert!(!cli_flags(&settled.fixture, "a.R"));
+
+    ry_lsp::test_seam::arm(Seam::Scan);
+    trigger_full_scan(&mut settled).await;
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_arrived(Seam::Scan),
+    )
+    .await
+    .expect("the scan must park before its install");
+    let a_uri = settled.a_uri.clone();
+    for bytes in ["load(\"data.rda\")\na\na\n", "a\nload(\"data.rda\")\na\n"] {
+        settled.fixture.write_file("pkgA/a.R", bytes).unwrap();
+        settled.watched(&a_uri).await;
+    }
+    ry_lsp::test_seam::release(Seam::Scan);
+
+    let a = await_diagnostics_where(
+        &mut settled.session,
+        &a_uri,
+        |d| has_ry010_for_a_at_line(d, 0) && !has_ry010_for_a_at_line(d, 2),
+        6,
+    )
+    .await;
+    assert!(
+        has_ry010_for_a_at_line(&a, 0) && !has_ry010_for_a_at_line(&a, 2),
+        "only the use above the moved load() call may report: {a:?}"
+    );
+    assert!(
+        cli_flags(&settled.fixture, "a.R"),
+        "true-positive control: the CLI flags the use above the load() call"
+    );
+
     join_session(settled.session, settled.server).await;
 }

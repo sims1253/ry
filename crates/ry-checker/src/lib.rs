@@ -1335,12 +1335,14 @@ pub struct Checker {
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
     typeshed: Arc<Typeshed>,
     user_stubs: Arc<BTreeMap<String, Typeshed>>,
-    /// Editor/project buffers take precedence over the disk copy of a
-    /// relative box module. Keys use the existing ancestor's identity.
-    box_sources: Arc<box_imports::BoxSources>,
-    box_module_cache: HashMap<PathBuf, Arc<box_imports::BoxInventory>>,
+    box_modules: Arc<box_imports::BoxModules>,
     box_package_cache: HashMap<(PathBuf, String), Arc<box_imports::BoxInventory>>,
-    box_depth: u8,
+    /// Identities of the modules whose loading led to this check; empty
+    /// for a file checked in its own right.
+    box_loading: Vec<PathBuf>,
+    /// This check imported a module that was still loading, directly or
+    /// through a nested module.
+    box_cycle: bool,
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Explicitly adopted structured records. Empty unless a caller opts in.
     pub(crate) declarations: Arc<declaration_check::DeclarationSet>,
@@ -1537,7 +1539,11 @@ impl Checker {
         self.path = file.path.clone();
         self.native_path.clone_from(&file.native_path);
         self.source.clone_from(&file.source);
-        self.box_module_cache.clear();
+        // A file checked in its own right rereads its modules; a nested
+        // module shares its importer's run.
+        if self.box_loading.is_empty() {
+            self.box_modules.forget_inventories();
+        }
         self.box_package_cache.clear();
         self.escaped_operator_bindings = self
             .external_bindings
@@ -1606,10 +1612,10 @@ impl Checker {
         Self {
             typeshed: embedded_base(),
             user_stubs: Arc::new(BTreeMap::new()),
-            box_sources: Arc::new(HashMap::new()),
-            box_module_cache: HashMap::new(),
+            box_modules: Arc::default(),
             box_package_cache: HashMap::new(),
-            box_depth: 0,
+            box_loading: Vec::new(),
+            box_cycle: false,
             diagnostics: Vec::new(),
             declarations: Arc::new(declaration_check::DeclarationSet::default()),
             declaration_findings: Vec::new(),
@@ -2014,9 +2020,8 @@ impl Checker {
         self.user_stubs = stubs;
     }
 
-    pub(crate) fn set_box_sources(&mut self, sources: Arc<box_imports::BoxSources>) {
-        self.box_sources = sources;
-        self.box_module_cache.clear();
+    pub(crate) fn set_box_modules(&mut self, modules: Arc<box_imports::BoxModules>) {
+        self.box_modules = modules;
         self.box_package_cache.clear();
     }
 

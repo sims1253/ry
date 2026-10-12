@@ -42,6 +42,49 @@ pub struct SemanticList {
     pub claim: &'static str,
 }
 
+/// Calls that can reach a frame's promises without naming them: frame and
+/// call reflection, evaluation of constructed code, by-string lookup, and
+/// method dispatch that re-matches the original promises.
+pub const FRAME_REFLECTION: &[&str] = &[
+    "UseMethod",
+    "NextMethod",
+    "standardGeneric",
+    "callNextMethod",
+    "callGeneric",
+    "Recall",
+    "environment",
+    "parent.frame",
+    "sys.frame",
+    "sys.frames",
+    "sys.call",
+    "sys.calls",
+    "sys.function",
+    "match.call",
+    "as.environment",
+    "eval",
+    "evalq",
+    "eval.parent",
+    "get",
+    "get0",
+    "mget",
+    "exists",
+    "dynGet",
+    "parse",
+    "str2lang",
+    "str2expression",
+    "as.name",
+    "as.symbol",
+    "sym",
+    "syms",
+    "current_env",
+    "current_call",
+    "current_fn",
+    "caller_env",
+    "env_get",
+    "env_get_list",
+    "env_has",
+];
+
 /// Syntax call spellings whose visible replacement invalidates literal Ops proof.
 /// Backticked entries reflect the parser's retained spelling of bindings.
 pub const OPS_PROOF_SYNTAX: &[&str] = &[
@@ -278,6 +321,12 @@ pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "FRAME_REFLECTION",
+            items: FRAME_REFLECTION,
+            check: CheckKind::TypeshedAgreement,
+            claim: "calls that can reach a frame's promises without naming the formal",
+        },
         SemanticList {
             name: "SCALAR_FACT_SAFE_CALLS",
             items: SCALAR_FACT_SAFE_CALLS,

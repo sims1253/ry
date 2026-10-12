@@ -1441,7 +1441,7 @@ fn full_invalidation_keeps_fresh_shadowed_signatures() {
         Operation::RepeatedUpdate {
             file: 2,
             first: SourceModel::UnrelatedInteger,
-            second: SourceModel::IntegerReturn,
+            second: SourceModel::RequiredParameter,
         },
         Operation::RemoveThenReadd {
             file: 1,
@@ -1479,7 +1479,7 @@ fn loaded_change_keeps_fresh_signatures() {
     ];
     let mut project = callback_project(&sources);
     project.check_incremental();
-    sources[0].1 = "library(stats)\ntarget <- function(value) 1L";
+    sources[0].1 = "library(stats)\ntarget <- function(value) value";
     project.update_file("callee.R".into(), Arc::new(parse("callee.R", sources[0].1)));
     let incremental = project.check_incremental();
     assert_eq!(incremental, callback_project(&sources).check());

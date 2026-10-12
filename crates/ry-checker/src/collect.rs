@@ -1,6 +1,6 @@
 use super::*;
 use crate::infer::*;
-use crate::semantic_lists::{bare_name, strip_package};
+use crate::semantic_lists::{FRAME_REFLECTION, bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
@@ -845,49 +845,6 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
             && !(body.iter().any(captures_promise)
                 && parameter_has_normal_use(body, parameter)))
 }
-
-/// Calls that can reach a frame's promises without naming them: frame and
-/// call reflection, evaluation of constructed code, by-string lookup, and
-/// method dispatch that re-matches the original promises.
-const FRAME_REFLECTION: &[&str] = &[
-    "UseMethod",
-    "NextMethod",
-    "standardGeneric",
-    "callNextMethod",
-    "callGeneric",
-    "Recall",
-    "environment",
-    "parent.frame",
-    "sys.frame",
-    "sys.frames",
-    "sys.call",
-    "sys.calls",
-    "sys.function",
-    "match.call",
-    "as.environment",
-    "eval",
-    "evalq",
-    "eval.parent",
-    "get",
-    "get0",
-    "mget",
-    "exists",
-    "dynGet",
-    "parse",
-    "str2lang",
-    "str2expression",
-    "as.name",
-    "as.symbol",
-    "sym",
-    "syms",
-    "current_env",
-    "current_call",
-    "current_fn",
-    "caller_env",
-    "env_get",
-    "env_get_list",
-    "env_has",
-];
 
 /// Whether no evaluation of the function can force `parameter`'s promise:
 /// the name occurs nowhere in the definition (body, any default, nested

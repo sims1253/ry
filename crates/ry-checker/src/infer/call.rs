@@ -1672,11 +1672,11 @@ impl Checker {
                 injection
             };
             if unforced_args.get(index).copied().unwrap_or(false) {
-                // R never evaluates this actual. Like a quoted argument it
-                // is visited without diagnostics or effects on the caller.
+                // R never evaluates this actual, so it gets no diagnostics
+                // and no effects on the caller. Its type still serves
+                // declared-contract checks.
                 let mut unevaluated = scope.independent_execution_scope();
-                self.infer_discarding(&a.value, &mut unevaluated);
-                arg_types.push(RType::unknown());
+                arg_types.push(self.infer_discarding(&a.value, &mut unevaluated));
                 continue;
             }
             if let Some(parameter) = user_param

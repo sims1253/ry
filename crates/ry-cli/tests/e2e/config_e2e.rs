@@ -10,7 +10,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Output;
 
-use ry_testkit::{CliOutput, ry};
+use ry_testkit::ry;
+
+use crate::support::{install_namespace, unbound_names};
 
 fn stub(package: &str, function: &str, mode: &str) -> String {
     format!(
@@ -36,21 +38,6 @@ fn check(cwd: &Path, args: &[&str]) -> Output {
 /// `ry check <path>` with the path spelled absolutely.
 fn ry_check(path: &Path) -> Output {
     ry!().arg("check").arg(path).run().0
-}
-
-/// Names reported unbound (RY010) by a JSON check, in output order.
-fn unbound_names(output: &CliOutput) -> Vec<String> {
-    output
-        .json()
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|diagnostic| {
-            assert_eq!(diagnostic["code"], "RY010", "{diagnostic}");
-            let message = diagnostic["message"].as_str().unwrap();
-            message.split('`').nth(1).unwrap().to_owned()
-        })
-        .collect()
 }
 
 #[test]
@@ -367,13 +354,7 @@ fn ry_check_with_r_lib(arg: &Path, r_lib: &Path) -> Output {
 }
 
 fn install_fixture_package(r_lib: &Path) {
-    install_fixture_package_with_export(r_lib, "exported_value");
-}
-
-fn install_fixture_package_with_export(r_lib: &Path, export: &str) {
-    let package = r_lib.join("fixturepkg");
-    fs::create_dir_all(&package).unwrap();
-    fs::write(package.join("NAMESPACE"), format!("export({export})\n")).unwrap();
+    install_namespace(r_lib, "fixturepkg", "exported_value");
 }
 
 fn install_fixture_r_home(r_home: &Path, version: &str) {
@@ -1088,8 +1069,8 @@ fn installed_namespace_lookup_preserves_r_library_precedence() {
     let tmp = tempfile::tempdir().unwrap();
     let first = tmp.path().join("first-library");
     let second = tmp.path().join("second-library");
-    install_fixture_package_with_export(&first, "first_export");
-    install_fixture_package_with_export(&second, "shadowed_export");
+    install_namespace(&first, "fixturepkg", "first_export");
+    install_namespace(&second, "fixturepkg", "shadowed_export");
     fs::write(
         tmp.path().join("script.R"),
         "library(fixturepkg)\nx <- first_export\ny <- shadowed_export\n",
@@ -1117,8 +1098,8 @@ fn installed_namespace_lookup_preserves_r_library_precedence() {
 fn placeholder_library_path_prefers_current_r_version() {
     let tmp = tempfile::tempdir().unwrap();
     let versioned = tmp.path().join("versioned-library");
-    install_fixture_package_with_export(&versioned.join("8.8"), "old_export");
-    install_fixture_package_with_export(&versioned.join("R-9.9.1"), "current_export");
+    install_namespace(&versioned.join("8.8"), "fixturepkg", "old_export");
+    install_namespace(&versioned.join("R-9.9.1"), "fixturepkg", "current_export");
 
     let r_home = tmp.path().join("r-home");
     install_fixture_r_home(&r_home, "9.9.1");
@@ -1151,9 +1132,9 @@ fn project_renv_library_precedes_global_libraries() {
     let project = tmp.path().join("project");
     fs::create_dir_all(&project).unwrap();
     let renv_library = project.join("renv/library/R-9.9/x86_64-pc-linux-gnu");
-    install_fixture_package_with_export(&renv_library, "renv_export");
+    install_namespace(&renv_library, "fixturepkg", "renv_export");
     let global_library = tmp.path().join("global-library");
-    install_fixture_package_with_export(&global_library, "global_export");
+    install_namespace(&global_library, "fixturepkg", "global_export");
     let r_home = tmp.path().join("r-home");
     install_fixture_r_home(&r_home, "9.9.1");
     fs::write(
@@ -1198,7 +1179,7 @@ fn library_environment_selects_the_installed_namespace() {
         ("consumer/renv/library", "renv_export"),
     ];
     for (library, export) in libraries {
-        install_fixture_package_with_export(&path(library), export);
+        install_namespace(&path(library), "fixturepkg", export);
     }
     for version in ["4.3", "4.4"] {
         install_fixture_r_home(&path(&format!("r-home-{version}")), &format!("{version}.1"));
@@ -1313,7 +1294,11 @@ fn library_environment_selects_the_installed_namespace() {
             .map(|(_, name)| *name)
             .filter(|name| *name != supplied)
             .collect();
-        assert_eq!(unbound_names(&output), expected, "{env:?}");
+        assert_eq!(
+            unbound_names(output.json().as_array().unwrap()),
+            expected,
+            "{env:?}"
+        );
     }
 }
 
@@ -1485,7 +1470,7 @@ fn full_output_reports_argument_type_mismatch_with_types() {
 fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
     // Generated from two distinct self-referential R environments wrapped
     // in pairlists. The decoder must not compare their cyclic graphs in dedup.
-    // Regenerate in tests/fixtures/ with R:
+    // Regenerate in tests/e2e/fixtures/ with R:
     // a <- new.env(parent = emptyenv()); a$self <- a
     // b <- new.env(parent = emptyenv()); b$self <- b
     // x <- pairlist(a); y <- pairlist(b)
@@ -1628,13 +1613,13 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
     let cases: [(&[u8], Option<&str>, &[&str]); 3] = [
         // Over the parser limit: the file-stem binding stands in.
         (
-            include_bytes!("../../../testdata/serialized/nested-limit.rda"),
+            include_bytes!("../../../../testdata/serialized/nested-limit.rda"),
             Some("serialized parser resource limit exceeded"),
             &["genuinely_missing"],
         ),
         // A repaired, known empty inventory binds nothing.
         (
-            include_bytes!("../../../testdata/serialized/empty.rda"),
+            include_bytes!("../../../../testdata/serialized/empty.rda"),
             None,
             &["sysdata", "genuinely_missing"],
         ),
@@ -1642,7 +1627,7 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
         // XDR inventory cannot read it, but its valid envelope must not be
         // mislabeled as corrupt.
         (
-            include_bytes!("../../../testdata/serialized/empty-ascii.rda"),
+            include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
             Some("unsupported serialized input"),
             &["sysdata", "genuinely_missing"],
         ),
@@ -1660,7 +1645,11 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
                 "--statistics",
             ])
             .run();
-        assert_eq!(unbound_names(&checked), unbound, "{degraded:?}");
+        assert_eq!(
+            unbound_names(checked.json().as_array().unwrap()),
+            unbound,
+            "{degraded:?}"
+        );
         let notice = checked.stderr();
         let facts = ry!().cwd(pkg).args(["dump-facts", "R/use.R"]).run().json();
         let scopes = &facts["contexts"][0]["inputs"]["degraded_scopes"];

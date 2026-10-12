@@ -174,13 +174,7 @@ impl Checker {
             Expr::Block { body, .. } => {
                 let mut inner = scope.function_execution_scope();
                 inner.insert(".", lhs_t);
-                let Some((last, prefix)) = body.split_last() else {
-                    return RType::new(Mode::Null, Length::Zero);
-                };
-                for statement in prefix {
-                    self.walk_stmt(statement, &mut inner, None);
-                }
-                self.infer_stmt_value(last, &mut inner)
+                self.infer_block_expr(body, &mut inner)
             }
             // Bare magrittr pronoun: `x %>% .` returns the LHS value
             // itself (the `.` refers to the LHS). This is distinct from

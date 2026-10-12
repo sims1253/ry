@@ -1,0 +1,78 @@
+{
+  "schema_version": "2",
+  "package": "tidyverse",
+  "version": "0.0.1",
+  "attaches": [
+    "ggplot2",
+    "tibble",
+    "tidyr",
+    "readr",
+    "purrr",
+    "dplyr",
+    "stringr",
+    "forcats",
+    "lubridate"
+  ],
+  "functions": {
+    "tidyverse_conflicts": {
+      "params": [
+        "only"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tidyverse_deps": {
+      "params": [
+        "recursive",
+        "repos"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tidyverse_logo": {
+      "params": [
+        "unicode"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tidyverse_packages": {
+      "params": [
+        "include_self"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tidyverse_sitrep": {
+      "params": [],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    },
+    "tidyverse_update": {
+      "params": [
+        "recursive",
+        "repos"
+      ],
+      "return": {
+        "mode": "opaque",
+        "length": "unknown",
+        "na": true
+      }
+    }
+  }
+}

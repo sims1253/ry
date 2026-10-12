@@ -81,7 +81,7 @@ the bundled stubs, with installed-library discovery disabled. Positions are 1-ba
 The CLI integration test checks this table against the current source files:
 
 ```sh
-cargo test -p ry-cli --test editor_playground
+cargo test -p ry-cli --test e2e editor_playground
 ```
 
 <!-- playground-diagnostics:start -->

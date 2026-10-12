@@ -133,15 +133,12 @@ impl Checker {
             .filter(move |package| self.bare_loaded.contains(*package))
     }
 
-    /// The other gate: `loaded` (the project-wide union) plus the
-    /// tidyverse expansion — `library(tidyverse)` makes dplyr and tidyr's
-    /// declarative verbs resolvable everywhere, exactly like the dplyr
-    /// NSE gating they share inference with.
+    /// The other gate: `loaded`, the project-wide union, which makes
+    /// declarative verbs resolvable everywhere, exactly like the dplyr NSE
+    /// gating they share inference with.
     pub(crate) fn schema_attached_packages(&self) -> impl Iterator<Item = &str> + '_ {
-        self.available_package_names().filter(move |package| {
-            self.loaded.contains(*package)
-                || (self.loaded.contains("tidyverse") && matches!(*package, "dplyr" | "tidyr"))
-        })
+        self.available_package_names()
+            .filter(move |package| self.loaded.contains(*package))
     }
 
     /// Resolve only signatures that declare checker schema semantics. Unlike
@@ -539,6 +536,31 @@ impl Checker {
 
         // The bare name falls through to base.
         true
+    }
+
+    /// Whether `generic` names a project function whose whole body is
+    /// `UseMethod("<generic>")`, so it dispatches on its first argument.
+    pub(crate) fn is_user_generic(&self, generic: &str) -> bool {
+        self.fn_table.fns.get(generic).is_some_and(|function| {
+            matches!(&*function.body, [Stmt::Expr(Expr::Call { args, .. })] if args.len() == 1)
+                && usemethod_generic_name(&function.body).as_deref() == Some(generic)
+        })
+    }
+
+    /// Whether the project binds any `<generic>.<class>` method for a
+    /// project generic, which makes the project own its dispatch surface.
+    pub(crate) fn has_user_generic_method(&self, generic: &str) -> bool {
+        self.is_user_generic(generic)
+            && self
+                .fn_table
+                .fns
+                .keys()
+                .chain(&self.fn_table.known_vars)
+                .any(|name| {
+                    name.strip_prefix(generic)
+                        .and_then(|rest| rest.strip_prefix('.'))
+                        .is_some_and(|class| !class.is_empty())
+                })
     }
 
     pub(crate) fn user_s3_dispatch_return(&self, generic: &str, first: &RType) -> Option<RType> {

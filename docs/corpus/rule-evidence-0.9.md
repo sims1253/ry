@@ -115,7 +115,7 @@ determines the verdict.
 
 The historical corpus above predates RY114–117. These opt-in declaration
 rules retain a `keep` verdict in the executable matrix. Their positive and
-quiet controls are in `ry-cli/tests/typehint_e2e.rs`, their R premises are in
+quiet controls are in `ry-cli/tests/e2e/typehint_e2e.rs`, their R premises are in
 `ry-checker/testdata/oracle/typehint_*.R`, and RY114 warm editor behavior is
 covered in `ry-lsp/tests/typehint_adoption.rs`. They are outside the original
 literal-lift experiment because that experiment installs no authored records.

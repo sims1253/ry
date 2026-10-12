@@ -101,7 +101,7 @@ fn class_guards_do_not_establish_or_erase_an_explicit_class() {
     let temp = project(Some(ADOPT));
     fs::write(
         temp.path().join("R/main.R"),
-        include_str!("../../ry-checker/testdata/oracle/typehint_class_guards.R"),
+        include_str!("../../../ry-checker/testdata/oracle/typehint_class_guards.R"),
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 0);
@@ -145,7 +145,7 @@ fn class_guards_do_not_establish_or_erase_an_explicit_class() {
 #[test]
 fn methods_selected_from_class_tests_do_not_return_exact_classes() {
     let temp = project(Some(ADOPT));
-    let fixture = include_str!("../../ry-checker/testdata/oracle/typehint_guarded_dispatch.R");
+    let fixture = include_str!("../../../ry-checker/testdata/oracle/typehint_guarded_dispatch.R");
     fs::write(temp.path().join("R/main.R"), fixture).unwrap();
     assert_eq!(count(temp.path(), "RY114"), 0);
 

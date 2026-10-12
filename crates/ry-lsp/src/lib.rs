@@ -116,8 +116,16 @@ mod settings;
 use backend::Backend;
 #[cfg(feature = "test-util")]
 pub use backend::baseline_disk_reads;
-use tower_lsp::jsonrpc::Result as LspResult;
+use std::future::Future;
+use std::pin::Pin;
+use std::process::ExitCode;
+use std::task::{Context, Poll};
+use std::time::Duration;
+use tokio::io::ReadBuf;
+use tokio::sync::oneshot;
+use tower_lsp::jsonrpc::Request;
 use tower_lsp::{LspService, Server};
+use tower_service::Service;
 
 /// Entry point for the LSP server. Reads from stdin, writes to stdout.
 ///
@@ -125,7 +133,7 @@ use tower_lsp::{LspService, Server};
 /// that routes output to stderr BEFORE calling this function. Any log
 /// output on stdout will corrupt the JSON-RPC stream and break the
 /// client. See `crates/ry-cli/src/main.rs`'s `Cmd::Server` arm.
-pub async fn run() -> LspResult<()> {
+pub async fn run() -> ExitCode {
     run_with(tokio::io::stdin(), tokio::io::stdout()).await
 }
 
@@ -134,19 +142,110 @@ pub async fn run() -> LspResult<()> {
 /// Production uses stdio through [`run`]. Integration tests use this seam with
 /// in-memory duplex streams so large protocol matrices exercise the same
 /// [`LspService`] without paying subprocess startup costs.
-pub async fn run_with<R, W>(reader: R, writer: W) -> LspResult<()>
+///
+/// Returns once the client sends `exit` or closes the input stream. The exit
+/// code follows the LSP spec: `exit` without a prior `shutdown` is a failure.
+pub async fn run_with<R, W>(reader: R, writer: W) -> ExitCode
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
     let (service, socket) = LspService::build(Backend::new).finish();
+    let (code_tx, mut code_rx) = oneshot::channel();
+    let (end_input_tx, end_input_rx) = oneshot::channel();
+    let service = ExitSignal {
+        inner: service,
+        shutdown_requested: false,
+        exit: Some((code_tx, end_input_tx)),
+    };
+    let reader = InputUntilExit {
+        inner: reader,
+        exit: Some(end_input_rx),
+    };
     let server = Server::new(reader, writer, socket);
     // Tests park several handlers at seams at once; tower-lsp's default of
     // four in-flight messages would leave the next notification undelivered.
     #[cfg(feature = "test-util")]
     let server = server.concurrency_level(64);
-    server.serve(service).await;
-    Ok(())
+    let serve = server.serve(service);
+    tokio::pin!(serve);
+    tokio::select! {
+        biased;
+        Ok(code) = &mut code_rx => {
+            // Ending the input lets `serve` flush every queued response
+            // before it returns. The bound covers a handler still awaiting
+            // a reply from a client that has already exited.
+            let _ = tokio::time::timeout(EXIT_DRAIN_LIMIT, &mut serve).await;
+            code
+        }
+        () = &mut serve => code_rx.try_recv().unwrap_or(ExitCode::SUCCESS),
+    }
+}
+
+const EXIT_DRAIN_LIMIT: Duration = Duration::from_secs(2);
+
+/// Reports the `exit` notification, and whether `shutdown` preceded it, to
+/// [`run_with`] and to the input stream.
+struct ExitSignal<S> {
+    inner: S,
+    shutdown_requested: bool,
+    exit: Option<(oneshot::Sender<ExitCode>, oneshot::Sender<()>)>,
+}
+
+impl<S: Service<Request>> Service<Request> for ExitSignal<S> {
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: Request) -> Self::Future {
+        match request.method() {
+            "shutdown" => self.shutdown_requested = true,
+            "exit" => {
+                if let Some((code_tx, end_input_tx)) = self.exit.take() {
+                    let code = if self.shutdown_requested {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    };
+                    let _ = code_tx.send(code);
+                    let _ = end_input_tx.send(());
+                }
+            }
+            _ => {}
+        }
+        self.inner.call(request)
+    }
+}
+
+/// Reads the client's input until `exit`, then reports end of stream.
+///
+/// tower-lsp only notices `exit` when the next message arrives, and a client
+/// may keep the stream open after sending it; ending the input here lets the
+/// serve loop wind down without waiting on the client.
+struct InputUntilExit<R> {
+    inner: R,
+    exit: Option<oneshot::Receiver<()>>,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for InputUntilExit<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let Some(exit) = self.exit.as_mut() else {
+            return Poll::Ready(Ok(()));
+        };
+        if Pin::new(exit).poll(cx).is_ready() {
+            self.exit = None;
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
 }
 
 #[cfg(test)]

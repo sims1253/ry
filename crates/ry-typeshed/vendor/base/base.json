@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -5268,7 +5268,9 @@
     },
     "median": {
       "params": [
-        "x"
+        "x",
+        "na.rm",
+        "..."
       ],
       "return": {
         "mode": "double_or_int",

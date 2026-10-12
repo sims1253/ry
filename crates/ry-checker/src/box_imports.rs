@@ -1010,11 +1010,7 @@ impl Checker {
             self.infer_args_for_diagnostics(args, scope);
             return Some(RType::unknown());
         }
-        match name {
-            "box::use" => Some(self.infer_box_use(args, scope)),
-            "box::export" => Some(RType::new(Mode::Null, Length::Zero)),
-            _ => None,
-        }
+        (name == "box::use").then(|| self.infer_box_use(args, scope))
     }
 
     fn infer_box_callable(

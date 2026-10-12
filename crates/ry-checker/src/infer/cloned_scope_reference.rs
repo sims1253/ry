@@ -27,13 +27,9 @@ impl Checker {
                 )
             })
             .collect();
-        for s in then {
-            self.walk_stmt(s, &mut then_scope, returns.as_deref_mut());
-        }
+        self.walk_block(then, &mut then_scope, returns.as_deref_mut());
         if let Some(else_) = else_ {
-            for s in else_ {
-                self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
-            }
+            self.walk_block(else_, &mut else_scope, returns);
         }
         // Same join as `box_imports::join_box_provenance`, over whole branch
         // scopes instead of journal deltas.

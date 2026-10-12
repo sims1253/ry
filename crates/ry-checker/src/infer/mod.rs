@@ -311,6 +311,50 @@ pub(crate) struct UnionGuardViews<'a> {
     pub has_else: bool,
 }
 
+/// RY119 for `name <- as.integer(...)` when the block's next statement
+/// subassigns `name`. The warning waits for that statement: when it is
+/// the NA repair `name[is.na(name)] <- value`, the cast's new NA is
+/// handled where it was introduced and the warning is dropped.
+pub(crate) struct HeldCast {
+    name: String,
+    /// The `as.integer()` call.
+    span: Span,
+    /// The cast proved an out-of-range input.
+    warned: bool,
+}
+
+fn held_cast_site(statement: &Stmt, next: Option<&Stmt>) -> Option<HeldCast> {
+    let Stmt::Assign {
+        target: Expr::Ident { name, .. },
+        value: Expr::Call { func, span, .. },
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    let Some(Stmt::Assign {
+        target:
+            Expr::Index {
+                base,
+                kind: IndexKind::Single,
+                ..
+            },
+        ..
+    }) = next
+    else {
+        return None;
+    };
+    let cast = call::callee_name(func)
+        .is_some_and(|callee| callee == "as.integer" || callee == "base::as.integer");
+    (cast && matches!(base.as_ref(), Expr::Ident { name: repaired, .. } if repaired == name)).then(
+        || HeldCast {
+            name: name.clone(),
+            span: *span,
+            warned: false,
+        },
+    )
+}
+
 /// Which arms of an `if` contribute state to its continuation in the
 /// binding merge: the sole continuing arm of an `if`/`else`, no arm for a
 /// one-armed `if` whose then arm leaves the enclosing loop, else every arm.
@@ -571,7 +615,7 @@ impl Checker {
     /// `returns` is `Some`).
     ///
     /// Callers:
-    ///   * `check_stmt` (pass 3): discarding=false, returns=None.
+    ///   * `walk_block` from `check` (pass 3): discarding=false, returns=None.
     ///   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
     ///     caller), returns=Some.
     ///   * `build_function_signature` (closure literals, both passes):
@@ -608,11 +652,7 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign {
-                target,
-                value,
-                span: assignment_span,
-            } => {
+            Stmt::Assign { target, value, .. } => {
                 self.drop_scalar_facts_for_complex_assignment(target, value, scope);
                 if !scope.uncertainty.ops_environment
                     && !ops_chooser::ordinary_assignment(self, target, value)
@@ -623,18 +663,7 @@ impl Checker {
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let class_write = self.prepare_class_attribute(target, value, scope);
-                let mut vt = self.infer(value, scope);
-                vt.value_facts.cast_site = None;
-                if matches!(
-                    vt.coercion_new_na(),
-                    ry_core::types::NewNaProvenance::ProvenContains
-                        | ry_core::types::NewNaProvenance::ProvenOnly
-                ) && matches!(value, Expr::Call { func, .. }
-                    if call::callee_name(func).as_deref().is_some_and(|name|
-                        name == "as.integer" || name == "base::as.integer"))
-                {
-                    vt.value_facts.cast_site = Some((span_of(value), assignment_span.end));
-                }
+                let vt = self.infer(value, scope);
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
                 // declarations, since a user-defined list-returning
@@ -875,9 +904,7 @@ impl Checker {
                 self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                for s in body {
-                    self.walk_stmt(s, &mut inner, returns.as_deref_mut());
-                }
+                self.walk_block(body, &mut inner, returns.as_deref_mut());
                 self.finish_loop(
                     scope,
                     inner,
@@ -892,9 +919,7 @@ impl Checker {
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                for s in body {
-                    self.walk_stmt(s, &mut inner, returns.as_deref_mut());
-                }
+                self.walk_block(body, &mut inner, returns.as_deref_mut());
                 let always_true = matches!(cond, Expr::Logical(true, _));
                 self.finish_loop(scope, inner, always_true, always_true);
             }
@@ -1100,9 +1125,7 @@ impl Checker {
         self.deferred_captures.push(assigned);
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
-        for s in body {
-            self.walk_stmt(s, &mut fn_scope, None);
-        }
+        self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
@@ -1437,9 +1460,7 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
-        for statement in then {
-            self.walk_stmt(statement, scope, returns.as_deref_mut());
-        }
+        self.walk_block(then, scope, returns.as_deref_mut());
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
@@ -1447,9 +1468,7 @@ impl Checker {
             narrowed.insert(name.to_string());
         }
         if let Some(statements) = else_ {
-            for statement in statements {
-                self.walk_stmt(statement, scope, returns.as_deref_mut());
-            }
+            self.walk_block(statements, scope, returns);
         }
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
@@ -2031,9 +2050,7 @@ impl Checker {
         // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
-        for s in body {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
+        self.walk_block(body, &mut scope, Some(&mut returns));
         // The trailing expression -- or a bare trailing function
         // literal, the closure-factory pattern -- is the implicit
         // return.
@@ -2105,11 +2122,53 @@ impl Checker {
         }
     }
 
-    /// Pass-3 entry point: walk a top-level statement for diagnostics.
-    /// Thin wrapper over `walk_stmt` (the unified walker) with return
-    /// collection disabled and emission enabled.
-    pub(crate) fn check_stmt(&mut self, s: &Stmt, scope: &mut Scope) {
-        self.walk_stmt(s, scope, None);
+    /// Walk a block's statements in order.
+    pub(crate) fn walk_block(
+        &mut self,
+        statements: &[Stmt],
+        scope: &mut Scope,
+        mut returns: Option<&mut Vec<RType>>,
+    ) {
+        self.walk_block_with(statements, |checker, statement, _| {
+            checker.walk_stmt(statement, scope, returns.as_deref_mut());
+        });
+    }
+
+    /// Walk each statement with `walk`, which also learns whether it is the
+    /// block's last, and settle RY119 for casts the block holds.
+    fn walk_block_with(
+        &mut self,
+        statements: &[Stmt],
+        mut walk: impl FnMut(&mut Self, &Stmt, bool),
+    ) {
+        // A cast held by an enclosing block waits on that block's next
+        // statement, not on statements nested inside the current one.
+        let enclosing = self.held_cast.take();
+        for (index, statement) in statements.iter().enumerate() {
+            let next = statements.get(index + 1);
+            // A held cast is present here only when this statement may be
+            // its repair: the previous statement held it for this one.
+            let repair_candidate = self.held_cast.is_some();
+            if !repair_candidate {
+                self.held_cast = held_cast_site(statement, next);
+            }
+            walk(self, statement, next.is_none());
+            match self.held_cast.take() {
+                Some(held) if repair_candidate => self.emit_integer_range_loss(held.span),
+                Some(held) if held.warned => self.held_cast = Some(held),
+                _ => {}
+            }
+        }
+        self.held_cast = enclosing;
+    }
+
+    pub(crate) fn emit_integer_range_loss(&mut self, span: Span) {
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY119",
+            "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
+        );
     }
 
     pub(crate) fn diagnostic_parameter_type(
@@ -2612,7 +2671,6 @@ impl Checker {
                 && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
                 && !vt.length.may_be_empty()
             {
-                let site = updated.value_facts.cast_site;
                 if !no_selection {
                     // A scalar is recycled to every selected NA. A vector's
                     // extrema need not occur among the values actually used.
@@ -2636,20 +2694,14 @@ impl Checker {
                         updated.value_facts = ry_core::types::ValueFacts::default();
                     }
                 }
-                if let Some((site, assignment_end)) = site
-                    && self
-                        .source
-                        .get(assignment_end..span.start)
-                        .is_some_and(|gap| {
-                            gap.lines().all(|line| {
-                                line.trim().is_empty() || line.trim_start().starts_with('#')
-                            })
-                        })
+                if self
+                    .held_cast
+                    .as_ref()
+                    .is_some_and(|held| held.warned && held.name == *base_name)
                 {
-                    self.diagnostics
-                        .retain(|diagnostic| diagnostic.code != "RY119" || diagnostic.span != site);
+                    // The block's previous statement introduced these NAs.
+                    self.held_cast = None;
                 }
-                updated.value_facts.cast_site = None;
             } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
             }
@@ -2706,13 +2758,15 @@ impl Checker {
     }
 
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
-        let Some((last, prefix)) = body.split_last() else {
-            return RType::new(Mode::Null, Length::Zero);
-        };
-        for s in prefix {
-            self.walk_stmt(s, scope, None);
-        }
-        self.infer_stmt_value(last, scope)
+        let mut value = RType::new(Mode::Null, Length::Zero);
+        self.walk_block_with(body, |checker, statement, last| {
+            if last {
+                value = checker.infer_stmt_value(statement, scope);
+            } else {
+                checker.walk_stmt(statement, scope, None);
+            }
+        });
+        value
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {

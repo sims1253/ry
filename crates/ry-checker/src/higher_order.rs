@@ -640,7 +640,7 @@ impl Checker {
     /// For each callback (inline anonymous function literal), we build
     /// a scope with the callback's params bound to the element types
     /// the higher-order function will pass, then walk the body's
-    /// statements via `check_stmt` (which emits diagnostics). Named
+    /// statements via `walk_block` (which emits diagnostics). Named
     /// callbacks (user-fn, typeshed) don't need this: their bodies are
     /// walked during the user-fn fixpoint or are built-in.
     fn walk_callback_for_diagnostics(
@@ -684,9 +684,7 @@ impl Checker {
                 let t = elem_types.get(i).cloned().unwrap_or(RType::unknown());
                 fn_scope.insert(p.name.clone(), t);
             }
-            for s in body {
-                self.check_stmt(s, &mut fn_scope);
-            }
+            self.walk_block(body, &mut fn_scope, None);
         }
     }
 

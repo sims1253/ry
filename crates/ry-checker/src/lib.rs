@@ -1325,6 +1325,8 @@ pub(crate) struct EnclosingFormals {
 
 pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
+    /// See [`infer::HeldCast`].
+    pub(crate) held_cast: Option<infer::HeldCast>,
     #[cfg(test)]
     journal_branches: bool,
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
@@ -1632,6 +1634,7 @@ impl Checker {
             enclosing_formals: Vec::new(),
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
+            held_cast: None,
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
@@ -1831,9 +1834,7 @@ impl Checker {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
             self.start_reference_scope(&mut scope, whole_file_span(&file.source));
         }
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
+        self.walk_block(&file.stmts, &mut scope, None);
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot

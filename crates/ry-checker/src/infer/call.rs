@@ -646,12 +646,10 @@ impl Checker {
                     None => NewNaProvenance::Possible,
                 };
             if introduced_here {
-                self.emit(
-                    Severity::Warning,
-                    span,
-                    "RY119",
-                    "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
-                );
+                match &mut self.held_cast {
+                    Some(held) if held.span == span => held.warned = true,
+                    _ => self.emit_integer_range_loss(span),
+                }
             }
             return result;
         }
@@ -2345,9 +2343,7 @@ impl Checker {
                 for name in assigned_names_in_body(body) {
                     inner.insert(name, RType::unknown());
                 }
-                for statement in body {
-                    self.walk_stmt(statement, &mut inner, None);
-                }
+                self.walk_block(body, &mut inner, None);
                 RType::scalar(Mode::Function)
             }
             Expr::Call { args, .. } => {
@@ -2357,9 +2353,7 @@ impl Checker {
                 RType::unknown()
             }
             Expr::Block { body, .. } => {
-                for statement in body {
-                    self.walk_stmt(statement, scope, None);
-                }
+                self.walk_block(body, scope, None);
                 RType::unknown()
             }
             _ => self.infer(expr, scope),

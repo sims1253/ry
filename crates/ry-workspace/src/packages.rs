@@ -7,7 +7,8 @@
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use std::collections::{HashMap, HashSet};
+use ry_typeshed::Typeshed;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 
 /// Per-file package facts that are not R bindings.
@@ -138,6 +139,32 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
         }
     }
     metadata
+}
+
+/// `package` followed by the packages attaching it also attaches: a
+/// meta-package's declared `attaches`, read from a user stub when one
+/// replaces the embedded stub.
+pub fn attaching<'a>(
+    package: &'a str,
+    user_stubs: &'a BTreeMap<String, Typeshed>,
+) -> impl Iterator<Item = &'a str> {
+    let attaches = user_stubs
+        .get(package)
+        .or_else(|| ry_typeshed::load_package(package))
+        .map_or(&[][..], |stub| stub.attaches.as_slice());
+    std::iter::once(package).chain(attaches.iter().map(String::as_str))
+}
+
+/// `packages` together with everything they attach (see [`attaching`]).
+pub fn with_attached(
+    packages: HashSet<String>,
+    user_stubs: &BTreeMap<String, Typeshed>,
+) -> HashSet<String> {
+    packages
+        .iter()
+        .flat_map(|package| attaching(package, user_stubs))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Find packages attached by `library()` or `require()` calls.

@@ -30,16 +30,13 @@ fn bare_name_ladders_gate_on_the_file_local_search_path() {
 }
 
 #[test]
-fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
-    // Schema-effect verbs gate on the project-wide `loaded` union plus
-    // the tidyverse expansion (tidyverse itself ships no stubs), while
+fn schema_verb_ladder_gates_on_the_project_union() {
+    // Schema-effect verbs gate on the project-wide `loaded` union, while
     // ordinary signature resolution stays gated on `bare_loaded`.
     // `arrange`/`pivot_longer` exist in no base or rlang stub, so a
     // `None` means the gate closed, not masking by another rung.
     let cases: &[(&[&str], &str, bool)] = &[
         (&["dplyr"], "arrange", true),
-        (&["tidyverse"], "arrange", true),
-        (&["tidyverse"], "pivot_longer", true),
         (&["tidyr"], "pivot_longer", true),
         (&["rlang"], "pivot_longer", false),
         (&["rlang"], "arrange", false),
@@ -61,12 +58,6 @@ fn schema_verb_ladder_gates_on_the_project_union_and_tidyverse_expansion() {
     let mut checker = Checker::new("test.R");
     checker.set_shared_loaded(Arc::new(HashSet::from(["dplyr".to_string()])));
     assert!(checker.resolve_schema_sig("arrange").is_some());
-    assert!(checker.resolve_typeshed_sig("arrange").is_none());
-
-    // The tidyverse expansion must not leak into the ordinary ladder
-    // either (tidyverse itself ships no stubs).
-    let mut checker = Checker::new("test.R");
-    checker.set_shared_loaded(Arc::new(HashSet::from(["tidyverse".to_string()])));
     assert!(checker.resolve_typeshed_sig("arrange").is_none());
 }
 

@@ -1,8 +1,42 @@
 {
   "schema_version": "2",
   "package": "testthat",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "functions": {
+    "describe": {
+      "params": [
+        {
+          "name": "description",
+          "required": true
+        },
+        {
+          "name": "code",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
+    "it": {
+      "params": [
+        {
+          "name": "description",
+          "required": true
+        },
+        {
+          "name": "code",
+          "default": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
+    },
     "test_path": {
       "params": [
         "..."
@@ -13,6 +47,23 @@
         "na": false
       },
       "source_relative_path_arg": 0
+    },
+    "test_that": {
+      "params": [
+        {
+          "name": "desc",
+          "required": true
+        },
+        {
+          "name": "code",
+          "required": true
+        }
+      ],
+      "return": {
+        "mode": "logical",
+        "length": "1",
+        "na": false
+      }
     }
   }
 }

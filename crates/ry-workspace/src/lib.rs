@@ -21,7 +21,9 @@ mod serialized;
 pub use serialized::InventoryFailure;
 use serialized::serialized_inventory;
 
-pub use packages::{NamespaceMetadata, PackageFacts, attached_packages, namespace_metadata};
+pub use packages::{
+    NamespaceMetadata, PackageFacts, attached_packages, attaching, namespace_metadata,
+};
 pub use ry_core::FFI_PRIMITIVES;
 
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
@@ -489,15 +491,18 @@ pub fn resolve_workspace_context<'a>(
     // dataset would otherwise be reported once per file. Deduplicate on the
     // (path, reason) pair; the CLI prints one line per entry.
     let mut degraded: BTreeSet<(PathBuf, InventoryFailure)> = BTreeSet::new();
-    let project_attached: HashSet<String> = configured_packages
-        .iter()
-        .cloned()
-        .chain(
-            files
-                .iter()
-                .flat_map(|file| packages::attached_packages(file)),
-        )
-        .collect();
+    let project_attached = packages::with_attached(
+        configured_packages
+            .iter()
+            .cloned()
+            .chain(
+                files
+                    .iter()
+                    .flat_map(|file| packages::attached_packages(file)),
+            )
+            .collect(),
+        user_stubs,
+    );
 
     for file in &files {
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
@@ -638,11 +643,14 @@ pub fn resolve_workspace_context<'a>(
                     .entry(root.clone())
                     .or_insert_with(|| read_description_packages(&root))
                     .clone();
-                let test_dependencies = dependencies
-                    .depends
-                    .into_iter()
-                    .chain(dependencies.suggests)
-                    .collect::<HashSet<_>>();
+                let test_dependencies = packages::with_attached(
+                    dependencies
+                        .depends
+                        .into_iter()
+                        .chain(dependencies.suggests)
+                        .collect(),
+                    user_stubs,
+                );
                 for package in &test_dependencies {
                     // Without a stub, an attached test dependency can
                     // supply arbitrary exports. This is intentionally a
@@ -664,6 +672,7 @@ pub fn resolve_workspace_context<'a>(
             }
         }
         file_attached.extend(packages::attached_packages(file));
+        let file_attached = packages::with_attached(file_attached, user_stubs);
         for package in &file_attached {
             // The package currently being checked gets any shipped typeshed,
             // but its bindings come from this source tree. Reading exports

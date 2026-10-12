@@ -31,10 +31,9 @@ fn has_ry010_for(publish: &Value, name: &str) -> bool {
 }
 
 /// Settle the session so the initial background index has committed:
-/// open `main.R` and await its publication (the publish path returns
-/// early while `initial_index_pending` holds, so the publication proves
-/// the flag cleared), then close it again for the zero-open-docs shape
-/// both issues exercise.
+/// open `main.R` and await its publication (publication waits for the
+/// initial scan's install), then close it again for the zero-open-docs
+/// shape both issues exercise.
 async fn settle_then_close(session: &mut harness::ClientSession, main_uri: &str) {
     session.open(main_uri, 1, "w <- 1L\n").await.unwrap();
     session

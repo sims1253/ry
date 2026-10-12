@@ -3,12 +3,12 @@
 //!
 //! Two gaps combined into the bug:
 //!
-//! * `republish_all_open_documents` scheduled one debounced task per
+//! * Republishing every open document scheduled one debounced task per
 //!   open document, but the debounce used a single workspace-wide
 //!   generation, so of N scheduled URIs only the last task survived
 //!   and the rest aborted as stale. Which URI survived followed
 //!   `docs` HashMap iteration order.
-//! * `publish_diagnostics` sent an empty publication only for its own
+//! * A publication pass sent an empty publication only for its own
 //!   requested URI when that URI was ineligible. Every other document
 //!   that left the eligible set (folder disabled, file excluded) was
 //!   filtered out of the check and never published again, and closed

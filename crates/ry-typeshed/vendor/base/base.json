@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "package": "base",
-  "version": "0.0.27",
+  "version": "0.0.28",
   "globals": {
     "ambient": [
       "..deparseOpts",
@@ -4405,7 +4405,13 @@
         "x",
         "n"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "x"
+        ]
+      }
     },
     "identical": {
       "params": [
@@ -5393,7 +5399,13 @@
       "params": [
         "object"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "object"
+        ]
+      }
     },
     "na.pass": {
       "params": [
@@ -6865,7 +6877,13 @@
         "x",
         "y"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "x"
+        ]
+      }
     },
     "setequal": {
       "params": [
@@ -7272,7 +7290,13 @@
         "select": "tidy_select"
       },
       "schema_effect": "select",
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "subset"
+        ]
+      }
     },
     "substitute": {
       "params": [
@@ -7457,7 +7481,13 @@
         "x",
         "n"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "x"
+        ]
+      }
     },
     "tan": {
       "params": [
@@ -7741,13 +7771,24 @@
         "x",
         "y"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_all_params_zero",
+        "params": [
+          "x",
+          "y"
+        ]
+      }
     },
     "unique": {
       "params": [
         "x"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "same_emptiness",
+        "param": "x"
+      }
     },
     "uniroot": {
       "params": [
@@ -7923,7 +7964,13 @@
         "start",
         "end"
       ],
-      "return": "arg0"
+      "return": "arg0",
+      "return_length": {
+        "kind": "zero_if_any_param_zero",
+        "params": [
+          "x"
+        ]
+      }
     },
     "with": {
       "params": [

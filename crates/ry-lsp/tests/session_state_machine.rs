@@ -1602,11 +1602,11 @@ async fn utf16_transcript() {
 
     session.shutdown().await.unwrap();
     drop(session);
-    tokio::time::timeout(std::time::Duration::from_secs(3), server)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(3), server)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
+    assert_eq!(code, std::process::ExitCode::SUCCESS);
 }
 
 /// Regression for #81: after a close/reopen the server must publish the

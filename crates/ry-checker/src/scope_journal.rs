@@ -200,6 +200,7 @@ impl Clone for Journal {
 pub(crate) struct Mark {
     len: usize,
     data_mask_unknown: bool,
+    data_mask: Option<Arc<DataMaskFrame>>,
     tidy_injection: Option<InjectionMode>,
     search_path_unknown: bool,
     unreachable: bool,
@@ -215,6 +216,7 @@ pub(crate) struct BranchDelta {
     pub changed: BranchChanges,
     pub unreachable: bool,
     pub uncertainty: Uncertainty,
+    pub data_mask_env_unknown: bool,
 }
 
 pub(crate) struct BindingView<'a> {
@@ -486,6 +488,7 @@ impl Scope {
             loop_frame: self.loop_frame,
             uncertainty: self.uncertainty,
             data_mask_unknown: self.data_mask_unknown,
+            data_mask: self.data_mask.clone(),
             tidy_injection: self.tidy_injection,
             search_path_unknown: self.search_path_unknown,
             unreachable: self.unreachable,
@@ -547,6 +550,7 @@ impl Scope {
         let delta = BranchDelta {
             uncertainty: self.uncertainty,
             unreachable: self.unreachable,
+            data_mask_env_unknown: self.data_mask_env_unknown(),
             changed,
         };
         while self.journal.undo.len() > mark.len {
@@ -622,6 +626,7 @@ impl Scope {
         self.loop_frame = mark.loop_frame;
         self.uncertainty = mark.uncertainty;
         self.data_mask_unknown = mark.data_mask_unknown;
+        self.data_mask = mark.data_mask;
         self.tidy_injection = mark.tidy_injection;
         self.search_path_unknown = mark.search_path_unknown;
         self.unreachable = mark.unreachable;
@@ -767,9 +772,18 @@ mod tests {
             unsafe_read_blocker: None,
             bindings: HashMap::new(),
         }));
+        scope.data_mask = Some(Arc::new(DataMaskFrame {
+            columns_first: false,
+            columns: FxSet::default(),
+            env: [("x".to_string(), RType::new(Mode::Integer, Length::One))]
+                .into_iter()
+                .collect(),
+            env_unknown: false,
+        }));
         let initial = format!("{:?}", scope.clone());
         let outer = scope.begin_snapshot();
         scope.insert_narrowed("x", RType::new(Mode::Double, Length::One));
+        scope.invalidate_data_mask_env();
         scope.data_mask_unknown = true;
         scope.search_path_unknown = true;
         scope.tidy_injection = Some(InjectionMode::Full);
@@ -790,8 +804,13 @@ mod tests {
         let delta = scope.finish_snapshot(inner, BranchChanges::default());
         assert!(delta.changed.contains_key("new"));
         assert_eq!(format!("{:?}", scope.clone()), outer_state);
-        scope.finish_snapshot(outer, BranchChanges::default());
+        let delta = scope.finish_snapshot(outer, BranchChanges::default());
+        assert!(delta.data_mask_env_unknown);
         assert_eq!(format!("{:?}", scope), initial);
+        assert_eq!(
+            scope.data_mask_env_binding("x"),
+            Some(RType::new(Mode::Integer, Length::One))
+        );
     }
     fn assert_same_scope(left: &Scope, right: &Scope) {
         assert_eq!(left.bindings, right.bindings);
@@ -841,6 +860,7 @@ mod tests {
         );
         assert_eq!(left.search_path_unknown, right.search_path_unknown);
         assert_eq!(left.data_mask_unknown, right.data_mask_unknown);
+        assert_eq!(left.data_mask, right.data_mask);
         assert_eq!(left.tidy_injection, right.tidy_injection);
         match (&left.reference_provenance, &right.reference_provenance) {
             (None, None) => {}
@@ -938,6 +958,9 @@ mod tests {
             "f <- function(p=1L) { x <- 1L; if(flag) { y <- p; x } else { x <- 2L; x }; x }; f()",
             "x <- list(a=1); if(flag) { x <- x %>% identity(); x$a } else x <- list(a=2); x$a",
             "if (flag) { box::use(mod/x[answer]) }",
+            "library(dplyr); f <- function(d, e) { b <- 1L; mutate(d, y = { if (flag) switch(e, a = 1); .env$b }) }",
+            "library(dplyr); f <- function(d, e) { b <- 1L; mutate(d, y = { if (flag) { switch(e, a = 1); stop() } else 1; .env$b }) }",
+            "library(dplyr); f <- function(d, e) { b <- 1L; mutate(d, y = { for (i in 1:2) if (flag) { switch(e, a = 1); break }; .env$b }) }",
         ];
         for source in sources {
             let mut parser = ry_core::RParser::new().unwrap();

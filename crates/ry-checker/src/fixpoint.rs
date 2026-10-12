@@ -43,6 +43,64 @@ pub(crate) fn s3_evaluation_methods(table: &FnTable) -> HashMap<String, Vec<Stri
         .collect()
 }
 
+/// Strongly connected components of a dependency graph, each listed after
+/// every component it depends on. Iterative Tarjan: call chains in large
+/// packages are deeper than a recursive walk should go.
+fn components_after_dependencies(dependencies: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let unvisited = usize::MAX;
+    let mut order = vec![unvisited; dependencies.len()];
+    let mut low = vec![0; dependencies.len()];
+    let mut on_stack = vec![false; dependencies.len()];
+    let mut stack = Vec::new();
+    let mut components = Vec::new();
+    let mut next = 0;
+    for root in 0..dependencies.len() {
+        if order[root] != unvisited {
+            continue;
+        }
+        let mut frames = vec![(root, 0)];
+        order[root] = next;
+        low[root] = next;
+        next += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(frame) = frames.last_mut() {
+            let node = frame.0;
+            if let Some(&target) = dependencies[node].get(frame.1) {
+                frame.1 += 1;
+                if order[target] == unvisited {
+                    order[target] = next;
+                    low[target] = next;
+                    next += 1;
+                    stack.push(target);
+                    on_stack[target] = true;
+                    frames.push((target, 0));
+                } else if on_stack[target] {
+                    low[node] = low[node].min(order[target]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some(&(parent, _)) = frames.last() {
+                low[parent] = low[parent].min(low[node]);
+            }
+            if low[node] == order[node] {
+                let mut component = Vec::new();
+                while let Some(member) = stack.pop() {
+                    on_stack[member] = false;
+                    component.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                component.sort_unstable();
+                components.push(component);
+            }
+        }
+    }
+    components
+}
+
 impl Checker {
     // Pass 2: refine all function return types until convergence.
     // Safe to call once, after all files have been collected.
@@ -65,6 +123,13 @@ impl Checker {
     /// still iterates until convergence *within the scope* — a scoped
     /// function whose return type changes can still affect other scoped
     /// functions that call it.
+    ///
+    /// Scoped returns start at bottom (not computed): a call to such a
+    /// function makes its path unreachable, so recursion keeps its base
+    /// case. The first pass visits functions in name order to observe
+    /// their reads; later passes visit strongly connected components of
+    /// that read graph callee-first, so acyclic chains settle in one pass
+    /// and only recursive components iterate.
     pub(crate) fn run_fixpoint_scoped(&mut self, scope: Option<&HashSet<String>>) {
         if scope.is_some_and(|s| s.is_empty()) {
             return;
@@ -81,25 +146,106 @@ impl Checker {
             .iter()
             .map(|name| scope.is_none_or(|scope| scope.contains(name)))
             .collect();
+        let mut owners = vec![Vec::new(); self.return_slots.0.len()];
+        for (index, slot) in slots.iter().enumerate() {
+            owners[*slot].push(index);
+        }
         let mut pending: std::collections::BTreeSet<_> =
             (0..names.len()).filter(|&index| active[index]).collect();
-        let mut callers = vec![HashSet::new(); self.return_slots.0.len()];
+        self.uncomputed_returns = pending.iter().map(|&index| slots[index]).collect();
+        let mut callers: Vec<HashSet<usize>> = vec![HashSet::new(); self.return_slots.0.len()];
         let methods = s3_evaluation_methods(&self.fn_table);
         let mut reads = Vec::new();
         let mut evaluation_pending = true;
-        let mut rounds = 0;
-        while rounds < MAX_FIXPOINT_DEPTH && (!pending.is_empty() || evaluation_pending) {
-            rounds += 1;
+        let mut passes = 0;
+        while passes < MAX_FIXPOINT_DEPTH && (!pending.is_empty() || evaluation_pending) {
+            passes += 1;
             let attached_before = (self.loaded.len(), self.bare_loaded.len());
-            let mut changed = HashSet::new();
-            for index in std::mem::take(&mut pending) {
-                *self.refinement_reads.get_mut() = Some(std::mem::take(&mut reads));
-                if self.refine_fn_return(&names[index]) {
-                    changed.insert(slots[index]);
+            let components: Vec<Vec<usize>> = if passes == 1 {
+                pending.iter().map(|&index| vec![index]).collect()
+            } else {
+                let mut dependencies = vec![Vec::new(); names.len()];
+                for (slot, readers) in callers.iter().enumerate() {
+                    for &reader in readers {
+                        dependencies[reader].extend(&owners[slot]);
+                    }
                 }
-                reads = self.refinement_reads.get_mut().take().unwrap();
-                for dependency in reads.drain(..) {
-                    callers[dependency].insert(index);
+                components_after_dependencies(&dependencies)
+            };
+            let mut component_of = vec![usize::MAX; names.len()];
+            for (id, component) in components.iter().enumerate() {
+                for &index in component {
+                    component_of[index] = id;
+                }
+            }
+            for (id, component) in components.iter().enumerate() {
+                let mut queue: std::collections::BTreeSet<_> = component
+                    .iter()
+                    .copied()
+                    .filter(|index| pending.remove(index))
+                    .collect();
+                let mut budget = MAX_FIXPOINT_DEPTH * component.len();
+                loop {
+                    let mut changed = Vec::new();
+                    // Termination bound for a recursive component.
+                    let widen = budget == 0 && !queue.is_empty();
+                    if widen {
+                        queue.clear();
+                        for &member in component {
+                            if self.store_return(slots[member], RType::unknown()) {
+                                changed.push(slots[member]);
+                            }
+                        }
+                    } else if let Some(index) = queue.pop_first() {
+                        budget -= 1;
+                        *self.refinement_reads.get_mut() = Some(std::mem::take(&mut reads));
+                        let result = self.refine_fn_return(&names[index]);
+                        reads = self.refinement_reads.get_mut().take().unwrap();
+                        let read_bottom = reads
+                            .iter()
+                            .any(|slot| self.uncomputed_returns.contains(slot));
+                        for dependency in reads.drain(..) {
+                            callers[dependency].insert(index);
+                        }
+                        // Without a returning path through computed callees,
+                        // the return stays bottom.
+                        if let Some(result) = result.or_else(|| (!read_bottom).then(RType::unknown))
+                            && self.store_return(slots[index], result)
+                        {
+                            changed.push(slots[index]);
+                        }
+                    } else {
+                        // Members still at bottom only reach each other.
+                        // Before the read graph is known, revisit them in the
+                        // next pass; afterwards no path returns a known value.
+                        let stuck = component
+                            .iter()
+                            .copied()
+                            .filter(|&member| self.uncomputed_returns.contains(&slots[member]));
+                        if passes == 1 {
+                            pending.extend(stuck);
+                            break;
+                        }
+                        changed.extend(stuck.map(|member| slots[member]));
+                        if changed.is_empty() {
+                            break;
+                        }
+                        for &slot in &changed {
+                            self.store_return(slot, RType::unknown());
+                        }
+                    }
+                    for slot in changed {
+                        for &caller in &callers[slot] {
+                            if component_of[caller] != id {
+                                pending.insert(caller);
+                            } else if !widen {
+                                queue.insert(caller);
+                            }
+                        }
+                    }
+                    if widen {
+                        break;
+                    }
                 }
             }
             let attachments_changed =
@@ -116,13 +262,8 @@ impl Checker {
             evaluation_pending = !metadata_changed.is_empty();
             // A parameter's evaluation mode can affect its own body as well
             // as callers, even when its return slot has not changed yet.
-            for (index, slot) in slots.iter().enumerate() {
-                if active[index] && metadata_changed.contains(slot) {
-                    pending.insert(index);
-                }
-            }
-            changed.extend(metadata_changed);
-            for slot in changed {
+            for slot in metadata_changed {
+                pending.extend(owners[slot].iter().filter(|&&index| active[index]));
                 pending.extend(callers[slot].iter().copied());
             }
             // Inference can discover library()/require() through an alias.
@@ -132,33 +273,40 @@ impl Checker {
             }
         }
         tracing::debug!(
-            rounds,
+            passes,
             scoped = scope.is_some(),
             converged = pending.is_empty() && !evaluation_pending,
             "fixpoint finished"
         );
+        // Bottom slots are stored as unknown; only the marker is dropped.
+        self.uncomputed_returns.clear();
         if let Some(dependencies) = &mut self.refinement_dependencies {
             // Slots are local to the rebuilt table. Persist owning names, and
             // retain reads from every round rather than only the final pass.
-            let mut names_by_slot = vec![Vec::new(); self.return_slots.0.len()];
-            for (index, slot) in slots.iter().enumerate() {
-                names_by_slot[*slot].push(index);
+            for (index, name) in names.iter().enumerate() {
                 if active[index] {
-                    dependencies.insert(names[index].clone(), HashSet::new());
+                    dependencies.insert(name.clone(), HashSet::new());
                 }
             }
             for (slot, readers) in callers.iter().enumerate() {
                 for reader in readers {
                     let reads = dependencies.get_mut(&names[*reader]).unwrap();
-                    reads.extend(
-                        names_by_slot[slot]
-                            .iter()
-                            .map(|index| names[*index].clone()),
-                    );
+                    reads.extend(owners[slot].iter().map(|index| names[*index].clone()));
                 }
             }
         }
         self.discarding = prev_discarding;
+    }
+
+    /// Store a computed return. Leaving bottom counts as a change even when
+    /// the stored placeholder already equals the result.
+    fn store_return(&mut self, slot: usize, result: RType) -> bool {
+        let was_bottom = self.uncomputed_returns.remove(&slot);
+        if self.return_slots.0.get(slot) == Some(&result) {
+            return was_bottom;
+        }
+        Arc::make_mut(&mut self.return_slots).set(slot, result);
+        true
     }
 
     pub(crate) fn record_signature_read(&self, slot: usize) {
@@ -169,9 +317,7 @@ impl Checker {
 
     pub(crate) fn read_return_slot(&self, slot: usize) -> RType {
         self.record_signature_read(slot);
-        let mut result = self.return_slots.get(slot);
-        result.value_facts.cast_site = None;
-        result
+        self.return_slots.get(slot)
     }
 
     /// A generic must allow the quoting and injection behavior of its known
@@ -397,25 +543,43 @@ mod tests {
         checker
     }
 
-    // The old full sweep is an independent scheduling oracle. Comparing
-    // complete signatures catches skipped metadata edges as well as returns.
+    // Full sweeps to convergence are an independent scheduling oracle.
+    // Comparing complete signatures catches skipped metadata edges as well
+    // as returns.
     fn full_sweep(checker: &mut Checker) {
         checker.discarding = true;
         let mut names: Vec<_> = checker.fn_table.fns.keys().cloned().collect();
         names.sort_unstable();
         let methods = s3_evaluation_methods(&checker.fn_table);
-        for _ in 0..MAX_FIXPOINT_DEPTH {
-            let before = checker.return_slots.0.clone();
+        checker.uncomputed_returns = names
+            .iter()
+            .map(|name| checker.fn_table.fns[name].return_slot)
+            .collect();
+        for _ in 0..100 {
+            let mut changed = false;
             for name in &names {
-                checker.refine_fn_return(name);
+                *checker.refinement_reads.get_mut() = Some(Vec::new());
+                let result = checker.refine_fn_return(name);
+                let reads = checker.refinement_reads.get_mut().take().unwrap();
+                let bottom = reads
+                    .iter()
+                    .any(|slot| checker.uncomputed_returns.contains(slot));
+                if let Some(result) = result.or_else(|| (!bottom).then(RType::unknown)) {
+                    changed |= checker.store_return(checker.fn_table.fns[name].return_slot, result);
+                }
             }
-            let generic = checker.propagate_s3_generic_evaluation(&methods);
-            let forwarded = checker.propagate_forwarded_evaluation();
-            if before == checker.return_slots.0 && generic.is_empty() && forwarded.is_empty() {
-                break;
+            changed |= !checker.propagate_s3_generic_evaluation(&methods).is_empty();
+            changed |= !checker.propagate_forwarded_evaluation().is_empty();
+            if !changed {
+                // Returns still at bottom never produce a known value.
+                if checker.uncomputed_returns.is_empty() {
+                    checker.discarding = false;
+                    return;
+                }
+                checker.uncomputed_returns.clear();
             }
         }
-        checker.discarding = false;
+        panic!("full sweep did not converge");
     }
 
     fn compare(source: &str) -> (Checker, Checker) {
@@ -475,13 +639,70 @@ mod tests {
     }
 
     #[test]
-    fn deep_chains_keep_the_same_round_limit() {
-        let mut source = String::new();
-        for index in 0..20 {
-            source.push_str(&format!("f{index:02} <- function() f{:02}()\n", index + 1));
+    fn deep_chains_converge_in_either_name_order() {
+        for descending in [false, true] {
+            let name = |index: usize| {
+                let index = if descending { 20 - index } else { index };
+                format!("f{index:02}")
+            };
+            let mut source = String::new();
+            for index in 0..20 {
+                source.push_str(&format!(
+                    "{} <- function() {}()\n",
+                    name(index),
+                    name(index + 1)
+                ));
+            }
+            source.push_str(&format!("{} <- function() 1L\n", name(20)));
+            let (scheduled, _) = compare(&source);
+            let top = &scheduled.fn_table.fns[&name(0)];
+            assert_eq!(
+                scheduled.return_slots.get(top.return_slot).mode,
+                Mode::Integer
+            );
+            // One discovery visit, then one callee-first visit.
+            assert!(
+                scheduled
+                    .refinement_counts
+                    .values()
+                    .all(|&count| count <= 2)
+            );
         }
-        source.push_str("f20 <- function() 1L\n");
-        compare(&source);
+    }
+
+    #[test]
+    fn recursion_keeps_its_base_case() {
+        let (scheduled, _) = compare(
+            "f <- function(n) if (n == 0L) 'oops' else f(n - 1L)\n\
+             g <- function(n) { if (n == 0L) return(1L); h(n - 1L) }\n\
+             h <- function(n) g(n)\n\
+             loop <- function() loop()\n\
+             uses_loop <- function(x) if (x) loop() else 1L\n\
+             count <- function(n) if (n == 0L) 0L else count(n - 1L) + 1L",
+        );
+        let returns = |name: &str| {
+            scheduled
+                .return_slots
+                .get(scheduled.fn_table.fns[name].return_slot)
+        };
+        assert_eq!(returns("f").mode, Mode::Character);
+        assert_eq!(returns("g").mode, Mode::Integer);
+        assert_eq!(returns("h").mode, Mode::Integer);
+        assert_eq!(returns("count").mode, Mode::Integer);
+        // A component with no returning path leaves bottom as unknown.
+        assert_eq!(returns("loop"), RType::unknown());
+        assert_eq!(returns("uses_loop"), RType::unknown());
+        assert!(scheduled.uncomputed_returns.is_empty());
+    }
+
+    #[test]
+    fn non_converging_recursion_widens_to_unknown() {
+        // Each round nests the column schema one level deeper.
+        let mut checker = collected("grow <- function(x) if (x) list(a = grow(x)) else 1L");
+        checker.run_fixpoint();
+        let grow = &checker.fn_table.fns["grow"];
+        assert_eq!(checker.return_slots.get(grow.return_slot), RType::unknown());
+        assert_eq!(checker.refinement_counts["grow"], MAX_FIXPOINT_DEPTH);
     }
 
     #[test]

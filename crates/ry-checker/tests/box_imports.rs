@@ -195,6 +195,29 @@ fn project_module_overlay_replaces_disk_inventory_on_incremental_check() {
 }
 
 #[test]
+fn nested_module_overlay_edits_reach_importers_on_incremental_check() {
+    let root = tempfile::tempdir().unwrap();
+    let leaf = root.path().join("leaf.r");
+    let caller = root.path().join("run.R");
+    fs::write(
+        root.path().join("mid.r"),
+        "box::use(./leaf[foo])\nbox::export(foo)\n",
+    )
+    .unwrap();
+    let mut project = Project::new();
+    add(&mut project, &leaf, "foo <- function() 1L\n");
+    add(&mut project, &caller, "box::use(./mid[foo])\nfoo() + 1L\n");
+    assert!(!has(&project.check()[1].1, "RY040"));
+    project.update_file(
+        leaf.to_string_lossy().into_owned(),
+        Arc::new(parse(&leaf, "foo <- function() 'text'\n")),
+    );
+    let warm = project.check_incremental();
+    assert!(has(&warm[1].1, "RY040"), "{:#?}", warm[1].1);
+    assert_eq!(warm, project.check(), "warm and cold results agree");
+}
+
+#[test]
 fn project_module_overlays_are_used_unless_r_cannot_parse_them() {
     let root = tempfile::tempdir().unwrap();
     let module = root.path().join("mod.r");

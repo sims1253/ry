@@ -74,7 +74,7 @@ fn unknown_custom_infix_quotes_its_operands() {
 #[test]
 fn known_custom_infix_evaluates_its_operands() {
     let diagnostics = check(
-        "`%myop%` <- function(a, b) a\n\
+        "`%myop%` <- function(a, b) c(a, b)\n\
          f <- function() { a %myop% b }\n",
     );
     assert!(

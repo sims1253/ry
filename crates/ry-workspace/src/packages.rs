@@ -7,7 +7,8 @@
 use ry_core::SourceFile;
 use ry_core::ast::{Expr, Stmt};
 use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
-use std::collections::{HashMap, HashSet};
+use ry_typeshed::Typeshed;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 
 /// Per-file package facts that are not R bindings.
@@ -126,13 +127,44 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                     &generic,
                     args.get(1).and_then(|arg| static_name(&arg.value)),
                 ) {
-                    metadata.s3_methods.insert((generic.clone(), class));
+                    // `S3method(pkg::generic, class)` registers a method
+                    // for the bare generic that calls dispatch through.
+                    let generic = generic
+                        .rsplit_once("::")
+                        .map_or(generic.as_str(), |(_, bare)| bare);
+                    metadata.s3_methods.insert((generic.to_string(), class));
                 }
             }
             _ => {}
         }
     }
     metadata
+}
+
+/// `package` followed by the packages attaching it also attaches: a
+/// meta-package's declared `attaches`, read from a user stub when one
+/// replaces the embedded stub.
+pub fn attaching<'a>(
+    package: &'a str,
+    user_stubs: &'a BTreeMap<String, Typeshed>,
+) -> impl Iterator<Item = &'a str> {
+    let attaches = user_stubs
+        .get(package)
+        .or_else(|| ry_typeshed::load_package(package))
+        .map_or(&[][..], |stub| stub.attaches.as_slice());
+    std::iter::once(package).chain(attaches.iter().map(String::as_str))
+}
+
+/// `packages` together with everything they attach (see [`attaching`]).
+pub fn with_attached(
+    packages: HashSet<String>,
+    user_stubs: &BTreeMap<String, Typeshed>,
+) -> HashSet<String> {
+    packages
+        .iter()
+        .flat_map(|package| attaching(package, user_stubs))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Find packages attached by `library()` or `require()` calls.
@@ -243,6 +275,24 @@ my_library(dplyr)
         assert_eq!(
             metadata.native_routine_prefixes,
             HashSet::from(["pkg_".to_string()])
+        );
+    }
+
+    #[test]
+    fn qualified_s3_registrations_key_the_bare_generic() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "S3method(tidyr::expand, tbl_lazy)\nS3method(print, tbl_lazy)\n",
+            )
+            .unwrap();
+        assert_eq!(
+            namespace_metadata(&file).s3_methods,
+            HashSet::from([
+                ("expand".to_string(), "tbl_lazy".to_string()),
+                ("print".to_string(), "tbl_lazy".to_string()),
+            ])
         );
     }
 

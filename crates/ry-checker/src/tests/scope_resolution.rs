@@ -1411,7 +1411,7 @@ fn superassignment_escapes_the_testthat_block() {
 #[test]
 fn project_local_test_that_keeps_caller_argument_flow() {
     let diagnostics = check(
-        "test_that <- function(desc, code) NULL\n\
+        "test_that <- function(desc, code) code\n\
          test_that(\"a\", {\n  zz <- 1L\n})\n\
          zz + \"s\"\n",
     );

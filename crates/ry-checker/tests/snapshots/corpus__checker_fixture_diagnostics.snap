@@ -1355,6 +1355,228 @@ expression: snapshots
       severity: error
       span:
         column: 0
+        end: 234
+        line: 4
+        start: 224
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
+        end: 331
+        line: 11
+        start: 321
+    - code: RY040
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+      span:
+        column: 0
+        end: 409
+        line: 14
+        start: 394
+  fixture: err_recursive_return_base_case.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 554
+        line: 15
+        start: 545
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 582
+        line: 16
+        start: 573
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 610
+        line: 17
+        start: 601
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 638
+        line: 18
+        start: 629
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 666
+        line: 19
+        start: 657
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 694
+        line: 20
+        start: 685
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 722
+        line: 21
+        start: 713
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 750
+        line: 22
+        start: 741
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 778
+        line: 23
+        start: 769
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 806
+        line: 24
+        start: 797
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 834
+        line: 25
+        start: 825
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 862
+        line: 26
+        start: 853
+  fixture: err_return_chain_callees_sort_first.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 553
+        line: 15
+        start: 544
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 581
+        line: 16
+        start: 572
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 609
+        line: 17
+        start: 600
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 637
+        line: 18
+        start: 628
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 665
+        line: 19
+        start: 656
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 693
+        line: 20
+        start: 684
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 721
+        line: 21
+        start: 712
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 749
+        line: 22
+        start: 740
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 777
+        line: 23
+        start: 768
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 805
+        line: 24
+        start: 796
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 833
+        line: 25
+        start: 824
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 861
+        line: 26
+        start: 852
+  fixture: err_return_chain_callees_sort_last.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
         end: 230
         line: 7
         start: 217
@@ -1389,6 +1611,32 @@ expression: snapshots
         line: 3
         start: 104
   fixture: err_scalar_logical.R
+- diagnostics:
+    - code: RY001
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 4
+        end: 201
+        line: 4
+        start: 184
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 5
+        end: 243
+        line: 5
+        start: 223
+    - code: RY119
+      message: "`as.integer()` converts a proven out-of-range value to `NA_integer_`"
+      severity: warning
+      span:
+        column: 5
+        end: 382
+        line: 8
+        start: 349
+  fixture: err_selection_lengths.R
 - diagnostics:
     - code: RY109
       message: "parameter `copy` has a self-referential default that can never evaluate; forcing the promise errors ('promise already under evaluation')"
@@ -1494,6 +1742,114 @@ expression: snapshots
         start: 216
   fixture: err_switch_mixed.R
 - diagnostics:
+    - code: RY080
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
+      span:
+        column: 6
+        end: 191
+        line: 4
+        start: 152
+  fixture: err_tidyverse_attaches_purrr.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 4
+        end: 227
+        line: 4
+        start: 216
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 16
+        end: 320
+        line: 8
+        start: 309
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 17
+        end: 463
+        line: 11
+        start: 452
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 12
+        end: 594
+        line: 15
+        start: 583
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 10
+        end: 659
+        line: 18
+        start: 648
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 11
+        end: 733
+        line: 21
+        start: 722
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 7
+        end: 843
+        line: 27
+        start: 832
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 11
+        end: 1009
+        line: 32
+        start: 998
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 13
+        end: 1252
+        line: 37
+        start: 1241
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 34
+        end: 1393
+        line: 41
+        start: 1382
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 8
+        end: 1471
+        line: 45
+        start: 1460
+    - code: RY010
+      message: "variable `assigned` is not bound in this scope"
+      severity: warning
+      span:
+        column: 0
+        end: 1573
+        line: 49
+        start: 1565
+  fixture: err_unforced_user_argument_controls.R
+- diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
@@ -1531,6 +1887,24 @@ expression: snapshots
         line: 2
         start: 57
   fixture: err_user_fn_missing_required.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 695
+        line: 13
+        start: 680
+    - code: RY050
+      message: "S3 generic `lbl` called on value with classes [triangle] but no matching method is defined"
+      severity: warning
+      span:
+        column: 0
+        end: 733
+        line: 16
+        start: 720
+  fixture: err_user_generic_dispatch.R
 - diagnostics:
     - code: RY110
       message: "`all(is.na(seconds))` is vacuously TRUE when `seconds` is empty, and the guard then accepts zero-length input that fails `is.numeric` (such as an empty character) which `sqrt()` cannot use as numeric; guard the emptiness too: `is.numeric(seconds) || (length(seconds) > 0 && all(is.na(seconds)))`"
@@ -1884,6 +2258,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_qualified_return_dead_code.R
 - diagnostics: []
+  fixture: ok_qualified_same_name_wrapper_return.R
+- diagnostics: []
   fixture: ok_quoted_default_dependencies.R
 - diagnostics: []
   fixture: ok_quoted_formula_symbols.R
@@ -1901,6 +2277,8 @@ expression: snapshots
   fixture: ok_recursive_default_qualified_defuser.R
 - diagnostics: []
   fixture: ok_recursive_default_skipped_operands.R
+- diagnostics: []
+  fixture: ok_recursive_return_without_base_case.R
 - diagnostics: []
   fixture: ok_regmatches_callback_lengths.R
 - diagnostics: []
@@ -1931,6 +2309,8 @@ expression: snapshots
   fixture: ok_scalar_logical.R
 - diagnostics: []
   fixture: ok_scalar_single_bracket_index.R
+- diagnostics: []
+  fixture: ok_selection_lengths.R
 - diagnostics: []
   fixture: ok_seq_defaulted_forward.R
 - diagnostics: []
@@ -1968,6 +2348,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_tidyselect_negative_string.R
 - diagnostics: []
+  fixture: ok_tidyverse_unstubbed_core.R
+- diagnostics: []
   fixture: ok_trycatch.R
 - diagnostics: []
   fixture: ok_typeshed_coercion.R
@@ -1990,6 +2372,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_unary_not.R
 - diagnostics: []
+  fixture: ok_unforced_user_argument.R
+- diagnostics: []
   fixture: ok_union_element_condition.R
 - diagnostics: []
   fixture: ok_union_if_arith.R
@@ -2001,6 +2385,8 @@ expression: snapshots
   fixture: ok_user_fn_missing_lazy_formal.R
 - diagnostics: []
   fixture: ok_user_fn_return.R
+- diagnostics: []
+  fixture: ok_user_generic_dispatch.R
 - diagnostics: []
   fixture: ok_vacuous_all_guard.R
 - diagnostics: []

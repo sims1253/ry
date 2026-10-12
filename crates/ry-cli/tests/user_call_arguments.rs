@@ -16,11 +16,13 @@ pick <- function(x, i) x[[i]]
   x
 }
 scaled <- helper(2)
+alias <- function(x) x
 ";
 
 const OTHER_HELPERS: &str = "\
 twice <- function(a, b) a + b
 memo <- Vectorize(memo)
+`alias` <- function(y) y
 ";
 
 const CALLS: &str = "\
@@ -32,6 +34,7 @@ use_helpers <- function(values) {
   twice(1, c = 3)
   twice()
   memo(b = 1)
+  alias(y = 1)
   pick(values, 1, strict = TRUE) <- 2
   values
 }
@@ -85,7 +88,8 @@ fn project_calls_are_checked_against_unambiguous_definitions() {
         .collect();
     found.sort();
     // `lazy(1)` never forces `unused`, `gather` absorbs names in `...`,
-    // `twice` has two definitions with different formals, `memo` is rebound
+    // `twice` and `alias` (another spelling of the same R name) have two
+    // definitions with different formals, `memo` is rebound
     // to a non-literal, a replacement target calls `pick<-` rather than
     // `pick`, and a formal, local rebinding, block-local literal, or another
     // package's export named `helper` is not the project function.

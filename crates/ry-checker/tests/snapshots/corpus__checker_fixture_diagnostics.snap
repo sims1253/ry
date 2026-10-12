@@ -1652,6 +1652,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_assign_literal.R
 - diagnostics: []
+  fixture: ok_assign_rebinds_formal.R
+- diagnostics: []
   fixture: ok_block_expr_scope.R
 - diagnostics: []
   fixture: ok_bom_elsewhere.R
@@ -1691,6 +1693,8 @@ expression: snapshots
   fixture: ok_dataset_iris.R
 - diagnostics: []
   fixture: ok_dataset_mtcars.R
+- diagnostics: []
+  fixture: ok_default_writes_sibling_formal.R
 - diagnostics: []
   fixture: ok_df_bracket_string.R
 - diagnostics: []
@@ -1739,6 +1743,8 @@ expression: snapshots
   fixture: ok_fn_explicit_return.R
 - diagnostics: []
   fixture: ok_fnbody_sequential.R
+- diagnostics: []
+  fixture: ok_for_binder_rebinds_formal.R
 - diagnostics: []
   fixture: ok_fractional_numeric_index_length.R
 - diagnostics: []
@@ -1908,6 +1914,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_quoted_formula_symbols.R
 - diagnostics: []
+  fixture: ok_quoted_redefinition_contract.R
+- diagnostics: []
   fixture: ok_r6_class_body_bindings.R
 - diagnostics: []
   fixture: ok_raw_operations.R
@@ -2015,6 +2023,8 @@ expression: snapshots
   fixture: ok_union_if_arith.R
 - diagnostics: []
   fixture: ok_unknown_argument_type.R
+- diagnostics: []
+  fixture: ok_usemethod_ends_generic_body.R
 - diagnostics: []
   fixture: ok_user_fn_argument_matching.R
 - diagnostics: []

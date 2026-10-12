@@ -1129,13 +1129,23 @@ impl FnTable {
     /// Returns the replaced entry's return slot.
     fn insert_fn(&mut self, name: String, function: UserFn) -> Option<usize> {
         let key = function.definition_key();
+        // Quoted spellings (`` `f` ``, `"f"`) bind the same R name as `f`.
+        let semantic = semantic_argument_name(&name).to_string();
+        let disagrees = [
+            semantic.clone(),
+            format!("`{semantic}`"),
+            format!("'{semantic}'"),
+            format!("\"{semantic}\""),
+        ]
+        .iter()
+        .filter_map(|spelling| self.fns.get(spelling))
+        .any(|other| other.definition_key() != key && !other.formals_agree(&function));
+        if disagrees {
+            self.unstable_callees.insert(semantic);
+        }
         let prev = self.fns.insert(name.clone(), function);
         if let Some(prev) = &prev {
             let prev_key = prev.definition_key();
-            if prev_key != key && !prev.formals_agree(&self.fns[&name]) {
-                self.unstable_callees
-                    .insert(semantic_argument_name(&name).to_string());
-            }
             // Another name may still bind the same literal (`f <- g <- function() ...`).
             if prev_key != key && self.live_definitions.get(&prev_key) == Some(&name) {
                 self.live_definitions.remove(&prev_key);

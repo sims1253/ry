@@ -672,6 +672,9 @@ impl Checker {
     ) -> usize {
         let outward_writes = Arc::new(OnceLock::new());
         let source_params = Arc::from(params.to_vec());
+        // A forced default may assign a sibling formal, which a later read
+        // then sees instead of the missing argument.
+        let default_writes = default_local_writes(params);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -684,8 +687,10 @@ impl Checker {
                     Some(e) => infer_literal_default(e),
                     None => RType::unknown(),
                 };
-                let required =
-                    p.name != "..." && p.default.is_none() && block_force_flow(&body, &p.name).0;
+                let required = p.name != "..."
+                    && p.default.is_none()
+                    && !default_writes.may_write(semantic_argument_name(&p.name))
+                    && block_force_flow(&body, &p.name).0;
                 UserParam {
                     name: p.name.clone(),
                     type_: t,
@@ -1439,9 +1444,48 @@ fn statement_binds(statement: &Stmt, name: &str) -> bool {
     let name = semantic_argument_name(name);
     walk_stmt(statement, FRAME_WALK, |node, _| match frame_binding(node) {
         Some((bound, _)) if bound.is_none_or(|bound| bound == name) => ControlFlow::Break(()),
+        _ if installs_in_frame(node) == Some(name) => ControlFlow::Break(()),
         _ => ControlFlow::Continue(Descend::Into),
     })
     .is_break()
+}
+
+/// The literal name an `assign()`/`delayedAssign()` call binds in the
+/// calling frame: no argument selects another environment.
+fn installs_in_frame<'a>(node: AstNode<'a>) -> Option<&'a str> {
+    let AstNode::Expr(Expr::Call { func, args, .. }) = node else {
+        return None;
+    };
+    let Expr::Ident { name, .. } = func.as_ref() else {
+        return None;
+    };
+    let name = semantic_argument_name(name);
+    // `assign(x, value, pos, envir)`, `delayedAssign(x, value, eval.env, assign.env)`.
+    let positional_limit = match strip_package(name, "base").unwrap_or(name) {
+        "assign" => 2,
+        "delayedAssign" => 3,
+        _ => return None,
+    };
+    let elsewhere = args.iter().any(|argument| {
+        argument.name.as_deref().is_some_and(|tag| {
+            matches!(semantic_argument_name(tag), "pos" | "envir" | "assign.env")
+        })
+    }) || args
+        .iter()
+        .filter(|argument| argument.name.is_none())
+        .count()
+        > positional_limit;
+    if elsewhere {
+        return None;
+    }
+    named_or_first_positional(args, "x").and_then(|argument| string_literal(&argument.value))
+}
+
+/// `UseMethod()` and `standardGeneric()` never return to the generic body.
+fn is_dispatch_call(expression: &Expr) -> bool {
+    matches!(expression, Expr::Call { func, .. }
+        if matches!(func.as_ref(), Expr::Ident { name, .. }
+            if matches!(bare_name(semantic_argument_name(name)), "UseMethod" | "standardGeneric")))
 }
 
 /// `Some(true)` for `missing(name)`, `Some(false)` for `!missing(name)`.
@@ -1473,6 +1517,8 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool, bool) {
                     false,
                     false,
                 )
+            } else if is_dispatch_call(value) {
+                (false, false, false)
             } else {
                 let forces = expression_must_force(value, name);
                 (forces, true, !forces && statement_binds(statement, name))
@@ -1503,7 +1549,13 @@ fn statement_force_flow(statement: &Stmt, name: &str) -> (bool, bool, bool) {
         // `return`s on its first iteration). Reporting the body's
         // fall-through as the loop's own could wrongly mark a parameter
         // required.
-        Stmt::For { iter, .. } => (expression_must_force(iter, name), true, false),
+        Stmt::For {
+            name: binder, iter, ..
+        } => {
+            let forces = expression_must_force(iter, name);
+            let rebinds = semantic_argument_name(binder) == semantic_argument_name(name);
+            (forces, true, !forces && rebinds)
+        }
         Stmt::While { cond, .. } => (expression_must_force(cond, name), false, false),
         Stmt::Return { value, .. } => (
             value

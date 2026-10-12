@@ -9,13 +9,10 @@ use std::sync::Arc;
 use ry_config as config;
 use ry_core::declarations::DeclarationRecord;
 
-/// Input for a unified diagnostics check.
+/// One package group's parsed files and the context they are checked in.
 pub(crate) struct CheckInput {
-    /// Parsed source files as (path, SourceFile) tuples.
     pub files: Vec<(String, Arc<ry_core::SourceFile>)>,
-    /// User typeshed stubs.
     pub user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
-    /// Workspace context (package metadata, bindings).
     pub workspace: ry_workspace::WorkspaceContext,
 }
 
@@ -49,13 +46,6 @@ pub(crate) fn check_project(
 pub(crate) struct CapturedFacts {
     pub scopes: Vec<(String, Vec<ry_checker::ScopeRecord>)>,
     pub references: Vec<(String, ry_checker::ReferenceFacts)>,
-}
-
-/// Capture scope snapshots without reference evidence or declarations.
-pub(crate) fn check_project_with_scope_capture(
-    input: CheckInput,
-) -> Vec<(String, Vec<ry_checker::ScopeRecord>)> {
-    check_project_with_facts_capture(input, false, Vec::new()).scopes
 }
 
 /// Capture scope snapshots and optional reference evidence in one project check.
@@ -277,6 +267,36 @@ pub(crate) fn resolve_groups(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn check_project_applies_the_workspace_context() {
+        // `is_null(x)` narrows `x` away from NULL only when rlang is
+        // attached, so the trailing `x()` is an RY070 exactly when the
+        // workspace context does not reach the checker.
+        let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
+            let file = ry_core::RParser::new()
+                .unwrap()
+                .parse(
+                    "test.R",
+                    "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n",
+                )
+                .unwrap();
+            let input = CheckInput {
+                files: vec![("test.R".to_string(), Arc::new(file))],
+                user_stubs: Arc::new(BTreeMap::new()),
+                workspace,
+            };
+            check_project(input, Vec::new())
+                .iter()
+                .flat_map(|(_, diagnostics)| diagnostics)
+                .filter(|diagnostic| diagnostic.code == "RY070")
+                .count()
+        };
+        assert!(run(Default::default()) > 0);
+        let mut attached = ry_workspace::WorkspaceContext::default();
+        attached.attached_packages.insert("rlang".to_string());
+        assert_eq!(run(attached), 0);
+    }
 
     #[test]
     fn parallel_parsing_preserves_order_and_reports_every_failure() {

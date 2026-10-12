@@ -362,7 +362,7 @@ pub(crate) fn match_argument_names<'a>(
 /// The formal-parameter view RY090/RY091 reporting needs, shared by
 /// typeshed `ParamSpec`s and collected `UserParam`s so one code path
 /// serves stub and user calls.
-trait CallFormal {
+pub(crate) trait CallFormal {
     fn name(&self) -> &str;
     fn required(&self) -> bool;
 }
@@ -433,15 +433,28 @@ pub(crate) fn match_args_to_params(
 }
 
 impl Checker {
-    pub(crate) fn check_box_call_arguments(
+    /// Infer an actual bound to a user formal that quotes or defuses it.
+    /// `None` leaves an ordinarily evaluated actual to the caller.
+    pub(crate) fn infer_user_param_arg(
         &mut self,
-        function_name: &str,
-        params: &[UserParam],
-        args: &[Arg],
-        bindings: &ArgumentMatch,
-        call_span: Span,
-    ) {
-        self.check_call_arity(function_name, params, args, bindings, true, call_span);
+        parameter: &UserParam,
+        value: &Expr,
+        scope: &Scope,
+    ) -> Option<RType> {
+        if parameter.quoting {
+            // User functions that capture an argument with substitute(),
+            // bquote(), or match.call()-style reflection receive the
+            // expression unevaluated. Infer it without diagnostics so nested
+            // operations and names cannot be mistaken for runtime R code.
+            let mut quoted = scope.independent_execution_scope();
+            self.infer_discarding(value, &mut quoted);
+            return Some(RType::unknown());
+        }
+        if parameter.defused {
+            let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
+            return Some(self.infer_with_injection(value, &mut local, Some(InjectionMode::Full)));
+        }
+        None
     }
 
     pub(crate) fn is_forwarded_dots(&self, argument: &Arg) -> bool {
@@ -714,7 +727,7 @@ impl Checker {
     /// actuals no formal matched, RY091 for required formals without a
     /// supplied value. The typeshed and user-function checks differ only in their
     /// formals source and unknown-argument gating.
-    fn check_call_arity<P: CallFormal>(
+    pub(crate) fn check_call_arity<P: CallFormal>(
         &mut self,
         function_name: &str,
         params: &[P],

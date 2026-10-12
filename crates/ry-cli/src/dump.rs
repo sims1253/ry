@@ -532,7 +532,8 @@ pub(crate) fn run_dump_types(
         for (path, reason) in &group.degraded_scopes {
             eprintln!("{}", reason.notice(path));
         }
-        for (path, records) in pipeline::check_project_with_scope_capture(group.check_input) {
+        let captured = pipeline::check_project_with_facts_capture(group.check_input, false, vec![]);
+        for (path, records) in captured.scopes {
             records_by_path.insert(path, records);
         }
     }

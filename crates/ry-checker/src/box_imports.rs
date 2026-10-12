@@ -4,16 +4,13 @@
 
 use crate::scope_journal::BranchDelta;
 use crate::*;
-use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmt, walk_stmts};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 const MAX_MODULE_BYTES: u64 = 1_048_576;
 const MAX_MODULE_DEPTH: u8 = 4;
-/// Function-alias prefix of a callable imported from a package.
-const IMPORT_ALIAS: &str = "__ry_box_import::";
 
 /// Project buffers by physical identity. `None` marks an open buffer that
 /// this check does not read, whose disk copy may be stale.
@@ -207,23 +204,10 @@ pub(crate) fn has_box_use(file: &SourceFile) -> bool {
     .is_break()
 }
 
-/// An existing file's physical identity, or the physical identity of its
-/// nearest existing ancestor plus an unsaved final path. This lets a module
-/// opened in an editor match its on-disk caller even with a symlinked root.
-pub(crate) fn path_identity(path: &Path) -> Option<PathBuf> {
-    let absolute = std::path::absolute(path).ok()?;
-    let mut existing = absolute.as_path();
-    let mut tail = Vec::new();
-    while !existing.exists() {
-        tail.push(existing.file_name()?.to_os_string());
-        existing = existing.parent()?;
-    }
-    let mut resolved = std::fs::canonicalize(existing).ok()?;
-    for component in tail.into_iter().rev() {
-        resolved.push(component);
-    }
-    Some(resolved)
-}
+/// Physical identity of a module path, which may name an unsaved file. It
+/// lets a module opened in an editor match its on-disk caller even with a
+/// symlinked root.
+pub(crate) use ry_config::scoped_path_identity as path_identity;
 
 fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]> {
     let mut stem = caller.parent()?.to_path_buf();
@@ -250,119 +234,40 @@ fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]>
     ])
 }
 
-/// The collector indexes literal functions by spelling. A later wrapper
-/// assignment can leave the final value callable while the indexed literal
-/// is no longer its definition. Retain the collected signature only for a
-/// single direct literal binding with no other module-load assignment to the
-/// same name. Control-flow bindings are counted; nested function bodies have
-/// their own lexical scope and are excluded.
-fn stable_direct_function_bindings(file: &SourceFile, load: &ModuleLoad) -> HashSet<String> {
-    if load.unmodeled_effects {
-        return HashSet::new();
-    }
-    file.stmts
-        .iter()
-        .filter_map(|statement| match statement {
-            Stmt::Assign {
-                target,
-                value: Expr::Function { .. },
-                ..
-            } => binding_name(target),
-            _ => None,
-        })
-        .map(|name| infer::semantic_argument_name(name).to_string())
-        .filter(|name| load.counts.get(name) == Some(&1))
-        .collect()
-}
-
-/// What loading a module does outside function bodies, which are inert
-/// until called. Assignment targets are keyed by semantic name.
+/// What loading a module does and declares, from one pass over its
+/// top-level statements. Names are decoded binding names. Function bodies
+/// are inert until called; only `box::export` calls inside them count.
 #[derive(Default)]
 struct ModuleLoad {
+    /// Load-time assignments per target, including nested ones.
     counts: HashMap<String, usize>,
     /// Targets of assignment expressions, which also cover `<<-`/`%<>%`.
     expression_names: HashSet<String>,
-    /// Targets of `<-`/`=` expressions, which bind in the module itself.
-    own_expression_names: HashSet<String>,
+    /// Own bindings: assignment statements, `<-`/`=` expressions, and
+    /// plain or aliased imports. Legacy modules export these.
+    assigned: HashSet<String>,
+    /// Targets of direct `name <- function` statements.
+    function_literals: Vec<String>,
     /// Calls may create caller-frame bindings, including through qualified
     /// writers and sourced files. We do not execute them, so a missing
     /// syntactic assignment is not proof that a name is absent.
     unmodeled_effects: bool,
     /// box's quoted imports change the lexical environment of functions.
     imports: bool,
-}
-
-fn module_load(file: &SourceFile) -> ModuleLoad {
-    let mut load = ModuleLoad::default();
-    let walk = Walk {
-        fn_bodies: false,
-        ..Walk::ALL
-    };
-    let _ = walk_stmts(&file.stmts, walk, |node, _| {
-        let (target, operator) = match node {
-            AstNode::Stmt(Stmt::Assign { target, .. }) => (Some(target), None),
-            AstNode::Expr(Expr::BinOp { op, lhs, .. })
-                if matches!(
-                    op,
-                    BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
-                ) =>
-            {
-                (Some(lhs.as_ref()), Some(*op))
-            }
-            _ => (None, None),
-        };
-        if let Some(name) = target.and_then(binding_name) {
-            let name = infer::semantic_argument_name(name).to_string();
-            if let Some(op) = operator {
-                if op == BinOpKind::Assign {
-                    load.own_expression_names.insert(name.clone());
-                }
-                load.expression_names.insert(name.clone());
-            }
-            *load.counts.entry(name).or_default() += 1;
-        }
-        let AstNode::Expr(expr) = node else {
-            return ControlFlow::<(), Descend>::Continue(Descend::Into);
-        };
-        let descend = match expr {
-            Expr::Call { func, args, .. } if ident_name(func) == Some("box::use") => {
-                load.imports = true;
-                load.unmodeled_effects |=
-                    args.iter().any(|argument| parse_import(argument).is_none());
-                Descend::Skip
-            }
-            Expr::Call { func, args, .. }
-                if ident_name(func) == Some("box::export")
-                    && args
-                        .iter()
-                        .all(|argument| static_name(&argument.value).is_some()) =>
-            {
-                Descend::Skip
-            }
-            // `%<>%` is dispatched through an operator, and executed braced
-            // or conditional expressions can write bindings without a
-            // top-level Stmt::Assign.
-            Expr::Call { .. }
-            | Expr::BinOp {
-                op: BinOpKind::PipeAssign,
-                ..
-            }
-            | Expr::Block { .. }
-            | Expr::If { .. } => {
-                load.unmodeled_effects = true;
-                Descend::Into
-            }
-            _ => Descend::Into,
-        };
-        ControlFlow::Continue(descend)
-    });
-    load
-}
-
-struct RoxygenExports {
-    names: HashSet<String>,
+    /// Top-level control flow or runtime writers may add legacy exports.
+    legacy_open: bool,
+    /// Whether any statement carries an `@export` tag.
     tagged: bool,
-    complete: bool,
+    tagged_names: HashSet<String>,
+    /// A tagged statement may export names that are not enumerated.
+    tags_open: bool,
+    /// Static names of top-level `box::export()` calls.
+    explicit_names: HashSet<String>,
+    /// A top-level `box::export()` argument is not a static name.
+    explicit_open: bool,
+    top_level_export_calls: usize,
+    /// `box::export` calls anywhere, including function bodies.
+    export_calls: usize,
 }
 
 fn has_export_tag(lines: &[&str]) -> bool {
@@ -385,16 +290,14 @@ fn has_export_tag(lines: &[&str]) -> bool {
     false
 }
 
-fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
-    let mut assigned = HashSet::new();
-    let mut roxygen = RoxygenExports {
-        names: HashSet::new(),
-        tagged: false,
-        complete: true,
-    };
+fn module_load(file: &SourceFile) -> ModuleLoad {
+    let mut load = ModuleLoad::default();
     let lines: Vec<&str> = file.source.lines().collect();
     let mut region_start = 0;
     for statement in &file.stmts {
+        let _ = walk_stmt(statement, Walk::ALL, |node, fn_depth| {
+            load.visit(node, fn_depth)
+        });
         let span = infer::vacuous::stmt_span(statement);
         // box begins each comment region on the line after the preceding
         // expression ends. Blank lines and ordinary comments do not end it.
@@ -405,121 +308,215 @@ fn top_level_bindings(file: &SourceFile) -> (HashSet<String>, RoxygenExports) {
                 .filter(|byte| *byte == b'\n')
                 .count()
             + 1;
-        roxygen.tagged |= tagged;
-        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
-            && ident_name(func) == Some("box::use")
-        {
-            for argument in args {
-                let Some(import) = parse_import(argument) else {
-                    roxygen.complete &= !tagged;
-                    continue;
-                };
-                // Plain and explicitly aliased imports bind in the module
-                // namespace. A tag also exports that object and the
-                // attached aliases; a wildcard may add unenumerated names.
-                if let Some(name) = import.object_name {
-                    if tagged {
-                        roxygen.names.insert(name.clone());
-                    }
-                    assigned.insert(name);
-                }
-                if tagged {
-                    roxygen.names.extend(
-                        import
-                            .selection
-                            .into_iter()
-                            .flatten()
-                            .map(|selection| selection.bound),
-                    );
-                    roxygen.complete &= !import.wildcard && !import.selection_unknown;
-                }
-            }
-            continue;
-        }
-        let Stmt::Assign {
-            target,
-            value,
-            span,
-        } = statement
-        else {
-            roxygen.complete &= !tagged;
-            continue;
-        };
-        // The parser wraps a direct `foo <<- value` or `value ->> foo`
-        // statement in Stmt::Assign with a SuperAssign expression spanning
-        // the whole statement. It writes through the module environment,
-        // not to an own binding, and box rejects a tag on it at load time.
-        // An ordinary `foo <- (bar <<- value)` has a smaller inner span.
-        let direct_superassignment = matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
-            if marker == span && binding_name(lhs) == binding_name(target));
-        let name = binding_name(target).filter(|_| !direct_superassignment);
-        let Some(name) = name else {
-            roxygen.complete &= !tagged;
-            continue;
-        };
-        let name = infer::semantic_argument_name(name).to_string();
-        if tagged {
-            roxygen.names.insert(name.clone());
-        }
-        assigned.insert(name);
+        load.tagged |= tagged;
+        load.declare(statement, tagged);
     }
-    (assigned, roxygen)
+    load
 }
 
-fn declared_exports(
-    file: &SourceFile,
-    mut assigned: HashSet<String>,
-    roxygen: RoxygenExports,
-    unmodeled_load_effects: bool,
-) -> (HashSet<String>, bool) {
-    let mut names = HashSet::new();
-    let mut complete = !unmodeled_load_effects;
-    let mut direct_calls = 0;
-    for statement in &file.stmts {
-        if let Stmt::Expr(Expr::Call { func, args, .. }) = statement
-            && ident_name(func) == Some("box::export")
-        {
-            direct_calls += 1;
-            for argument in args {
-                match static_name(&argument.value) {
-                    Some(name) => {
-                        names.insert(name);
-                    }
-                    None => complete = false,
+impl ModuleLoad {
+    /// Record the load-time effects of one node.
+    fn visit(&mut self, node: AstNode<'_>, fn_depth: usize) -> ControlFlow<(), Descend> {
+        let call = match node {
+            AstNode::Expr(Expr::Call { func, args, .. }) => Some((ident_name(func), args)),
+            _ => None,
+        };
+        if matches!(call, Some((Some("box::export"), _))) {
+            self.export_calls += 1;
+        }
+        if fn_depth > 0 {
+            return ControlFlow::Continue(Descend::Into);
+        }
+        let (target, operator) = match node {
+            AstNode::Stmt(Stmt::Assign { target, .. }) => (Some(target), None),
+            AstNode::Expr(Expr::BinOp { op, lhs, .. })
+                if matches!(
+                    op,
+                    BinOpKind::Assign | BinOpKind::SuperAssign | BinOpKind::PipeAssign
+                ) =>
+            {
+                (Some(lhs.as_ref()), Some(*op))
+            }
+            _ => (None, None),
+        };
+        if let Some(name) = target.and_then(static_name) {
+            if let Some(op) = operator {
+                if op == BinOpKind::Assign {
+                    self.assigned.insert(name.clone());
                 }
+                self.expression_names.insert(name.clone());
+            }
+            *self.counts.entry(name).or_default() += 1;
+        }
+        let descend = match call {
+            Some((Some("box::use"), args)) => {
+                self.imports = true;
+                self.unmodeled_effects |=
+                    args.iter().any(|argument| parse_import(argument).is_none());
+                Descend::Skip
+            }
+            Some((Some("box::export"), args))
+                if args
+                    .iter()
+                    .all(|argument| static_name(&argument.value).is_some()) =>
+            {
+                Descend::Skip
+            }
+            // `%<>%` is dispatched through an operator, and executed braced
+            // or conditional expressions can write bindings without a
+            // top-level Stmt::Assign.
+            Some(_) => {
+                self.unmodeled_effects = true;
+                Descend::Into
+            }
+            None if matches!(
+                node,
+                AstNode::Expr(
+                    Expr::BinOp {
+                        op: BinOpKind::PipeAssign,
+                        ..
+                    } | Expr::Block { .. }
+                        | Expr::If { .. }
+                )
+            ) =>
+            {
+                self.unmodeled_effects = true;
+                Descend::Into
+            }
+            None => Descend::Into,
+        };
+        ControlFlow::Continue(descend)
+    }
+
+    /// Record the names one top-level statement binds or exports.
+    fn declare(&mut self, statement: &Stmt, tagged: bool) {
+        match statement {
+            Stmt::Expr(Expr::Call { func, args, .. }) if ident_name(func) == Some("box::use") => {
+                for argument in args {
+                    let Some(import) = parse_import(argument) else {
+                        self.tags_open |= tagged;
+                        continue;
+                    };
+                    // Plain and explicitly aliased imports bind in the module
+                    // namespace. A tag also exports that object and the
+                    // attached aliases; a wildcard may add unenumerated names.
+                    if let Some(name) = import.object_name {
+                        if tagged {
+                            self.tagged_names.insert(name.clone());
+                        }
+                        self.assigned.insert(name);
+                    }
+                    if tagged {
+                        self.tagged_names.extend(
+                            import
+                                .selection
+                                .into_iter()
+                                .flatten()
+                                .map(|selection| selection.bound),
+                        );
+                        self.tags_open |= import.wildcard || import.selection_unknown;
+                    }
+                }
+            }
+            Stmt::Expr(Expr::Call { func, args, .. })
+                if ident_name(func) == Some("box::export") =>
+            {
+                self.tags_open |= tagged;
+                self.top_level_export_calls += 1;
+                for argument in args {
+                    match static_name(&argument.value) {
+                        Some(name) => {
+                            self.explicit_names.insert(name);
+                        }
+                        None => self.explicit_open = true,
+                    }
+                }
+            }
+            Stmt::Assign {
+                target,
+                value,
+                span,
+            } => {
+                // The parser wraps a direct `foo <<- value` or `value ->> foo`
+                // statement in Stmt::Assign with a SuperAssign expression
+                // spanning the whole statement. It writes through the module
+                // environment, not to an own binding, and box rejects a tag on
+                // it at load time. An ordinary `foo <- (bar <<- value)` has a
+                // smaller inner span.
+                let direct_superassignment = matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
+                    if marker == span && static_name(lhs) == static_name(target));
+                let Some(name) = static_name(target).filter(|_| !direct_superassignment) else {
+                    self.tags_open |= tagged;
+                    return;
+                };
+                if matches!(value, Expr::Function { .. }) {
+                    self.function_literals.push(name.clone());
+                }
+                if tagged {
+                    self.tagged_names.insert(name.clone());
+                }
+                self.assigned.insert(name);
+            }
+            _ => {
+                self.tags_open |= tagged;
+                self.legacy_open |= match statement {
+                    Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => true,
+                    Stmt::Expr(Expr::Call { func, .. }) => matches!(
+                        ident_name(func),
+                        Some("assign" | "delayedAssign" | "makeActiveBinding")
+                    ),
+                    _ => false,
+                };
             }
         }
     }
-    // A braced, conditional, or otherwise nested export call may add names
-    // at runtime. It also prevents legacy fallback, even when it declares
-    // no statically readable name.
-    let mut all_calls = 0;
-    let _ = walk_stmts(&file.stmts, Walk::ALL, |node, _| {
-        if let AstNode::Expr(Expr::Call { func, .. }) = node
-            && ident_name(func) == Some("box::export")
-        {
-            all_calls += 1;
+
+    /// The exported names, and whether that set is complete.
+    fn exports(&self) -> (HashSet<String>, bool) {
+        let complete = !self.unmodeled_effects;
+        // A braced, conditional, or otherwise nested export call may add
+        // names at runtime. It also prevents legacy fallback, even when it
+        // declares no statically readable name.
+        if self.export_calls > 0 {
+            return (
+                self.explicit_names.clone(),
+                complete && !self.explicit_open && self.export_calls == self.top_level_export_calls,
+            );
         }
-        ControlFlow::<(), Descend>::Continue(Descend::Into)
-    });
-    if all_calls > 0 {
-        return (names, complete && all_calls == direct_calls);
-    }
-    // box 1.2.3 falls back to legacy exports when tags name nothing.
-    if roxygen.tagged && !(roxygen.complete && roxygen.names.is_empty()) {
+        // box 1.2.3 falls back to legacy exports when tags name nothing.
         // An aliased or computed box::export() can extend a tagged module's
         // inventory during load. Only an effect-free body proves absence.
-        return (roxygen.names, complete && roxygen.complete);
+        if self.tagged && (self.tags_open || !self.tagged_names.is_empty()) {
+            return (self.tagged_names.clone(), complete && !self.tags_open);
+        }
+        // Legacy modules export their own non-dot bindings. Imported names
+        // live in an attachment environment and are not implicitly
+        // re-exported. Dynamic writes or control flow make absence uncertain.
+        let names = self
+            .assigned
+            .iter()
+            .filter(|name| !name.starts_with('.'))
+            .cloned()
+            .collect();
+        (names, complete && !self.legacy_open)
     }
-    // Legacy modules export their own non-dot bindings. Imported names live
-    // in an attachment environment and are not implicitly re-exported.
-    // Dynamic writes or control flow make absence uncertain.
-    complete &= !file.stmts.iter().any(|statement| {
-        matches!(statement, Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. })
-            || matches!(statement, Stmt::Expr(Expr::Call { func, .. }) if matches!(ident_name(func), Some("assign" | "delayedAssign" | "makeActiveBinding")))
-    });
-    assigned.retain(|name| !name.starts_with('.'));
-    (assigned, complete)
+
+    /// The collector indexes literal functions by spelling. A later wrapper
+    /// assignment can leave the final value callable while the indexed
+    /// literal is no longer its definition. Retain the collected signature
+    /// only for a single direct literal binding with no other module-load
+    /// assignment to the same name. Control-flow bindings are counted;
+    /// nested function bodies have their own lexical scope and are excluded.
+    fn stable_functions(&self) -> HashSet<&str> {
+        if self.unmodeled_effects {
+            return HashSet::new();
+        }
+        self.function_literals
+            .iter()
+            .filter(|name| self.counts.get(*name) == Some(&1))
+            .map(String::as_str)
+            .collect()
+    }
 }
 
 /// Bind a selected or wildcard attachment. box attaches it in a parent of
@@ -550,38 +547,39 @@ impl Scope {
     /// An attachment lives in a parent environment. After a local write of
     /// a value that may not be a function, a call can still reach it, so
     /// calls through the name stay opaque until a function is assigned.
-    pub(crate) fn box_call_after_write(&self, name: &str, value: &RType) -> Option<BoxObject> {
-        if self.box_objects.is_empty() || value.mode == Mode::Function {
-            return None;
-        }
-        matches!(
-            self.box_objects.get(name),
-            Some(BoxObject::Attached(_) | BoxObject::OpaqueCall)
-        )
-        .then_some(BoxObject::OpaqueCall)
+    pub(crate) fn box_call_after_write(&self, name: &str, value: &RType) -> bool {
+        // `Scope::insert` asks on every write; most scopes have no box objects.
+        !self.box_objects.is_empty()
+            && value.mode != Mode::Function
+            && matches!(
+                self.box_objects.get(name),
+                Some(BoxObject::Attached(_) | BoxObject::OpaqueCall)
+            )
     }
 
     /// `box_call_after_write` for writers that journal the whole binding.
     pub(crate) fn replace_box_call_after_write(&mut self, name: &str, value: &RType) {
-        match self.box_call_after_write(name, value) {
-            Some(marker) => self.box_objects.insert(name.to_string(), marker),
-            None => self.box_objects.remove(name),
-        };
+        if self.box_call_after_write(name, value) {
+            self.box_objects
+                .insert(name.to_string(), BoxObject::OpaqueCall);
+        } else {
+            self.box_objects.remove(name);
+        }
     }
 
     /// Effect invalidation forgets values, not the attachments beneath them.
     pub(crate) fn keep_box_calls_after_writes(&mut self) {
-        self.box_objects
-            .retain(|_, object| matches!(object, BoxObject::Attached(_) | BoxObject::OpaqueCall));
-        for object in self.box_objects.values_mut() {
+        self.box_objects.retain(|_, object| {
+            let call = matches!(object, BoxObject::Attached(_) | BoxObject::OpaqueCall);
             *object = BoxObject::OpaqueCall;
-        }
+            call
+        });
     }
 
     fn set_box_attachment(&mut self, name: &str, callable: Option<BoxCallable>) {
         // Other call stages see a package function through its alias.
         if let Some(BoxCallable::Package(target)) = &callable {
-            self.set_function_alias(name, format!("{IMPORT_ALIAS}{target}"));
+            self.set_function_alias(name, target.clone());
         }
         self.set_box_object(name, BoxObject::Attached(callable));
     }
@@ -594,10 +592,8 @@ impl Scope {
                 continue;
             }
             self.journal_binding(&name);
-            if self
-                .function_aliases
-                .get(&name)
-                .is_some_and(|alias| alias.starts_with(IMPORT_ALIAS))
+            if let Some(BoxObject::Attached(Some(BoxCallable::Package(_)))) =
+                self.box_objects.get(&name)
             {
                 self.function_aliases.remove(&name);
             }
@@ -669,20 +665,13 @@ pub(crate) fn box_member<'a>(
     Some((base, object, member))
 }
 
-/// Read and parse an existing module file. The read is bounded as well as
-/// the metadata precheck: the file can grow between those operations.
+/// Read and parse an existing module file within the size limit.
 fn read_module(path: &Path, identity: &Path) -> Option<SourceFile> {
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MODULE_BYTES {
         return None;
     }
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(MAX_MODULE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let decoded = ry_workspace::decode_r_source(&bytes);
+    let decoded = ry_workspace::read_r_source_decoded(path).ok()?;
     let mut file = ry_core::RParser::new()
         .ok()?
         .parse(&path.to_string_lossy(), &decoded.text)
@@ -757,10 +746,9 @@ impl Checker {
                     Err(_) => return None,
                 },
             };
-            // Source that R's parser rejects (#376, #474) cannot provide a
+            // Source that R's parser rejects cannot provide a
             // trustworthy inventory, whether read from disk or a buffer.
-            if file.source.len() as u64 > MAX_MODULE_BYTES
-                || file.leading_bom
+            if file.leading_bom
                 || !file.invalid_utf8.is_empty()
                 || !file.parse_errors.is_empty()
                 || !file.syntax_violations.is_empty()
@@ -783,15 +771,9 @@ impl Checker {
     }
 
     fn analyze_box_module(&self, file: &SourceFile) -> BoxInventory {
-        let (mut assigned, roxygen) = top_level_bindings(file);
         let load = module_load(file);
-        // Legacy box modules export bindings made by executed assignment
-        // expressions too (`a <- b <- 1L`, `dummy <- (foo <- 1L)`).
-        // Roxygen/explicit inventories still use their declared names.
-        assigned.extend(load.own_expression_names.iter().cloned());
-        let stable_functions = stable_direct_function_bindings(file, &load);
-        let (exported, complete) =
-            declared_exports(file, assigned, roxygen, load.unmodeled_effects);
+        let stable_functions = load.stable_functions();
+        let (exported, complete) = load.exports();
         let mut nested = Checker::new(&file.path);
         nested.box_depth = self.box_depth + 1;
         nested.box_sources = Arc::clone(&self.box_sources);
@@ -811,7 +793,7 @@ impl Checker {
             let callable = match (scope.box_objects.get(&name), alias) {
                 (Some(BoxObject::Attached(callable)), _) if imported => callable.clone(),
                 (_, None)
-                    if stable_functions.contains(&name)
+                    if stable_functions.contains(name.as_str())
                         && value.is_some_and(|value| value.mode == Mode::Function) =>
                 {
                     // Refinement starts from formals, without the module's
@@ -832,7 +814,7 @@ impl Checker {
             };
             let stale_callable = value.is_some_and(|value| value.mode == Mode::Function)
                 && written
-                && !stable_functions.contains(&name);
+                && !stable_functions.contains(name.as_str());
             let value = if load.unmodeled_effects
                 || load.expression_names.contains(&name)
                 || stale_callable
@@ -853,8 +835,8 @@ impl Checker {
             let Some(import) = parse_import(argument) else {
                 // A computed argument is outside the static model. box
                 // quotes it, so evaluating it here would invent RY010s.
-                if let Some(alias) = &argument.name {
-                    scope.insert(alias.clone(), RType::unknown());
+                if let Some(alias) = argument.name.as_deref().and_then(binding_name_token) {
+                    scope.insert(alias, RType::unknown());
                 }
                 continue;
             };
@@ -1073,24 +1055,17 @@ impl Checker {
             .collect();
         let matches = infer::match_arguments(&names, args);
         if self.validate_user_call_arguments {
-            self.check_box_call_arguments(name, &function.params, args, &matches, span);
+            self.check_call_arity(name, &function.params, args, &matches, true, span);
         }
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index]
                 .or(matches.dots)
                 .and_then(|index| function.params.get(index));
-            match parameter {
-                Some(parameter) if parameter.quoting => {
-                    let mut quoted = scope.independent_execution_scope();
-                    self.infer_discarding(&argument.value, &mut quoted);
-                }
-                Some(parameter) if parameter.defused => {
-                    let mut masked = scope.clone().with_unknown_data_mask();
-                    self.infer(&argument.value, &mut masked);
-                }
-                _ => {
-                    self.infer(&argument.value, scope);
-                }
+            if parameter
+                .and_then(|parameter| self.infer_user_param_arg(parameter, &argument.value, scope))
+                .is_none()
+            {
+                self.infer(&argument.value, scope);
             }
         }
         function.return_type.clone()

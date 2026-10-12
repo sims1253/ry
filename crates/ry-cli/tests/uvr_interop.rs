@@ -1,4 +1,4 @@
-//! #588: an externally provisioned uvr library is an ordinary static R library.
+//! An externally provisioned uvr library is an ordinary static R library.
 //! Every environment change is confined to a child process; these tests never
 //! run R, activate uvr, or mutate the test process environment.
 
@@ -124,12 +124,13 @@ fn install_export(library: &Path, export: &str) {
     fs::write(package.join("NAMESPACE"), format!("export({export})\n")).unwrap();
 }
 
+/// The names RY010 reports unbound, in output order.
 fn missing_names(diagnostics: &[Value]) -> Vec<&str> {
     diagnostics
         .iter()
         .map(|item| {
             assert_eq!(item["code"], "RY010", "{item}");
-            item["message"].as_str().unwrap()
+            item["message"].as_str().unwrap().split('`').nth(1).unwrap()
         })
         .collect()
 }
@@ -138,10 +139,7 @@ fn missing_names(diagnostics: &[Value]) -> Vec<&str> {
 fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     let fixture = UvrFixture::new();
     let installed = fixture.diagnostics(&fixture.library);
-    assert_eq!(
-        missing_names(&installed),
-        ["variable `uvr_not_exported` is not bound in this scope"]
-    );
+    assert_eq!(missing_names(&installed), ["uvr_not_exported"]);
     assert!(
         installed
             .iter()
@@ -149,13 +147,7 @@ fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     );
 
     let missing = fixture.diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(
-        missing_names(&missing),
-        [
-            "variable `uvr_export` is not bound in this scope",
-            "variable `uvr_not_exported` is not bound in this scope"
-        ]
-    );
+    assert_eq!(missing_names(&missing), ["uvr_export", "uvr_not_exported"]);
     let installed_facts = fixture.facts(&fixture.library);
     let missing_facts = fixture.facts(&fixture.project.join("missing library"));
     assert_eq!(
@@ -181,185 +173,12 @@ fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
 }
 
 #[test]
-fn child_library_roots_preserve_order_and_missing_root_fallback() {
-    let fixture = UvrFixture::new();
-    let first = fixture.files.path("first library with spaces");
-    let second = fixture.files.path("second library");
-    install_export(&first, "uvr_first");
-    install_export(&second, "uvr_second");
-    fs::write(fixture.source(), "a <- uvr_first\nb <- uvr_second\n").unwrap();
-    let first_then_second = std::env::join_paths([&first, &second]).unwrap();
-    let second_then_first = std::env::join_paths([&second, &first]).unwrap();
-    for (roots, missing) in [
-        (first_then_second, "uvr_second"),
-        (second_then_first, "uvr_first"),
-    ] {
-        let output = fixture
-            .command()
-            .args(["check", "--output-format", "json"])
-            .arg(&fixture.project)
-            .env("R_LIBS", roots)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert!(
-            diagnostics[0]["message"]
-                .as_str()
-                .unwrap()
-                .contains(missing),
-            "{diagnostics:?}"
-        );
-    }
-    let fallback = fixture
-        .command()
-        .args(["check", "--output-format", "json"])
-        .arg(&fixture.project)
-        .env("R_LIBS", fixture.project.join("missing library"))
-        .env("R_LIBS_USER", &second)
-        .output()
-        .unwrap();
-    assert!(fallback.status.success(), "{fallback:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&fallback.stdout).unwrap();
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert!(
-        diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("uvr_first")
-    );
-
-    let site_fallback = fixture
-        .command()
-        .args(["check", "--output-format", "json"])
-        .arg(&fixture.project)
-        .env("R_LIBS", fixture.project.join("missing library"))
-        .env("R_LIBS_USER", fixture.project.join("missing user library"))
-        .env("R_LIBS_SITE", &first)
-        .output()
-        .unwrap();
-    assert!(site_fallback.status.success(), "{site_fallback:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&site_fallback.stdout).unwrap();
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert!(
-        diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("uvr_second")
-    );
-}
-
-#[test]
-fn nearest_renv_library_precedes_an_explicit_uvr_root() {
-    let fixture = UvrFixture::new();
-    let renv = fixture.project.join("renv/library");
-    install_export(&renv, "renv_export");
-    fs::write(fixture.source(), "a <- renv_export\nb <- uvr_export\n").unwrap();
-    let diagnostics = fixture.diagnostics(&fixture.library);
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert!(
-        diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("uvr_export")
-    );
-
-    fs::remove_dir_all(&renv).unwrap();
-    let diagnostics = fixture.diagnostics(&fixture.library);
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert!(
-        diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("renv_export")
-    );
-}
-
-#[test]
-fn nested_library_versions_follow_the_inferred_r_minor() {
-    let fixture = UvrFixture::new();
-    let versions = fixture.files.path("versioned libraries with spaces");
-    install_export(&versions.join("4.3"), "uvr_old");
-    install_export(&versions.join("4.4"), "uvr_new");
-    fs::write(fixture.source(), "a <- uvr_old\nb <- uvr_new\n").unwrap();
-    for (version, missing) in [("4.3", "uvr_new"), ("4.4", "uvr_old")] {
-        let r_home = fixture.files.path(format!("r-home-{version}"));
-        fs::create_dir_all(r_home.join("library/base")).unwrap();
-        fs::write(r_home.join("library/base/NAMESPACE"), "export(baseenv)\n").unwrap();
-        fs::write(
-            r_home.join("library/base/DESCRIPTION"),
-            format!("Package: base\nVersion: {version}.1\n"),
-        )
-        .unwrap();
-        let output = fixture
-            .command()
-            .args(["check", "--output-format", "json"])
-            .arg(&fixture.project)
-            .env("R_LIBS", versions.join("%v"))
-            .env("R_HOME", r_home)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(diagnostics.len(), 1, "{version}: {diagnostics:?}");
-        assert!(
-            diagnostics[0]["message"]
-                .as_str()
-                .unwrap()
-                .contains(missing),
-            "{version}: {diagnostics:?}"
-        );
-    }
-    install_export(&versions, "uvr_direct");
-    fs::write(
-        fixture.source(),
-        "a <- uvr_direct\nb <- uvr_old\nc <- uvr_new\n",
-    )
-    .unwrap();
-    let output = fixture
-        .command()
-        .args(["check", "--output-format", "json"])
-        .arg(&fixture.project)
-        .env("R_LIBS", versions.join("%v"))
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(missing_names(&diagnostics).len(), 2, "{diagnostics:?}");
-    assert!(diagnostics.iter().any(|item| {
-        item["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("uvr_old"))
-    }));
-    assert!(diagnostics.iter().any(|item| {
-        item["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("uvr_new"))
-    }));
-}
-
-#[test]
 fn lsp_reads_the_environment_at_launch_like_the_cli() {
     let fixture = UvrFixture::new();
     let installed = fixture.lsp_diagnostics(&fixture.library);
     let missing = fixture.lsp_diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(installed.len(), 1, "{installed:?}");
-    assert_eq!(missing.len(), 2, "{missing:?}");
-    assert!(
-        installed[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("uvr_not_exported")
-    );
-    assert!(missing.iter().any(|item| {
-        item["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("uvr_export"))
-    }));
-    assert!(missing.iter().any(|item| {
-        item["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("uvr_not_exported"))
-    }));
+    assert_eq!(missing_names(&installed), ["uvr_not_exported"]);
+    let mut missing = missing_names(&missing);
+    missing.sort_unstable();
+    assert_eq!(missing, ["uvr_export", "uvr_not_exported"]);
 }

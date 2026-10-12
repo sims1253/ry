@@ -1674,6 +1674,10 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_dplyr_join_schema.R
 - diagnostics: []
+  fixture: ok_dplyr_join_suffixes.R
+- diagnostics: []
+  fixture: ok_dplyr_select_aliases.R
+- diagnostics: []
   fixture: ok_dplyr_sequential_columns.R
 - diagnostics: []
   fixture: ok_dplyr_unknown_schema_data_mask.R
@@ -2207,6 +2211,16 @@ expression: snapshots
   fixture: ry060_dots_fallback_data_pronoun.R
 - diagnostics:
     - code: RY060
+      message: "column `x` not found in data frame schema; available columns: y, g"
+      severity: error
+      span:
+        column: 0
+        end: 185
+        line: 5
+        start: 179
+  fixture: ry060_select_negative_first.R
+- diagnostics:
+    - code: RY060
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
       severity: error
       span:
@@ -2229,6 +2243,72 @@ expression: snapshots
   fixture: ry096_hasarg_no_dots.R
 - diagnostics: []
   fixture: ry098_default_forced_before_assignment.R
+- diagnostics:
+    - code: RY001
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 4
+        end: 284
+        line: 4
+        start: 274
+    - code: RY001
+      message: "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 7
+        end: 319
+        line: 5
+        start: 309
+    - code: RY002
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+      span:
+        column: 4
+        end: 345
+        line: 6
+        start: 331
+    - code: RY001
+      message: "loop condition is `logical<len=3>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 7
+        end: 390
+        line: 7
+        start: 370
+    - code: RY001
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 4
+        end: 427
+        line: 10
+        start: 423
+    - code: RY001
+      message: "loop condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 7
+        end: 456
+        line: 11
+        start: 452
+    - code: RY002
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+      span:
+        column: 4
+        end: 495
+        line: 13
+        start: 491
+    - code: RY001
+      message: "loop condition is `logical<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+      span:
+        column: 7
+        end: 524
+        line: 14
+        start: 520
+  fixture: warn_condition_cardinality.R
 - diagnostics:
     - code: RY001
       message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"

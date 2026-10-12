@@ -62,7 +62,7 @@ impl RParser {
             })?;
         let root = tree.root_node();
         // Check nesting before recursive lowering (and eventual AST drop).
-        let (comments, special_operators, function_bodies) = collect_lexical(root, src)?;
+        let lexical = collect_lexical(root, src)?;
         let tree = tree.clone(); // Clone for return value; root borrows the original.
         let mut stmts = Vec::new();
         let mut cursor = root.walk();
@@ -103,10 +103,10 @@ impl RParser {
                 // only the decoded text (and parses the BOM cleanly), so
                 // the read boundary decides.
                 leading_bom: false,
-                special_operators,
+                special_operators: lexical.special_operators,
                 syntax_violations,
-                comments,
-                function_bodies,
+                comments: lexical.comments,
+                function_bodies: lexical.function_bodies,
             },
             tree,
         ))
@@ -990,24 +990,30 @@ fn process_r_escapes(s: &str) -> String {
 const MAX_SYNTAX_DEPTH: usize = 128;
 
 /// Comments, special-operator spans, and function ranges from one CST walk.
-type LexicalNodes = (Vec<crate::ast::Comment>, Vec<Span>, Vec<FunctionBody>);
+struct LexicalNodes {
+    comments: Vec<crate::ast::Comment>,
+    special_operators: Vec<Span>,
+    function_bodies: Vec<FunctionBody>,
+}
 
-/// Collect every `comment` node in the tree, returning `(line, body)`
-/// pairs in source order. The body is the text AFTER the leading `#`
-/// (untrimmed). These are the ONLY lexically-real comments -- a `#`
-/// that appears inside a string literal is part of the string, not a
-/// comment, so the suppression parser must consume this list rather
-/// than scanning source lines for `#`.
+/// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST
+/// lowering, and collect lexical nodes in the same walk.
+///
+/// Every `comment` node is collected in source order; its body is the text
+/// AFTER the leading `#` (untrimmed). These are the ONLY lexically-real
+/// comments -- a `#` that appears inside a string literal is part of the
+/// string, not a comment, so the suppression parser must consume this list
+/// rather than scanning source lines for `#`.
 ///
 /// The same walk also collects the spans of `special` nodes (the
 /// `%...%` user-defined operator tokens): R's lexer scans comments and
 /// special-operator bodies as raw bytes without multibyte validation,
-/// so the checker's invalid-UTF-8 tolerance treats both the same way
-/// (#376). Special spans are returned sorted by start offset.
+/// so the checker's invalid-UTF-8 tolerance treats both the same way.
+/// Special spans are returned sorted by start offset.
+///
 /// It also collects every function's lexical span and any braced body span,
 /// sorted by function span, so annotation readers can identify the innermost
 /// owning function.
-/// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST lowering.
 fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, ParseError> {
     let mut out = Vec::new();
     let mut special = Vec::new();
@@ -1051,7 +1057,11 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
     out.sort_by_key(|c| c.line);
     special.sort_by_key(|span| span.start);
     bodies.sort_by_key(|body| (body.function.start, body.function.end));
-    Ok((out, special, bodies))
+    Ok(LexicalNodes {
+        comments: out,
+        special_operators: special,
+        function_bodies: bodies,
+    })
 }
 
 /// A node's span without a `&self` receiver (the free-function twin of

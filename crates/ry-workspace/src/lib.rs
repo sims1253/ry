@@ -21,10 +21,7 @@ mod serialized;
 pub use serialized::InventoryFailure;
 use serialized::serialized_inventory;
 
-pub use packages::{
-    NATIVE_REGISTRATION_SENTINEL, NATIVE_ROUTINE_PREFIX_SENTINEL, NamespaceMetadata,
-    attached_packages, namespace_metadata,
-};
+pub use packages::{NamespaceMetadata, PackageFacts, attached_packages, namespace_metadata};
 pub use ry_core::FFI_PRIMITIVES;
 
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
@@ -192,6 +189,8 @@ pub struct WorkspaceContext {
     pub attached_packages: HashSet<String>,
     pub bare_bindings: HashMap<String, HashSet<String>>,
     pub external_bindings: HashMap<String, HashSet<String>>,
+    /// Files whose package facts differ from the default.
+    pub package_facts: HashMap<String, PackageFacts>,
     pub imported_bindings: HashMap<String, HashMap<String, String>>,
     pub s3_methods: HashMap<String, HashSet<(String, String)>>,
     pub load_bindings: HashMap<String, HashMap<usize, HashSet<String>>>,
@@ -202,8 +201,6 @@ pub struct WorkspaceContext {
 pub enum ResolveError {
     #[error("workspace root is not a directory: {0}")]
     InvalidRoot(PathBuf),
-    #[error("invalid environment path pattern: {0}")]
-    InvalidEnvironmentPattern(#[from] glob::PatternError),
 }
 
 /// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
@@ -461,22 +458,6 @@ pub fn resolve_workspace_context<'a>(
     if !root.is_dir() {
         return Err(ResolveError::InvalidRoot(root.to_path_buf()));
     }
-    let profiles = config
-        .environments
-        .iter()
-        .map(|profile| {
-            let patterns = profile
-                .paths
-                .iter()
-                .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
-                .collect::<Result<Vec<_>, _>>()?;
-            let anchor = profile.root.as_deref().unwrap_or(root);
-            let anchor = anchor
-                .canonicalize()
-                .unwrap_or_else(|_| anchor.to_path_buf());
-            Ok((profile, patterns, anchor))
-        })
-        .collect::<Result<Vec<_>, glob::PatternError>>()?;
     let files = environment.files;
     let user_stubs = environment.user_stubs;
     let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
@@ -500,6 +481,7 @@ pub fn resolve_workspace_context<'a>(
     let mut attached = HashSet::new();
     let mut bare_attached = HashMap::new();
     let mut bindings = HashMap::new();
+    let mut package_facts = HashMap::new();
     let mut imported_from = HashMap::new();
     let mut s3_methods = HashMap::new();
     let mut load_bindings = HashMap::new();
@@ -520,31 +502,14 @@ pub fn resolve_workspace_context<'a>(
     for file in &files {
         let mut file_attached: HashSet<String> = configured_packages.iter().cloned().collect();
         let mut file_bindings = HashSet::new();
+        let mut file_package_facts = PackageFacts::default();
         let mut file_s3_methods = HashSet::new();
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        if !profiles.is_empty()
-            && let Ok(path) = Path::new(&file.path)
-                .canonicalize()
-                .or_else(|_| std::path::absolute(&file.path))
-        {
-            for (profile, patterns, anchor) in &profiles {
-                let Ok(relative) = path.strip_prefix(anchor) else {
-                    continue;
-                };
-                let relative = relative.to_string_lossy().replace('\\', "/");
-                if patterns.iter().any(|pattern| {
-                    pattern.matches_with(
-                        &relative,
-                        glob::MatchOptions {
-                            require_literal_separator: true,
-                            ..Default::default()
-                        },
-                    )
-                }) {
-                    file_bindings.extend(profile.bindings.iter().cloned());
-                }
+        for profile in &config.environments {
+            if profile.scope.matches(Path::new(&file.path)) {
+                file_bindings.extend(profile.bindings.iter().cloned());
             }
         }
         if let Some(root) = package_root_cache
@@ -596,15 +561,8 @@ pub fn resolve_workspace_context<'a>(
             // Registering an S3 method does not install the generic as a
             // namespace binding. Real imports/dynamic bindings remain above.
             file_bindings.extend(metadata.native_routines.iter().cloned());
-            file_bindings.extend(
-                metadata
-                    .native_routine_prefixes
-                    .iter()
-                    .map(|prefix| format!("{}{prefix}", packages::NATIVE_ROUTINE_PREFIX_SENTINEL)),
-            );
-            if metadata.native_registration {
-                file_bindings.insert(packages::NATIVE_REGISTRATION_SENTINEL.to_string());
-            }
+            file_package_facts.native_routine_prefixes = metadata.native_routine_prefixes.clone();
+            file_package_facts.native_registration = metadata.native_registration;
             file_s3_methods.extend(metadata.s3_methods.iter().cloned());
             // `import(pkg)` puts pkg's exports in the package namespace, not
             // on the search path. Two execution contexts still resolve those
@@ -626,7 +584,7 @@ pub fn resolve_workspace_context<'a>(
                     && metadata.imported_packages.is_empty()
                     && root.join("NAMESPACE").is_file()
                 {
-                    file_bindings.insert(packages::BASE_BEFORE_SEARCH_PATH_SENTINEL.to_string());
+                    file_package_facts.base_before_search_path = true;
                 }
                 // Packages that rely on DESCRIPTION Depends may omit a
                 // NAMESPACE (Quarto/Shiny projects commonly do). Depends are
@@ -730,6 +688,9 @@ pub fn resolve_workspace_context<'a>(
         attached.extend(file_attached.iter().cloned());
         bare_attached.insert(file.path.clone(), file_attached);
         bindings.insert(file.path.clone(), file_bindings);
+        if file_package_facts != PackageFacts::default() {
+            package_facts.insert(file.path.clone(), file_package_facts);
+        }
         imported_from.insert(file.path.clone(), file_imported_from);
         s3_methods.insert(file.path.clone(), file_s3_methods);
     }
@@ -737,6 +698,7 @@ pub fn resolve_workspace_context<'a>(
         attached_packages: attached,
         bare_bindings: bare_attached,
         external_bindings: bindings,
+        package_facts,
         imported_bindings: imported_from,
         s3_methods,
         load_bindings,

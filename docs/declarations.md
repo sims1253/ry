@@ -7,10 +7,10 @@ scope exit describes one analysis snapshot. A declaration describes a
 provider's claim about a function, with its original source and attachment.
 Neither a compact hint nor an inferred fact silently becomes a contract.
 
-This document describes the declaration core in [#592], shared checking in
-[#593], and the first source adapter in [#594]. The adapter is opt-in and reads
-the audited `typehint` 0.1.0 `#| formal class` comment convention from named,
-braced function bodies. It never runs inspected R code or assumes that a call
+This document describes the declaration core, shared checking, and the
+`typehint` source adapter. The adapter is opt-in and reads the audited
+`typehint` 0.1.0 `#| formal class` comment convention from named, braced
+function bodies. It never runs inspected R code or assumes that a call
 to `check_types()` succeeded.
 The `#|` must begin a source line after indentation; an inline R comment is
 not a provider clause. A comment in a nested function's header, default, or
@@ -144,10 +144,10 @@ checks, and independent return evidence remain available. A typeshed
 signature alone does not establish that a call is effect-free.
 For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
-absent. Local assignments inside an immediately invoked closure belong to
-that closure; they cannot certify a later read in its caller.
-Named helpers use their own local binding proofs and stable project bindings.
-Caller-local definitions and aliases do not prove a helper's free-name lookup.
+absent. A call keeps later contract checks only when it invokes a known user
+function with literal arguments whose body reads nothing but its formals and
+runs no call, operator, or subscript; its `<<-` targets are then the only
+bindings it can replace.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and
@@ -167,7 +167,3 @@ field retains its source-definition meaning. Schema 1 and 2 output remains
 unchanged for callers that do not request annotations. If a native filename
 collision makes attachment ambiguous, annotation export fails with RY117
 instead of presenting an empty array as a complete record set.
-
-[#592]: https://github.com/sims1253/ry/issues/592
-[#593]: https://github.com/sims1253/ry/issues/593
-[#594]: https://github.com/sims1253/ry/issues/594

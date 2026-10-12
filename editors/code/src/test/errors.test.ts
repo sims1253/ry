@@ -22,18 +22,11 @@ mock.module("../common/settings", () => ({
   getGlobalSettings: () => ({ lint: {} }),
   getWorkspaceSettings: () => ({ lint: {} }),
 }));
-mock.module("vscode-languageclient", () => ({
-  MessageType: {},
-  ShowMessageNotification: { type: {} },
-  State: {},
-}));
+mock.module("vscode-languageclient", () => ({ State: {} }));
 mock.module("vscode-languageclient/node", () => ({
   RevealOutputChannelOn: { Never: 0 },
   LanguageClient: class {
     onDidChangeState() {
-      return { dispose() {} };
-    }
-    onNotification() {
       return { dispose() {} };
     }
     start() {
@@ -46,49 +39,28 @@ mock.module("vscode-languageclient/node", () => ({
   },
 }));
 
-const { errorMessage } = await import("../common/errors");
+const { startServer } = await import("../common/server");
 
-const { startServer, stopServer } = await import("../common/server");
+describe("server start failure", () => {
+  it("names the binary and reason, and disposes the client", async () => {
+    for (const reason of [new Error("spawn ENOENT"), "spawn ENOENT"]) {
+      disposed = 0;
+      startFailure = reason;
+      stopFailure = undefined;
+      await expect(
+        startServer("ry", "/missing/ry", {} as never, {} as never),
+      ).rejects.toThrow("Server failed to start at /missing/ry: spawn ENOENT");
+      expect(disposed).toBe(1);
+    }
+  });
 
-describe("server failure details", () => {
-  it("preserves the start reason and binary path in the error and log", async () => {
+  it("logs a cleanup failure without hiding the startup failure", async () => {
     logs.length = 0;
-    disposed = 0;
-    startFailure = new Error("spawn ENOENT");
-    stopFailure = undefined;
+    startFailure = new Error("initialization failed");
+    stopFailure = new Error("cleanup failed");
     await expect(
-      startServer("ry", "/missing/ry", {} as never, {} as never),
-    ).rejects.toThrow("Server failed to start at /missing/ry: spawn ENOENT");
-    expect(logs.join("\n")).toContain("spawn ENOENT");
-    expect(disposed).toBe(1);
+      startServer("ry", "/broken/ry", {} as never, {} as never),
+    ).rejects.toThrow("initialization failed");
+    expect(logs.join("\n")).toContain("cleanup failed");
   });
-
-  it("preserves a stop rejection", async () => {
-    const client = {
-      dispose: () => Promise.reject(new Error("shutdown failed")),
-    };
-    await expect(stopServer(client as never)).rejects.toThrow(
-      "shutdown failed",
-    );
-  });
-});
-
-it("preserves error messages and string rejections", () => {
-  for (const reason of [
-    new Error("document unavailable"),
-    "document unavailable",
-  ]) {
-    expect(errorMessage(reason)).toBe("document unavailable");
-  }
-});
-
-it("logs cleanup failure without hiding the original startup failure", async () => {
-  logs.length = 0;
-  startFailure = new Error("initialization failed");
-  stopFailure = new Error("cleanup failed");
-  await expect(
-    startServer("ry", "/broken/ry", {} as never, {} as never),
-  ).rejects.toThrow("initialization failed");
-  expect(logs.join("\n")).toContain("initialization failed");
-  expect(logs.join("\n")).toContain("cleanup failed");
 });

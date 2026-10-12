@@ -80,9 +80,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
-    /// Directory containing the configuration, assigned when it is loaded.
+    /// `paths` compiled against the config root when the file is loaded.
     #[serde(skip)]
-    pub root: Option<PathBuf>,
+    pub scope: ScopedPaths,
 }
 
 /// Static readers for existing annotation conventions. Each reader is
@@ -101,9 +101,9 @@ pub struct TypehintConfig {
     pub adopt: bool,
     pub version: Option<String>,
     pub paths: Vec<String>,
-    /// Directory containing the configuration, assigned when loaded.
+    /// `paths` compiled against the config root when the file is loaded.
     #[serde(skip)]
-    pub root: Option<PathBuf>,
+    scope: ScopedPaths,
 }
 
 /// One ordered per-file rule policy. Later matching tables replace earlier
@@ -123,7 +123,9 @@ pub struct RuleOverrideConfig {
 /// the deepest existing ancestor. A `..` after a missing ancestor is
 /// ambiguous and does not match on Unix. Windows non-verbatim paths use
 /// native normalization, which removes parent components before lookup.
-#[derive(Debug, Clone)]
+/// `\` separates components only on Windows; on Unix it is a filename byte.
+/// The default scope matches nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScopedPaths {
     root: Option<PathBuf>,
     patterns: Vec<glob::Pattern>,
@@ -131,13 +133,31 @@ pub struct ScopedPaths {
 
 impl ScopedPaths {
     pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
+        Self::compile(root, patterns).map_err(|(_, error)| error)
+    }
+
+    /// Like [`ScopedPaths::new`], reporting which pattern failed.
+    fn compile<'a>(
+        root: &Path,
+        patterns: &'a [String],
+    ) -> Result<Self, (&'a String, glob::PatternError)> {
         let patterns = patterns
             .iter()
-            .map(String::as_str)
-            .map(compile_scoped_pattern)
+            .map(|pattern| {
+                let native = if cfg!(windows) {
+                    pattern.replace('\\', "/")
+                } else {
+                    pattern.clone()
+                };
+                glob::Pattern::new(&native).map_err(|error| (pattern, error))
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let root = scoped_path_identity(root);
         Ok(Self { root, patterns })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
     }
 
     pub fn matches(&self, source: &Path) -> bool {
@@ -248,21 +268,12 @@ mod native_display_tests {
     }
 }
 
-fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternError> {
-    let pattern = if cfg!(windows) {
-        pattern.replace('\\', "/")
-    } else {
-        pattern.to_owned()
-    };
-    glob::Pattern::new(&pattern)
-}
-
 /// Resolve the longest existing prefix with filesystem semantics. This
 /// preserves the meaning of `symlink/..` and of final symlink files while
 /// still matching unsaved files and virtual descendants under an existing
 /// folder. Parent components that remain after platform normalization cannot
 /// be resolved after a missing prefix and are declined.
-fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
+pub fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
     for ancestor in absolute.ancestors() {
@@ -304,13 +315,10 @@ impl TypehintConfig {
             && !self.paths.is_empty()
     }
 
-    /// Compile the audited, explicitly adopted source scope once per
-    /// analysis. Programmatically built invalid configs remain disabled.
+    /// The audited, explicitly adopted source scope. Configs that were not
+    /// loaded from a file have no root and adopt nothing.
     pub fn adopted_scope(&self) -> Option<ScopedPaths> {
-        if !self.adoption_is_complete() {
-            return None;
-        }
-        ScopedPaths::new(self.root.as_deref()?, &self.paths).ok()
+        self.adoption_is_complete().then(|| self.scope.clone())
     }
 }
 
@@ -397,6 +405,10 @@ pub struct Config {
     pub baseline: Option<PathBuf>,
     /// Bounded directory discovery limits.
     pub index: IndexConfig,
+    /// Absolute directory containing the loaded `ry.toml`; `None` for
+    /// built-in defaults. Relative config paths are anchored here.
+    #[serde(skip)]
+    pub root: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -426,6 +438,7 @@ impl Default for Config {
             typeshed: Vec::new(),
             baseline: None,
             index: IndexConfig::default(),
+            root: None,
         }
     }
 }
@@ -466,67 +479,45 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        let root = path.parent().unwrap_or(Path::new("."));
-        for profile in &mut cfg.environments {
-            profile.root = Some(
-                std::path::absolute(root).map_err(|source| ConfigError::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })?,
-            );
-            for pattern in &profile.paths {
-                glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
-                    ConfigError::InvalidEnvironmentPattern {
-                        path: path.to_path_buf(),
-                        pattern: pattern.clone(),
-                        source,
-                    }
-                })?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let root = std::path::absolute(parent.unwrap_or(Path::new("."))).map_err(|source| {
+            ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
             }
+        })?;
+        let scope = |key: String, patterns: &[String]| {
+            ScopedPaths::compile(&root, patterns).map_err(|(pattern, source)| {
+                ConfigError::InvalidPattern {
+                    path: path.to_path_buf(),
+                    key,
+                    pattern: pattern.clone(),
+                    source,
+                }
+            })
+        };
+        for profile in &mut cfg.environments {
+            profile.scope = scope(
+                format!("environments `{}` paths", profile.name),
+                &profile.paths,
+            )?;
         }
-        for (index, override_config) in cfg.rule_overrides.iter().enumerate() {
-            if override_config.paths.is_empty() {
+        for (index, table) in cfg.rule_overrides.iter().enumerate() {
+            if table.paths.is_empty() {
                 return Err(ConfigError::EmptyRuleOverridePaths {
                     path: path.to_path_buf(),
                     index: index + 1,
                 });
             }
-            for pattern in &override_config.paths {
-                compile_scoped_pattern(pattern).map_err(|source| {
-                    ConfigError::InvalidRuleOverridePattern {
-                        path: path.to_path_buf(),
-                        index: index + 1,
-                        pattern: pattern.clone(),
-                        source,
-                    }
-                })?;
-            }
+            scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
         }
-        for pattern in &cfg.include_build_ignored {
-            glob::Pattern::new(&pattern.replace('\\', "/")).map_err(|source| {
-                ConfigError::InvalidIncludePattern {
-                    path: path.to_path_buf(),
-                    pattern: pattern.clone(),
-                    source,
-                }
-            })?;
-        }
-        cfg.annotations.typehint.root =
-            Some(
-                std::path::absolute(root).map_err(|source| ConfigError::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })?,
-            );
-        for pattern in &cfg.annotations.typehint.paths {
-            compile_scoped_pattern(pattern).map_err(|source| {
-                ConfigError::InvalidAnnotationPattern {
-                    path: path.to_path_buf(),
-                    pattern: pattern.clone(),
-                    source,
-                }
-            })?;
-        }
+        scope("include-build-ignored".into(), &cfg.include_build_ignored)?;
+        cfg.annotations.typehint.scope = scope(
+            "annotations.typehint paths".into(),
+            &cfg.annotations.typehint.paths,
+        )?;
         if cfg.annotations.typehint.adopt && !cfg.annotations.typehint.adoption_is_complete() {
             return Err(ConfigError::InvalidTypehintAdoption {
                 path: path.to_path_buf(),
@@ -542,34 +533,29 @@ impl Config {
         {
             *baseline = root.join(&*baseline);
         }
-        cfg.validate().map_err(|field| {
-            if field == "max-serialized-bytes" {
-                ConfigError::InvalidSerializedLimit {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                ConfigError::InvalidIndex {
-                    path: path.to_path_buf(),
-                    field,
-                }
-            }
-        })?;
+        cfg.validate_limits(path)?;
+        cfg.root = Some(root);
         Ok(cfg)
     }
 
-    /// Return the first invalid resource limit.
-    pub fn validate(&self) -> Result<(), &'static str> {
+    /// Reject resource limits outside their documented ranges.
+    fn validate_limits(&self, path: &Path) -> Result<(), ConfigError> {
         if !(1..=MAX_SERIALIZED_BYTES).contains(&self.max_serialized_bytes) {
-            return Err("max-serialized-bytes");
+            return Err(ConfigError::InvalidSerializedLimit {
+                path: path.to_path_buf(),
+            });
         }
-        if self.index.max_files == 0 {
-            return Err("index.max-files");
-        }
-        if self.index.max_file_bytes == 0 {
-            return Err("index.max-file-bytes");
-        }
-        if self.index.max_depth == 0 {
-            return Err("index.max-depth");
+        for (field, value) in [
+            ("index.max-files", self.index.max_files),
+            ("index.max-file-bytes", self.index.max_file_bytes),
+            ("index.max-depth", self.index.max_depth),
+        ] {
+            if value == 0 {
+                return Err(ConfigError::InvalidIndex {
+                    path: path.to_path_buf(),
+                    field,
+                });
+            }
         }
         Ok(())
     }
@@ -649,7 +635,7 @@ pub struct CliOverrides {
 }
 
 impl Config {
-    /// Merge CLI overrides into this config, returning a new `Config`.
+    /// Merge CLI overrides into this config.
     ///
     /// List fields (`error`, `warn`, `ignore`) have the CLI values
     /// APPENDED to the config file's values. Scalar boolean / string
@@ -660,47 +646,28 @@ impl Config {
     /// `verbose` and `quiet` are additive: the CLI count is added on
     /// top of the config count, so `verbose = 1` in `ry.toml` plus a
     /// single `-v` flag yields a final count of 2.
-    pub fn merge_cli(self, cli: CliOverrides) -> Self {
-        let mut errors = self.error;
-        errors.extend(cli.error);
-        let mut warns = self.warn;
-        warns.extend(cli.warn);
-        let mut ignores = self.ignore;
-        ignores.extend(cli.ignore);
-        let mut typeshed = self.typeshed;
-        typeshed.extend(cli.typeshed);
-
-        let output_format = cli.output_format.unwrap_or(self.output_format);
-        let baseline = cli.baseline.or(self.baseline);
-
-        Self {
-            error_on_warning: cli.error_on_warning.unwrap_or(self.error_on_warning),
-            exit_zero: cli.exit_zero.unwrap_or(self.exit_zero),
-            error: errors,
-            warn: warns,
-            ignore: ignores,
-            rule_overrides: self.rule_overrides,
-            select: self.select,
-            extend_select: self.extend_select,
-            exclude: self.exclude,
-            include_build_ignored: self.include_build_ignored,
-            check_test_fixtures: self.check_test_fixtures,
-            output_format,
-            // Saturating add so a config value of 255 plus a CLI flag
-            // stays within u8 rather than panicking on overflow.
-            verbose: self.verbose.saturating_add(cli.verbose),
-            quiet: self.quiet.saturating_add(cli.quiet),
-            // Config-only (no CLI flag): passes through unchanged.
-            packages: self.packages,
-            globals: self.globals,
-            max_serialized_bytes: self.max_serialized_bytes,
-            environments: self.environments,
-            annotations: self.annotations,
-            reports: self.reports,
-            typeshed,
-            baseline,
-            index: self.index,
+    pub fn merge_cli(mut self, cli: CliOverrides) -> Self {
+        self.error.extend(cli.error);
+        self.warn.extend(cli.warn);
+        self.ignore.extend(cli.ignore);
+        self.typeshed.extend(cli.typeshed);
+        if let Some(baseline) = cli.baseline {
+            self.baseline = Some(baseline);
         }
+        if let Some(error_on_warning) = cli.error_on_warning {
+            self.error_on_warning = error_on_warning;
+        }
+        if let Some(exit_zero) = cli.exit_zero {
+            self.exit_zero = exit_zero;
+        }
+        if let Some(output_format) = cli.output_format {
+            self.output_format = output_format;
+        }
+        // Saturating add so a config value of 255 plus a CLI flag stays
+        // within u8 rather than panicking on overflow.
+        self.verbose = self.verbose.saturating_add(cli.verbose);
+        self.quiet = self.quiet.saturating_add(cli.quiet);
+        self
     }
 }
 
@@ -776,21 +743,10 @@ pub enum ConfigError {
         "config file {path} has invalid max-serialized-bytes: expected 1..=268435456 (256 MiB)"
     )]
     InvalidSerializedLimit { path: PathBuf },
-    #[error("config file {path} has invalid include-build-ignored pattern `{pattern}`: {source}")]
-    InvalidIncludePattern {
+    #[error("config file {path} has invalid {key} pattern `{pattern}`: {source}")]
+    InvalidPattern {
         path: PathBuf,
-        pattern: String,
-        source: glob::PatternError,
-    },
-    #[error("config file {path} has invalid environment path pattern `{pattern}`: {source}")]
-    InvalidEnvironmentPattern {
-        path: PathBuf,
-        pattern: String,
-        source: glob::PatternError,
-    },
-    #[error("config file {path} has invalid typehint path pattern `{pattern}`: {source}")]
-    InvalidAnnotationPattern {
-        path: PathBuf,
+        key: String,
         pattern: String,
         source: glob::PatternError,
     },
@@ -800,15 +756,6 @@ pub enum ConfigError {
     InvalidTypehintAdoption { path: PathBuf },
     #[error("config file {path} has rule-overrides table #{index} without paths")]
     EmptyRuleOverridePaths { path: PathBuf, index: usize },
-    #[error(
-        "config file {path} has invalid rule-overrides table #{index} path pattern `{pattern}`: {source}"
-    )]
-    InvalidRuleOverridePattern {
-        path: PathBuf,
-        index: usize,
-        pattern: String,
-        source: glob::PatternError,
-    },
 }
 
 #[cfg(test)]
@@ -818,25 +765,37 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn invalid_build_include_globs_are_configuration_errors() {
+    fn invalid_scoped_globs_are_configuration_errors() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("ry.toml");
-        fs::write(&path, "include-build-ignored = ['[']\n").unwrap();
-        assert!(matches!(
-            Config::load_file(&path),
-            Err(ConfigError::InvalidIncludePattern { .. })
-        ));
-    }
-
-    #[test]
-    fn invalid_environment_globs_are_configuration_errors() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("ry.toml");
-        fs::write(&path, "[[environments]]\nname = 'broken'\npaths = ['[']\n").unwrap();
-        assert!(matches!(
-            Config::load_file(&path),
-            Err(ConfigError::InvalidEnvironmentPattern { .. })
-        ));
+        for (toml, key) in [
+            ("include-build-ignored = ['[']\n", "include-build-ignored"),
+            (
+                "[[environments]]\nname = 'broken'\npaths = ['[']\n",
+                "environments `broken` paths",
+            ),
+            (
+                "[[rule-overrides]]\npaths = ['R/**', '[']\n",
+                "rule-overrides #1 paths",
+            ),
+            (
+                "[annotations.typehint]\npaths = ['[']\n",
+                "annotations.typehint paths",
+            ),
+        ] {
+            fs::write(&path, toml).unwrap();
+            match Config::load_file(&path) {
+                Err(ConfigError::InvalidPattern {
+                    key: actual,
+                    pattern,
+                    ..
+                }) => {
+                    assert_eq!(actual, key);
+                    assert_eq!(pattern, "[");
+                }
+                other => panic!("{toml}: {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -854,15 +813,6 @@ mod tests {
         ));
         fs::write(
             &path,
-            "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['[']\n",
-        )
-        .unwrap();
-        assert!(matches!(
-            Config::load_file(&path),
-            Err(ConfigError::InvalidAnnotationPattern { .. })
-        ));
-        fs::write(
-            &path,
             "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n",
         )
         .unwrap();
@@ -872,10 +822,7 @@ mod tests {
             config.annotations.typehint.version.as_deref(),
             Some("0.1.0")
         );
-        assert_eq!(
-            config.annotations.typehint.root.as_deref(),
-            Some(dir.path())
-        );
+        assert_eq!(config.root.as_deref(), Some(dir.path()));
         let scope = config.annotations.typehint.adopted_scope().unwrap();
         assert!(scope.matches(&dir.path().join("R/code.R")));
         assert!(scope.matches(&dir.path().join("R/sub/code.R")));
@@ -1108,18 +1055,13 @@ paths = ["inst/shiny/**"]
     }
 
     #[test]
-    fn invalid_rule_override_scope_is_a_config_error() {
+    fn rule_override_without_paths_is_a_config_error() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("ry.toml");
         fs::write(&path, "[[rule-overrides]]\nerror = [\"RY040\"]\n").unwrap();
         assert!(matches!(
             Config::load_file(&path),
             Err(ConfigError::EmptyRuleOverridePaths { index: 1, .. })
-        ));
-        fs::write(&path, "[[rule-overrides]]\npaths = [\"[\"]\n").unwrap();
-        assert!(matches!(
-            Config::load_file(&path),
-            Err(ConfigError::InvalidRuleOverridePattern { index: 1, .. })
         ));
     }
 

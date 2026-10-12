@@ -27,17 +27,12 @@ cargo test -p ry-checker --test oracle -- --include-ignored
 Each oracle fixture runs in a fresh `Rscript --vanilla` process. Its exit
 status determines whether R errored; fixtures cannot leak bindings, attached
 packages, or daemon state into later fixtures.
-The [bounded semantic-generation guide](docs/corpus/semantic-generation.md)
-describes the audited condition family, required R gate, reducer, sandboxed
-campaign, and retained case records.
 
 The [instruction-count corpus guide](docs/corpus/instructions.md) explains
 the fixed performance sample, local measurements, and warn-only CI deltas.
 Run `python3 ecosystem/test-instructions.py` after changing that harness.
 The [performance tracking guide](docs/performance.md) covers core timings,
 extension activation, package sizes, and the historical dashboard.
-The [project trace guide](docs/project-trace.md) shows how to inspect bounded
-collection, refinement, and emission decisions during checker development.
 
 ## Fixture conventions
 
@@ -78,9 +73,22 @@ merges only if:
 
 When inference is uncertain, return `unknown` and say nothing.
 
-For semantic, performance, and concurrency changes, use the short
-[evidence playbook](docs/contributing/evidence.md) and its optional experiment
-template to retain decisive controls, failed approaches, and replay commands.
+## Evidence for semantic changes
+
+For semantic, performance, and concurrency changes, the PR description should:
+
+- name the mechanism it changes, a witness that should change, an existing
+  true positive that must remain, and an adjacent idiom that must stay quiet;
+- back R-semantics claims with `Rscript --vanilla` output, ideally as oracle
+  fixtures, and speed claims with a fixed workload;
+- list the exact commands run, their results, and any check that did not run
+  (a missing tool or unrun comparison is not a pass);
+- call out changes to oracle premises, `known-gap` tags, triage labels,
+  benchmark workloads, and baselines for explicit review.
+
+Aggregate corpus totals and updated expected values are not evidence that
+individual findings were preserved. For a rejected approach, record the
+invalid assumption and the smallest counterexample in the issue.
 
 ## Typeshed changes
 

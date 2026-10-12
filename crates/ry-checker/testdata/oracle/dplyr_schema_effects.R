@@ -116,3 +116,16 @@ stopifnot(inherits(dplyr::group_by(small, big = x > mean(x)), "grouped_df"))
 stopifnot(identical(names(base::subset(small, select = x)), "x"))
 stopifnot(identical(names(base::subset(small, select = c(new = x))), "x"))
 stopifnot(identical(base::with(base::subset(small, select = x), x + 1L), 2L))
+
+# A leading negative selector starts from every column.
+wide <- data.frame(x = 1L, y = 2L, g = 3L)
+stopifnot(identical(names(dplyr::select(wide, -x, y)), c("y", "g")))
+# Shared non-key join columns are suffixed.
+joined <- dplyr::left_join(data.frame(id = 1L, v = 2), data.frame(id = 1L, v = "a"), by = "id")
+stopifnot(identical(names(joined), c("id", "v.x", "v.y")))
+# Each named selector of one column is a separate output.
+stopifnot(identical(names(dplyr::select(wide, a = x, b = x)), c("a", "b")))
+stopifnot(identical(names(dplyr::select(wide, -x, a = y, b = y)), c("a", "g", "b")))
+# Named tables may surround `by`; the shared non-key column is still suffixed.
+reordered <- dplyr::left_join(x = data.frame(id = 1L, v = 2), by = "id", y = data.frame(id = 1L, v = "a"))
+stopifnot(identical(names(reordered), c("id", "v.x", "v.y")))

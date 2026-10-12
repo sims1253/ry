@@ -15,7 +15,11 @@ fn is_file_eligible_with_excludes(
     // Match the workspace entry name, not a canonicalized symlink target: an
     // explicit exclude for `linked.R` must exclude that entry regardless of
     // where it points.
-    let relative = path.strip_prefix(root).unwrap_or(path);
+    // `absolute` only joins the working directory, so a relative walk root
+    // such as `.` still lines up with the config root.
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let relative = path.strip_prefix(&root).unwrap_or(&path);
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 
@@ -224,7 +228,7 @@ pub fn is_single_file_walk_admitted(
             {
                 inherited_buildignore = true;
             }
-            if inherited_buildignore && includes.patterns.is_empty() {
+            if inherited_buildignore && includes.is_empty() {
                 return false;
             }
             // Descending into a nested package swaps the pattern set while
@@ -279,14 +283,9 @@ pub fn is_single_file_walk_admitted(
 /// Compile `include_build_ignored` patterns against `anchor` (the walk's
 /// `exclude_root.unwrap_or(walk_root)`), shared by the directory walk and
 /// the single-file verdict so the rescue rule cannot drift between them.
-fn compile_build_ignored_includes(anchor: &Path, patterns: &[String]) -> BuildIgnoredIncludes {
-    BuildIgnoredIncludes {
-        root: std::path::absolute(anchor).unwrap_or_else(|_| anchor.to_path_buf()),
-        patterns: patterns
-            .iter()
-            .filter_map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")).ok())
-            .collect(),
-    }
+/// Config loading rejects invalid patterns.
+fn compile_build_ignored_includes(anchor: &Path, patterns: &[String]) -> ry_config::ScopedPaths {
+    ry_config::ScopedPaths::new(anchor, patterns).unwrap_or_default()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -362,32 +361,6 @@ impl SkippedPaths {
         } else {
             self.omitted += 1;
         }
-    }
-}
-
-struct BuildIgnoredIncludes {
-    root: PathBuf,
-    patterns: Vec<glob::Pattern>,
-}
-
-impl BuildIgnoredIncludes {
-    fn matches(&self, path: &Path) -> bool {
-        let Ok(path) = std::path::absolute(path) else {
-            return false;
-        };
-        let Ok(relative) = path.strip_prefix(&self.root) else {
-            return false;
-        };
-        let relative = relative.to_string_lossy().replace('\\', "/");
-        self.patterns.iter().any(|pattern| {
-            pattern.matches_with(
-                &relative,
-                glob::MatchOptions {
-                    require_literal_separator: true,
-                    ..Default::default()
-                },
-            )
-        })
     }
 }
 
@@ -592,7 +565,7 @@ fn discover_recursive(
     truncated: &mut TruncationReport,
     skipped: &mut SkippedPaths,
     read_errors: &mut Vec<(PathBuf, String)>,
-    includes: &BuildIgnoredIncludes,
+    includes: &ry_config::ScopedPaths,
     inherited_buildignore: bool,
     package_root: Option<&Path>,
     buildignore: &[glob::Pattern],
@@ -642,8 +615,7 @@ fn discover_recursive(
                     .any(|ancestor| is_rbuildignored(root, ancestor, buildignore))
             });
         if build_ignored
-            && ((directory && includes.patterns.is_empty())
-                || (!directory && !includes.matches(&path)))
+            && ((directory && includes.is_empty()) || (!directory && !includes.matches(&path)))
         {
             skipped.record(&path, directory, ".Rbuildignore", limits.max_files);
             continue;

@@ -30,12 +30,27 @@ struct NamedFunction {
     params: Vec<(String, bool)>,
 }
 
-struct Clause<'a> {
-    span: Span,
-    argument: Option<&'a str>,
-    class: Option<&'a str>,
-    residual: Option<ResidualConstraint>,
-    error: Option<String>,
+enum Clause<'a> {
+    /// `#| formal class [rest]`. An unsupported class spelling has no
+    /// `class`; the residual keeps it together with any trailing expression.
+    Claim {
+        span: Span,
+        argument: &'a str,
+        class: Option<&'a str>,
+        residual: Option<ResidualConstraint>,
+    },
+    Invalid {
+        span: Span,
+        reason: String,
+    },
+}
+
+impl Clause<'_> {
+    fn span(&self) -> Span {
+        match self {
+            Self::Claim { span, .. } | Self::Invalid { span, .. } => *span,
+        }
+    }
 }
 
 /// Read explicitly adopted comments from a parsed source file. Invalid R
@@ -130,13 +145,9 @@ pub fn read_records_at(
         while end > start && !file.source.is_char_boundary(end) {
             end -= 1;
         }
-        let Some(full_raw) = file.source.get(start..full_end) else {
+        let Some(raw) = file.source.get(start..end) else {
             continue;
         };
-        if !full_raw.starts_with('#') || full_raw[1..] != comment.body {
-            continue;
-        }
-        let raw = &full_raw[..end - start];
         // The audited provider requires '#' and '|' to be adjacent. A
         // regular '# | ...' comment is not a typehint declaration.
         let Some(after_pipe) = comment.body.strip_prefix('|') else {
@@ -144,10 +155,7 @@ pub fn read_records_at(
         };
         // `typehint` reads printed source lines after trimming indentation.
         // A trailing `NULL #| ...` or `{ #| ...` comment is ordinary R prose.
-        let Some(line_start) = line_starts.get(comment.line).copied() else {
-            continue;
-        };
-        if !file.source[line_start..start]
+        if !file.source[start - comment.col..start]
             .bytes()
             .all(|byte| matches!(byte, b' ' | b'\t'))
         {
@@ -181,14 +189,11 @@ pub fn read_records_at(
         // number of annotations from a generated or hostile source file.
         if clauses.len() <= MAX_CLAUSES_PER_FUNCTION {
             let clause = if full_end > end {
-                Clause {
+                Clause::Invalid {
                     span,
-                    argument: None,
-                    class: None,
-                    residual: None,
-                    error: Some(format!(
+                    reason: format!(
                         "typehint clause exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
-                    )),
+                    ),
                 }
             } else {
                 parse_clause(raw, span)
@@ -205,40 +210,38 @@ pub fn read_records_at(
             };
             let mut claims = BTreeMap::new();
             let conflicting = clauses.iter().any(|clause| {
-                let Some(argument) = clause.argument else {
+                let Clause::Claim {
+                    argument,
+                    class,
+                    residual,
+                    ..
+                } = clause
+                else {
                     return false;
                 };
-                let claim = (
-                    clause.class,
-                    clause
-                        .residual
-                        .as_ref()
-                        .map(|residual| residual.raw.as_str()),
-                );
+                let claim = (*class, residual.as_ref().map(|residual| &residual.raw));
                 claims
-                    .insert(argument, claim)
+                    .insert(*argument, claim)
                     .is_some_and(|old| old != claim)
             });
-            let within_reader_budget = clauses.len() <= MAX_CLAUSES_PER_FUNCTION
-                && clauses
-                    .last()
-                    .and_then(|last| {
-                        clauses
-                            .first()
-                            .map(|first| last.span.end.saturating_sub(first.span.start))
-                    })
-                    .is_some_and(|bytes| bytes <= MAX_ANNOTATION_BYTES);
-            if conflicting && within_reader_budget {
+            let (source_span, budget_error) = group_extent(&clauses);
+            if conflicting && budget_error.is_none() {
                 // Each comment is a faithful claim in its own source span.
                 // Selecting one combined signature would silently choose a
                 // side; the shared resolver sees distinct exact signatures
                 // and emits an explicit conflict instead.
                 clauses
                     .into_iter()
-                    .map(|clause| build_record(file, target, vec![clause]))
+                    .map(|clause| build_record(file, target, clause.span(), None, vec![clause]))
                     .collect()
             } else {
-                vec![build_record(file, target, clauses)]
+                vec![build_record(
+                    file,
+                    target,
+                    source_span,
+                    budget_error,
+                    clauses,
+                )]
             }
         })
         .collect()
@@ -259,44 +262,76 @@ fn next_token(raw: &str, after: usize) -> Option<(usize, usize)> {
 fn parse_clause(raw: &str, span: Span) -> Clause<'_> {
     let argument_range = next_token(raw, 2);
     let class_range = argument_range.and_then(|(_, end)| next_token(raw, end));
-    let argument = argument_range.map(|(start, end)| &raw[start..end]);
-    let mut clause = Clause {
+    let (Some((argument_start, argument_end)), Some((class_start, class_end))) =
+        (argument_range, class_range)
+    else {
+        return invalid_clause(span);
+    };
+    let argument = &raw[argument_start..argument_end];
+    if !valid_formal(argument) {
+        return invalid_clause(span);
+    }
+    let residual = |offset: usize, reason: &str| {
+        let rest = raw[offset..].trim_end();
+        let start = span.start + offset;
+        ResidualConstraint {
+            raw: rest.into(),
+            span: Span::new(start, start + rest.len(), span.line, span.col + offset),
+            reason: reason.into(),
+        }
+    };
+    let class = &raw[class_start..class_end];
+    if !valid_class(class) {
+        return Clause::Claim {
+            span,
+            argument,
+            class: None,
+            residual: Some(residual(
+                class_start,
+                "class spelling is outside the audited simple typehint subset",
+            )),
+        };
+    }
+    // Preserve the exact unsupported expression and its byte span. The
+    // upstream provider evaluates dim/not expressions at runtime; ry
+    // neither evaluates them nor silently drops them from an Exact record.
+    Clause::Claim {
         span,
         argument,
-        class: class_range.map(|(start, end)| &raw[start..end]),
-        residual: None,
-        error: None,
-    };
-    let Some((class_start, class_end)) = class_range.filter(|_| argument.is_some_and(valid_formal))
-    else {
-        clause.error = Some("expected `#| formal class`".into());
-        return clause;
-    };
-    if !valid_class(&raw[class_start..class_end]) {
-        let rest = raw[class_start..].trim_end();
-        let start = span.start + class_start;
-        clause.residual = Some(ResidualConstraint {
-            raw: rest.into(),
-            span: Span::new(start, start + rest.len(), span.line, span.col + class_start),
-            reason: "class spelling is outside the audited simple typehint subset".into(),
-        });
-        return clause;
+        class: Some(class),
+        residual: next_token(raw, class_end).map(|(rest_start, _)| {
+            residual(
+                rest_start,
+                "typehint dimension, exclusion, or value expression requires runtime evaluation",
+            )
+        }),
     }
-    if let Some((rest_start, _)) = next_token(raw, class_end) {
-        // Preserve the exact unsupported expression and its byte span. The
-        // upstream provider evaluates dim/not expressions at runtime; ry
-        // neither evaluates them nor silently drops them from an Exact record.
-        let rest = raw[rest_start..].trim_end();
-        let start = span.start + rest_start;
-        clause.residual = Some(ResidualConstraint {
-            raw: rest.into(),
-            span: Span::new(start, start + rest.len(), span.line, span.col + rest_start),
-            reason:
-                "typehint dimension, exclusion, or value expression requires runtime evaluation"
-                    .into(),
-        });
+}
+
+fn invalid_clause(span: Span) -> Clause<'static> {
+    Clause::Invalid {
+        span,
+        reason: "expected `#| formal class`".into(),
     }
-    clause
+}
+
+/// The group's source range and any reader budget it exceeds. An oversized
+/// range is reported at its first clause rather than copying it whole.
+fn group_extent(clauses: &[Clause<'_>]) -> (Span, Option<String>) {
+    let first = clauses.first().expect("group is nonempty").span();
+    let last = clauses.last().expect("group is nonempty").span();
+    if last.end.saturating_sub(first.start) > MAX_ANNOTATION_BYTES {
+        return (
+            first,
+            Some(format!(
+                "typehint annotation range exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
+            )),
+        );
+    }
+    let span = Span::new(first.start, last.end, first.line, first.col);
+    let error = (clauses.len() > MAX_CLAUSES_PER_FUNCTION)
+        .then(|| format!("more than {MAX_CLAUSES_PER_FUNCTION} typehint clauses for one function"));
+    (span, error)
 }
 
 fn simple_word(word: &str) -> bool {
@@ -317,34 +352,25 @@ fn valid_class(word: &str) -> bool {
 fn build_record(
     file: &SourceFile,
     target: &NamedFunction,
+    source_span: Span,
+    mut invalid: Option<String>,
     clauses: Vec<Clause<'_>>,
 ) -> DeclarationRecord {
-    let first = clauses.first().expect("group is nonempty").span;
-    let last = clauses.last().expect("group is nonempty").span;
-    let full_span = Span::new(first.start, last.end, first.line, first.col);
-    let oversized = full_span.end.saturating_sub(full_span.start) > MAX_ANNOTATION_BYTES;
-    let source_span = if oversized { first } else { full_span };
     let mut parameters = Vec::new();
     let mut residuals = Vec::new();
-    let mut invalid = None;
     let mut ambiguous = None;
-    if clauses.len() > MAX_CLAUSES_PER_FUNCTION {
-        invalid = Some(format!(
-            "more than {MAX_CLAUSES_PER_FUNCTION} typehint clauses for one function"
-        ));
-    }
-    if oversized {
-        invalid = Some(format!(
-            "typehint annotation range exceeds {MAX_ANNOTATION_BYTES} byte reader budget"
-        ));
-    }
     for clause in clauses {
-        if let Some(error) = clause.error {
-            invalid.get_or_insert(error);
-            continue;
-        }
-        let (Some(argument), Some(class)) = (clause.argument, clause.class) else {
-            continue;
+        let (argument, class, residual) = match clause {
+            Clause::Invalid { reason, .. } => {
+                invalid.get_or_insert(reason);
+                continue;
+            }
+            Clause::Claim {
+                argument,
+                class,
+                residual,
+                ..
+            } => (argument, class, residual),
         };
         let Some((_, defaulted)) = target.params.iter().find(|formal| formal.0 == argument) else {
             if target.params.iter().any(|formal| formal.0.contains('\\')) {
@@ -357,12 +383,10 @@ fn build_record(
             }
             continue;
         };
-        if let Some(residual) = clause.residual {
-            residuals.push(residual);
-        }
-        if !valid_class(class) {
+        residuals.extend(residual);
+        let Some(class) = class else {
             continue;
-        }
+        };
         if parameters
             .iter()
             .any(|parameter: &DeclaredParameter| parameter.name == argument)
@@ -417,7 +441,7 @@ fn build_record(
             path: file.path.clone(),
             span: source_span,
             raw: file.source[source_span.start..source_span.end].into(),
-            target: DeclarationTarget::LocalFunction {
+            target: DeclarationTarget {
                 path: file.path.clone(),
                 definition: target.span,
                 display_name: Some(target.name.clone()),
@@ -459,10 +483,7 @@ mod tests {
         assert_eq!(records.len(), 2, "{records:?}");
         for (record, name) in records.iter().zip(["f", "inner"]) {
             assert!(matches!(record.translation, Translation::Exact(_)));
-            assert!(matches!(
-                &record.source.target,
-                DeclarationTarget::LocalFunction { display_name: Some(actual), .. } if actual == name
-            ));
+            assert_eq!(record.source.target.display_name.as_deref(), Some(name));
         }
     }
 

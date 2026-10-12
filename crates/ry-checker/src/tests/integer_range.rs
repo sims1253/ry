@@ -31,6 +31,13 @@ fn exact_integer_range_and_truncation() {
 }
 
 #[test]
+fn long_literal_vectors_keep_value_facts() {
+    let values = vec!["1"; 40].join(", ");
+    assert_eq!(range_warnings(&format!("as.integer(c({values}, 1e10))")), 1);
+    assert_eq!(range_warnings(&format!("as.integer(c({values}, 2))")), 0);
+}
+
+#[test]
 fn assignment_and_vector_preserve_new_na_provenance() {
     let (diags, scope) = check_with_scope("x <- c(0, 1e10)\ny <- as.integer(x)");
     assert_eq!(

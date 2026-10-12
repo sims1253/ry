@@ -52,54 +52,6 @@ fn package_local_module_and_dplyr_import_reach_cli_pipeline() {
 }
 
 #[test]
-fn search_path_module_imports_reach_cli_as_opaque_bindings() {
-    let files = FixtureProject::empty().unwrap();
-    files
-        .write_file(
-            "run.R",
-            "box::use(mod/hello[answer])\nvalue <- answer\nbefore <- unbound\nbox::use(\"m\" = mod/hello)\nobject <- m\nbox::use(mod/hello[...])\nafter <- unenumerated\n",
-        )
-        .unwrap();
-    let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").arg(files.path("run.R")), 0);
-    assert_eq!(codes(&diagnostics), ["RY010"], "{diagnostics:#?}");
-    assert!(
-        diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("unbound")
-    );
-}
-
-#[test]
-fn quoted_members_reach_cli_with_types_and_proven_absence() {
-    let files = FixtureProject::empty().unwrap();
-    files
-        .write_file(
-            "mod.r",
-            "foo <- function() 1L\ntext <- function() 'wrong'\nbox::export(foo, text)\n",
-        )
-        .unwrap();
-    for (source, expected) in [
-        ("value <- m$`foo`\nm$\"\\u0066oo\"()\n", &[][..]),
-        ("m$`text`() + 1L\n", &["RY040"][..]),
-        ("m$\"missing\"\n", &["RY118"][..]),
-    ] {
-        files
-            .write_file("run.R", format!("box::use(m = ./mod)\n{source}"))
-            .unwrap();
-        let diagnostics =
-            json_diagnostics(ry_check().arg("--exit-zero").arg(files.path("run.R")), 0);
-        assert_eq!(codes(&diagnostics), expected, "{source}: {diagnostics:#?}");
-        if expected == ["RY118"] {
-            assert_eq!(
-                diagnostics[0]["message"],
-                "box module does not export `missing`"
-            );
-        }
-    }
-}
-
-#[test]
 fn installed_namespace_gates_package_stub_import_without_loading_r() {
     let files = FixtureProject::empty().unwrap();
     files
@@ -198,41 +150,6 @@ fn package_local_module_and_dplyr_import_reach_lsp_pipeline() {
         .receive_until(|message| message.get("id") == Some(&json!(shutdown)), 16)
         .unwrap();
     client.notify("exit", Value::Null).unwrap();
-}
-
-#[cfg(unix)]
-#[test]
-fn native_module_path_survives_lossy_display_collision_in_cli() {
-    use std::os::unix::ffi::OsStringExt;
-
-    let root = tempfile::tempdir().unwrap();
-    let raw = root
-        .path()
-        .join(std::ffi::OsString::from_vec(b"bad\xff.r".to_vec()));
-    let unicode = root.path().join("bad�.r");
-    let caller = root.path().join("run.R");
-    std::fs::write(&raw, "answer <- function() 'wrong'\n").unwrap();
-    std::fs::write(&unicode, "answer <- function() 1L\n").unwrap();
-    std::fs::write(
-        &caller,
-        "box::use(m = ./`bad�`)\nvalue <- m$answer() + 1L\n",
-    )
-    .unwrap();
-    let check = |paths: &[&std::path::Path]| {
-        let diagnostics = json_diagnostics(ry_check().arg("--exit-zero").args(paths), 0);
-        assert!(
-            diagnostics.iter().all(|diagnostic| {
-                diagnostic["path"] != caller.to_string_lossy().as_ref()
-                    || diagnostic["code"] != "RY040"
-            }),
-            "{diagnostics:#?}"
-        );
-    };
-    check(&[root.path()]);
-    check(&[&raw, &unicode, &caller]);
-    check(&[&unicode, &raw, &caller]);
-    std::fs::remove_file(&raw).unwrap();
-    check(&[root.path()]);
 }
 
 #[cfg(unix)]

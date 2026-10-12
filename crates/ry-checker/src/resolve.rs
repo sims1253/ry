@@ -6,7 +6,7 @@ use crate::infer::{dispatch_result, json_rtype_to_rtype};
 
 /// R's standard packages, which share ry's embedded base stub database:
 /// a qualified lookup in any of them resolves against `typeshed` itself.
-const BASE_DATABASE_PACKAGES: &[&str] = &[
+pub(crate) const BASE_DATABASE_PACKAGES: &[&str] = &[
     "base",
     "stats",
     "utils",
@@ -460,7 +460,8 @@ impl Checker {
     /// Package `R/` code without whole-package imports looks up base before
     /// the search path, so there only an unknown search path can.
     pub(crate) fn search_path_may_mask_base(&self, scope: &Scope) -> bool {
-        scope.search_path_unknown || (!self.base_before_search_path && !self.bare_loaded.is_empty())
+        scope.search_path_unknown
+            || (!self.package_facts.base_before_search_path && !self.bare_loaded.is_empty())
     }
 
     /// Lenient variant of [`Self::resolves_to_base`]: same resolution
@@ -711,7 +712,7 @@ fn has_schema_semantics(signature: &FunctionSig) -> bool {
 /// Split `pkg::fun` / `pkg:::fun` into `(package, member)`. The triple-
 /// colon form splits as `("pkg:", "fun")`, so trailing colons are
 /// trimmed to recover the package name.
-fn split_qualified(name: &str) -> Option<(&str, &str)> {
+pub(crate) fn split_qualified(name: &str) -> Option<(&str, &str)> {
     let (pkg_raw, member) = name.rsplit_once("::")?;
     Some((pkg_raw.trim_end_matches(':'), member))
 }

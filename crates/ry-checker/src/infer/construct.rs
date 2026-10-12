@@ -586,9 +586,8 @@ impl Checker {
             }
         };
         let mut result = RType::new(mode, length);
-        // Limit this value proof to short, fully observed concatenations.
+        // A fully observed unclassed concatenation keeps its value proof.
         if matches!(mode, Mode::Integer | Mode::Double)
-            && arg_types.len() <= 32
             && arg_types.iter().all(|t| t.value_facts.all_values_known)
             && arg_types
                 .iter()

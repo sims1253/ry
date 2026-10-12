@@ -98,46 +98,18 @@ function findOnPath(binary: string): string | undefined {
   return undefined;
 }
 
-interface VersionProbe {
-  stats: fs.Stats;
-  version: VersionInfo;
-}
-
-const versionProbes = new Map<string, VersionProbe>();
-
 /** An unavailable binary or invalid response produces an unknown version. */
 export async function getRyVersion(
   binaryPath: string,
 ): Promise<VersionInfo | undefined> {
-  const stats = await fs.promises.stat(binaryPath).catch(() => undefined);
-  const cached = stats && versionProbes.get(binaryPath);
-  if (
-    cached &&
-    (["dev", "ino", "ctimeMs", "mtimeMs", "size"] as const).every(
-      (key) => cached.stats[key] === stats[key],
-    )
-  )
-    return cached.version;
-  versionProbes.delete(binaryPath);
   try {
     const { stdout } = await runBinary(binaryPath, [
       "version",
       "--output-format",
       "json",
     ]);
-    const response: unknown = JSON.parse(stdout);
-    if (
-      !response ||
-      typeof response !== "object" ||
-      !("version" in response) ||
-      typeof response.version !== "string"
-    )
-      return undefined;
-    const version = versionFromString(response.version);
-    // Retry failed probes on the next restart.
-    if (stats && version !== undefined)
-      versionProbes.set(binaryPath, { stats, version });
-    return version;
+    const { version } = JSON.parse(stdout);
+    return typeof version === "string" ? versionFromString(version) : undefined;
   } catch {
     return undefined;
   }

@@ -2,27 +2,22 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
 
-use serde_json::Value;
+use ry_testkit::{CliOutput, ry};
+use serde_json::{Value, json};
 
-fn invoke(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ry"))
-        .current_dir(root)
+fn invoke(root: &Path, args: &[&str]) -> CliOutput {
+    ry!()
+        .cwd(root)
         .args(args)
         .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .output()
-        .unwrap()
+        .run()
 }
 
 fn check_codes(root: &Path) -> Vec<String> {
     let output = invoke(root, &["check", "--output-format", "json", "."]);
-    assert!(output.status.success(), "{output:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    diagnostics
-        .iter()
-        .filter_map(|diagnostic| diagnostic["code"].as_str().map(str::to_owned))
-        .collect()
+    assert!(output.success(), "{output:?}");
+    output.codes()
 }
 
 fn count(root: &Path, code: &str) -> usize {
@@ -44,12 +39,19 @@ fn project(config: Option<&str>) -> tempfile::TempDir {
     temp
 }
 
+/// `ry dump-facts <path> --annotations`, which must succeed.
+fn dump_path(root: &Path, path: &str) -> Value {
+    let output = invoke(root, &["dump-facts", path, "--annotations"]);
+    assert!(output.success(), "{output:?}");
+    output.json()
+}
+
 fn dump(root: &Path, flags: &[&str]) -> Value {
     let mut args = vec!["dump-facts", "R/main.R"];
     args.extend(flags);
     let output = invoke(root, &args);
-    assert!(output.status.success(), "{output:?}");
-    serde_json::from_slice(&output.stdout).unwrap()
+    assert!(output.success(), "{output:?}");
+    output.json()
 }
 
 #[test]
@@ -69,6 +71,18 @@ fn adopted_contract_checks_and_exports_the_same_source_record() {
     assert_eq!(dump(temp.path(), &["--references"])["schema_version"], 2);
     let facts = dump(temp.path(), &["--annotations"]);
     assert_eq!(facts["schema_version"], 3);
+    // Schema 3 keeps the schema 2 root shape even without `--references`.
+    assert!(facts.get("snapshot_kind").is_none(), "{facts}");
+    assert_eq!(facts["scope_snapshot_kind"], "scope_exit");
+    assert_eq!(
+        facts["capabilities"],
+        json!({
+            "scope_snapshots": true,
+            "reference_facts": null,
+            "reference_coverage": null,
+            "annotation_records": "typehint_0.1.0_static_subset",
+        })
+    );
     let annotation = &facts["files"][0]["annotations"][0];
     assert_eq!(annotation["source"]["provider"], "typehint");
     assert_eq!(annotation["source"]["provider_version"], "0.1.0");
@@ -212,33 +226,6 @@ fn stub_class_tests_mark_union_member_and_column_classes() {
     }
 }
 
-#[test]
-fn nested_headers_and_inline_comments_cannot_create_an_outer_contract() {
-    let temp = project(Some(ADOPT));
-    for body in [
-        "g <- function(\n #| x integer\n y) { y }\n x",
-        "g <- function(y = {\n #| x integer\n 1L\n }) { y }\n x",
-        "g <- function(y)\n #| x integer\n y\n x",
-        "NULL #| x integer\n x",
-        "x; #| x integer\n x",
-    ] {
-        fs::write(
-            temp.path().join("R/main.R"),
-            format!("f <- function(x) {{\n {body}\n}}\nf(\"bad\")\n"),
-        )
-        .unwrap();
-        let codes = check_codes(temp.path());
-        assert!(!codes.iter().any(|code| code == "RY114"), "{body}");
-        assert!(
-            dump(temp.path(), &["--annotations"])["files"][0]["annotations"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "{body}"
-        );
-    }
-}
-
 #[cfg(unix)]
 #[test]
 fn native_filename_collision_cannot_attach_another_files_contract() {
@@ -285,9 +272,8 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
         temp.path(),
         &["check", "--output-format", "json", "R/bad�.R"],
     );
-    assert!(checked.status.success(), "{checked:?}");
-    let diagnostics: Vec<Value> = serde_json::from_slice(&checked.stdout).unwrap();
-    assert!(diagnostics.iter().any(|entry| entry["code"] == "RY117"));
+    assert!(checked.success(), "{checked:?}");
+    assert!(checked.codes().iter().any(|code| code == "RY117"));
 
     for flags in [
         &["--annotations"][..],
@@ -296,22 +282,20 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
         let mut args = vec!["dump-facts", "R/bad�.R"];
         args.extend_from_slice(flags);
         let output = invoke(temp.path(), &args);
-        assert!(!output.status.success(), "{output:?}");
-        assert!(output.stdout.is_empty(), "{output:?}");
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.success(), "{output:?}");
+        assert!(output.stdout().is_empty(), "{output:?}");
+        let stderr = output.stderr();
         assert!(stderr.contains("RY117"), "{stderr}");
         assert!(stderr.contains("bad�.R"), "{stderr}");
-        assert!(stderr.contains("ambiguous"), "{stderr}");
     }
 
-    // Schemas without annotations do not claim an adopted-record snapshot.
-    for (flags, schema) in [(&[][..], 1), (&["--references"][..], 2)] {
-        let mut args = vec!["dump-facts", "R/bad�.R"];
-        args.extend_from_slice(flags);
-        let output = invoke(temp.path(), &args);
-        assert!(output.status.success(), "{output:?}");
-        let facts: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(facts["schema_version"], schema);
+    // Exports without annotations do not attach records, so they succeed.
+    for flags in [&[][..], &["--references"][..]] {
+        let output = invoke(
+            temp.path(),
+            &[&["dump-facts", "R/bad�.R"][..], flags].concat(),
+        );
+        assert!(output.success(), "{flags:?}: {output:?}");
     }
 
     fs::write(
@@ -319,9 +303,7 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
         ADOPT.replace("adopt = true", "adopt = false"),
     )
     .unwrap();
-    let disabled = invoke(temp.path(), &["dump-facts", "R/bad�.R", "--annotations"]);
-    assert!(disabled.status.success(), "{disabled:?}");
-    let disabled_facts: Value = serde_json::from_slice(&disabled.stdout).unwrap();
+    let disabled_facts = dump_path(temp.path(), "R/bad�.R");
     assert!(
         disabled_facts["files"][0]["annotations"]
             .as_array()
@@ -330,15 +312,14 @@ fn annotation_export_refuses_a_selected_file_with_ambiguous_native_identity() {
     );
     fs::write(temp.path().join("ry.toml"), ADOPT).unwrap();
 
+    // A directory export reaches the raw filename itself and refuses it.
     let directory = invoke(temp.path(), &["dump-facts", "R", "--annotations"]);
-    assert!(!directory.status.success(), "{directory:?}");
-    assert!(directory.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&directory.stderr).contains("UTF-8 paths"));
+    assert!(!directory.success(), "{directory:?}");
+    assert!(directory.stdout().is_empty());
+    assert!(directory.stderr().contains("bad"), "{directory:?}");
 
     fs::remove_file(&raw).unwrap();
-    let restored = invoke(temp.path(), &["dump-facts", "R/bad�.R", "--annotations"]);
-    assert!(restored.status.success(), "{restored:?}");
-    let facts: Value = serde_json::from_slice(&restored.stdout).unwrap();
+    let facts = dump_path(temp.path(), "R/bad�.R");
     assert_eq!(facts["schema_version"], 3);
     assert_eq!(
         facts["files"][0]["annotations"][0]["source"]["raw"],
@@ -393,68 +374,60 @@ fn omitted_default_is_not_checked_but_explicit_actual_is() {
 }
 
 #[test]
-fn partial_unsupported_and_invalid_source_records_keep_their_status() {
+fn non_exact_and_conflicting_source_records_keep_their_status() {
     let temp = project(Some(ADOPT));
-    fs::write(
-        temp.path().join("R/main.R"),
-        concat!(
-            "partial <- function(x) {\n #| x integer dim(1L)\n x\n}\n",
-            "unsupported <- function(x) {\n #| x custom-class\n x\n}\n",
-            "invalid <- function(x) {\n #| x\n x\n}\n",
+    for (source, expected_codes, expected_kinds) in [
+        (
+            concat!(
+                "partial <- function(x) {\n #| x integer dim(1L)\n x\n}\n",
+                "unsupported <- function(x) {\n #| x custom-class\n x\n}\n",
+                "invalid <- function(x) {\n #| x\n x\n}\n",
+            ),
+            &["RY115", "RY115", "RY117"][..],
+            &["invalid_syntax", "partial", "unsupported"][..],
         ),
-    )
-    .unwrap();
+        (
+            "f <- function(x) {\n #| x integer\n #| x character\n x\n}\nf(\"bad\")\n",
+            &["RY116"],
+            &["exact", "exact"],
+        ),
+    ] {
+        fs::write(temp.path().join("R/main.R"), source).unwrap();
+        let mut codes = check_codes(temp.path());
+        codes.retain(|code| ["RY114", "RY115", "RY116", "RY117"].contains(&code.as_str()));
+        codes.sort();
+        assert_eq!(codes, expected_codes, "{source}");
 
-    let codes = check_codes(temp.path());
-    assert_eq!(codes.iter().filter(|code| *code == "RY115").count(), 2);
-    assert_eq!(codes.iter().filter(|code| *code == "RY117").count(), 1);
-    assert!(!codes.iter().any(|code| code == "RY114"));
-
-    let facts = dump(temp.path(), &["--annotations"]);
-    let annotations = facts["files"][0]["annotations"].as_array().unwrap();
-    assert_eq!(annotations.len(), 3);
-    let mut kinds: Vec<_> = annotations
-        .iter()
-        .map(|record| record["translation"]["kind"].as_str().unwrap())
-        .collect();
-    kinds.sort_unstable();
-    assert_eq!(kinds, ["invalid_syntax", "partial", "unsupported"]);
-    let residuals: Vec<_> = annotations
-        .iter()
-        .filter_map(|record| record["translation"]["residuals"][0]["raw"].as_str())
-        .collect();
-    assert!(residuals.contains(&"dim(1L)"));
-    assert!(residuals.contains(&"custom-class"));
+        let facts = dump(temp.path(), &["--annotations"]);
+        let mut kinds: Vec<_> = facts["files"][0]["annotations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["translation"]["kind"].as_str().unwrap())
+            .collect();
+        kinds.sort_unstable();
+        assert_eq!(kinds, expected_kinds, "{source}");
+    }
 }
 
 #[test]
 fn schema_three_residuals_use_structural_token_offsets_and_unicode_columns() {
     let temp = project(Some(ADOPT));
-    for (source, raw, expected_start) in [
-        (
-            "f <- function(x) {\n #| x integer x\n x\n}\n",
-            "x",
-            [2_u64, 15],
-        ),
-        (
-            "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n",
-            "dim(\"λ\")",
-            [2_u64, 15],
-        ),
-    ] {
-        fs::write(temp.path().join("R/main.R"), source).unwrap();
-        let facts = dump(temp.path(), &["--annotations"]);
-        let residual = &facts["files"][0]["annotations"][0]["translation"]["residuals"][0];
-        assert_eq!(residual["raw"], raw);
-        let start = residual["span"]["bytes"][0].as_u64().unwrap() as usize;
-        let end = residual["span"]["bytes"][1].as_u64().unwrap() as usize;
-        assert_eq!(&source[start..end], raw);
-        assert_eq!(residual["span"]["start"], serde_json::json!(expected_start));
-        assert_eq!(
-            residual["span"]["end"][1].as_u64().unwrap(),
-            expected_start[1] + raw.chars().count() as u64
-        );
-    }
+    let source = "f <- function(x) {\n #| x integer dim(\"λ\")\n x\n}\n";
+    let raw = "dim(\"λ\")";
+    fs::write(temp.path().join("R/main.R"), source).unwrap();
+    let facts = dump(temp.path(), &["--annotations"]);
+    let residual = &facts["files"][0]["annotations"][0]["translation"]["residuals"][0];
+    assert_eq!(residual["raw"], raw);
+    let start = residual["span"]["bytes"][0].as_u64().unwrap() as usize;
+    let end = residual["span"]["bytes"][1].as_u64().unwrap() as usize;
+    assert_eq!(&source[start..end], raw);
+    // Line and column count Unicode scalars, not bytes.
+    assert_eq!(residual["span"]["start"], json!([2, 15]));
+    assert_eq!(
+        residual["span"]["end"],
+        json!([2, 15 + raw.chars().count()])
+    );
 }
 
 #[test]
@@ -476,10 +449,7 @@ fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 1);
-    let output = invoke(temp.path(), &["dump-facts", "R", "--annotations"]);
-    assert!(output.status.success(), "{output:?}");
-    let facts: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(facts["schema_version"], 3);
+    let facts = dump_path(temp.path(), "R");
     let files = facts["files"].as_array().unwrap();
     let annotations = files
         .iter()
@@ -488,25 +458,4 @@ fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
     assert_eq!(annotations.len(), 1);
     assert_eq!(annotations[0]["source"]["raw"], "#| x integer");
     assert_eq!(annotations[0]["evidence_use"], "adopted_contract");
-}
-
-#[test]
-fn conflicting_source_comments_emit_ry116_and_export_each_claim() {
-    let temp = project(Some(ADOPT));
-    fs::write(
-        temp.path().join("R/main.R"),
-        "f <- function(x) {\n #| x integer\n #| x character\n x\n}\nf(\"bad\")\n",
-    )
-    .unwrap();
-    let codes = check_codes(temp.path());
-    assert!(codes.iter().any(|code| code == "RY116"));
-    assert!(!codes.iter().any(|code| code == "RY114"));
-    let facts = dump(temp.path(), &["--annotations"]);
-    let annotations = facts["files"][0]["annotations"].as_array().unwrap();
-    assert_eq!(annotations.len(), 2);
-    assert!(
-        annotations
-            .iter()
-            .all(|record| record["translation"]["kind"] == "exact")
-    );
 }

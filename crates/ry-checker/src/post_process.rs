@@ -36,7 +36,7 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_core::{SourceFile, Span};
 
 use crate::diagnostics::{
-    Confidence, Diagnostic, SeverityFilter, SuppressionKind, SuppressionOrigin,
+    Confidence, Diagnostic, SeverityFilter, Suppression, SuppressionKind, SuppressionOrigin,
 };
 
 /// The initial audit covers only rules whose premise is recognized from
@@ -46,40 +46,34 @@ use crate::diagnostics::{
 const UNUSED_IGNORE_AUDITABLE_CODES: &[&str] = &["RY034", "RY102"];
 
 fn unchecked_audit_regions(file: &SourceFile) -> Vec<Span> {
+    // The walk visits an assignment before its value, so a directly
+    // assigned function is known by the time its `Expr::Function` is reached.
     let mut assigned_functions = HashSet::new();
-    let _ = walk_stmts(
-        &file.stmts,
-        Walk::ALL,
-        |node, _| -> ControlFlow<(), Descend> {
-            if let AstNode::Stmt(Stmt::Assign {
-                value: Expr::Function { span, .. },
-                ..
-            }) = node
-            {
-                assigned_functions.insert(*span);
-            }
-            ControlFlow::Continue(Descend::Into)
-        },
-    );
-
     let mut unchecked = Vec::new();
     let _ = walk_stmts(
         &file.stmts,
         Walk::ALL,
         |node, _| -> ControlFlow<(), Descend> {
             match node {
+                AstNode::Stmt(Stmt::Assign {
+                    value: Expr::Function { span, .. },
+                    ..
+                }) => {
+                    assigned_functions.insert(*span);
+                }
                 AstNode::Expr(Expr::Function { span, .. })
                     if !assigned_functions.contains(span) =>
                 {
                     unchecked.push(*span);
-                    ControlFlow::Continue(Descend::Skip)
+                    return ControlFlow::Continue(Descend::Skip);
                 }
                 AstNode::Expr(Expr::Unknown(span)) => {
                     unchecked.push(*span);
-                    ControlFlow::Continue(Descend::Skip)
+                    return ControlFlow::Continue(Descend::Skip);
                 }
-                _ => ControlFlow::Continue(Descend::Into),
+                _ => {}
             }
+            ControlFlow::Continue(Descend::Into)
         },
     );
     unchecked
@@ -109,14 +103,21 @@ impl PostProcess<'_> {
         path: &str,
         file: Option<&SourceFile>,
     ) -> Vec<Diagnostic> {
-        let (comments, src) = file.map_or((&[][..], ""), |file| {
-            (file.comments.as_slice(), file.source.as_str())
-        });
-        let audit = file.map_or_else(Vec::new, |file| {
-            self.unused_ignore_diagnostics(&diagnostics, path, file)
-        });
-        let mut diagnostics = crate::filter_suppressed_with_comments(diagnostics, comments, src);
-        diagnostics.extend(audit);
+        let mut diagnostics = match file {
+            Some(file) if crate::has_file_suppression_from_comments(&file.comments) => Vec::new(),
+            Some(file) => {
+                let directives =
+                    crate::parse_suppressions_from_comments(&file.comments, &file.source);
+                let audit = self.unused_ignore_diagnostics(&diagnostics, path, file, &directives);
+                let mut kept: Vec<_> = diagnostics
+                    .into_iter()
+                    .filter(|diagnostic| !crate::is_suppressed(diagnostic, &directives))
+                    .collect();
+                kept.extend(audit);
+                kept
+            }
+            None => diagnostics,
+        };
         crate::apply_filter_to_diagnostics(&mut diagnostics, self.filter);
         diagnostics
     }
@@ -126,18 +127,16 @@ impl PostProcess<'_> {
         raw: &[Diagnostic],
         path: &str,
         file: &SourceFile,
+        directives: &[Suppression],
     ) -> Vec<Diagnostic> {
-        let (comments, src) = (file.comments.as_slice(), file.source.as_str());
         if self
             .filter
-            .effective("RY113", crate::Severity::Warning)
+            .effective(crate::rules::UNUSED_IGNORE, crate::Severity::Warning)
             .is_none()
             || raw.iter().any(|d| d.code == "RY000")
-            || crate::has_file_suppression_from_comments(comments)
         {
             return Vec::new();
         }
-        let directives = crate::parse_suppressions_from_comments(comments, src);
         if !directives.iter().any(|directive| {
             directive.origin == SuppressionOrigin::Ry
                 && matches!(directive.kind, SuppressionKind::Selective(_))
@@ -150,7 +149,7 @@ impl PostProcess<'_> {
         // direct assigned functions and bare function definitions receive
         // a separate diagnostic walk. Unknown AST nodes are also opaque.
         let uncovered = unchecked_audit_regions(file);
-        let line_starts = crate::diagnostics::line_starts(src);
+        let line_starts = crate::diagnostics::line_starts(&file.source);
         let mut unchecked_lines = vec![false; line_starts.len()];
         for region in uncovered {
             let first = line_starts
@@ -167,7 +166,7 @@ impl PostProcess<'_> {
             if directive.origin != SuppressionOrigin::Ry {
                 continue;
             }
-            let SuppressionKind::Selective(codes) = directive.kind else {
+            let SuppressionKind::Selective(codes) = &directive.kind else {
                 continue;
             };
             if unchecked_lines.get(directive.line).copied().unwrap_or(true)
@@ -182,14 +181,10 @@ impl PostProcess<'_> {
                 if !UNUSED_IGNORE_AUDITABLE_CODES.contains(&code.as_str()) {
                     continue;
                 }
-                let Some(rule) = crate::rules::find(&code) else {
+                let Some(rule) = crate::rules::find(code) else {
                     continue;
                 };
-                if self
-                    .filter
-                    .effective(&code, rule.default_severity)
-                    .is_none()
-                {
+                if self.filter.effective(code, rule.default_severity).is_none() {
                     continue;
                 }
                 if raw
@@ -202,7 +197,7 @@ impl PostProcess<'_> {
                     crate::Severity::Warning,
                     directive.span,
                     path,
-                    "RY113",
+                    crate::rules::UNUSED_IGNORE,
                     format!("unused ry ignore for `{code}`"),
                 ));
             }

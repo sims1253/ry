@@ -68,6 +68,7 @@ fn check_package(test_file: &str) -> Vec<(String, Vec<ry_checker::Diagnostic>)> 
     project.set_loaded(context.attached_packages);
     project.set_bare_loaded(context.bare_bindings);
     project.set_external_bindings(context.external_bindings);
+    project.set_package_facts(context.package_facts);
     project.set_imported_from(context.imported_bindings);
     project.set_external_s3_methods(context.s3_methods);
     project.check()

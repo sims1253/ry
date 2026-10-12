@@ -337,39 +337,18 @@ impl Checker {
             let ty = self.infer(expr, &mut child);
             (
                 ty,
-                child.ops_environment_unknown,
-                child.effects_unknown,
-                child.dynamic_bindings_unknown,
+                child.uncertainty,
                 child.unreachable,
-                child.literal_values_unknown,
                 (!child.unreachable).then_some(child.scalar_asserted_bindings),
             )
         };
-        let (
-            then_t,
-            then_ops,
-            then_effects,
-            then_dynamic,
-            then_unreachable,
-            then_literals,
-            then_facts,
-        ) = infer_arm(then, NarrowingBranch::Then);
-        let (
-            else_t,
-            else_ops,
-            else_effects,
-            else_dynamic,
-            else_unreachable,
-            else_literals,
-            else_facts,
-        ) = match else_ {
+        let (then_t, then_uncertainty, then_unreachable, then_facts) =
+            infer_arm(then, NarrowingBranch::Then);
+        let (else_t, else_uncertainty, else_unreachable, else_facts) = match else_ {
             Some(e) => infer_arm(e, NarrowingBranch::Else),
             None => (
                 RType::new(Mode::Null, Length::Zero),
-                false,
-                false,
-                false,
-                false,
+                Uncertainty::default(),
                 false,
                 None,
             ),
@@ -381,10 +360,12 @@ impl Checker {
         }
         scope.clear_ops_facts();
         scope.clear_known_strings();
-        scope.ops_environment_unknown |= then_ops || else_ops;
-        scope.effects_unknown |= then_effects || else_effects;
-        scope.dynamic_bindings_unknown |= then_dynamic || else_dynamic;
-        scope.literal_values_unknown |= then_literals || else_literals;
+        // Expression arms drop their bindings, and with them the evidence
+        // their names carry about escaped slot operators.
+        scope.uncertainty |= Uncertainty {
+            escaped_slot_names: false,
+            ..then_uncertainty | else_uncertainty
+        };
         scope.unreachable |= then_unreachable && else_unreachable;
         match (then_unreachable, else_unreachable) {
             (true, false) => else_t,
@@ -489,8 +470,11 @@ mod if_expression_scope_tests {
     fn absent_else_joins_null_and_keeps_existing_effects() {
         for effects_unknown in [false, true] {
             let mut scope = Scope {
-                effects_unknown,
-                ops_environment_unknown: effects_unknown,
+                uncertainty: Uncertainty {
+                    effects: effects_unknown,
+                    ops_environment: effects_unknown,
+                    ..Uncertainty::default()
+                },
                 ..Scope::default()
             };
             let ty = infer_expression("result <- if (TRUE) 1L", &mut scope);
@@ -498,8 +482,8 @@ mod if_expression_scope_tests {
             let members = ty.members.unwrap();
             assert!(members.iter().any(|ty| ty.mode == Mode::Integer));
             assert!(members.iter().any(|ty| ty.mode == Mode::Null));
-            assert_eq!(scope.effects_unknown, effects_unknown);
-            assert_eq!(scope.ops_environment_unknown, effects_unknown);
+            assert_eq!(scope.uncertainty.effects, effects_unknown);
+            assert_eq!(scope.uncertainty.ops_environment, effects_unknown);
         }
     }
 
@@ -512,7 +496,7 @@ mod if_expression_scope_tests {
         ] {
             let mut scope = Scope::default();
             infer_expression(source, &mut scope);
-            assert!(scope.ops_environment_unknown, "{source}");
+            assert!(scope.uncertainty.ops_environment, "{source}");
         }
     }
 }

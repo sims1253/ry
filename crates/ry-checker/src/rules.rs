@@ -12,11 +12,22 @@ pub struct Rule {
     pub summary: &'static str,
 }
 
+/// Malformed or unknown-rule ry ignore directive.
+pub const INVALID_IGNORE: &str = "RY112";
+/// Opt-in audit for selective ignores that matched nothing.
+pub const UNUSED_IGNORE: &str = "RY113";
+
 /// Rules omitted from normal output unless explicitly selected with a
 /// severity override. Keep this policy in the registry so every checker
 /// entry point and CLI output path agrees.
 pub fn enabled_by_default(code: &str) -> bool {
-    !matches!(code, "RY003" | "RY113")
+    !matches!(code, "RY003" | UNUSED_IGNORE)
+}
+
+/// Directive diagnostics take severity overrides only: an ignore comment
+/// must not hide a finding about ignore comments.
+pub fn suppressible(code: &str) -> bool {
+    !matches!(code, INVALID_IGNORE | UNUSED_IGNORE)
 }
 
 /// All rules currently emitted by the checker. Keep codes lexicographic.

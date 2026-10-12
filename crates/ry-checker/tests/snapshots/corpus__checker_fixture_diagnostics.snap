@@ -1674,6 +1674,10 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_dplyr_join_schema.R
 - diagnostics: []
+  fixture: ok_dplyr_join_suffixes.R
+- diagnostics: []
+  fixture: ok_dplyr_select_aliases.R
+- diagnostics: []
   fixture: ok_dplyr_sequential_columns.R
 - diagnostics: []
   fixture: ok_dplyr_unknown_schema_data_mask.R
@@ -2205,6 +2209,16 @@ expression: snapshots
         line: 11
         start: 566
   fixture: ry060_dots_fallback_data_pronoun.R
+- diagnostics:
+    - code: RY060
+      message: "column `x` not found in data frame schema; available columns: y, g"
+      severity: error
+      span:
+        column: 0
+        end: 185
+        line: 5
+        start: 179
+  fixture: ry060_select_negative_first.R
 - diagnostics:
     - code: RY060
       message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."

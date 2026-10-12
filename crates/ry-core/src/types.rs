@@ -438,6 +438,18 @@ pub enum NewNaProvenance {
     ProvenOnly,
 }
 
+impl NewNaProvenance {
+    /// The provenance of a value that is either `self` or `other`.
+    pub fn join(self, other: Self) -> Self {
+        use NewNaProvenance::{Possible, ProvenContains, ProvenOnly};
+        match (self, other) {
+            _ if self == other => self,
+            (ProvenOnly | ProvenContains, ProvenOnly | ProvenContains) => ProvenContains,
+            _ => Possible,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ValueFacts {
     /// Exact extrema of a fully observed numeric value, as f64 bit patterns.
@@ -477,6 +489,25 @@ impl ValueFacts {
             prior_na: value.is_nan(),
             new_na: NewNaProvenance::None,
             cast_site: None,
+        }
+    }
+
+    /// The facts that hold for a value that is either `self` or `other`.
+    pub fn join(self, other: Self) -> Self {
+        Self {
+            numeric_bounds: (self.numeric_bounds == other.numeric_bounds)
+                .then_some(self.numeric_bounds)
+                .flatten(),
+            all_values_known: self.all_values_known
+                && other.all_values_known
+                && self.numeric_bounds == other.numeric_bounds
+                && self.prior_na == other.prior_na
+                && self.new_na == other.new_na,
+            prior_na: self.prior_na || other.prior_na,
+            new_na: self.new_na.join(other.new_na),
+            cast_site: (self.cast_site == other.cast_site)
+                .then_some(self.cast_site)
+                .flatten(),
         }
     }
 
@@ -570,33 +601,7 @@ impl RType {
         if &self == other {
             return self;
         }
-        self.value_facts = ValueFacts {
-            numeric_bounds: (self.value_facts.numeric_bounds == other.value_facts.numeric_bounds)
-                .then_some(self.value_facts.numeric_bounds)
-                .flatten(),
-            all_values_known: self.value_facts.all_values_known
-                && other.value_facts.all_values_known
-                && self.value_facts.numeric_bounds == other.value_facts.numeric_bounds
-                && self.value_facts.prior_na == other.value_facts.prior_na
-                && self.value_facts.new_na == other.value_facts.new_na,
-            prior_na: self.value_facts.prior_na || other.value_facts.prior_na,
-            new_na: if self.value_facts.new_na == other.value_facts.new_na {
-                self.value_facts.new_na
-            } else if matches!(
-                self.value_facts.new_na,
-                NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains
-            ) && matches!(
-                other.value_facts.new_na,
-                NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains
-            ) {
-                NewNaProvenance::ProvenContains
-            } else {
-                NewNaProvenance::Possible
-            },
-            cast_site: (self.value_facts.cast_site == other.value_facts.cast_site)
-                .then_some(self.value_facts.cast_site)
-                .flatten(),
-        };
+        self.value_facts = self.value_facts.join(other.value_facts);
         if let (Some(left), Some(right)) = (&self.columns, &other.columns) {
             let mut schema = (**left).clone();
             for ((_, ty), (_, other_ty)) in schema.columns.iter_mut().zip(&right.columns) {
@@ -646,17 +651,7 @@ impl RType {
             let Some(first) = facts.next() else {
                 return NewNaProvenance::None;
             };
-            return facts.fold(first, |left, right| match (left, right) {
-                (NewNaProvenance::None, NewNaProvenance::None) => NewNaProvenance::None,
-                (NewNaProvenance::ProvenOnly, NewNaProvenance::ProvenOnly) => {
-                    NewNaProvenance::ProvenOnly
-                }
-                (
-                    NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains,
-                    NewNaProvenance::ProvenOnly | NewNaProvenance::ProvenContains,
-                ) => NewNaProvenance::ProvenContains,
-                _ => NewNaProvenance::Possible,
-            });
+            return facts.fold(first, NewNaProvenance::join);
         }
         self.value_facts.new_na
     }
@@ -1052,6 +1047,18 @@ where
     Some(iter.fold(first, |acc, t| acc.join(t)))
 }
 
+impl fmt::Display for Length {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Length::Zero => f.write_str("0"),
+            Length::One => f.write_str("1"),
+            Length::Known(n) => write!(f, "{n}"),
+            Length::Unknown => f.write_str("?"),
+            Length::Nonempty => f.write_str("1+"),
+        }
+    }
+}
+
 impl fmt::Display for RType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.mode == Mode::Union {
@@ -1076,18 +1083,7 @@ impl fmt::Display for RType {
                 None => write!(f, "opaque"),
             };
         }
-        let mode = self.mode;
-        let len = match self.length {
-            Length::Zero => "0",
-            Length::One => "1",
-            Length::Known(n) => {
-                let core = write!(f, "{}<len={}>", mode, n);
-                return self.fmt_class(f, core);
-            }
-            Length::Unknown => "?",
-            Length::Nonempty => "1+",
-        };
-        let core = write!(f, "{}<len={}>", mode, len);
+        let core = write!(f, "{}<len={}>", self.mode, self.length);
         self.fmt_class(f, core)
     }
 }

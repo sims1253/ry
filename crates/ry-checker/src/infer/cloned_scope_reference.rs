@@ -35,6 +35,35 @@ impl Checker {
                 self.walk_stmt(s, &mut else_scope, returns.as_deref_mut());
             }
         }
+        // Same join as `box_imports::join_box_provenance`, over whole branch
+        // scopes instead of journal deltas.
+        let box_provenance: Vec<_> = {
+            let mut paths = Vec::new();
+            if !then_scope.unreachable {
+                paths.push(&then_scope.box_objects);
+            }
+            if !has_else {
+                paths.push(&scope.box_objects);
+            } else if !else_scope.unreachable {
+                paths.push(&else_scope.box_objects);
+            }
+            let names: FxSet<&String> = (scope.box_objects.keys())
+                .chain(paths.iter().flat_map(|path| path.keys()))
+                .collect();
+            names
+                .into_iter()
+                .filter_map(|name| {
+                    let mut objects = paths.iter().map(|path| path.get(name));
+                    let first = objects.next()?;
+                    let joined = if objects.all(|other| other == first) {
+                        first.cloned()
+                    } else {
+                        Some(box_imports::BoxObject::OpaqueCall)
+                    };
+                    Some((name.clone(), joined))
+                })
+                .collect()
+        };
         // Merge branch bindings back into the parent scope. In R,
         // assignments inside an `if` branch leak to the enclosing
         // scope, so a name bound conditionally must still be visible
@@ -58,8 +87,8 @@ impl Checker {
                     || else_diverges
                     || else_scope.scalar_asserted_bindings.contains(name))
         });
-        scope.dynamic_bindings_unknown |= (!then_diverges && then_scope.dynamic_bindings_unknown)
-            || (!else_diverges && else_scope.dynamic_bindings_unknown);
+        scope.uncertainty |= then_scope.uncertainty.continuing(then_diverges)
+            | else_scope.uncertainty.continuing(else_diverges);
         let mut loop_vectors_after = FxSet::default();
         if !then_diverges && literal_cond != Some(false) {
             loop_vectors_after.extend(then_scope.loop_vector_bindings.iter().cloned());
@@ -129,6 +158,7 @@ impl Checker {
             scope.insert_narrowed(name, refined);
         }
         scope.loop_vector_bindings = loop_vectors_after;
+        scope.apply_box_provenance(box_provenance);
         // When both explicit arms throw, no route reaches the
         // enclosing block's continuation.
         if has_else && then_scope.unreachable && else_scope.unreachable {
@@ -148,13 +178,11 @@ impl Checker {
         // carry its identity or constant result across a branch merge.
         scope.clear_ops_facts();
         scope.clear_known_strings();
-        scope.ops_environment_unknown |=
-            then_scope.ops_environment_unknown || else_scope.ops_environment_unknown;
-        scope.effects_unknown |= then_scope.effects_unknown || else_scope.effects_unknown;
-        scope.literal_values_unknown |=
-            then_scope.literal_values_unknown || else_scope.literal_values_unknown;
-        scope.has_escaped_slot_names |=
-            then_scope.has_escaped_slot_names || else_scope.has_escaped_slot_names;
+        // The caller passes on dynamic bindings only from continuing arms.
+        scope.uncertainty |= Uncertainty {
+            dynamic_bindings: false,
+            ..then_scope.uncertainty | else_scope.uncertainty
+        };
         // A diverging branch contributes no state to the continuation. Treat
         // its live sibling as the only arm, while retaining the parent path
         // for a one-arm `if` whose then branch can continue.

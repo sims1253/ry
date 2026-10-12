@@ -46,16 +46,12 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
     joined
         .lexical_definitions
         .retain(|name, definition| incoming.lexical_definition(name) == Some(*definition));
-    joined.ops_environment_unknown |= incoming.ops_environment_unknown;
-    joined.effects_unknown |= incoming.effects_unknown;
-    joined.dynamic_bindings_unknown |= incoming.dynamic_bindings_unknown;
-    joined.literal_values_unknown |= incoming.literal_values_unknown;
-    joined.has_escaped_slot_names |= incoming.has_escaped_slot_names;
+    joined.uncertainty |= incoming.uncertainty;
 }
 
 impl Checker {
     fn unmasked_loop_transfer(&self, name: &str, scope: &Scope) -> bool {
-        matches!(name, "break" | "next") && !scope.effects_unknown && {
+        matches!(name, "break" | "next") && !scope.uncertainty.effects && {
             let escaped = format!("`{name}`");
             !self.literal_bindings_may_be_shadowed([name, escaped.as_str()], &HashSet::new(), scope)
         }
@@ -136,13 +132,9 @@ impl Checker {
         let body_unreachable = inner.unreachable;
         // An unmodelled path may mutate bindings or control syntax before
         // leaving the loop. A previously recorded safe break cannot erase it.
-        scope.ops_environment_unknown |= inner.ops_environment_unknown;
-        scope.effects_unknown |= inner.effects_unknown;
-        scope.dynamic_bindings_unknown |= inner.dynamic_bindings_unknown;
-        scope.literal_values_unknown |= inner.literal_values_unknown;
-        scope.has_escaped_slot_names |= inner.has_escaped_slot_names;
+        scope.uncertainty |= inner.uncertainty;
         let mut exits = frame.breaks;
-        if has_transfer && inner.effects_unknown {
+        if has_transfer && inner.uncertainty.effects {
             join_path(&mut exits, &inner);
         }
         if has_transfer {
@@ -151,7 +143,7 @@ impl Checker {
             // remains possible unless entry was established.
             if !always_true {
                 // Unknown-effect paths were already included above.
-                if !inner.unreachable && !inner.effects_unknown {
+                if !inner.unreachable && !inner.uncertainty.effects {
                     join_path(&mut exits, &inner);
                 }
                 if let Some(next) = &frame.nexts {
@@ -171,11 +163,7 @@ impl Checker {
         if let Some(exit) = exits {
             let scalar_before = scope.scalar_asserted_bindings.clone();
             let vector_before = scope.loop_vector_bindings.clone();
-            scope.ops_environment_unknown |= exit.ops_environment_unknown;
-            scope.effects_unknown |= exit.effects_unknown;
-            scope.dynamic_bindings_unknown |= exit.dynamic_bindings_unknown;
-            scope.literal_values_unknown |= exit.literal_values_unknown;
-            scope.has_escaped_slot_names |= exit.has_escaped_slot_names;
+            scope.uncertainty |= exit.uncertainty;
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
                 let scalar_asserted = scalar_before.contains(&binding)
@@ -226,7 +214,7 @@ mod tests {
         scope.insert(r"`@\x3c-`", RType::unknown());
         // Sticky evidence remains after removal, independently of a source AST.
         scope.bindings.clear();
-        assert!(scope.has_escaped_slot_names);
+        assert!(scope.uncertainty.escaped_slot_names);
         scope
     }
 
@@ -237,7 +225,7 @@ mod tests {
         join_path(&mut paths, &escaped_slot_scope());
         join_path(&mut paths, &Scope::default());
         let joined = paths.unwrap();
-        assert!(joined.has_escaped_slot_names);
+        assert!(joined.uncertainty.escaped_slot_names);
         assert!(joined.bindings.is_empty());
     }
 
@@ -268,7 +256,7 @@ mod tests {
                 nexts: next_flag.then(|| Box::new(escaped_slot_scope())),
             });
             checker.finish_loop(&mut scope, inner, body_flag || break_flag, true);
-            assert!(scope.has_escaped_slot_names);
+            assert!(scope.uncertainty.escaped_slot_names);
             assert!(scope.bindings.is_empty());
             assert!(!checker.fn_table.has_escaped_slot_names);
             assert!(checker.has_explicit_operator_mask("@<-", "`@<-`", &scope));

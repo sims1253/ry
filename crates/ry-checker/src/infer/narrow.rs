@@ -234,13 +234,7 @@ fn scalar_false_path_fact(expr: &Expr) -> Option<(String, Option<RType>)> {
         else {
             return None;
         };
-        if is_literal_eq(rhs, 1.0) {
-            length_guard_var(lhs)
-        } else if is_literal_eq(lhs, 1.0) {
-            length_guard_var(rhs)
-        } else {
-            None
-        }
+        length_guard_var(compared_with_one(lhs, rhs)?)
     }
 
     fn false_path_target(expr: &Expr, var: &str) -> Option<RType> {
@@ -277,6 +271,18 @@ fn length_guard_var(expr: &Expr) -> Option<String> {
         return None;
     }
     first_arg_ident(args)
+}
+
+/// For a comparison against the literal one written either way round
+/// (`length(x) == 1`, `1L != length(x)`), the other operand.
+pub(crate) fn compared_with_one<'a>(lhs: &'a Expr, rhs: &'a Expr) -> Option<&'a Expr> {
+    if is_literal_eq(rhs, 1.0) {
+        Some(lhs)
+    } else if is_literal_eq(lhs, 1.0) {
+        Some(rhs)
+    } else {
+        None
+    }
 }
 
 /// Whether `expr` is the whole-number literal `value` (`0`, `1`, `1.0`),
@@ -717,7 +723,7 @@ impl Checker {
                 predicate_target(crate::semantic_lists::bare_name(name)).is_some()
                     && self.resolves_to_base(name, scope)
                     && !scope.data_mask_unknown
-                    && !scope.effects_unknown
+                    && !scope.uncertainty.effects
                     && args.len() == 1
                     && matches!(args[0].value, Expr::Ident { .. })
             }

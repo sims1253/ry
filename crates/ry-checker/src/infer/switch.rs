@@ -32,7 +32,7 @@ impl Checker {
                 ["::", "`::`", ":::", "`:::`"],
                 &HashSet::new(),
                 scope,
-            ) || scope.effects_unknown
+            ) || scope.uncertainty.effects
             {
                 return unknown(scope);
             }
@@ -68,7 +68,7 @@ impl Checker {
                     unknown(scope)
                 };
             }
-            if scope.effects_unknown
+            if scope.uncertainty.effects
                 || scope.data_mask_unknown
                 || self.literal_bindings_may_be_shadowed(
                     ["switch", "`switch`"],
@@ -184,11 +184,11 @@ impl Checker {
                 // Base switch and its literal selector have not run user code.
                 // Remove only our own call barrier so the chosen expression's
                 // uncertainty is observable independently of that barrier.
-                scope.ops_environment_unknown = false;
+                scope.uncertainty.ops_environment = false;
                 let selected = &alternatives[index].value;
                 let pure_constructor = self.pure_switch_constructor(selected, scope);
                 let result = self.infer(selected, scope);
-                if scope.ops_environment_unknown && !pure_constructor {
+                if scope.uncertainty.ops_environment && !pure_constructor {
                     return unknown(scope);
                 }
                 Some(result)

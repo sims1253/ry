@@ -730,7 +730,7 @@ impl Checker {
     }
 
     fn scalar_call_operator_is_base(&self, symbol: &str, scope: &Scope) -> bool {
-        !scope.ops_environment_unknown
+        !scope.uncertainty.ops_environment
             && !scope.data_mask_unknown
             && !scope.search_path_unknown
             && self.bare_loaded.is_empty()

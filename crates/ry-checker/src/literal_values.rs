@@ -5,7 +5,7 @@ use crate::scope_journal::Undo;
 impl Scope {
     pub(crate) fn invalidate_literal_values(&mut self) {
         self.clear_known_strings();
-        self.literal_values_unknown = true;
+        self.uncertainty.literal_values = true;
     }
 
     pub(crate) fn invalidate_literal_values_for_dispatch(&mut self, value: &RType) {
@@ -24,13 +24,13 @@ impl Scope {
     }
 
     pub(crate) fn set_known_string(&mut self, name: &str, value: Arc<str>) {
-        if self.effects_unknown || self.literal_values_unknown {
+        if self.uncertainty.effects || self.uncertainty.literal_values {
             return;
         }
         let name = semantic_argument_name(name).to_string();
         let previous = self.known_strings.insert(name.clone(), value);
-        if self.snapshot_depth > 0 {
-            self.undo.push(Undo::KnownString(name, previous));
+        if self.journal.depth > 0 {
+            self.journal.undo.push(Undo::KnownString(name, previous));
         }
     }
 
@@ -40,16 +40,18 @@ impl Scope {
         }
         let name = semantic_argument_name(name);
         if let Some(value) = self.known_strings.remove(name)
-            && self.snapshot_depth > 0
+            && self.journal.depth > 0
         {
-            self.undo
+            self.journal
+                .undo
                 .push(Undo::KnownString(name.to_string(), Some(value)));
         }
     }
 
     pub(crate) fn clear_known_strings(&mut self) {
-        if self.snapshot_depth > 0 && !self.known_strings.is_empty() {
-            self.undo
+        if self.journal.depth > 0 && !self.known_strings.is_empty() {
+            self.journal
+                .undo
                 .push(Undo::KnownStrings(std::mem::take(&mut self.known_strings)));
         } else {
             self.known_strings.clear();

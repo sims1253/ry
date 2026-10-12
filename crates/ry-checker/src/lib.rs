@@ -103,18 +103,10 @@ use std::sync::{Arc, OnceLock};
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
         Expr::String(value, _) => vec![value.clone()],
-        Expr::Call { func, args, .. } => {
-            let Some(name) = ident_name(func) else {
-                return Vec::new();
-            };
-            let bare = crate::semantic_lists::bare_name(name);
-            if bare != "c" {
-                return Vec::new();
-            }
-            args.iter()
-                .flat_map(|arg| string_literals(&arg.value))
-                .collect()
-        }
+        Expr::Call { func, args, .. } if is_c_call_head(func) => args
+            .iter()
+            .flat_map(|arg| string_literals(&arg.value))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -124,6 +116,11 @@ fn ident_name(expr: &Expr) -> Option<&str> {
         Expr::Ident { name, .. } => Some(name),
         _ => None,
     }
+}
+
+/// `c` or a namespace-qualified `base::c` in call position.
+fn is_c_call_head(func: &Expr) -> bool {
+    ident_name(func).is_some_and(|name| crate::semantic_lists::bare_name(name) == "c")
 }
 
 fn binding_name(expr: &Expr) -> Option<&str> {
@@ -364,30 +361,65 @@ impl SelectSlotRole {
     }
 }
 
+/// What unmodeled code on some path into the current point may have done.
+/// A path joining another keeps the union of both paths' uncertainty.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Uncertainty {
+    /// An unknown effect may install delayed bindings or change syntax itself.
+    /// Later literal assignments cannot prove that those effects disappeared.
+    pub(crate) ops_environment: bool,
+    /// An unmodeled call may force promises that mutate this frame or install
+    /// active bindings. Later expression inference cannot reuse caller facts.
+    pub(crate) effects: bool,
+    /// A call may have replaced a binding with an active binding or promise.
+    /// A later read need not return the value an assertion just checked.
+    pub(crate) dynamic_bindings: bool,
+    pub(crate) literal_values: bool,
+    /// Raw escaped slot names were supplied directly to a scope. This records
+    /// possible masks, never absence of dynamically created bindings.
+    pub(crate) escaped_slot_names: bool,
+}
+
+impl Uncertainty {
+    /// What an `if` arm passes to the continuation. A diverging arm's
+    /// replaced bindings cannot be read there; its effects stay sticky.
+    pub(crate) fn continuing(mut self, diverges: bool) -> Self {
+        self.dynamic_bindings &= !diverges;
+        self
+    }
+}
+
+impl std::ops::BitOr for Uncertainty {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self {
+            ops_environment: self.ops_environment || other.ops_environment,
+            effects: self.effects || other.effects,
+            dynamic_bindings: self.dynamic_bindings || other.dynamic_bindings,
+            literal_values: self.literal_values || other.literal_values,
+            escaped_slot_names: self.escaped_slot_names || other.escaped_slot_names,
+        }
+    }
+}
+
+impl std::ops::BitOrAssign for Uncertainty {
+    fn bitor_assign(&mut self, other: Self) {
+        *self = *self | other;
+    }
+}
+
 /// A single scope's binding table.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Scope {
     // Enclosing-frame evidence survives assignments in the current frame.
     outward_functions: Option<Arc<FunctionLookupFrame>>,
-    // Sticky evidence for raw escaped slot names supplied directly to a scope.
-    // It records possible masks, never absence of dynamically created bindings.
-    pub(crate) has_escaped_slot_names: bool,
-    undo: Vec<scope_journal::Undo>,
-    snapshot_depth: usize,
+    pub(crate) uncertainty: Uncertainty,
+    journal: scope_journal::Journal,
     /// Active loop in this execution frame; independent function scopes clear it.
     pub(crate) loop_frame: Option<usize>,
-    // An unknown effect may install delayed bindings or change syntax itself.
-    // Later literal assignments cannot prove that those effects disappeared.
-    pub(crate) ops_environment_unknown: bool,
-    /// An unmodeled call may force promises that mutate this frame or install
-    /// active bindings. Later expression inference cannot reuse caller facts.
-    pub(crate) effects_unknown: bool,
-    /// A call may have replaced a binding with an active binding or promise.
-    /// A later read need not return the value an assertion just checked.
-    pub(crate) dynamic_bindings_unknown: bool,
     /// Closed class-only vector construction, lost on writes and control-flow merges.
     pub(crate) plain_ops_vectors: FxSet<String>,
-    pub(crate) literal_values_unknown: bool,
     pub(crate) known_strings: FxMap<String, Arc<str>>,
     pub(crate) literal_functions: FxMap<String, Arc<infer::ops_chooser::LiteralFunction>>,
     pub(crate) reference_provenance: Option<Box<reference_facts::ScopeProvenance>>,
@@ -438,42 +470,6 @@ pub struct Scope {
     pub(crate) unreachable: bool,
 }
 
-impl Clone for Scope {
-    fn clone(&self) -> Self {
-        Self {
-            outward_functions: self.outward_functions.clone(),
-            has_escaped_slot_names: self.has_escaped_slot_names,
-            loop_frame: self.loop_frame,
-            effects_unknown: self.effects_unknown,
-            dynamic_bindings_unknown: self.dynamic_bindings_unknown,
-            ops_environment_unknown: self.ops_environment_unknown,
-            literal_functions: self.literal_functions.clone(),
-            known_strings: self.known_strings.clone(),
-            literal_values_unknown: self.literal_values_unknown,
-            plain_ops_vectors: self.plain_ops_vectors.clone(),
-            reference_provenance: self.reference_provenance.clone(),
-            bindings: self.bindings.clone(),
-            narrowed_bindings: self.narrowed_bindings.clone(),
-            parameter_bindings: self.parameter_bindings.clone(),
-            scalar_asserted_bindings: self.scalar_asserted_bindings.clone(),
-            loop_vector_bindings: self.loop_vector_bindings.clone(),
-            list_origin_bindings: self.list_origin_bindings.clone(),
-            default_parameter_bindings: self.default_parameter_bindings.clone(),
-            function_aliases: self.function_aliases.clone(),
-            box_objects: self.box_objects.clone(),
-            lexical_functions: self.lexical_functions.clone(),
-            lexical_definitions: self.lexical_definitions.clone(),
-            data_mask_unknown: self.data_mask_unknown,
-            tidy_injection: self.tidy_injection,
-            select_subscript: self.select_subscript.clone(),
-            search_path_unknown: self.search_path_unknown,
-            unreachable: self.unreachable,
-            undo: Vec::new(),
-            snapshot_depth: 0,
-        }
-    }
-}
-
 impl Scope {
     /// Start a function, deferred expression, or speculative walk without
     /// inheriting transfers from the caller's active loop.
@@ -482,7 +478,7 @@ impl Scope {
         scope.loop_frame = None;
         // Code here may run after the caller's binding changes, so it gets
         // no scalar facts; it may prove its own.
-        scope.dynamic_bindings_unknown = false;
+        scope.uncertainty.dynamic_bindings = false;
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
@@ -554,7 +550,7 @@ impl Scope {
     /// but make value uncertainty persist across writes.
     pub(crate) fn invalidate_unknown_effects(&mut self) {
         self.clear_known_strings();
-        if self.snapshot_depth > 0 {
+        if self.journal.depth > 0 {
             let names: HashSet<_> = self
                 .bindings
                 .keys()
@@ -591,7 +587,7 @@ impl Scope {
         if let Some(provenance) = self.reference_provenance.as_mut() {
             provenance.invalidate_all();
         }
-        self.effects_unknown = true;
+        self.uncertainty.effects = true;
         self.data_mask_unknown = true;
         self.search_path_unknown = true;
         self.invalidate_ops_environment();
@@ -600,7 +596,7 @@ impl Scope {
     pub(crate) fn invalidate_ops_environment(&mut self) {
         self.clear_known_strings();
         self.clear_ops_facts();
-        self.ops_environment_unknown = true;
+        self.uncertainty.ops_environment = true;
     }
 
     pub fn get(&self, name: &str) -> Option<&RType> {
@@ -619,10 +615,11 @@ impl Scope {
 
     fn insert_value(&mut self, name: String, t: RType) {
         self.clear_known_string(&name);
-        if !self.has_escaped_slot_names {
-            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        if !self.uncertainty.escaped_slot_names {
+            self.uncertainty.escaped_slot_names =
+                infer::custom_operator::escaped_name_may_mask_slot(&name);
         }
-        if self.snapshot_depth > 0 {
+        if self.journal.depth > 0 {
             self.insert_with_assignment_undo(name, t);
             return;
         }
@@ -671,8 +668,9 @@ impl Scope {
         let name = name.into();
         let excludes_unclassed_vector =
             t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
-        if !self.has_escaped_slot_names {
-            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        if !self.uncertainty.escaped_slot_names {
+            self.uncertainty.escaped_slot_names =
+                infer::custom_operator::escaped_name_may_mask_slot(&name);
         }
         let journal = self.begin_binding_change(&name);
         self.clear_ops_binding(&name);
@@ -702,8 +700,9 @@ impl Scope {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
         let name = name.into();
-        if !self.has_escaped_slot_names {
-            self.has_escaped_slot_names = infer::custom_operator::escaped_name_may_mask_slot(&name);
+        if !self.uncertainty.escaped_slot_names {
+            self.uncertainty.escaped_slot_names =
+                infer::custom_operator::escaped_name_may_mask_slot(&name);
         }
         let journal = self.begin_binding_change(&name);
         self.clear_ops_binding(&name);
@@ -747,7 +746,7 @@ impl Scope {
 
     /// A scalar fact counts only while no call may have swapped bindings.
     pub(crate) fn is_scalar_asserted(&self, name: &str) -> bool {
-        !self.dynamic_bindings_unknown && self.scalar_asserted_bindings.contains(name)
+        !self.uncertainty.dynamic_bindings && self.scalar_asserted_bindings.contains(name)
     }
 
     pub(crate) fn clear_scalar_asserted(&mut self, name: &str) {
@@ -761,7 +760,7 @@ impl Scope {
     /// Drop current scalar facts, and refuse new ones in this frame: a later
     /// assertion could read a value that the next read no longer returns.
     pub(crate) fn invalidate_scalar_assertions(&mut self) {
-        self.dynamic_bindings_unknown = true;
+        self.uncertainty.dynamic_bindings = true;
         self.clear_scalar_assertions();
     }
 
@@ -1308,12 +1307,7 @@ pub struct Checker {
     // package cannot suppress RY010 in an unrelated package checked in the
     // same invocation.
     external_bindings: HashSet<String>,
-    // Whether this file's package declares `useDynLib(..., .registration =
-    // TRUE)`. Derived from `external_bindings` in `set_external_bindings`.
-    pub(crate) native_registration: bool,
-    // Whether this file is package code that finds base before the search
-    // path. Derived from `external_bindings` in `set_external_bindings`.
-    base_before_search_path: bool,
+    pub(crate) package_facts: ry_workspace::PackageFacts,
     imported_from: HashMap<String, String>,
     external_s3_methods: HashSet<(String, String)>,
     /// Method screens derived from the collected and imported tables. They
@@ -1539,8 +1533,7 @@ impl Checker {
             loaded: Arc::new(HashSet::new()),
             bare_loaded: Arc::new(HashSet::new()),
             external_bindings: HashSet::new(),
-            native_registration: false,
-            base_before_search_path: false,
+            package_facts: Default::default(),
             imported_from: HashMap::new(),
             external_s3_methods: HashSet::new(),
             method_screens: std::sync::OnceLock::new(),
@@ -1974,13 +1967,13 @@ impl Checker {
 
     // Seed opaque bindings established by metadata for this source file.
     pub fn set_external_bindings(&mut self, bindings: HashSet<String>) {
-        self.native_registration =
-            bindings.contains(ry_workspace::packages::NATIVE_REGISTRATION_SENTINEL);
-        self.base_before_search_path =
-            bindings.contains(ry_workspace::packages::BASE_BEFORE_SEARCH_PATH_SENTINEL);
         self.external_bindings = bindings;
         self.method_screens = std::sync::OnceLock::new();
         self.refresh_escaped_slot_bindings();
+    }
+
+    pub fn set_package_facts(&mut self, facts: ry_workspace::PackageFacts) {
+        self.package_facts = facts;
     }
 
     fn refresh_escaped_slot_bindings(&mut self) {

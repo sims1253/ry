@@ -38,7 +38,7 @@ fn slot_access_and_nested_replacement_forget_caller_facts() {
             );
             assert!(!scope.has_list_origin(name), "{operation}: {name}");
         }
-        assert!(scope.effects_unknown);
+        assert!(scope.uncertainty.effects);
     }
     let diagnostics =
         check("`@<-` <- function(object, name, value) 11L; x <- list(); (x@foo <- 4:6) + 'bad'");

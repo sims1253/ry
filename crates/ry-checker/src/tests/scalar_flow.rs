@@ -179,6 +179,9 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
         "own::helper()",
         "pkg::run(function() NULL)",
         "base::message('start')",
+        // Every package sharing the base stub database counts as base.
+        "graphics::plot.new()",
+        "grDevices::dev.off()",
     ] {
         let source = format!("{helper}f <- function(x = 1L) {{ {before}; {guard}");
         assert!(warns_ry032(&source), "{before}");

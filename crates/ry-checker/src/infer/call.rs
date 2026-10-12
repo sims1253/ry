@@ -78,7 +78,7 @@ impl Checker {
         }
         // Calls may install delayed bindings, not just mutate current values.
         // Preserve environment certainty only for a closed literal constructor.
-        let environment_known_before_call = !scope.ops_environment_unknown;
+        let environment_known_before_call = !scope.uncertainty.ops_environment;
         let pure = ops_chooser::pure_literal_constructor(self, func, args, scope);
         if !pure {
             scope.invalidate_literal_values();
@@ -86,7 +86,7 @@ impl Checker {
         }
         // R selects the callee before its arguments run; classify it first.
         let may_replace_bindings =
-            !scope.dynamic_bindings_unknown && !self.call_keeps_scalar_facts(func, args, scope);
+            !scope.uncertainty.dynamic_bindings && !self.call_keeps_scalar_facts(func, args, scope);
         let blocks_later_facts =
             may_replace_bindings && !self.call_allowed_before_assertion(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
@@ -141,11 +141,11 @@ impl Checker {
         };
         let callee = if crate::semantic_lists::bare_name(&name) == "I" {
             self.resolves_to_base_lenient(&name, scope)
-        } else if let Some((package, member)) = name.rsplit_once("::")
-            && !package.ends_with(':')
+        } else if let Some((package, member)) = crate::resolve::split_qualified(&name)
+            && !name.contains(":::")
         {
             // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
-            !matches!(package, "base" | "methods" | "utils" | "stats")
+            !crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
                 && !self.fn_table.fns.contains_key(member)
                 && !self.known_vars.contains(member)
                 && !ops_chooser::operator_rebound(self, "::", scope)
@@ -1112,7 +1112,7 @@ impl Checker {
                     self.infer(&argument.value, &mut child);
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
-                scope.effects_unknown |= delta.effects_unknown;
+                scope.uncertainty.effects |= delta.uncertainty.effects;
                 for name in delta.changed.into_keys() {
                     scope.insert(name, RType::unknown());
                 }
@@ -1149,11 +1149,11 @@ impl Checker {
             // An explicit environment can have unrelated bindings and parents.
             child.invalidate_unknown_effects();
         }
-        let effects_were_unknown = child.effects_unknown;
+        let effects_were_unknown = child.uncertainty.effects;
         self.deferred_captures.push(captures);
         let result = self.infer(block, &mut child);
         self.deferred_captures.pop();
-        if child.effects_unknown && !effects_were_unknown {
+        if child.uncertainty.effects && !effects_were_unknown {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();
         }
@@ -1212,7 +1212,7 @@ impl Checker {
                     self.infer(&argument.value, &mut child);
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
-                scope.effects_unknown |= delta.effects_unknown;
+                scope.uncertainty.effects |= delta.uncertainty.effects;
                 for changed in delta.changed.into_keys() {
                     scope.insert(changed, RType::unknown());
                 }
@@ -1234,9 +1234,9 @@ impl Checker {
             return Some(RType::unknown());
         };
         let mut child = scope.function_execution_scope();
-        let effects_were_unknown = child.effects_unknown;
+        let effects_were_unknown = child.uncertainty.effects;
         self.infer(&args[code].value, &mut child);
-        if child.effects_unknown && !effects_were_unknown {
+        if child.uncertainty.effects && !effects_were_unknown {
             // Eager nonlocal writes can reach the caller from this child.
             scope.invalidate_unknown_effects();
         }
@@ -1865,7 +1865,7 @@ impl Checker {
         // functions, so they only get this treatment in a package that
         // declares `useDynLib(..., .registration = TRUE)`.
         if ry_core::FFI_PRIMITIVES.contains(&semantic_name)
-            || (is_registered_ffi_wrapper(semantic_name) && self.native_registration)
+            || (is_registered_ffi_wrapper(semantic_name) && self.package_facts.native_registration)
         {
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {

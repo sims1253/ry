@@ -104,8 +104,7 @@ paths = ["inst/shiny/**"]
 Profile paths are glob patterns relative to the configuration directory, even
 when checking a nested package. `*` stays within one path component; `**`
 includes descendants. Use forward slashes on every platform. Existing paths
-are resolved through symlinks before matching. A programmatically constructed
-configuration without a file location uses the analysis root.
+are resolved through symlinks before matching.
 
 To adopt the audited `typehint` 0.1.0 comments only in selected source files:
 

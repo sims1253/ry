@@ -12,4 +12,4 @@ pub use lsp_session::{LspSession, QuiescedDiagnostics, file_uri, rpc_receive_tim
 pub use observed::{
     DriverError, ObservedPosition, PositionEncoding, normalize_path, normalize_position,
 };
-pub use process::CliProcess;
+pub use process::{CliOutput, CliProcess};

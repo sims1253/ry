@@ -146,8 +146,6 @@ pub struct WorkspaceContext {
 pub enum ResolveError {
     #[error("workspace root is not a directory: {0}")]
     InvalidRoot(PathBuf),
-    #[error("invalid environment path pattern: {0}")]
-    InvalidEnvironmentPattern(#[from] glob::PatternError),
 }
 
 /// Inventory of a directory of data files (`data/`, `R/sysdata.rda`).
@@ -330,22 +328,6 @@ pub fn resolve_workspace_context<'a>(
     if !root.is_dir() {
         return Err(ResolveError::InvalidRoot(root.to_path_buf()));
     }
-    let profiles = config
-        .environments
-        .iter()
-        .map(|profile| {
-            let patterns = profile
-                .paths
-                .iter()
-                .map(|pattern| glob::Pattern::new(&pattern.replace('\\', "/")))
-                .collect::<Result<Vec<_>, _>>()?;
-            let anchor = profile.root.as_deref().unwrap_or(root);
-            let anchor = anchor
-                .canonicalize()
-                .unwrap_or_else(|_| anchor.to_path_buf());
-            Ok((profile, patterns, anchor))
-        })
-        .collect::<Result<Vec<_>, glob::PatternError>>()?;
     let files = environment.files;
     let user_stubs = environment.user_stubs;
     let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
@@ -395,27 +377,9 @@ pub fn resolve_workspace_context<'a>(
         let mut file_imported_from = HashMap::new();
         let mut source_package = None;
         file_bindings.extend(configured_globals.iter().cloned());
-        if !profiles.is_empty()
-            && let Ok(path) = Path::new(&file.path)
-                .canonicalize()
-                .or_else(|_| std::path::absolute(&file.path))
-        {
-            for (profile, patterns, anchor) in &profiles {
-                let Ok(relative) = path.strip_prefix(anchor) else {
-                    continue;
-                };
-                let relative = relative.to_string_lossy().replace('\\', "/");
-                if patterns.iter().any(|pattern| {
-                    pattern.matches_with(
-                        &relative,
-                        glob::MatchOptions {
-                            require_literal_separator: true,
-                            ..Default::default()
-                        },
-                    )
-                }) {
-                    file_bindings.extend(profile.bindings.iter().cloned());
-                }
+        for profile in &config.environments {
+            if profile.scope.matches(Path::new(&file.path)) {
+                file_bindings.extend(profile.bindings.iter().cloned());
             }
         }
         if let Some(root) = package_root_cache

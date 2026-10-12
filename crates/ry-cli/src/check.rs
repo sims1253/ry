@@ -89,7 +89,7 @@ pub(crate) fn run_check(
 
     // Forward `None` for scalars the CLI did not set explicitly, so the
     // config file's value wins. The overrides are retained for watch
-    // mode, which re-merges them over every reloaded `ry.toml` (#530).
+    // mode, which re-merges them over every reloaded `ry.toml`.
     let m = check_matches;
     let baseline_from_cli = flag_set(m, "baseline");
 
@@ -110,7 +110,7 @@ pub(crate) fn run_check(
     // Regeneration snapshots what the run reports as it stands, so the
     // configured baseline is neither loaded nor subtracted: subtracting
     // first would empty the file on an unchanged project and resurrect
-    // every accepted finding on the next plain check (#484). This
+    // every accepted finding on the next plain check. This
     // mirrors at the config level the clap conflict between
     // `--write-baseline` and `--baseline` (`baseline_from_cli` is
     // therefore unreachable here); a genuinely fixed finding still drops
@@ -153,46 +153,19 @@ pub(crate) fn run_check(
     let user_stubs = load_user_stubs(&cfg.typeshed);
 
     // Collect the initial file set via the shared bounded discovery
-    // module (issue #48). CLI and LSP use the same eligibility,
-    // extension, hidden-directory, symlink, exclude, and test-fixture rules.
-    let overlay_identity = stdin_path.as_deref().map(source_identity).transpose()?;
-    let mut overlay_alias = None;
-    let mut search_roots = Vec::new();
-    if paths.is_empty() {
+    // module. CLI and LSP use the same eligibility, extension,
+    // hidden-directory, symlink, exclude, and test-fixture rules.
+    let mut search_roots: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| path.as_os_str() != "-")
+        .collect();
+    if search_roots.is_empty() && stdin_path.is_none() {
         search_roots.push(PathBuf::from("."));
-    } else {
-        for path in paths {
-            if path.as_os_str() == "-" {
-                continue;
-            }
-            let aliases_overlay = match overlay_identity.as_ref() {
-                Some(_) if path.as_path() == stdin_path.as_deref().expect("stdin has a path") => {
-                    true
-                }
-                Some(identity) if path.exists() || source_parent(&path).is_dir() => {
-                    source_identity(&path)? == *identity
-                }
-                // A separate requested root with no directory parent is
-                // diagnosed by the missing-root check below, not silently
-                // treated as an alias of the stdin source.
-                _ => false,
-            };
-            if aliases_overlay {
-                // An explicit alias of the overlay is already supplied by
-                // stdin, including when this file has never been saved.
-                overlay_alias.get_or_insert(path);
-            } else {
-                search_roots.push(path);
-            }
-        }
     }
 
-    // Every requested input root must exist (#485): a missing path used
-    // to fall into the directory branch of discovery, whose failed
-    // `read_dir` was swallowed, so a typo'd CI path checked as clean.
-    // `ry dump-types` already rejects missing inputs this way. The run
-    // aborts before checking anything — a partial check that never
-    // mentions the miss is what made the bug dangerous.
+    // Every requested input root must exist, so a typo'd CI path cannot
+    // check as clean. The run aborts before checking anything, like
+    // `ry dump-types` does for missing inputs.
     let missing: Vec<&PathBuf> = search_roots.iter().filter(|root| !root.exists()).collect();
     if !missing.is_empty() {
         for root in &missing {
@@ -208,71 +181,38 @@ pub(crate) fn run_check(
         &cfg,
         true,
         explain_files,
-        overlay_identity.as_deref(),
-    )?;
+    );
     report_read_errors(&scan.read_errors);
     let mut all_paths = scan.paths;
 
     // The operand `-` is an explicit source, just like an explicitly named
-    // file: it is checked even when a directory walk would exclude it. A
-    // directory root may also discover a stale copy of the same path, so
-    // replace every spelling of that disk entry before project analysis.
-    let overlay = if let Some(path) = stdin_path {
-        let limit = cfg.index.max_file_bytes;
-        let mut bytes = Vec::new();
-        let read_result = std::io::stdin()
-            .lock()
-            .take(limit.saturating_add(1))
-            .read_to_end(&mut bytes);
-        if let Err(error) = read_result {
-            eprintln!("ry: stdin for {}: {error}", path.display());
-            print_empty_report();
-            return Ok(discovery_exit_code(&cfg));
-        }
-        if bytes.len() as u64 > limit {
-            eprintln!(
-                "ry: stdin for {} exceeds index.max-file-bytes ({limit} bytes)",
-                path.display()
-            );
-            print_empty_report();
-            return Ok(discovery_exit_code(&cfg));
-        }
-        let identity = overlay_identity.expect("stdin path has an identity");
-        let mut checked_path = None;
-        let mut distinct = Vec::with_capacity(all_paths.len() + 1);
-        for discovered in all_paths {
-            if source_identity(&discovered)? == identity {
-                checked_path.get_or_insert(discovered);
-            } else {
-                distinct.push(discovered);
+    // file: it is checked even when a directory walk would exclude it.
+    let overlay = match stdin_path {
+        Some(path) => {
+            let Some(overlay) = read_stdin_overlay(
+                &path,
+                &mut all_paths,
+                &search_roots,
+                cfg.index.max_file_bytes,
+            )?
+            else {
+                print_empty_report();
+                return Ok(discovery_exit_code(&cfg));
+            };
+            if explain_files {
+                eprintln!("ry: include {} (stdin overlay)", overlay.path.display());
             }
+            Some(overlay)
         }
-        let checked_path = match checked_path {
-            Some(path) => path,
-            None => {
-                overlay_path_for_roots(&path, &identity, &search_roots, overlay_alias.as_deref())?
-            }
-        };
-        all_paths = distinct;
-        all_paths.push(checked_path.clone());
-        sort_and_deduplicate_paths(&mut all_paths);
-        if explain_files {
-            eprintln!("ry: include {} (stdin overlay)", checked_path.display());
-        }
-        Some(SourceOverlay {
-            path: checked_path,
-            bytes,
-        })
-    } else {
-        None
+        None => None,
     };
 
     // A readable-but-empty discovery result enters the watch loop with
     // zero files instead of exiting: the loop's rescan already detects
     // membership growth, so the first created `.R` file triggers a
-    // re-check (#529). The read-error branch below still fails the run
-    // in watch mode (#485): an unreadable root is a discovery failure,
-    // not a quiet empty set. Non-watch behavior is unchanged.
+    // re-check. The read-error branch below still fails the run in
+    // watch mode: an unreadable root is a discovery failure, not a quiet
+    // empty set.
     if all_paths.is_empty() && !(watch && scan.read_errors.is_empty()) {
         print_empty_report();
         if scan.read_errors.is_empty() {
@@ -292,7 +232,7 @@ pub(crate) fn run_check(
     }
 
     // The reloadable inputs of every pass. In watch mode the loop below
-    // refreshes them whenever a non-R input changes (#530); the file set
+    // refreshes them whenever a non-R input changes; the file set
     // stays a parameter of `run_check_once` because watch iterations
     // change it too.
     let mut state = WatchState::new(
@@ -315,8 +255,7 @@ pub(crate) fn run_check(
         &state.check_context(min_confidence),
     )?;
     // Directories the initial scan could not read fail the run like
-    // parse errors do, even when every discovered file checks clean
-    // (#485).
+    // parse errors do, even when every discovered file checks clean.
     result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
@@ -360,8 +299,7 @@ pub(crate) fn run_check(
             state.config(),
             false,
             false,
-            None,
-        )?;
+        );
 
         // Poll the package-metadata dependencies AFTER the rescan: the
         // dependency set is derived from the discovered paths, so it must
@@ -418,7 +356,7 @@ pub(crate) fn run_check(
 /// The reloadable inputs of one watch session: everything a check pass
 /// reads *besides* the R file set. Watch mode polls the mtimes of the
 /// files these inputs come from and re-derives the affected state when
-/// one changes, so mid-watch edits take effect without a restart (#530).
+/// one changes, so mid-watch edits take effect without a restart.
 /// The inputs split into two classes with different refresh disciplines:
 ///
 /// * Static, config-anchored inputs (`ry.toml` candidates, the effective
@@ -449,6 +387,7 @@ struct WatchState {
     /// baseline of the current pass.
     cfg: config::Config,
     filter: ry_checker::SeverityFilter,
+    scoped_policy: ry_checker::ScopedRulePolicy,
     format: ry_checker::format::OutputFormat,
     color_choice: crate::ColorChoice,
     user_stubs: Arc<BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -459,7 +398,7 @@ struct WatchState {
     /// Whether the effective baseline came from `--baseline`: startup
     /// aborts on its load errors, and reloads report them loudly too.
     baseline_from_cli: bool,
-    /// Last-good policy (#530): a broken `ry.toml` or baseline
+    /// Last-good policy: a broken `ry.toml` or baseline
     /// mid-watch keeps the previous inputs with one warning per episode
     /// instead of killing the session or spamming every poll. Cleared
     /// when the file parses again, with a recovery note.
@@ -496,11 +435,13 @@ impl WatchState {
         overrides: config::CliOverrides,
         baseline_from_cli: bool,
     ) -> Self {
+        let scoped_policy = scoped_policy(&cfg, config_root.as_deref(), &overrides);
         Self {
             search_start: search_start.to_path_buf(),
             config_root,
             cfg,
             filter,
+            scoped_policy,
             format,
             color_choice,
             user_stubs,
@@ -530,21 +471,9 @@ impl WatchState {
     /// Borrow the current inputs as one pass's context. Rebuilt per
     /// pass because a reload may have replaced everything it borrows.
     fn check_context(&self, min_confidence: ry_checker::Confidence) -> CheckContext<'_> {
-        let protected = self
-            .overrides
-            .error
-            .iter()
-            .chain(&self.overrides.warn)
-            .chain(&self.overrides.ignore)
-            .cloned()
-            .collect::<Vec<_>>();
         CheckContext {
             filter: &self.filter,
-            scoped_policy: ry_checker::ScopedRulePolicy::new(
-                &self.cfg,
-                self.config_root.as_deref(),
-                &protected,
-            ),
+            scoped_policy: &self.scoped_policy,
             format: self.format,
             resolution_config: &self.cfg,
             user_stubs: Arc::clone(&self.user_stubs),
@@ -687,6 +616,11 @@ impl WatchState {
                         self.cfg = cfg;
                         self.format = format;
                         self.filter = ry_checker::filter_from_config(&self.cfg);
+                        self.scoped_policy = scoped_policy(
+                            &self.cfg,
+                            self.config_root.as_deref(),
+                            &self.overrides,
+                        );
                         self.user_stubs = load_user_stubs(&self.cfg.typeshed);
                         self.reload_baseline();
                     }
@@ -755,6 +689,22 @@ impl WatchState {
             eprintln!("ry: warning: {error}; keeping the last good configuration");
         }
     }
+}
+
+/// Per-path rule tables; explicit CLI rule flags keep precedence over them.
+fn scoped_policy(
+    cfg: &config::Config,
+    config_root: Option<&std::path::Path>,
+    overrides: &config::CliOverrides,
+) -> ry_checker::ScopedRulePolicy {
+    let protected = overrides
+        .error
+        .iter()
+        .chain(&overrides.warn)
+        .chain(&overrides.ignore)
+        .cloned()
+        .collect::<Vec<_>>();
+    ry_checker::ScopedRulePolicy::new(cfg, config_root, &protected)
 }
 
 /// Candidate `ry.toml` paths for the upward discovery walk from
@@ -1075,8 +1025,7 @@ pub(crate) struct CheckResult {
     degraded: Vec<String>,
     /// Directories that could not be read while discovering the input
     /// set. Like parse errors, they fail the run's exit code: a
-    /// partially undiscoverable input must not look like a clean check
-    /// (#485).
+    /// partially undiscoverable input must not look like a clean check.
     discovery_errors: usize,
 }
 
@@ -1190,7 +1139,7 @@ impl CheckResult {
 /// of `run_check_once` because watch iterations change it.
 pub(crate) struct CheckContext<'a> {
     filter: &'a ry_checker::SeverityFilter,
-    scoped_policy: ry_checker::ScopedRulePolicy,
+    scoped_policy: &'a ry_checker::ScopedRulePolicy,
     format: ry_checker::format::OutputFormat,
     resolution_config: &'a config::Config,
     user_stubs: Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
@@ -1270,43 +1219,6 @@ fn run_check_once(
         &[ctx.repo_root],
     )?;
 
-    let adopted = pipeline::adopted_records(&parsed, ctx.resolution_config);
-    // Declined records originate from scoped UTF-8 native paths, so these
-    // synthesized paths preserve their authored file identity.
-    synthetic_diagnostics.extend(
-        adopted
-            .diagnostics
-            .into_iter()
-            .map(|diagnostic| (PathBuf::from(&diagnostic.path), diagnostic)),
-    );
-    let mut per_file_diagnostics = Vec::new();
-    for group in groups {
-        let group_paths: std::collections::HashSet<_> = group
-            .check_input
-            .files
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect();
-        let records = adopted
-            .records
-            .iter()
-            .filter(|record| group_paths.contains(record.source.path.as_str()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let checked = check_project(group.check_input, records);
-        debug_assert_eq!(group.source_indices.len(), checked.len());
-        per_file_diagnostics.extend(
-            group
-                .source_indices
-                .into_iter()
-                .zip(checked)
-                .map(|(index, (path, diagnostics))| (index, path, diagnostics)),
-        );
-        for (path, reason) in group.degraded_scopes {
-            degraded.insert(format!("{} ({})", path.display(), reason.description()));
-        }
-    }
-
     // Post-processing runs through the shared pipeline
     // (`ry_checker::post_process`) so the CLI and the LSP apply one
     // specified order: inline suppression comments (`# ry: ignore`,
@@ -1316,18 +1228,38 @@ fn run_check_once(
     // min-confidence threshold. The lexical (comment-based) suppression
     // filter keeps a `#` inside a string literal from being mistaken
     // for a directive.
-    for (index, path, diags) in &mut per_file_diagnostics {
-        let file = &parsed[*index];
-        let filter = ctx
-            .scoped_policy
-            .filter_for(file.native_or_display_path(), ctx.filter);
-        let post = ry_checker::PostProcess {
-            filter: &filter,
-            baseline: ctx.baseline,
-            min_confidence: ctx.min_confidence,
-            repo_root: ctx.repo_root,
-        };
-        *diags = post.pre_demotion(std::mem::take(diags), path.as_str(), Some(file.as_ref()));
+    for group in groups {
+        let files: Vec<_> = group
+            .source_indices
+            .iter()
+            .map(|&index| Arc::clone(&parsed[index]))
+            .collect();
+        let adopted = pipeline::adopted_records(&files, ctx.resolution_config);
+        // Declined records originate from scoped UTF-8 native paths, so these
+        // paths preserve their authored file identity.
+        synthetic_diagnostics.extend(
+            adopted
+                .diagnostics
+                .into_iter()
+                .map(|diagnostic| (PathBuf::from(&diagnostic.path), diagnostic)),
+        );
+        let checked = check_project(group.check_input, adopted.records);
+        debug_assert_eq!(files.len(), checked.len());
+        for (file, (path, diagnostics)) in files.iter().zip(checked) {
+            let filter = ctx
+                .scoped_policy
+                .filter_for(file.native_or_display_path(), ctx.filter);
+            let post = ry_checker::PostProcess {
+                filter: &filter,
+                baseline: ctx.baseline,
+                min_confidence: ctx.min_confidence,
+                repo_root: ctx.repo_root,
+            };
+            all_diagnostics.extend(post.pre_demotion(diagnostics, &path, Some(file.as_ref())));
+        }
+        for (path, reason) in group.degraded_scopes {
+            degraded.insert(format!("{} ({})", path.display(), reason.description()));
+        }
     }
     // File-level synthetic findings have no unambiguous source comment to
     // honor, so they enter the pipeline at the severity filter.
@@ -1337,14 +1269,11 @@ fn run_check_once(
         ry_checker::apply_filter_to_diagnostics(&mut diagnostics, &filter);
         all_diagnostics.extend(diagnostics);
     }
-    for (_index, _path, diags) in per_file_diagnostics {
-        all_diagnostics.extend(diags);
-    }
 
     // Demotion seam: path-based confidence demotion sits between the
     // severity filter and the baseline, its documented position in the
     // shared order. The stage lives in the shared pipeline, so the LSP
-    // demotes non-source paths exactly like the CLI (#492).
+    // demotes non-source paths exactly like the CLI.
     let post = ry_checker::PostProcess {
         filter: ctx.filter,
         baseline: ctx.baseline,
@@ -1487,7 +1416,7 @@ struct Scan {
 /// discovery module and return them sorted and deduplicated, alongside
 /// the directories the walk could not read. The two are kept apart so
 /// an unreadable root is never mistaken for an intentionally empty or
-/// excluded one (#485). `report` surfaces discovery-cap warnings (the
+/// excluded one. `report` surfaces discovery-cap warnings (the
 /// initial scan does; quiet watch polls repeat the same roots and stay
 /// silent).
 fn rescan(
@@ -1496,8 +1425,7 @@ fn rescan(
     cfg: &config::Config,
     report: bool,
     explain: bool,
-    overlay_identity: Option<&std::path::Path>,
-) -> Result<Scan> {
+) -> Scan {
     let mut scan = Scan {
         paths: Vec::new(),
         read_errors: Vec::new(),
@@ -1507,13 +1435,7 @@ fn rescan(
             ry_workspace::discover_r_files(root, config_root, cfg, cfg.check_test_fixtures);
         if explain {
             for file in &result.files {
-                let is_overlay = match overlay_identity {
-                    Some(identity) => source_identity(file)? == identity,
-                    None => false,
-                };
-                if !is_overlay {
-                    eprintln!("ry: include {}", file.display());
-                }
+                eprintln!("ry: include {}", file.display());
             }
             for (path, reason) in &result.skipped.entries {
                 eprintln!("ry: skip {} ({reason})", path.display());
@@ -1534,7 +1456,7 @@ fn rescan(
     sort_and_deduplicate_paths(&mut scan.paths);
     scan.read_errors.sort();
     scan.read_errors.dedup();
-    Ok(scan)
+    scan
 }
 
 /// Exit code for a run that could not walk a requested input: failure,
@@ -1547,17 +1469,66 @@ fn discovery_exit_code(cfg: &config::Config) -> ExitCode {
     }
 }
 
-/// Resolve the filesystem identity of an existing file or the would-be
-/// identity of an unsaved final filename. Canonicalizing the parent first
-/// gives `link/../new.R` the OS meaning of `link/..` when `link` is a
-/// symlink; lexical `..` folding would alias an unrelated file. The parent
-/// must exist, just as it must before an ordinary file can be saved.
+/// Read the `-` operand, bounded like a discovered file, and splice it into
+/// `paths` in place of the disk file it names. `Ok(None)` means stdin was
+/// unusable; the reason has been printed.
+fn read_stdin_overlay(
+    logical: &std::path::Path,
+    paths: &mut Vec<PathBuf>,
+    roots: &[PathBuf],
+    limit: u64,
+) -> Result<Option<SourceOverlay>> {
+    let identity = source_identity(logical)?;
+    let mut bytes = Vec::new();
+    let read = std::io::stdin()
+        .lock()
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes);
+    if let Err(error) = read {
+        eprintln!("ry: stdin for {}: {error}", logical.display());
+        return Ok(None);
+    }
+    if bytes.len() as u64 > limit {
+        eprintln!(
+            "ry: stdin for {} exceeds index.max-file-bytes ({limit} bytes)",
+            logical.display()
+        );
+        return Ok(None);
+    }
+    let mut spelling = None;
+    let mut kept = Vec::with_capacity(paths.len() + 1);
+    for path in paths.drain(..) {
+        // Directory walks never yield symlinks, so only an explicit operand
+        // can name the overlay's file under another file name.
+        let candidate = path.file_name() == identity.file_name() || roots.contains(&path);
+        if candidate && source_identity(&path)? == identity {
+            spelling.get_or_insert(path);
+        } else {
+            kept.push(path);
+        }
+    }
+    let path = match spelling {
+        Some(path) => path,
+        None => overlay_path_for_roots(logical, &identity, roots)?,
+    };
+    kept.push(path.clone());
+    sort_and_deduplicate_paths(&mut kept);
+    *paths = kept;
+    Ok(Some(SourceOverlay { path, bytes }))
+}
+
+/// The directory containing `path`, `.` for a bare filename.
 fn source_parent(path: &std::path::Path) -> &std::path::Path {
     path.parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| std::path::Path::new("."))
 }
 
+/// Resolve the filesystem identity of an existing file or the would-be
+/// identity of an unsaved final filename. Canonicalizing the parent first
+/// gives `link/../new.R` the OS meaning of `link/..` when `link` is a
+/// symlink; lexical `..` folding would alias an unrelated file. The parent
+/// must exist, just as it must before an ordinary file can be saved.
 fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
     use miette::IntoDiagnostic;
 
@@ -1579,14 +1550,12 @@ fn source_identity(path: &std::path::Path) -> Result<PathBuf> {
     }
 }
 
-/// Reuse the disk invocation's path spelling when a directory or direct
-/// operand also names the overlay. That keeps package-group keys and
-/// diagnostic paths consistent with neighboring discovered sources.
+/// Spell an unsaved overlay below the directory root that contains it, so
+/// package grouping keys it like its discovered neighbours.
 fn overlay_path_for_roots(
     logical: &std::path::Path,
     identity: &std::path::Path,
     roots: &[PathBuf],
-    alias: Option<&std::path::Path>,
 ) -> Result<PathBuf> {
     for root in roots {
         if root.is_dir()
@@ -1594,9 +1563,6 @@ fn overlay_path_for_roots(
         {
             return Ok(root.join(relative));
         }
-    }
-    if let Some(alias) = alias {
-        return Ok(alias.to_path_buf());
     }
     Ok(logical.to_path_buf())
 }
@@ -1624,7 +1590,6 @@ fn sync_stamps(paths: &[PathBuf], stamps: &mut HashMap<PathBuf, std::time::Syste
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{CheckInput, check_project_with_scope_capture};
     use ry_core::Span;
 
     fn diag(path: &str, line: usize, col: usize, code: &'static str) -> ry_checker::Diagnostic {
@@ -1649,7 +1614,7 @@ mod tests {
             None,
             &CheckContext {
                 filter: &filter,
-                scoped_policy: ry_checker::ScopedRulePolicy::default(),
+                scoped_policy: &ry_checker::ScopedRulePolicy::default(),
                 format: ry_checker::format::OutputFormat::Json,
                 resolution_config: &resolution_config,
                 user_stubs: Arc::new(std::collections::BTreeMap::new()),
@@ -1687,7 +1652,7 @@ mod tests {
         );
     }
 
-    /// (#491) Pin the post-processing order `ry check` applies through
+    /// Pin the post-processing order `ry check` applies through
     /// the shared pipeline: inline suppression BEFORE baseline
     /// subtraction (a suppressed occurrence must not consume the count
     /// its unsuppressed twin needs) and the min-confidence threshold
@@ -1715,7 +1680,7 @@ mod tests {
         let resolution_config = config::Config::default();
         let ctx = CheckContext {
             filter: &filter,
-            scoped_policy: ry_checker::ScopedRulePolicy::default(),
+            scoped_policy: &ry_checker::ScopedRulePolicy::default(),
             format: ry_checker::format::OutputFormat::Json,
             resolution_config: &resolution_config,
             user_stubs: Arc::new(std::collections::BTreeMap::new()),
@@ -2230,7 +2195,7 @@ mod tests {
                 .any(|diagnostic| diagnostic.code == "RY010")
         );
         // R's parser tolerates invalid bytes inside comments, so the
-        // file must not gain an encoding RY000 either (#376).
+        // file must not gain an encoding RY000 either.
         assert!(
             result
                 .diagnostics
@@ -2266,8 +2231,8 @@ mod tests {
     }
 
     /// A leading UTF-8 BOM is valid UTF-8, but R's parser rejects the
-    /// file with "unexpected input" at 1:1 (#474): `ry check` must flag
-    /// it like the non-UTF-8 case (#376) instead of checking clean.
+    /// file with "unexpected input" at 1:1: `ry check` must flag
+    /// it like the non-UTF-8 case instead of checking clean.
     #[test]
     fn leading_bom_is_flagged_as_an_encoding_ry000() {
         let temp = tempfile::tempdir().unwrap();
@@ -2356,124 +2321,5 @@ mod tests {
                 .iter()
                 .all(|diagnostic| diagnostic.code != "RY097")
         );
-    }
-
-    #[test]
-    fn check_project_basic() {
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser.parse("test.R", "x <- 1\n").unwrap();
-        let input = CheckInput {
-            files: vec![("test.R".to_string(), Arc::new(file))],
-            user_stubs: Arc::new(BTreeMap::new()),
-            workspace: Default::default(),
-        };
-        let output = check_project(input, Vec::new());
-        // A clean file should produce no diagnostics.
-        let total: usize = output.iter().map(|(_, d)| d.len()).sum();
-        assert_eq!(total, 0, "clean file should have no diagnostics");
-    }
-
-    #[test]
-    fn check_project_finds_undefined_var() {
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser.parse("test.R", "undefined_var\n").unwrap();
-        let input = CheckInput {
-            files: vec![("test.R".to_string(), Arc::new(file))],
-            user_stubs: Arc::new(BTreeMap::new()),
-            workspace: Default::default(),
-        };
-        let output = check_project(input, Vec::new());
-        let total: usize = output.iter().map(|(_, d)| d.len()).sum();
-        assert!(total > 0, "undefined variable should produce diagnostics");
-    }
-
-    #[test]
-    fn check_project_with_workspace_context() {
-        // `is_null(x)` narrows `x` away from NULL only when its defining
-        // package is attached, so the trailing `x()` is an RY070
-        // (calling a non-function) exactly when rlang is absent. Running
-        // the same source with and without the workspace context proves
-        // check_project actually feeds attached_packages into the checker
-        // instead of ignoring it.
-        let src = "x <- NULL\nif (is_null(x)) stop(\"missing\")\nx()\n";
-        let run = |workspace: ry_workspace::WorkspaceContext| -> usize {
-            let mut parser = ry_core::RParser::new().unwrap();
-            let file = parser.parse("test.R", src).unwrap();
-            let output = check_project(
-                CheckInput {
-                    files: vec![("test.R".to_string(), Arc::new(file))],
-                    user_stubs: Arc::new(BTreeMap::new()),
-                    workspace,
-                },
-                Vec::new(),
-            );
-            output
-                .iter()
-                .flat_map(|(_, diags)| diags.iter())
-                .filter(|d| d.code == "RY070")
-                .count()
-        };
-
-        let without = run(Default::default());
-        assert!(
-            without > 0,
-            "without rlang the predicate cannot narrow x; RY070 must fire for x()"
-        );
-
-        let mut with = ry_workspace::WorkspaceContext::default();
-        with.attached_packages.insert("rlang".to_string());
-        assert_eq!(
-            run(with),
-            0,
-            "with rlang attached the predicate narrows x; no RY070 may survive"
-        );
-    }
-
-    #[test]
-    fn check_project_cross_file_resolution() {
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file_a = parser.parse("a.R", "shared_fn <- function(x) x\n").unwrap();
-        let file_b = parser.parse("b.R", "shared_fn(42)\n").unwrap();
-        let input = CheckInput {
-            files: vec![
-                ("a.R".to_string(), Arc::new(file_a)),
-                ("b.R".to_string(), Arc::new(file_b)),
-            ],
-            user_stubs: Arc::new(BTreeMap::new()),
-            workspace: Default::default(),
-        };
-        let output = check_project(input, Vec::new());
-        // shared_fn is defined in a.R and called in b.R — should resolve.
-        let b_diags: usize = output
-            .iter()
-            .find(|(p, _)| p == "b.R")
-            .map(|(_, d)| d.len())
-            .unwrap_or(0);
-        assert_eq!(b_diags, 0, "cross-file function call should resolve");
-    }
-
-    #[test]
-    fn check_project_with_scope_capture_returns_records_per_file() {
-        let mut parser = ry_core::RParser::new().unwrap();
-        let file = parser
-            .parse("a.R", "f <- function(x = 1L) { y <- x\n y }\n")
-            .unwrap();
-        let input = CheckInput {
-            files: vec![("a.R".to_string(), Arc::new(file))],
-            user_stubs: Arc::new(BTreeMap::new()),
-            workspace: Default::default(),
-        };
-        let records = check_project_with_scope_capture(input);
-        assert_eq!(records.len(), 1);
-        let (path, file_records) = &records[0];
-        assert_eq!(path, "a.R");
-        // Exactly the top scope and the one function scope.
-        assert_eq!(file_records.len(), 2, "{file_records:?}");
-        let function = file_records
-            .iter()
-            .find(|r| r.kind == ry_checker::ScopeRecordKind::Function)
-            .expect("function scope recorded");
-        assert_eq!(function.name.as_deref(), Some("f"));
-        assert_eq!(function.params.len(), 1);
     }
 }

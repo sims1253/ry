@@ -385,7 +385,8 @@ pub(crate) fn run_dump_facts(
     let configuration = json!({
         "root": config_root.as_deref().map(file_identity).transpose()?,
         "effective": cfg,
-        "environment_roots": cfg.environments.iter().map(|profile| &profile.root).collect::<Vec<_>>(),
+        // Every profile is anchored at the config root.
+        "environment_roots": cfg.environments.iter().map(|_| &cfg.root).collect::<Vec<_>>(),
     });
     let typeshed = json!({
         "bundled_source": ry_typeshed::SOURCE,
@@ -492,31 +493,35 @@ pub(crate) fn run_dump_facts(
     exported.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
     contexts.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     truncations.sort_by_key(Value::to_string);
+    let schema_version = if annotations {
+        3
+    } else if references {
+        2
+    } else {
+        1
+    };
     let mut result = json!({
-        "schema_version": 1,
+        "schema_version": schema_version,
         "producer": build,
-        "snapshot_kind": "scope_exit",
         "coordinates": {"encoding": "utf-8", "bytes": "zero_based_half_open", "line_column": "one_based_unicode_scalar", "tab_width": 1},
         "configuration": configuration,
         "contexts": contexts,
         "discovery": {"complete": truncations.is_empty(), "truncations": truncations},
         "files": exported,
     });
-    if references {
-        result["schema_version"] = json!(2);
-        result
-            .as_object_mut()
-            .expect("facts object")
-            .remove("snapshot_kind");
+    // Schema 1 is frozen; every later schema shares one root shape and the
+    // flags only toggle the capabilities and per-file content they enable.
+    if schema_version == 1 {
+        result["snapshot_kind"] = json!("scope_exit");
+    } else {
         result["scope_snapshot_kind"] = json!("scope_exit");
         result["capabilities"] = json!({
             "scope_snapshots": true,
-            "reference_facts": "same_file_ordered_prefix",
-            "reference_coverage": "partial",
+            "reference_facts": references.then_some("same_file_ordered_prefix"),
+            "reference_coverage": references.then_some("partial"),
         });
     }
     if annotations {
-        result["schema_version"] = json!(3);
         result["annotation_snapshot_kind"] = json!("adopted_source_records");
         result["capabilities"]["annotation_records"] = json!("typehint_0.1.0_static_subset");
     }

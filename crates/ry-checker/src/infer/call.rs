@@ -428,7 +428,7 @@ impl Checker {
             self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope, span);
 
         // The argument-validation stage.
-        self.check_call_arguments(&name, &lookup_name, &call, args, span);
+        self.check_call_arguments(&name, &lookup_name, &call, args, span, scope);
 
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
@@ -1837,10 +1837,11 @@ impl Checker {
         resolution: &CallResolution,
         args: &[Arg],
         span: Span,
+        scope: &Scope,
     ) {
-        // RY111's identical-name shadow check runs in both validation
-        // modes: it reads the same resolved formals (user table or stub)
-        // the arity checks below consult, and its own gates decide.
+        // RY111's identical-name shadow check reads the same resolved
+        // formals (user table or stub) the arity checks below consult, and
+        // its own gates decide.
         self.check_constant_shadowed_arguments(
             lookup_name,
             resolution.user_function.as_ref(),
@@ -1849,17 +1850,25 @@ impl Checker {
             args,
         );
         // The shared resolution precedence: a user definition shadows the
-        // stub, and a lexical callable resolves to neither. In the
-        // non-validating mode a same-named FnTable entry also shadows the
-        // stub (inside `resolve_callee`); a resolved user function is
-        // only arity-checked when user-call validation is on.
+        // stub, and a lexical callable resolves to neither. The flat table
+        // is name-keyed, so its entry validates a call only when it is the
+        // binding R reaches: not another package's export, not one of
+        // several definitions, and either no binding is in scope (a
+        // cross-file or later definition) or the scope still binds that
+        // exact literal (a formal or local rebinding is called instead).
+        let reaches_project_definition = !original_name.contains("::")
+            && self.fn_table.has_single_contract(lookup_name)
+            && (scope.get(lookup_name).is_none()
+                || resolution.user_function.as_ref().is_some_and(|function| {
+                    function.source_path == self.path
+                        && scope.lexical_definition(lookup_name) == Some(function.definition_span)
+                }));
         match self.resolve_callee(
-            lookup_name,
             resolution.user_function.as_ref(),
             resolution.resolved_sig.as_ref(),
             resolution.lexical_callable,
         ) {
-            ResolvedCallee::User(user_function) if self.validate_user_call_arguments => {
+            ResolvedCallee::User(user_function) if reaches_project_definition => {
                 self.check_user_call_arguments(lookup_name, user_function, args, span);
             }
             ResolvedCallee::Stub(signature) => {

@@ -974,6 +974,17 @@ impl UserFn {
             .get_or_init(|| collect::function_outward_writes(&self.source_params, &self.body))
     }
 
+    /// Same formal names, order, and requiredness: the facts RY090/RY091
+    /// read from a definition.
+    fn formals_agree(&self, other: &UserFn) -> bool {
+        self.params.len() == other.params.len()
+            && self
+                .params
+                .iter()
+                .zip(&other.params)
+                .all(|(left, right)| left.name == right.name && left.required == right.required)
+    }
+
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
@@ -1036,6 +1047,11 @@ pub(crate) struct FnTable {
     /// Direct literals a later same-name definition replaced in `fns`.
     /// Declaration checks still address them by source identity.
     replaced_fns: FxMap<(String, usize, usize), UserFn>,
+    /// Names whose `fns` entry need not be the function a call reaches:
+    /// literals with disagreeing formals (which one wins depends on
+    /// evaluation and collation order), and names a global non-literal or
+    /// outward write may rebind.
+    pub(crate) unstable_callees: FxSet<String>,
     /// Global-frame direct literal bindings addressable by declaration
     /// source identity. Kept by binding name for cross-file invalidation;
     /// nested local literals cannot be changed by another file's global
@@ -1116,6 +1132,10 @@ impl FnTable {
         let prev = self.fns.insert(name.clone(), function);
         if let Some(prev) = &prev {
             let prev_key = prev.definition_key();
+            if prev_key != key && !prev.formals_agree(&self.fns[&name]) {
+                self.unstable_callees
+                    .insert(semantic_argument_name(&name).to_string());
+            }
             // Another name may still bind the same literal (`f <- g <- function() ...`).
             if prev_key != key && self.live_definitions.get(&prev_key) == Some(&name) {
                 self.live_definitions.remove(&prev_key);
@@ -1124,6 +1144,11 @@ impl FnTable {
         }
         self.live_definitions.insert(key, name);
         prev.map(|prev| prev.return_slot)
+    }
+
+    /// Whether every binding of `name` is a literal with the same formals.
+    pub(crate) fn has_single_contract(&self, name: &str) -> bool {
+        !self.unstable_callees.contains(semantic_argument_name(name))
     }
 
     pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
@@ -1180,6 +1205,8 @@ impl FnTable {
             function.return_slot += slot_offset;
             self.insert_fn(name.clone(), function);
         }
+        self.unstable_callees
+            .extend(collected.unstable_callees.iter().cloned());
         self.replaced_fns
             .extend(collected.replaced_fns.iter().map(|(key, function)| {
                 let mut function = function.clone();
@@ -1288,7 +1315,6 @@ pub struct Checker {
     // walk: pass 2 runs the identical `infer` with `discarding = true`,
     // pass 3 with `false`.
     discarding: bool,
-    validate_user_call_arguments: bool,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1543,7 +1569,6 @@ impl Checker {
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
             discarding: false,
-            validate_user_call_arguments: true,
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
@@ -1595,10 +1620,6 @@ impl Checker {
             Arc::unwrap_or_clone(self.fn_table),
             Arc::unwrap_or_clone(self.return_slots),
         )
-    }
-
-    pub(crate) fn disable_user_call_argument_validation(&mut self) {
-        self.validate_user_call_arguments = false;
     }
 
     // Pass 1: collect this file's function definitions into the shared

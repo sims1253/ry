@@ -365,6 +365,7 @@ impl Checker {
         let mut literal_names = FxMap::<String, Vec<Span>>::default();
         let mut global_literals = FxSet::<Span>::default();
         let mut global_writes = WriteSet::default();
+        let mut global_values = FxSet::<String>::default();
         let mut outward = WriteSet::default();
         let _ = walk_stmts(stmts, CAPTURE_WALK, |node, function_depth| {
             // `walk_stmts` is preorder and increments the depth only
@@ -379,6 +380,9 @@ impl Checker {
                 if function_depth == 0 {
                     global_writes.insert_name(name);
                     global_literals.extend(literal);
+                    if let (Some(name), None) = (name, literal) {
+                        global_values.insert(name.to_string());
+                    }
                 }
                 if let Some(name) = name {
                     let frame = frames.last_mut().expect("top-level frame");
@@ -425,6 +429,8 @@ impl Checker {
                 .into_iter()
                 .map(|span| (self.path.clone(), span.start, span.end)),
         );
+        table.unstable_callees.extend(global_values);
+        table.unstable_callees.extend(outward.names.iter().cloned());
         table.capture_writes.extend(global_writes);
         table.capture_writes.extend(outward);
     }

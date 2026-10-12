@@ -958,7 +958,6 @@ impl Project {
                     Arc::clone(&return_slots),
                 );
                 emitter.set_shared_declarations(Arc::clone(&declarations));
-                emitter.disable_user_call_argument_validation();
                 emitter.set_shared_known_vars(Arc::clone(&package_known_vars));
                 emitter.set_shared_loaded(Arc::clone(&loaded));
                 emitter.set_bare_loaded(

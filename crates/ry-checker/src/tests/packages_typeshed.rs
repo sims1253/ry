@@ -91,24 +91,24 @@ fn package_loading_calls_have_distinct_return_types() {
 }
 
 #[test]
-fn user_function_argument_rules_wait_for_callable_provenance() {
+fn project_calls_to_a_single_user_definition_are_validated() {
     let file = parse_file(
         "project.R",
         "f <- function(required) required\nf()\nc <- function(x) x\nc(unrelated = 1L)\n",
     );
     let mut project = Project::new();
     project.add_file("project.R".to_string(), file);
-    let diags: Vec<_> = project
+    let mut codes: Vec<_> = project
         .check()
         .into_iter()
         .flat_map(|(_, diagnostics)| diagnostics)
+        .map(|diagnostic| diagnostic.code)
+        .filter(|code| matches!(*code, "RY090" | "RY091"))
         .collect();
-    assert!(
-        diags
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY090" && diagnostic.code != "RY091"),
-        "project-wide function names are not sufficient to validate a call: {diags:?}"
-    );
+    codes.sort();
+    // The user `c` shadows base `c`, so its formals decide the call: it
+    // has no `unrelated` formal and forces the missing `x`.
+    assert_eq!(codes, ["RY090", "RY091", "RY091"]);
 }
 
 #[test]

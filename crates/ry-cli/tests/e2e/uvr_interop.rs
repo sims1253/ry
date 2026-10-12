@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::support::{install_namespace, unbound_names};
+
 const PACKAGE: &str = "ryuvrfixture";
 const SOURCE: &str = "from_library <- uvr_export\nnot_exported <- uvr_not_exported\n";
 
@@ -43,7 +45,7 @@ impl UvrFixture {
             .write_file("project with spaces/uvr.lock", "locked_only_name\n")
             .unwrap();
         let library = project.join(".uvr/library");
-        install_export(&library, "uvr_export");
+        install_namespace(&library, PACKAGE, "uvr_export");
         fs::create_dir_all(library.join(PACKAGE).join("R")).unwrap();
         fs::write(
             library.join(PACKAGE).join("R/not_project_source.R"),
@@ -118,28 +120,11 @@ impl UvrFixture {
     }
 }
 
-fn install_export(library: &Path, export: &str) {
-    let package = library.join(PACKAGE);
-    fs::create_dir_all(&package).unwrap();
-    fs::write(package.join("NAMESPACE"), format!("export({export})\n")).unwrap();
-}
-
-/// The names RY010 reports unbound, in output order.
-fn missing_names(diagnostics: &[Value]) -> Vec<&str> {
-    diagnostics
-        .iter()
-        .map(|item| {
-            assert_eq!(item["code"], "RY010", "{item}");
-            item["message"].as_str().unwrap().split('`').nth(1).unwrap()
-        })
-        .collect()
-}
-
 #[test]
 fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     let fixture = UvrFixture::new();
     let installed = fixture.diagnostics(&fixture.library);
-    assert_eq!(missing_names(&installed), ["uvr_not_exported"]);
+    assert_eq!(unbound_names(&installed), ["uvr_not_exported"]);
     assert!(
         installed
             .iter()
@@ -147,7 +132,7 @@ fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     );
 
     let missing = fixture.diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(missing_names(&missing), ["uvr_export", "uvr_not_exported"]);
+    assert_eq!(unbound_names(&missing), ["uvr_export", "uvr_not_exported"]);
     let installed_facts = fixture.facts(&fixture.library);
     let missing_facts = fixture.facts(&fixture.project.join("missing library"));
     assert_eq!(
@@ -169,7 +154,7 @@ fn cli_reads_uvr_metadata_without_attaching_or_scanning_the_library() {
     // uvr.toml and uvr.lock alone do not attach the installed package.
     fs::write(fixture.project.join("NAMESPACE"), "").unwrap();
     let unattached = fixture.diagnostics(&fixture.library);
-    assert_eq!(missing_names(&unattached), missing_names(&missing));
+    assert_eq!(unbound_names(&unattached), unbound_names(&missing));
 }
 
 #[test]
@@ -177,8 +162,8 @@ fn lsp_reads_the_environment_at_launch_like_the_cli() {
     let fixture = UvrFixture::new();
     let installed = fixture.lsp_diagnostics(&fixture.library);
     let missing = fixture.lsp_diagnostics(&fixture.project.join("missing library"));
-    assert_eq!(missing_names(&installed), ["uvr_not_exported"]);
-    let mut missing = missing_names(&missing);
+    assert_eq!(unbound_names(&installed), ["uvr_not_exported"]);
+    let mut missing = unbound_names(&missing);
     missing.sort_unstable();
     assert_eq!(missing, ["uvr_export", "uvr_not_exported"]);
 }

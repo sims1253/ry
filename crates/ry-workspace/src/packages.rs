@@ -126,7 +126,12 @@ pub fn namespace_metadata(file: &SourceFile) -> NamespaceMetadata {
                     &generic,
                     args.get(1).and_then(|arg| static_name(&arg.value)),
                 ) {
-                    metadata.s3_methods.insert((generic.clone(), class));
+                    // `S3method(pkg::generic, class)` registers a method
+                    // for the bare generic that calls dispatch through.
+                    let generic = generic
+                        .rsplit_once("::")
+                        .map_or(generic.as_str(), |(_, bare)| bare);
+                    metadata.s3_methods.insert((generic.to_string(), class));
                 }
             }
             _ => {}
@@ -243,6 +248,24 @@ my_library(dplyr)
         assert_eq!(
             metadata.native_routine_prefixes,
             HashSet::from(["pkg_".to_string()])
+        );
+    }
+
+    #[test]
+    fn qualified_s3_registrations_key_the_bare_generic() {
+        let mut parser = ry_core::RParser::new().unwrap();
+        let file = parser
+            .parse(
+                "NAMESPACE",
+                "S3method(tidyr::expand, tbl_lazy)\nS3method(print, tbl_lazy)\n",
+            )
+            .unwrap();
+        assert_eq!(
+            namespace_metadata(&file).s3_methods,
+            HashSet::from([
+                ("expand".to_string(), "tbl_lazy".to_string()),
+                ("print".to_string(), "tbl_lazy".to_string()),
+            ])
         );
     }
 

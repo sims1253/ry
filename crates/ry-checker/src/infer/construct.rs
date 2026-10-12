@@ -132,7 +132,9 @@ impl Checker {
                 if !class.is_empty()
                     && !crate::semantic_lists::PLAIN_NEW_CLASSES.contains(&class.as_str()) =>
             {
-                RType::unknown().with_class(ClassVector::single(class))
+                // S3 dispatch and `inherits()` also see an S4 instance's
+                // superclasses, which its class attribute does not list.
+                RType::unknown().with_class(ClassVector::guard(class))
             }
             _ => RType::unknown(),
         }

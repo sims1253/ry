@@ -311,6 +311,71 @@ pub(crate) struct UnionGuardViews<'a> {
     pub has_else: bool,
 }
 
+/// RY119 for `name <- as.integer(...)` when the block's next statement
+/// subassigns `name`. The warning waits for that statement: when it is
+/// the NA repair `name[is.na(name)] <- value`, the cast's new NA is
+/// handled where it was introduced and the warning is dropped.
+pub(crate) struct HeldCast {
+    /// The `as.integer()` call.
+    span: Span,
+    /// The next statement's subassignment target. Only that target can
+    /// repair the cast; an assignment nested in its value or subscript,
+    /// including a quoted one that never runs, cannot.
+    repair: Span,
+    /// The cast proved an out-of-range input.
+    warned: bool,
+}
+
+fn held_cast_site(statement: &Stmt, next: Option<&Stmt>) -> Option<HeldCast> {
+    let Stmt::Assign {
+        target: Expr::Ident { name, .. },
+        value: Expr::Call { func, span, .. },
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    let Some(Stmt::Assign {
+        target:
+            Expr::Index {
+                base,
+                kind: IndexKind::Single,
+                span: repair,
+                ..
+            },
+        ..
+    }) = next
+    else {
+        return None;
+    };
+    let cast = call::callee_name(func)
+        .is_some_and(|callee| callee == "as.integer" || callee == "base::as.integer");
+    (cast && matches!(base.as_ref(), Expr::Ident { name: repaired, .. } if repaired == name))
+        .then_some(HeldCast {
+            span: *span,
+            repair: *repair,
+            warned: false,
+        })
+}
+
+/// Which arms of an `if` contribute state to its continuation in the
+/// binding merge: the sole continuing arm of an `if`/`else`, no arm for a
+/// one-armed `if` whose then arm leaves the enclosing loop, else every arm.
+pub(crate) fn merging_arms(
+    in_loop: bool,
+    has_else: bool,
+    then_reaches: bool,
+    else_reaches: bool,
+) -> (bool, bool) {
+    if has_else && then_reaches != else_reaches {
+        (then_reaches, else_reaches)
+    } else if in_loop && !then_reaches && !has_else {
+        (false, false)
+    } else {
+        (true, true)
+    }
+}
+
 /// R's `if`/`while` coercion accepts more than logical scalars: numeric
 /// and raw values coerce numerically, a complex scalar coerces by OR
 /// over its real and imaginary components, and a character scalar
@@ -553,7 +618,7 @@ impl Checker {
     /// `returns` is `Some`).
     ///
     /// Callers:
-    ///   * `check_stmt` (pass 3): discarding=false, returns=None.
+    ///   * `walk_block` from `check` (pass 3): discarding=false, returns=None.
     ///   * `refine_fn_return` (pass 2 fixpoint): discarding=true (set by
     ///     caller), returns=Some.
     ///   * `build_function_signature` (closure literals, both passes):
@@ -590,11 +655,7 @@ impl Checker {
             return;
         }
         match s {
-            Stmt::Assign {
-                target,
-                value,
-                span: assignment_span,
-            } => {
+            Stmt::Assign { target, value, .. } => {
                 self.drop_scalar_facts_for_complex_assignment(target, value, scope);
                 if !scope.uncertainty.ops_environment
                     && !ops_chooser::ordinary_assignment(self, target, value)
@@ -605,18 +666,7 @@ impl Checker {
                     self.capture_references && self.reference_value_known(value, scope);
                 let scope_marked_origin = expression_has_list_origin(value, scope);
                 let class_write = self.prepare_class_attribute(target, value, scope);
-                let mut vt = self.infer(value, scope);
-                vt.value_facts.cast_site = None;
-                if matches!(
-                    vt.coercion_new_na(),
-                    ry_core::types::NewNaProvenance::ProvenContains
-                        | ry_core::types::NewNaProvenance::ProvenOnly
-                ) && matches!(value, Expr::Call { func, .. }
-                    if call::callee_name(func).as_deref().is_some_and(|name|
-                        name == "as.integer" || name == "base::as.integer"))
-                {
-                    vt.value_facts.cast_site = Some((span_of(value), assignment_span.end));
-                }
+                let vt = self.infer(value, scope);
                 // The value keeps list origin whenever its inferred mode
                 // is `List` — broader than the stubs' `mode: list`
                 // declarations, since a user-defined list-returning
@@ -775,7 +825,10 @@ impl Checker {
                                 .first()
                                 .map(|a| self.infer(&a.value, scope))
                                 .unwrap_or_else(|| RType::new(Mode::Null, Length::Zero));
-                            if let Some(r) = returns {
+                            // An argument that cannot finish yields no value.
+                            if let Some(r) = returns
+                                && !scope.unreachable
+                            {
                                 r.push(t);
                             }
                             if bare == "return" {
@@ -857,9 +910,7 @@ impl Checker {
                 self.note_vacuous_map_rebind(name);
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                for s in body {
-                    self.walk_stmt(s, &mut inner, returns.as_deref_mut());
-                }
+                self.walk_block(body, &mut inner, returns.as_deref_mut());
                 self.finish_loop(
                     scope,
                     inner,
@@ -874,9 +925,7 @@ impl Checker {
                 let mut inner = scope.clone();
                 self.insert_loop_carried_bindings(body, &mut inner);
                 self.begin_loop(&mut inner);
-                for s in body {
-                    self.walk_stmt(s, &mut inner, returns.as_deref_mut());
-                }
+                self.walk_block(body, &mut inner, returns.as_deref_mut());
                 let always_true = matches!(cond, Expr::Logical(true, _));
                 self.finish_loop(scope, inner, always_true, always_true);
             }
@@ -890,7 +939,9 @@ impl Checker {
             Stmt::Return { value, .. } => {
                 if let Some(v) = value {
                     let t = self.infer(v, scope);
-                    if let Some(r) = returns {
+                    if let Some(r) = returns
+                        && !scope.unreachable
+                    {
                         r.push(t);
                     }
                 } else if let Some(r) = returns {
@@ -1082,9 +1133,7 @@ impl Checker {
         self.deferred_captures.push(assigned);
         self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
-        for s in body {
-            self.walk_stmt(s, &mut fn_scope, None);
-        }
+        self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
@@ -1419,9 +1468,7 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
-        for statement in then {
-            self.walk_stmt(statement, scope, returns.as_deref_mut());
-        }
+        self.walk_block(then, scope, returns.as_deref_mut());
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
@@ -1429,9 +1476,7 @@ impl Checker {
             narrowed.insert(name.to_string());
         }
         if let Some(statements) = else_ {
-            for statement in statements {
-                self.walk_stmt(statement, scope, returns.as_deref_mut());
-            }
+            self.walk_block(statements, scope, returns);
         }
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
@@ -1743,6 +1788,19 @@ impl Checker {
                 }
             }
         }
+        // Unknown is absorbing under join, so an arm the binding merge
+        // takes that lost the mask's entry-time types loses them here.
+        let (then_merges, else_merges) = merging_arms(
+            scope.loop_frame.is_some(),
+            has_else,
+            then_reaches,
+            else_reaches,
+        );
+        if then_merges && then_delta.data_mask_env_unknown
+            || else_merges && else_delta.data_mask_env_unknown
+        {
+            scope.invalidate_data_mask_env();
+        }
         for (name, ty, default_parameter) in continuation_facts {
             if let Some(ty) = ty {
                 if default_parameter {
@@ -2000,9 +2058,7 @@ impl Checker {
         // the body (the named-return closure pattern). `if` branches
         // are walked without splitting the scope (v1 approximation).
         let mut returns: Vec<RType> = Vec::new();
-        for s in body {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
+        self.walk_block(body, &mut scope, Some(&mut returns));
         // The trailing expression -- or a bare trailing function
         // literal, the closure-factory pattern -- is the implicit
         // return.
@@ -2045,7 +2101,8 @@ impl Checker {
                 if is_return_call(e) {
                     None
                 } else {
-                    Some(self.infer_discarding(e, scope))
+                    let t = self.infer_discarding(e, scope);
+                    (!scope.unreachable).then_some(t)
                 }
             }
             Stmt::FunctionDef { params, body, .. } => {
@@ -2074,11 +2131,53 @@ impl Checker {
         }
     }
 
-    /// Pass-3 entry point: walk a top-level statement for diagnostics.
-    /// Thin wrapper over `walk_stmt` (the unified walker) with return
-    /// collection disabled and emission enabled.
-    pub(crate) fn check_stmt(&mut self, s: &Stmt, scope: &mut Scope) {
-        self.walk_stmt(s, scope, None);
+    /// Walk a block's statements in order.
+    pub(crate) fn walk_block(
+        &mut self,
+        statements: &[Stmt],
+        scope: &mut Scope,
+        mut returns: Option<&mut Vec<RType>>,
+    ) {
+        self.walk_block_with(statements, |checker, statement, _| {
+            checker.walk_stmt(statement, scope, returns.as_deref_mut());
+        });
+    }
+
+    /// Walk each statement with `walk`, which also learns whether it is the
+    /// block's last, and settle RY119 for casts the block holds.
+    fn walk_block_with(
+        &mut self,
+        statements: &[Stmt],
+        mut walk: impl FnMut(&mut Self, &Stmt, bool),
+    ) {
+        // A cast held by an enclosing block waits on that block's next
+        // statement, not on statements nested inside the current one.
+        let enclosing = self.held_cast.take();
+        for (index, statement) in statements.iter().enumerate() {
+            let next = statements.get(index + 1);
+            // A held cast is present here only when this statement may be
+            // its repair: the previous statement held it for this one.
+            let repair_candidate = self.held_cast.is_some();
+            if !repair_candidate {
+                self.held_cast = held_cast_site(statement, next);
+            }
+            walk(self, statement, next.is_none());
+            match self.held_cast.take() {
+                Some(held) if repair_candidate => self.emit_integer_range_loss(held.span),
+                Some(held) if held.warned => self.held_cast = Some(held),
+                _ => {}
+            }
+        }
+        self.held_cast = enclosing;
+    }
+
+    pub(crate) fn emit_integer_range_loss(&mut self, span: Span) {
+        self.emit(
+            Severity::Warning,
+            span,
+            "RY119",
+            "`as.integer()` converts a proven out-of-range value to `NA_integer_`",
+        );
     }
 
     pub(crate) fn diagnostic_parameter_type(
@@ -2588,7 +2687,6 @@ impl Checker {
                 && vt.value_facts.new_na == ry_core::types::NewNaProvenance::None
                 && !vt.length.may_be_empty()
             {
-                let site = updated.value_facts.cast_site;
                 if !no_selection {
                     // A scalar is recycled to every selected NA. A vector's
                     // extrema need not occur among the values actually used.
@@ -2612,20 +2710,14 @@ impl Checker {
                         updated.value_facts = ry_core::types::ValueFacts::default();
                     }
                 }
-                if let Some((site, assignment_end)) = site
-                    && self
-                        .source
-                        .get(assignment_end..span.start)
-                        .is_some_and(|gap| {
-                            gap.lines().all(|line| {
-                                line.trim().is_empty() || line.trim_start().starts_with('#')
-                            })
-                        })
+                if self
+                    .held_cast
+                    .as_ref()
+                    .is_some_and(|held| held.warned && held.repair == span)
                 {
-                    self.diagnostics
-                        .retain(|diagnostic| diagnostic.code != "RY119" || diagnostic.span != site);
+                    // The block's previous statement introduced these NAs.
+                    self.held_cast = None;
                 }
-                updated.value_facts.cast_site = None;
             } else if !no_selection {
                 updated.value_facts = ry_core::types::ValueFacts::default();
             }
@@ -2682,13 +2774,15 @@ impl Checker {
     }
 
     pub(crate) fn infer_block_expr(&mut self, body: &[Stmt], scope: &mut Scope) -> RType {
-        let Some((last, prefix)) = body.split_last() else {
-            return RType::new(Mode::Null, Length::Zero);
-        };
-        for s in prefix {
-            self.walk_stmt(s, scope, None);
-        }
-        self.infer_stmt_value(last, scope)
+        let mut value = RType::new(Mode::Null, Length::Zero);
+        self.walk_block_with(body, |checker, statement, last| {
+            if last {
+                value = checker.infer_stmt_value(statement, scope);
+            } else {
+                checker.walk_stmt(statement, scope, None);
+            }
+        });
+        value
     }
 
     pub(crate) fn infer_stmt_value(&mut self, stmt: &Stmt, scope: &mut Scope) -> RType {
@@ -2745,14 +2839,9 @@ impl Checker {
         let result = (|| match scope.get(name) {
             Some(t) => {
                 found_lexical = true;
-                let is_lexical_binding_under_unknown_mask = scope.data_mask_unknown
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
-                        .is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
-                        .is_none();
+                let shadows_entry_binding = scope.data_mask_shadows_entry_binding(name);
+                let is_lexical_binding_under_unknown_mask =
+                    scope.data_mask_unknown && shadows_entry_binding;
                 // A table `[` mask over a schema that cannot prove the
                 // name absent resolves it as a column candidate first, so
                 // a same-named lexical function binding is shadowed even
@@ -2765,18 +2854,10 @@ impl Checker {
                 // names, the mask pronouns — carry no env snapshot and
                 // keep their typing; a name overlaid as a known column
                 // keeps the overlaid column type.
-                let function_shadowed_by_table_mask = t.mode == Mode::Function
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
-                let value_shadowed_by_table_mask = t.mode != Mode::Function
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
-                        .is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
-                        .is_none();
+                let columns_first = scope.data_mask_columns_first();
+                let function_shadowed_by_table_mask = t.mode == Mode::Function && columns_first;
+                let value_shadowed_by_table_mask =
+                    t.mode != Mode::Function && columns_first && shadows_entry_binding;
                 if is_lexical_binding_under_unknown_mask
                     || function_shadowed_by_table_mask
                     || value_shadowed_by_table_mask
@@ -2797,8 +2878,7 @@ impl Checker {
                 // rungs below, so a bare `append` inside a defused
                 // block types as unknown instead of borrowing
                 // `base::append`'s function type.
-                let under_unknown_data_mask =
-                    scope.data_mask_unknown && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
+                let under_unknown_data_mask = scope.data_mask_unknown && scope.data_mask.is_some();
                 // A table `[` mask (`x[i, j]` on a table-shaped receiver)
                 // resolves its free value-position symbols against the
                 // receiver's columns before scope functions (#369), even
@@ -2806,9 +2886,8 @@ impl Checker {
                 // be an atomic vector whose type degraded). A column named
                 // like a function (`month`, `table`, `count`) is data
                 // there, so the function-value rungs below are shadowed.
-                let columns_first_mask = scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
-                let functions_shadowed_by_mask = under_unknown_data_mask || columns_first_mask;
+                let functions_shadowed_by_mask =
+                    under_unknown_data_mask || scope.data_mask_columns_first();
                 // Typed package values take precedence over existence-only
                 // import bindings so constants retain their declared type.
                 if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -3283,9 +3362,7 @@ impl Checker {
                     return result;
                 }
                 let receiver_name = ident_name(base);
-                if receiver_name == Some(".env")
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                {
+                if receiver_name == Some(".env") && scope.data_mask.is_some() {
                     let name = match kind {
                         IndexKind::Dollar => args.first().and_then(|arg| arg.name.as_deref()),
                         IndexKind::Double => args.first().and_then(|arg| match &arg.value {
@@ -3295,9 +3372,7 @@ impl Checker {
                         IndexKind::Single | IndexKind::Slot => None,
                     };
                     if let Some(name) = name {
-                        let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
-                        if let Some(ty) = scope.get(&key) {
-                            let result = ty.clone();
+                        if let Some(result) = scope.data_mask_env_binding(name) {
                             self.invalidate_declaration_identities(scope);
                             return result;
                         }
@@ -3341,13 +3416,11 @@ impl Checker {
             }
             Expr::Block { body, .. } => {
                 if let Some((name, span)) = embraced_symbol(body) {
-                    let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
-                    let binding = if scope.get(crate::nse::DATA_MASK_ACTIVE).is_some() {
-                        scope.get(&key)
-                    } else {
-                        scope.get(name)
+                    let bound = match &scope.data_mask {
+                        Some(frame) => frame.env.contains_key(name),
+                        None => scope.get(name).is_some(),
                     };
-                    if binding.is_none() {
+                    if !bound {
                         self.emit(
                             Severity::Warning,
                             span,

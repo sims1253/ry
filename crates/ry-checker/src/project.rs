@@ -611,12 +611,22 @@ impl Project {
         &self,
         fn_table: FnTable,
         return_slots: ReturnSlots,
-        box_sources: &Arc<crate::box_imports::BoxSources>,
+        box_modules: &Arc<crate::box_imports::BoxModules>,
     ) -> Checker {
         let mut refiner = Checker::with_tables("__project_pass2__", fn_table, return_slots);
         refiner.set_loaded(self.loaded.clone());
         refiner.set_user_stubs(Arc::clone(&self.user_stubs));
-        refiner.set_box_sources(Arc::clone(box_sources));
+        refiner.set_box_modules(Arc::clone(box_modules));
+        // Pass 2 has no per-file context. Without the registrations, a
+        // package's own method for a stub generic (`group_by.tbl_lazy`)
+        // would be read as the stub's default-receiver return.
+        refiner.set_external_s3_methods(
+            self.external_s3_methods
+                .values()
+                .flatten()
+                .cloned()
+                .collect(),
+        );
         refiner.refinement_dependencies = Some(HashMap::new());
         refiner
     }
@@ -761,7 +771,8 @@ impl Project {
                 }
             }
         }
-        let box_sources = Arc::new(box_sources);
+        // Pass 2 and pass 3 share one module inventory per run.
+        let box_modules = Arc::new(crate::box_imports::BoxModules::new(box_sources));
         // Pass 2: refine every function's inferred return type until
         // the shared table stabilizes. A single Checker drives the
         // fixpoint loop; its table is then handed back to the Project.
@@ -775,7 +786,7 @@ impl Project {
         let mut fixpoint_scope = self.compute_fixpoint_scope();
         let fn_table = std::mem::take(&mut self.fn_table);
         let return_slots = std::mem::take(&mut self.return_slots);
-        let mut refiner = self.refiner(fn_table, return_slots, &box_sources);
+        let mut refiner = self.refiner(fn_table, return_slots, &box_modules);
 
         // Scoping: refine only functions whose return type can have
         // changed, rather than the entire project. On the first call or
@@ -795,7 +806,7 @@ impl Project {
             #[cfg(test)]
             let attempted_counts = std::mem::take(&mut refiner.refinement_counts);
             let (table, slots, _) = self.merge_collected(self.cached_in_order());
-            refiner = self.refiner(table, slots, &box_sources);
+            refiner = self.refiner(table, slots, &box_modules);
             refiner.run_fixpoint_scoped(None);
             #[cfg(test)]
             for (name, count) in attempted_counts {
@@ -969,7 +980,7 @@ impl Project {
                         .unwrap_or_else(|| loaded.as_ref().clone()),
                 );
                 emitter.set_user_stubs(Arc::clone(&user_stubs));
-                emitter.set_box_sources(Arc::clone(&box_sources));
+                emitter.set_box_modules(Arc::clone(&box_modules));
                 emitter.set_external_bindings(
                     external_bindings.get(path).cloned().unwrap_or_default(),
                 );

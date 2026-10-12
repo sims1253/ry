@@ -311,6 +311,24 @@ pub(crate) struct UnionGuardViews<'a> {
     pub has_else: bool,
 }
 
+/// Which arms of an `if` contribute state to its continuation in the
+/// binding merge: the sole continuing arm of an `if`/`else`, no arm for a
+/// one-armed `if` whose then arm leaves the enclosing loop, else every arm.
+pub(crate) fn merging_arms(
+    in_loop: bool,
+    has_else: bool,
+    then_reaches: bool,
+    else_reaches: bool,
+) -> (bool, bool) {
+    if has_else && then_reaches != else_reaches {
+        (then_reaches, else_reaches)
+    } else if in_loop && !then_reaches && !has_else {
+        (false, false)
+    } else {
+        (true, true)
+    }
+}
+
 /// R's `if`/`while` coercion accepts more than logical scalars: numeric
 /// and raw values coerce numerically, a complex scalar coerces by OR
 /// over its real and imaginary components, and a character scalar
@@ -1743,6 +1761,19 @@ impl Checker {
                 }
             }
         }
+        // Unknown is absorbing under join, so an arm the binding merge
+        // takes that lost the mask's entry-time types loses them here.
+        let (then_merges, else_merges) = merging_arms(
+            scope.loop_frame.is_some(),
+            has_else,
+            then_reaches,
+            else_reaches,
+        );
+        if then_merges && then_delta.data_mask_env_unknown
+            || else_merges && else_delta.data_mask_env_unknown
+        {
+            scope.invalidate_data_mask_env();
+        }
         for (name, ty, default_parameter) in continuation_facts {
             if let Some(ty) = ty {
                 if default_parameter {
@@ -2738,14 +2769,9 @@ impl Checker {
         let result = (|| match scope.get(name) {
             Some(t) => {
                 found_lexical = true;
-                let is_lexical_binding_under_unknown_mask = scope.data_mask_unknown
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
-                        .is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
-                        .is_none();
+                let shadows_entry_binding = scope.data_mask_shadows_entry_binding(name);
+                let is_lexical_binding_under_unknown_mask =
+                    scope.data_mask_unknown && shadows_entry_binding;
                 // A table `[` mask over a schema that cannot prove the
                 // name absent resolves it as a column candidate first, so
                 // a same-named lexical function binding is shadowed even
@@ -2758,18 +2784,10 @@ impl Checker {
                 // names, the mask pronouns — carry no env snapshot and
                 // keep their typing; a name overlaid as a known column
                 // keeps the overlaid column type.
-                let function_shadowed_by_table_mask = t.mode == Mode::Function
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
-                let value_shadowed_by_table_mask = t.mode != Mode::Function
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX))
-                        .is_some()
-                    && scope
-                        .get(&format!("{}{name}", crate::nse::DATA_MASK_COLUMN_PREFIX))
-                        .is_none();
+                let columns_first = scope.data_mask_columns_first();
+                let function_shadowed_by_table_mask = t.mode == Mode::Function && columns_first;
+                let value_shadowed_by_table_mask =
+                    t.mode != Mode::Function && columns_first && shadows_entry_binding;
                 if is_lexical_binding_under_unknown_mask
                     || function_shadowed_by_table_mask
                     || value_shadowed_by_table_mask
@@ -2790,8 +2808,7 @@ impl Checker {
                 // rungs below, so a bare `append` inside a defused
                 // block types as unknown instead of borrowing
                 // `base::append`'s function type.
-                let under_unknown_data_mask =
-                    scope.data_mask_unknown && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some();
+                let under_unknown_data_mask = scope.data_mask_unknown && scope.data_mask.is_some();
                 // A table `[` mask (`x[i, j]` on a table-shaped receiver)
                 // resolves its free value-position symbols against the
                 // receiver's columns before scope functions (#369), even
@@ -2799,9 +2816,8 @@ impl Checker {
                 // be an atomic vector whose type degraded). A column named
                 // like a function (`month`, `table`, `count`) is data
                 // there, so the function-value rungs below are shadowed.
-                let columns_first_mask = scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                    && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some();
-                let functions_shadowed_by_mask = under_unknown_data_mask || columns_first_mask;
+                let functions_shadowed_by_mask =
+                    under_unknown_data_mask || scope.data_mask_columns_first();
                 // Typed package values take precedence over existence-only
                 // import bindings so constants retain their declared type.
                 if let Some(value_type) = self.resolve_typeshed_value(name) {
@@ -3276,9 +3292,7 @@ impl Checker {
                     return result;
                 }
                 let receiver_name = ident_name(base);
-                if receiver_name == Some(".env")
-                    && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-                {
+                if receiver_name == Some(".env") && scope.data_mask.is_some() {
                     let name = match kind {
                         IndexKind::Dollar => args.first().and_then(|arg| arg.name.as_deref()),
                         IndexKind::Double => args.first().and_then(|arg| match &arg.value {
@@ -3288,9 +3302,7 @@ impl Checker {
                         IndexKind::Single | IndexKind::Slot => None,
                     };
                     if let Some(name) = name {
-                        let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
-                        if let Some(ty) = scope.get(&key) {
-                            let result = ty.clone();
+                        if let Some(result) = scope.data_mask_env_binding(name) {
                             self.invalidate_declaration_identities(scope);
                             return result;
                         }
@@ -3334,13 +3346,11 @@ impl Checker {
             }
             Expr::Block { body, .. } => {
                 if let Some((name, span)) = embraced_symbol(body) {
-                    let key = format!("{}{name}", crate::nse::DATA_MASK_ENV_PREFIX);
-                    let binding = if scope.get(crate::nse::DATA_MASK_ACTIVE).is_some() {
-                        scope.get(&key)
-                    } else {
-                        scope.get(name)
+                    let bound = match &scope.data_mask {
+                        Some(frame) => frame.env.contains_key(name),
+                        None => scope.get(name).is_some(),
                     };
-                    if binding.is_none() {
+                    if !bound {
                         self.emit(
                             Severity::Warning,
                             span,

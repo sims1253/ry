@@ -188,6 +188,17 @@ impl Checker {
         // for a one-arm `if` whose then branch can continue.
         let then_reaches = !then_scope.unreachable;
         let else_reaches = has_else && !else_scope.unreachable;
+        let (then_merges, else_merges) = merging_arms(
+            scope.loop_frame.is_some(),
+            has_else,
+            then_reaches,
+            else_reaches,
+        );
+        if then_merges && then_scope.data_mask_env_unknown()
+            || else_merges && else_scope.data_mask_env_unknown()
+        {
+            scope.invalidate_data_mask_env();
+        }
         if scope.loop_frame.is_some() && !then_reaches && !has_else {
             return;
         }

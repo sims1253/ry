@@ -32,9 +32,7 @@ fn table_index_receiver(bt: &RType) -> bool {
 /// [`Checker::table_index_mask_scope`]). Named `[` arguments there can
 /// only be a table method's controls, never base-vector subsetting.
 fn light_table_mask(scope: &Scope) -> bool {
-    !scope.data_mask_unknown
-        && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
-        && scope.get(crate::nse::DATA_MASK_COLUMNS_FIRST).is_some()
+    !scope.data_mask_unknown && scope.data_mask_columns_first()
 }
 
 /// The conservative `$`/`[[` fallback when no schema resolves the access:
@@ -450,7 +448,7 @@ impl Checker {
                 func.as_ref(),
                 Expr::Ident { name, .. } if name == ":=" || name == "`:=`"
             )
-            && scope.get(crate::nse::DATA_MASK_ACTIVE).is_some()
+            && scope.data_mask.is_some()
         {
             // Infix shape `target := value`, also spelled `` `:=`(target, value) ``.
             if args.len() == 2 && args.iter().all(|operand| operand.name.is_none()) {

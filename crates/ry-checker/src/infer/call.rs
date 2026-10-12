@@ -732,6 +732,9 @@ impl Checker {
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
                 scope.uncertainty.effects |= delta.uncertainty.effects;
+                if delta.data_mask_env_unknown {
+                    scope.invalidate_data_mask_env();
+                }
                 for name in delta.changed.into_keys() {
                     scope.insert(name, RType::unknown());
                 }
@@ -832,6 +835,9 @@ impl Checker {
                 }
                 let delta = child.finish_snapshot(mark, Default::default());
                 scope.uncertainty.effects |= delta.uncertainty.effects;
+                if delta.data_mask_env_unknown {
+                    scope.invalidate_data_mask_env();
+                }
                 for changed in delta.changed.into_keys() {
                     scope.insert(changed, RType::unknown());
                 }

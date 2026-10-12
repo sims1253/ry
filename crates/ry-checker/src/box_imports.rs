@@ -1087,9 +1087,7 @@ impl Checker {
             .map(|param| param.name.as_str())
             .collect();
         let matches = infer::match_arguments(&names, args);
-        if self.validate_user_call_arguments {
-            self.check_call_arity(name, &function.params, args, &matches, true, span);
-        }
+        self.check_call_arity(name, &function.params, args, &matches, true, span);
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index]
                 .or(matches.dots)

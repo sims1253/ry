@@ -41,7 +41,6 @@ pub fn baseline_disk_reads() -> usize {
 
 #[derive(Clone)]
 pub(super) struct Backend {
-    client: Client,
     state: Arc<Mutex<State>>,
     writer: tokio::sync::mpsc::UnboundedSender<Work>,
 }
@@ -1056,12 +1055,8 @@ impl Backend {
     pub(super) fn new(client: Client) -> Self {
         let state = Arc::new(Mutex::new(State::default()));
         let (writer, work) = tokio::sync::mpsc::unbounded_channel();
-        tokio::spawn(IndexWriter::new(client.clone(), Arc::clone(&state), work).run());
-        Backend {
-            client,
-            state,
-            writer,
-        }
+        tokio::spawn(IndexWriter::new(client, Arc::clone(&state), work).run());
+        Backend { state, writer }
     }
 
     /// Queue work for the index writer. Handlers that changed document
@@ -1117,41 +1112,6 @@ impl Backend {
             },
         );
         Some(hints)
-    }
-
-    /// Pull `ry` settings per folder scope via `workspace/configuration`:
-    /// one item per folder root plus a final item for the fallback context.
-    /// `None` when the client request failed.
-    async fn pull_folder_settings(&self) -> Option<SettingsUpdate> {
-        let scopes: Vec<(Option<PathBuf>, PathBuf)> = {
-            let state = self.state.lock().await;
-            state
-                .folder_contexts
-                .iter()
-                .map(|ctx| (Some(ctx.root.clone()), ctx.root.clone()))
-                .chain(std::iter::once((None, state.fallback.root.clone())))
-                .collect()
-        };
-        let items = scopes
-            .iter()
-            .map(|(_, root)| ConfigurationItem {
-                scope_uri: Url::from_file_path(root).ok(),
-                section: Some("ry".to_string()),
-            })
-            .collect();
-        match self.client.configuration(items).await {
-            Ok(values) => Some(SettingsUpdate::Pulled(
-                scopes
-                    .into_iter()
-                    .map(|(root, _)| root)
-                    .zip(values)
-                    .collect(),
-            )),
-            Err(e) => {
-                tracing::warn!("workspace/configuration pull failed: {e}");
-                None
-            }
-        }
     }
 }
 

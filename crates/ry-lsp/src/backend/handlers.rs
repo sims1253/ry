@@ -134,19 +134,14 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         tracing::info!("ry LSP initialized");
 
-        // If the client supports workspace/configuration, pull the
-        // `ry.*` section now. This is the primary settings path for VS
-        // Code and supersedes whatever was in initializationOptions.
+        // If the client supports workspace/configuration, the writer pulls
+        // the `ry.*` section before the first scan. This is the primary
+        // settings path for VS Code and supersedes initializationOptions.
         let should_pull = self.state.lock().await.supports_workspace_configuration;
-        let settings = if should_pull {
-            self.pull_folder_settings().await
-        } else {
-            None
-        };
         // Documents opened meanwhile publish only after the first scan
         // installed their workspace bindings and package metadata.
         self.send(Work::Configure {
-            settings,
+            settings: should_pull.then_some(SettingsUpdate::Pull),
             reload: should_pull,
         });
     }
@@ -210,7 +205,7 @@ impl LanguageServer for Backend {
         // Pull-capable clients re-pull `ry.*`; others send settings inline.
         let should_pull = self.state.lock().await.supports_workspace_configuration;
         let settings = if should_pull {
-            self.pull_folder_settings().await
+            Some(SettingsUpdate::Pull)
         } else {
             // The client sent settings inline. They may be wrapped in
             // an outer "ry" key (VS Code) or be the raw ry settings.

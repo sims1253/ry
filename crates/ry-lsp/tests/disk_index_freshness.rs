@@ -26,7 +26,7 @@ use harness::{
     sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
-use ry_testkit::FixtureProject;
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// `f <- function() "str"` — the character variant of `f`.
@@ -577,5 +577,35 @@ async fn close_queued_behind_a_scan_keeps_the_saved_bytes() {
         "close queued behind a scan",
     );
 
+    join_session(session, server).await;
+}
+
+/// The initial scan starts only after the watcher registration was
+/// answered: a disk edit between a scan's read and the client installing
+/// its watchers would produce no event, leaving the read stale.
+#[tokio::test]
+async fn initial_scan_waits_for_watcher_registration() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture.write_file("a.R", A_CHAR).unwrap();
+    ry_lsp::test_seam::arm(Seam::Scan);
+    let (mut session, server) =
+        spawn_session(&[fixture.root()], harness::watching_capabilities(), None).await;
+    let early = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        ry_lsp::test_seam::wait_arrived(Seam::Scan),
+    )
+    .await;
+    assert!(
+        early.is_err(),
+        "the initial scan read the workspace before the watchers were registered"
+    );
+    harness::answer_watcher_registration(&mut session).await;
+    tokio::time::timeout(
+        rpc_receive_timeout(),
+        ry_lsp::test_seam::wait_arrived(Seam::Scan),
+    )
+    .await
+    .expect("the initial scan must run once the registration is answered");
+    ry_lsp::test_seam::release(Seam::Scan);
     join_session(session, server).await;
 }

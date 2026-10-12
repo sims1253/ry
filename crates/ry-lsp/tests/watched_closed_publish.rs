@@ -18,7 +18,8 @@
 mod harness;
 
 use harness::{
-    file_uri, join_session, normalize_diagnostics, spawn_watching_session, sync_barrier,
+    file_uri, join_session, normalize_diagnostics, spawn_session, spawn_watching_session,
+    sync_barrier,
 };
 use ry_testkit::FixtureProject;
 use serde_json::{Value, json};
@@ -95,6 +96,55 @@ async fn watched_fix_with_no_open_documents_republishes_the_closed_file() {
     assert!(
         normalize_diagnostics(&fixed).is_empty(),
         "the watched fix must clear util.R's RY010 with no documents open: {fixed}"
+    );
+
+    join_session(session, server).await;
+}
+
+/// Closing the last open document before its debounced pass ran ends with
+/// the close's empty publication: the pending pass must not republish the
+/// file's disk diagnostics afterwards.
+#[tokio::test]
+async fn closing_the_last_document_before_its_pass_publishes_nothing_more() {
+    let fixture = FixtureProject::empty().unwrap();
+    let source = "x <- never_bound_here\n";
+    fixture.write_file("util.R", source).unwrap();
+    let util_uri = file_uri(&fixture.path("util.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &util_uri).await;
+
+    let mark = session.publication_mark();
+    session.open(&util_uri, 1, source).await.unwrap();
+    session
+        .notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": util_uri}}),
+        )
+        .await
+        .unwrap();
+    // A pass may legitimately publish while the buffer is open; the
+    // close's clear is the last word.
+    let mut mark = mark;
+    loop {
+        let publish = session
+            .published_diagnostics_after(&util_uri, mark)
+            .await
+            .unwrap();
+        if normalize_diagnostics(&publish).is_empty() {
+            break;
+        }
+        mark = session.publication_mark();
+    }
+    let after = session.publication_mark();
+    let leaked = tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        session.published_diagnostics_after(&util_uri, after),
+    )
+    .await;
+    assert!(
+        leaked.is_err(),
+        "no publication may follow the close's clear; got {:?}",
+        leaked.ok()
     );
 
     join_session(session, server).await;

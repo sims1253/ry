@@ -42,9 +42,9 @@ pub(super) enum Work {
 }
 
 pub(super) enum SettingsUpdate {
-    /// `workspace/configuration` answers keyed by folder root; `None` is
-    /// the fallback context, whose answer is also the global setting.
-    Pulled(Vec<(Option<PathBuf>, serde_json::Value)>),
+    /// Pull `workspace/configuration` for the folders installed when the
+    /// work runs, so a folder change queued before it is covered.
+    Pull,
     /// Settings sent inline by the client apply to every context.
     Inline(FolderSettings),
 }
@@ -117,10 +117,9 @@ impl IndexWriter {
                 if reload {
                     self.reload_folder_contexts().await;
                 }
-                tokio::spawn(refresh_watchers(
-                    self.client.clone(),
-                    Arc::clone(&self.state),
-                ));
+                // Registered before the scan reads, so an edit after the
+                // read produces an event.
+                refresh_watchers(self.client.clone(), Arc::clone(&self.state)).await;
                 self.rescan().await;
                 self.request_open_documents().await;
             }
@@ -149,6 +148,12 @@ impl IndexWriter {
             return;
         }
         self.published_uris.remove(&path);
+        // The close's empty publication is this path's last word unless
+        // another open document requests a pass below.
+        self.pending.remove(&path);
+        if self.pending.is_empty() {
+            self.deadline = None;
+        }
         // The last-saved bytes become the indexed snapshot, converging
         // with a fresh server.
         if self.refresh_disk_entry(Path::new(&path)).await {
@@ -165,10 +170,13 @@ impl IndexWriter {
     }
 
     async fn apply_settings(&mut self, settings: SettingsUpdate) {
-        let mut state = self.state.lock().await;
-        let state = &mut *state;
         match settings {
-            SettingsUpdate::Pulled(values) => {
+            SettingsUpdate::Pull => {
+                let Some(values) = self.pull_folder_settings().await else {
+                    return;
+                };
+                let mut state = self.state.lock().await;
+                let state = &mut *state;
                 for (root, value) in values {
                     let parsed = serde_json::from_value::<FolderSettings>(value).ok();
                     let ctx = match &root {
@@ -189,6 +197,8 @@ impl IndexWriter {
                 }
             }
             SettingsUpdate::Inline(settings) => {
+                let mut state = self.state.lock().await;
+                let state = &mut *state;
                 for ctx in state
                     .folder_contexts
                     .iter_mut()
@@ -198,6 +208,41 @@ impl IndexWriter {
                     ctx.refresh_policy();
                 }
                 state.server_settings.global_settings = settings;
+            }
+        }
+    }
+
+    /// Pull `ry` settings per folder scope via `workspace/configuration`:
+    /// one item per folder root plus a final item for the fallback context,
+    /// whose root is `None`. `None` when the client request failed.
+    async fn pull_folder_settings(&self) -> Option<Vec<(Option<PathBuf>, serde_json::Value)>> {
+        let scopes: Vec<(Option<PathBuf>, PathBuf)> = {
+            let state = self.state.lock().await;
+            state
+                .folder_contexts
+                .iter()
+                .map(|ctx| (Some(ctx.root.clone()), ctx.root.clone()))
+                .chain(std::iter::once((None, state.fallback.root.clone())))
+                .collect()
+        };
+        let items = scopes
+            .iter()
+            .map(|(_, root)| ConfigurationItem {
+                scope_uri: Url::from_file_path(root).ok(),
+                section: Some("ry".to_string()),
+            })
+            .collect();
+        match self.client.configuration(items).await {
+            Ok(values) => Some(
+                scopes
+                    .into_iter()
+                    .map(|(root, _)| root)
+                    .zip(values)
+                    .collect(),
+            ),
+            Err(e) => {
+                tracing::warn!("workspace/configuration pull failed: {e}");
+                None
             }
         }
     }
@@ -292,10 +337,7 @@ impl IndexWriter {
         }
         self.published_uris
             .retain(|path, _| !under_removed_root(path));
-        tokio::spawn(refresh_watchers(
-            self.client.clone(),
-            Arc::clone(&self.state),
-        ));
+        refresh_watchers(self.client.clone(), Arc::clone(&self.state)).await;
         self.rescan().await;
         self.clear(to_clear).await;
         self.request(to_republish).await;

@@ -14,6 +14,7 @@
 //! `enable_false_skips_inlay_hints_for_the_folder` verifies the on-demand
 //! half: `textDocument/inlayHint` returns null there instead of hints.
 
+use ry_lsp::test_seam::Seam;
 use ry_testkit::{FixtureProject, file_uri};
 use serde_json::{Value, json};
 
@@ -619,4 +620,76 @@ async fn stub_reload_converges_when_last_typeshed_directory_is_removed() {
         "cold server on the emptied config: {publish}"
     );
     harness::join_session(cold, server).await;
+}
+
+/// A configuration pull queued behind a folder addition covers the added
+/// folder: the scopes are read after the preceding folder change applied.
+#[tokio::test]
+async fn configuration_pull_covers_a_folder_added_before_it() {
+    let fixture = FixtureProject::empty().unwrap();
+    let added = FixtureProject::empty().unwrap();
+    fixture.write_file("main.R", "w <- 1L\n").unwrap();
+    let (mut session, server) = spawn_session(
+        &[fixture.root()],
+        json!({ "workspace": { "configuration": true } }),
+        None,
+    )
+    .await;
+    session
+        .respond_to_request("workspace/configuration", json!([{}, {}]))
+        .await
+        .unwrap();
+    let main_uri = file_uri(&fixture.path("main.R")).unwrap();
+    let mark = session.publication_mark();
+    session.open(&main_uri, 1, "w <- 1L\n").await.unwrap();
+    session
+        .published_diagnostics_after(&main_uri, mark)
+        .await
+        .unwrap();
+
+    // Park a full scan, then queue a folder addition and a configuration
+    // change behind it.
+    ry_lsp::test_seam::arm(Seam::Scan);
+    let fake = format!("{}/DESCRIPTION", file_uri(fixture.root()).unwrap());
+    session
+        .notify(
+            "workspace/didChangeWatchedFiles",
+            json!({"changes": [{"uri": fake, "type": 2}]}),
+        )
+        .await
+        .unwrap();
+    ry_lsp::test_seam::wait_arrived(Seam::Scan).await;
+    let added_uri = file_uri(added.root()).unwrap();
+    session
+        .notify(
+            "workspace/didChangeWorkspaceFolders",
+            json!({"event": {"added": [{"uri": added_uri, "name": "added"}], "removed": []}}),
+        )
+        .await
+        .unwrap();
+    session
+        .notify(
+            "workspace/didChangeConfiguration",
+            json!({ "settings": {} }),
+        )
+        .await
+        .unwrap();
+    ry_lsp::test_seam::release(Seam::Scan);
+    let request = session
+        .respond_to_request("workspace/configuration", json!([{}, {}, {}]))
+        .await
+        .unwrap();
+    let scopes: Vec<&str> = request["params"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["scopeUri"].as_str())
+        .collect();
+    assert!(
+        scopes
+            .iter()
+            .any(|scope| scope.trim_end_matches('/') == added_uri.trim_end_matches('/')),
+        "the pull must include the folder added before it: {scopes:?}"
+    );
+    harness::join_session(session, server).await;
 }

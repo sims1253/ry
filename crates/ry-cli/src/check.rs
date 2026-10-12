@@ -248,6 +248,17 @@ pub(crate) fn run_check(
         baseline_from_cli,
     );
 
+    // Snapshot the watched inputs before the initial pass reads them, like
+    // every poll does before its re-check: an edit landing during that
+    // pass, or right after the "watching" line, then differs on the first
+    // poll instead of becoming the recorded state.
+    let mut stamps: HashMap<PathBuf, SystemTime> = HashMap::new();
+    if watch {
+        sync_stamps(&all_paths, &mut stamps);
+        state.sync_static_stamps();
+        state.sync_meta_stamps(&search_roots, &all_paths);
+    }
+
     let min_confidence = min_confidence.into();
     let mut result = run_check_once(
         &all_paths,
@@ -259,6 +270,10 @@ pub(crate) fn run_check(
     result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
+        // The run's own baseline write is not an edit to react to.
+        if watch {
+            state.sync_static_stamps();
+        }
     }
     result.print_summary(state.format(), statistics);
 
@@ -274,10 +289,6 @@ pub(crate) fn run_check(
         "ry: watching {} file(s) for changes (Ctrl+C to stop)...",
         all_paths.len()
     );
-    let mut stamps: HashMap<PathBuf, SystemTime> = HashMap::new();
-    sync_stamps(&all_paths, &mut stamps);
-    state.sync_static_stamps();
-    state.sync_meta_stamps(&search_roots, &all_paths);
 
     let poll_interval = std::time::Duration::from_millis(500);
     loop {

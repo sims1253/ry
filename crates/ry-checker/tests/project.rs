@@ -64,6 +64,57 @@ fn cross_file_function_return_type_propagates() {
 }
 
 #[test]
+fn return_chains_cross_files_in_either_name_order() {
+    for descending in [false, true] {
+        let name = |index: usize| {
+            let index = if descending { 13 - index } else { index };
+            format!("f{index:02}")
+        };
+        let mut project = Project::new();
+        let mut uses = String::new();
+        for index in 1..=12 {
+            let body = if index == 12 {
+                "\"x\"".to_string()
+            } else {
+                format!("{}()", name(index + 1))
+            };
+            let path = format!("{}.R", name(index));
+            let source = format!("{} <- function() {body}\n", name(index));
+            project.add_file(path.clone(), parse(&path, &source));
+            uses.push_str(&format!(
+                "r{index:02} <- function() {}() + 1\n",
+                name(index)
+            ));
+        }
+        project.add_file("uses.R".into(), parse("uses.R", &uses));
+        let flagged = project
+            .check()
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .filter(|diagnostic| diagnostic.code == "RY040")
+            .count();
+        assert_eq!(flagged, 12, "descending names: {descending}");
+    }
+}
+
+#[test]
+fn recursive_returns_keep_their_base_case_across_files() {
+    let mut project = callback_project(&[
+        (
+            "g.R",
+            "g <- function(n) {\n  if (n == 0L) return(\"done\")\n  h(n - 1L)\n}",
+        ),
+        ("h.R", "h <- function(n) g(n)"),
+        ("use.R", "h(2L) + 1L"),
+    ]);
+    let diagnostics: Vec<_> = project.check().into_iter().flat_map(|(_, d)| d).collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn cross_file_fixpoint_rebinding_overrides_null_narrowing() {
     // `make_writer` is opaque in the first fixpoint iteration, then its
     // function return type is refined. The branch assignment must still
@@ -1689,6 +1740,9 @@ fn check_mode_transitions_match_fresh_projects() {
             _ => format!("f{index:02} <- function() f{:02}()\n", index + 1),
         })
         .collect();
+    let reversed_chain: String = (2..=12)
+        .map(|index| format!("a{index:02} <- function() a{:02}()\n", index - 1))
+        .collect();
     let cases: &[(Files<'_>, &[Edit])] = &[
         (
             PAIR,
@@ -1750,6 +1804,32 @@ fn check_mode_transitions_match_fresh_projects() {
         (
             &[("chain.R", chain.as_str())],
             &[Edit::Update("chain.R", "f11 <- function() 'x'")],
+        ),
+        (
+            &[
+                ("leaf.R", "a01 <- function() 1L"),
+                ("chain.R", reversed_chain.as_str()),
+                ("use.R", "z <- a12() + 1L"),
+            ],
+            &[
+                Edit::Update("leaf.R", "a01 <- function() 'x'"),
+                Edit::Update("leaf.R", "a01 <- function() a12()"),
+            ],
+        ),
+        (
+            &[
+                ("rec.R", "f <- function(n) if (n == 0L) 1L else g(n - 1L)"),
+                ("g.R", "g <- function(n) f(n)"),
+                ("use.R", "x <- f(1L) + 1L\ny <- g(2L) + 1L"),
+            ],
+            &[
+                Edit::Update(
+                    "rec.R",
+                    "f <- function(n) if (n == 0L) 'oops' else g(n - 1L)",
+                ),
+                Edit::Update("rec.R", "f <- function(n) g(n - 1L)"),
+                Edit::Update("g.R", "g <- function(n) 2L"),
+            ],
         ),
     ];
 

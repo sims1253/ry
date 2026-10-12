@@ -1355,6 +1355,228 @@ expression: snapshots
       severity: error
       span:
         column: 0
+        end: 234
+        line: 4
+        start: 224
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
+        end: 331
+        line: 11
+        start: 321
+    - code: RY040
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+      span:
+        column: 0
+        end: 409
+        line: 14
+        start: 394
+  fixture: err_recursive_return_base_case.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 554
+        line: 15
+        start: 545
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 582
+        line: 16
+        start: 573
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 610
+        line: 17
+        start: 601
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 638
+        line: 18
+        start: 629
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 666
+        line: 19
+        start: 657
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 694
+        line: 20
+        start: 685
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 722
+        line: 21
+        start: 713
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 750
+        line: 22
+        start: 741
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 778
+        line: 23
+        start: 769
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 806
+        line: 24
+        start: 797
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 834
+        line: 25
+        start: 825
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 862
+        line: 26
+        start: 853
+  fixture: err_return_chain_callees_sort_first.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 553
+        line: 15
+        start: 544
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 581
+        line: 16
+        start: 572
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 609
+        line: 17
+        start: 600
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 637
+        line: 18
+        start: 628
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 665
+        line: 19
+        start: 656
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 693
+        line: 20
+        start: 684
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 721
+        line: 21
+        start: 712
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 749
+        line: 22
+        start: 740
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 777
+        line: 23
+        start: 768
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 805
+        line: 24
+        start: 796
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 833
+        line: 25
+        start: 824
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+      span:
+        column: 18
+        end: 861
+        line: 26
+        start: 852
+  fixture: err_return_chain_callees_sort_last.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
         end: 230
         line: 7
         start: 217
@@ -1901,6 +2123,8 @@ expression: snapshots
   fixture: ok_recursive_default_qualified_defuser.R
 - diagnostics: []
   fixture: ok_recursive_default_skipped_operands.R
+- diagnostics: []
+  fixture: ok_recursive_return_without_base_case.R
 - diagnostics: []
   fixture: ok_regmatches_callback_lengths.R
 - diagnostics: []

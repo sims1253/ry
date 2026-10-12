@@ -2106,6 +2106,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_qualified_return_dead_code.R
 - diagnostics: []
+  fixture: ok_qualified_same_name_wrapper_return.R
+- diagnostics: []
   fixture: ok_quoted_default_dependencies.R
 - diagnostics: []
   fixture: ok_quoted_formula_symbols.R

@@ -551,8 +551,9 @@ impl Checker {
         if let Some(function) = call.user_function.as_ref() {
             let result = self.read_return_slot(function.return_slot);
             // A callee without a computed return yet has no known way to
-            // return, so this path contributes nothing to merges.
-            if self.uncomputed_returns.contains(&function.return_slot) {
+            // return, so this path contributes nothing to merges. A
+            // qualified call may name another package's same-named function.
+            if !name.contains("::") && self.uncomputed_returns.contains(&function.return_slot) {
                 scope.unreachable = true;
             }
             return result;

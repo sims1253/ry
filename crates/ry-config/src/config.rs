@@ -262,7 +262,7 @@ fn compile_scoped_pattern(pattern: &str) -> Result<glob::Pattern, glob::PatternE
 /// still matching unsaved files and virtual descendants under an existing
 /// folder. Parent components that remain after platform normalization cannot
 /// be resolved after a missing prefix and are declined.
-fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
+pub fn scoped_path_identity(path: &Path) -> Option<PathBuf> {
     let absolute = std::path::absolute(path).ok()?;
     let mut suffix = Vec::new();
     for ancestor in absolute.ancestors() {

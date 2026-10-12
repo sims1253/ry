@@ -2117,26 +2117,12 @@ impl Checker {
             } else {
                 injection
             };
-            let is_defused = user_param.is_some_and(|parameter| parameter.defused);
-            let is_quoting = user_param.is_some_and(|parameter| parameter.quoting);
-            if is_quoting {
-                // User functions that capture an argument with substitute(),
-                // bquote(), or match.call()-style reflection receive the
-                // expression unevaluated. Infer it without diagnostics so
-                // nested operations and names cannot be mistaken for runtime
-                // R code.
-                let mut quoted_scope = scope.independent_execution_scope();
-                self.infer_discarding(&a.value, &mut quoted_scope);
-                arg_types.push(RType::unknown());
-                continue;
-            }
-            if is_defused && declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)) {
-                let mut local = self.dplyr_data_mask_scope(scope, &RType::unknown());
-                arg_types.push(self.infer_with_injection(
-                    &a.value,
-                    &mut local,
-                    Some(InjectionMode::Full),
-                ));
+            if let Some(parameter) = user_param
+                && (parameter.quoting
+                    || declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)))
+                && let Some(captured) = self.infer_user_param_arg(parameter, &a.value, scope)
+            {
+                arg_types.push(captured);
                 continue;
             }
             if let Some((_, data)) = supplied_data_mask_source

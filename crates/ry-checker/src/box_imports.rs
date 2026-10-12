@@ -17,7 +17,9 @@ const MAX_MODULE_BYTES: u64 = 1_048_576;
 pub(crate) type BoxSources = HashMap<PathBuf, Option<Arc<SourceFile>>>;
 
 /// Relative module state shared by every checker of one run, including the
-/// checkers of nested modules, so each module is analysed once per run.
+/// checkers of nested modules, so a module is usually analysed once per run.
+/// The lock does not span analysis: concurrent misses may analyse a module
+/// twice, with identical results.
 #[derive(Default)]
 pub(crate) struct BoxModules {
     /// Editor/project buffers, which take precedence over a module's disk

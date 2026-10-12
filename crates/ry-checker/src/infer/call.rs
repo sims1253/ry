@@ -449,10 +449,16 @@ impl Checker {
         // A project `UseMethod` generic returns whatever its selected method
         // returns, so dispatch before the lexical stage reads the generic's
         // own opaque return.
-        if self.calls_user_generic(&name, &lookup_name, &call, args, scope)
-            && let Some(rt) = self.try_s3_dispatch(&lookup_name, &call.arg_types, span)
+        if let Some(receiver) = self.user_generic_receiver(&name, &lookup_name, &call, args, scope)
         {
-            return rt;
+            if self.caller_method_may_shadow(&lookup_name, &call.arg_types[receiver], scope) {
+                return RType::unknown();
+            }
+            let mut dispatch_args = call.arg_types.clone();
+            dispatch_args[..=receiver].rotate_right(1);
+            if let Some(rt) = self.try_s3_dispatch(&lookup_name, &dispatch_args, span) {
+                return rt;
+            }
         }
 
         // The lexical-callable stage. Must run before the constructor and
@@ -2085,22 +2091,23 @@ impl Checker {
         CallHeadFunctionEvidence::Suppress
     }
 
-    /// Whether this call reaches the project's `UseMethod` generic and its
-    /// first actual is the dispatch object: no local definition shadows the
-    /// table entry, and the first argument binds the generic's first formal.
-    fn calls_user_generic(
+    /// The actual a project `UseMethod` generic dispatches on: the one bound
+    /// to its first formal, when the call reaches the table's generic (no
+    /// local definition shadows it) and that binding is determinable.
+    fn user_generic_receiver(
         &self,
         name: &str,
         lookup_name: &str,
         call: &CallResolution,
         args: &[Arg],
         scope: &Scope,
-    ) -> bool {
-        let Some(generic) = call.user_function.as_ref() else {
-            return false;
-        };
-        if name.contains("::") || scope.is_parameter(lookup_name) {
-            return false;
+    ) -> Option<usize> {
+        let generic = call.user_function.as_ref()?;
+        if name.contains("::")
+            || scope.is_parameter(lookup_name)
+            || !self.is_user_generic(lookup_name)
+        {
+            return None;
         }
         if scope
             .get(lookup_name)
@@ -2108,16 +2115,51 @@ impl Checker {
             && (generic.source_path != self.path
                 || scope.lexical_definition(lookup_name) != Some(generic.definition_span))
         {
-            return false;
+            return None;
         }
-        let first_formal = generic.params.first().map(|param| param.name.as_str());
-        let names_first_formal = |arg: &Arg| arg.name.as_deref() == first_formal;
-        self.is_user_generic(lookup_name)
-            && args.first().is_some_and(|arg| {
-                first_formal == Some("...")
-                    || names_first_formal(arg)
-                    || (arg.name.is_none() && !args.iter().any(names_first_formal))
-            })
+        // Forwarded dots hide which actual reaches the first formal.
+        if args
+            .iter()
+            .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return None;
+        }
+        let formals: Vec<&str> = generic
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        let matched = match_arguments(&formals, args);
+        if formals.first() == Some(&"...") {
+            matched.param_for_arg.iter().position(Option::is_none)
+        } else {
+            matched.arg_for_param(0)
+        }
+    }
+
+    /// `UseMethod` looks up methods in the calling environment before the
+    /// generic's: a `<generic>.<class>` binding in scope that is not the
+    /// table's definition may be the selected method.
+    fn caller_method_may_shadow(&self, generic: &str, receiver: &RType, scope: &Scope) -> bool {
+        let classes = receiver
+            .class
+            .names
+            .iter()
+            .take(receiver.class.len as usize)
+            .flatten();
+        for class in classes.map(|class| &**class).chain(["default"]) {
+            let method = format!("{generic}.{class}");
+            if scope.get(&method).is_some() {
+                return !self.fn_table.fns.get(&method).is_some_and(|function| {
+                    function.source_path == self.path
+                        && scope.lexical_definition(&method) == Some(function.definition_span)
+                });
+            }
+            if self.s3_lookup_method(generic, class).is_some() {
+                return false;
+            }
+        }
+        false
     }
 
     /// The lexical-callable stage: a `Function`-typed scope binding with an

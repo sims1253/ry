@@ -2374,6 +2374,13 @@ impl Checker {
                 // the base expression fire.
                 self.infer(target, scope);
             }
+            // `f(x, ...) <- v` calls `f<-`, never the getter `f`, so only
+            // the arguments are evaluated here.
+            Expr::Call { args, .. } => {
+                for argument in args {
+                    self.infer(&argument.value, scope);
+                }
+            }
             _ => {
                 self.infer(target, scope);
             }

@@ -470,6 +470,24 @@ expression: snapshots
         start: 2645
   fixture: err_force_contract_lazy_controls.R
 - diagnostics:
+    - code: RY091
+      message: "missing required argument `df` in call to `trim`"
+      severity: warning
+      span:
+        column: 0
+        end: 111
+        line: 7
+        start: 94
+    - code: RY091
+      message: "missing required argument `x` in call to `coerce`"
+      severity: warning
+      span:
+        column: 0
+        end: 206
+        line: 14
+        start: 198
+  fixture: err_formal_forced_before_branch_rebind.R
+- diagnostics:
     - code: RY010
       message: "variable `undefined_var` is not bound in this scope"
       severity: warning
@@ -2008,6 +2026,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_assign_literal.R
 - diagnostics: []
+  fixture: ok_assign_rebinds_formal.R
+- diagnostics: []
   fixture: ok_block_expr_scope.R
 - diagnostics: []
   fixture: ok_bom_elsewhere.R
@@ -2047,6 +2067,8 @@ expression: snapshots
   fixture: ok_dataset_iris.R
 - diagnostics: []
   fixture: ok_dataset_mtcars.R
+- diagnostics: []
+  fixture: ok_default_writes_sibling_formal.R
 - diagnostics: []
   fixture: ok_df_bracket_string.R
 - diagnostics: []
@@ -2095,6 +2117,8 @@ expression: snapshots
   fixture: ok_fn_explicit_return.R
 - diagnostics: []
   fixture: ok_fnbody_sequential.R
+- diagnostics: []
+  fixture: ok_for_binder_rebinds_formal.R
 - diagnostics: []
   fixture: ok_fractional_numeric_index_length.R
 - diagnostics: []
@@ -2173,6 +2197,8 @@ expression: snapshots
   fixture: ok_mirai_minimal.R
 - diagnostics: []
   fixture: ok_mirai_status_dollar.R
+- diagnostics: []
+  fixture: ok_missing_formal_rebound.R
 - diagnostics: []
   fixture: ok_multi_assign.R
 - diagnostics: []
@@ -2263,6 +2289,8 @@ expression: snapshots
   fixture: ok_quoted_default_dependencies.R
 - diagnostics: []
   fixture: ok_quoted_formula_symbols.R
+- diagnostics: []
+  fixture: ok_quoted_redefinition_contract.R
 - diagnostics: []
   fixture: ok_r6_class_body_bindings.R
 - diagnostics: []
@@ -2379,6 +2407,8 @@ expression: snapshots
   fixture: ok_union_if_arith.R
 - diagnostics: []
   fixture: ok_unknown_argument_type.R
+- diagnostics: []
+  fixture: ok_usemethod_ends_generic_body.R
 - diagnostics: []
   fixture: ok_user_fn_argument_matching.R
 - diagnostics: []

@@ -1,1 +1,3 @@
 R/calculate.R:741:42 RY109
+tests/testthat/test-hypothesize.R:164:53 RY090
+tests/testthat/test-hypothesize.R:219:59 RY090

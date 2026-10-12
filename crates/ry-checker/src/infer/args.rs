@@ -4,11 +4,9 @@ use super::*;
 
 /// The callee resolution the argument rules share: a collected user
 /// definition shadows the typeshed stub, and a lexical callable
-/// resolves to neither (its formals are unknown at the call site). In
-/// the non-validating mode a same-named `FnTable` entry shadows the
-/// stub as well, mirroring the precedence `check_call_arguments` has
-/// always applied -- one copy, so RY090/RY091/RY092 and RY111's
-/// identical-name gate cannot drift apart.
+/// resolves to neither (its formals are unknown at the call site) --
+/// one copy, so RY090/RY091/RY092 and RY111's identical-name gate
+/// cannot drift apart.
 pub(crate) enum ResolvedCallee<'a> {
     User(&'a UserFn),
     Stub(&'a FunctionSig),
@@ -18,17 +16,13 @@ pub(crate) enum ResolvedCallee<'a> {
 impl Checker {
     pub(crate) fn resolve_callee<'a>(
         &self,
-        function_name: &str,
         user_function: Option<&'a UserFn>,
         resolved_sig: Option<&'a FunctionSig>,
         lexical_callable: bool,
     ) -> ResolvedCallee<'a> {
         if let Some(user_function) = user_function {
             ResolvedCallee::User(user_function)
-        } else if !lexical_callable
-            && (self.validate_user_call_arguments || !self.fn_table.fns.contains_key(function_name))
-            && let Some(signature) = resolved_sig
-        {
+        } else if !lexical_callable && let Some(signature) = resolved_sig {
             ResolvedCallee::Stub(signature)
         } else {
             ResolvedCallee::Unknown
@@ -654,8 +648,7 @@ impl Checker {
         // shared `resolve_callee` precedence (a user definition shadows
         // the stub; a lexical callable resolves to neither).
         let callee_formals: Option<Vec<&str>> =
-            match self.resolve_callee(function_name, user_function, resolved_sig, lexical_callable)
-            {
+            match self.resolve_callee(user_function, resolved_sig, lexical_callable) {
                 ResolvedCallee::User(user_function) => Some(
                     user_function
                         .params

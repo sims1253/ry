@@ -47,6 +47,9 @@ fn join_path(paths: &mut Option<Box<Scope>>, incoming: &Scope) {
         .lexical_definitions
         .retain(|name, definition| incoming.lexical_definition(name) == Some(*definition));
     joined.uncertainty |= incoming.uncertainty;
+    if incoming.data_mask_env_unknown() {
+        joined.invalidate_data_mask_env();
+    }
 }
 
 impl Checker {
@@ -164,6 +167,9 @@ impl Checker {
             let scalar_before = scope.scalar_asserted_bindings.clone();
             let vector_before = scope.loop_vector_bindings.clone();
             scope.uncertainty |= exit.uncertainty;
+            if exit.data_mask_env_unknown() {
+                scope.invalidate_data_mask_env();
+            }
             for (binding, ty) in exit.bindings {
                 let list_origin = exit.list_origin_bindings.contains(&binding);
                 let scalar_asserted = scalar_before.contains(&binding)

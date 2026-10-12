@@ -9,7 +9,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::Span;
 use crate::ast::BinOpKind;
 
 /// Atomic mode of an R vector, mirrors `typeof()` for vectors.
@@ -459,10 +458,6 @@ pub struct ValueFacts {
     pub all_values_known: bool,
     pub prior_na: bool,
     pub new_na: NewNaProvenance,
-    /// Exact cast span and the end of its assignment, including grouping
-    /// parentheses removed during lowering. Used only for immediate repair
-    /// suppression, not as a cross-function identity.
-    pub cast_site: Option<(Span, usize)>,
 }
 
 impl ValueFacts {
@@ -488,7 +483,6 @@ impl ValueFacts {
             all_values_known: true,
             prior_na: value.is_nan(),
             new_na: NewNaProvenance::None,
-            cast_site: None,
         }
     }
 
@@ -505,9 +499,6 @@ impl ValueFacts {
                 && self.new_na == other.new_na,
             prior_na: self.prior_na || other.prior_na,
             new_na: self.new_na.join(other.new_na),
-            cast_site: (self.cast_site == other.cast_site)
-                .then_some(self.cast_site)
-                .flatten(),
         }
     }
 
@@ -536,7 +527,6 @@ impl ValueFacts {
                 (NewNaProvenance::None, NewNaProvenance::None) => NewNaProvenance::None,
                 _ => NewNaProvenance::Possible,
             },
-            cast_site: None,
         }
     }
 }

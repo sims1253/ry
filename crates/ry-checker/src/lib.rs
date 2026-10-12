@@ -362,6 +362,24 @@ impl SelectSlotRole {
     }
 }
 
+/// Name resolution inside a data mask (a dplyr-style verb argument or a
+/// table `[` call). Every scope cloned from the masked one, including
+/// function bodies defined there, still evaluates inside the mask.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DataMaskFrame {
+    /// A bare value-position symbol is a column candidate before it is a
+    /// scope function, because the schema cannot prove the name absent.
+    pub(crate) columns_first: bool,
+    /// Names overlaid as columns by this mask or an enclosing one.
+    pub(crate) columns: FxSet<String>,
+    /// The lexical bindings when the mask was entered. `.env$x` and
+    /// `{{ x }}` bypass column shadowing and resolve here.
+    pub(crate) env: FxMap<String, RType>,
+    /// An unknown effect inside the mask may have rebound the enclosing
+    /// environment, so `env` keeps its names but not their types.
+    pub(crate) env_unknown: bool,
+}
+
 /// What unmodeled code on some path into the current point may have done.
 /// A path joining another keeps the union of both paths' uncertainty.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -461,6 +479,7 @@ pub struct Scope {
     /// alone cannot select among same-spelled functions in different frames.
     pub(crate) lexical_definitions: FxMap<String, Span>,
     pub data_mask_unknown: bool,
+    pub(crate) data_mask: Option<Arc<DataMaskFrame>>,
     pub(crate) tidy_injection: Option<InjectionMode>,
     /// The `[` subscript argument currently being inferred, if any.
     /// See [`SelectSubscript`].
@@ -590,8 +609,57 @@ impl Scope {
         }
         self.uncertainty.effects = true;
         self.data_mask_unknown = true;
+        self.invalidate_data_mask_env();
         self.search_path_unknown = true;
         self.invalidate_ops_environment();
+    }
+
+    pub(crate) fn data_mask_env_unknown(&self) -> bool {
+        self.data_mask
+            .as_ref()
+            .is_some_and(|frame| frame.env_unknown)
+    }
+
+    /// Unknown types are absorbing, so a path that lost the mask's
+    /// environment types keeps them lost through every later join.
+    pub(crate) fn invalidate_data_mask_env(&mut self) {
+        if let Some(frame) = self.data_mask.as_mut()
+            && !frame.env_unknown
+        {
+            Arc::make_mut(frame).env_unknown = true;
+        }
+    }
+
+    /// Whether the mask shadows a lexical binding that existed when the
+    /// mask was entered and was not overlaid as a column since.
+    pub(crate) fn data_mask_shadows_entry_binding(&self, name: &str) -> bool {
+        self.data_mask
+            .as_ref()
+            .is_some_and(|frame| frame.env.contains_key(name) && !frame.columns.contains(name))
+    }
+
+    pub(crate) fn mark_data_mask_column(&mut self, name: &str) {
+        if let Some(frame) = self.data_mask.as_mut() {
+            Arc::make_mut(frame).columns.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn data_mask_columns_first(&self) -> bool {
+        self.data_mask
+            .as_ref()
+            .is_some_and(|frame| frame.columns_first)
+    }
+
+    /// `.env$name` inside a data mask: `None` when the name was unbound
+    /// when the mask was entered.
+    pub(crate) fn data_mask_env_binding(&self, name: &str) -> Option<RType> {
+        let frame = self.data_mask.as_ref()?;
+        let ty = frame.env.get(name)?;
+        Some(if frame.env_unknown {
+            RType::unknown()
+        } else {
+            ty.clone()
+        })
     }
 
     pub(crate) fn invalidate_ops_environment(&mut self) {
@@ -1260,6 +1328,8 @@ pub(crate) struct EnclosingFormals {
 
 pub struct Checker {
     journal_delta_cache: scope_journal::BranchChanges,
+    /// See [`infer::HeldCast`].
+    pub(crate) held_cast: Option<infer::HeldCast>,
     #[cfg(test)]
     journal_branches: bool,
     pub(crate) loop_frames: Vec<infer::loops::LoopExitFrame>,
@@ -1571,6 +1641,7 @@ impl Checker {
             enclosing_formals: Vec::new(),
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
+            held_cast: None,
             #[cfg(test)]
             journal_branches: true,
             pipe_argument_types: HashMap::new(),
@@ -1770,9 +1841,7 @@ impl Checker {
             self.reference_capture = Some(Box::new(reference_facts::ReferenceCapture::new(file)));
             self.start_reference_scope(&mut scope, whole_file_span(&file.source));
         }
-        for s in &file.stmts {
-            self.check_stmt(s, &mut scope);
-        }
+        self.walk_block(&file.stmts, &mut scope, None);
         if encoding_flagged || !file.parse_errors.is_empty() {
             self.diagnostics.truncate(semantic_start);
             // Declarations are semantic claims too. A repaired AST cannot

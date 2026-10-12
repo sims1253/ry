@@ -774,9 +774,7 @@ impl Checker {
         // return collection enabled. The discarding flag is set by the
         // caller (refine_fn_return runs inside the fixpoint which sets
         // discarding=true at the run_fixpoint entry).
-        for s in body_clone.iter() {
-            self.walk_stmt(s, &mut scope, Some(&mut returns));
-        }
+        self.walk_block(body_clone, &mut scope, Some(&mut returns));
         // Trailing expression of a braced body is the implicit return.
         // A trailing `Stmt::FunctionDef` is the implicit return value
         // for the `function() { function() { 1L } }` shape;

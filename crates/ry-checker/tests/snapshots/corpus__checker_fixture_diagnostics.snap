@@ -1495,6 +1495,72 @@ expression: snapshots
   fixture: err_switch_mixed.R
 - diagnostics:
     - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 4
+        end: 199
+        line: 4
+        start: 188
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 16
+        end: 292
+        line: 8
+        start: 281
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 17
+        end: 435
+        line: 11
+        start: 424
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 12
+        end: 514
+        line: 14
+        start: 503
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 10
+        end: 579
+        line: 17
+        start: 568
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 11
+        end: 653
+        line: 20
+        start: 642
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 34
+        end: 794
+        line: 24
+        start: 783
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 8
+        end: 872
+        line: 28
+        start: 861
+  fixture: err_unforced_user_argument_controls.R
+- diagnostics:
+    - code: RY040
       message: "cannot apply arithmetic op to `union` and `double`"
       severity: error
       span:
@@ -1989,6 +2055,8 @@ expression: snapshots
   fixture: ok_unary_minus.R
 - diagnostics: []
   fixture: ok_unary_not.R
+- diagnostics: []
+  fixture: ok_unforced_user_argument.R
 - diagnostics: []
   fixture: ok_union_element_condition.R
 - diagnostics: []

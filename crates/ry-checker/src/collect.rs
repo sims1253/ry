@@ -687,6 +687,7 @@ impl Checker {
                     defaulted: p.default.is_some(),
                     defused: parameter_is_defused(&body, &p.name),
                     quoting: parameter_is_quoted(&body, params, &p.name),
+                    unforced: parameter_is_unforced(&body, params, &p.name),
                     injection: None,
                 }
             })
@@ -843,6 +844,121 @@ fn parameter_is_quoted(body: &[Stmt], params: &[Param], parameter: &str) -> bool
             // bodies such as a capture followed by `print(x)`.
             && !(body.iter().any(captures_promise)
                 && parameter_has_normal_use(body, parameter)))
+}
+
+/// Calls that can reach a frame's promises without naming them: frame and
+/// call reflection, evaluation of constructed code, by-string lookup, and
+/// method dispatch that re-matches the original promises.
+const FRAME_REFLECTION: &[&str] = &[
+    "UseMethod",
+    "NextMethod",
+    "standardGeneric",
+    "callNextMethod",
+    "callGeneric",
+    "Recall",
+    "environment",
+    "parent.frame",
+    "sys.frame",
+    "sys.frames",
+    "sys.call",
+    "sys.calls",
+    "sys.function",
+    "match.call",
+    "as.environment",
+    "eval",
+    "evalq",
+    "eval.parent",
+    "get",
+    "get0",
+    "mget",
+    "exists",
+    "dynGet",
+    "parse",
+    "str2lang",
+    "str2expression",
+    "as.name",
+    "as.symbol",
+    "sym",
+    "syms",
+    "current_env",
+    "current_call",
+    "current_fn",
+    "caller_env",
+    "env_get",
+    "env_get_list",
+    "env_has",
+];
+
+/// Whether no evaluation of the function can force `parameter`'s promise:
+/// the name occurs nowhere in the definition (body, any default, nested
+/// functions, string literals such as `get("x")` or glue templates) and
+/// nothing in it can reach the frame reflectively. Purely syntactic, so a
+/// formal that is forwarded, captured, tested with `missing()`, or forced
+/// only on some paths is not unforced.
+fn parameter_is_unforced(body: &[Stmt], params: &[Param], parameter: &str) -> bool {
+    // Alternate spellings (backticks, escapes) are not compared reliably.
+    if parameter == "..." || parameter.contains(['`', '\\']) {
+        return false;
+    }
+    !params
+        .iter()
+        .filter_map(|formal| formal.default.as_ref())
+        .any(|default| expr_mentions(default, parameter))
+        && !body.iter().any(|statement| {
+            walk_stmt(statement, Walk::ALL, |node, _| {
+                mention_step(node, parameter)
+            })
+            .is_break()
+        })
+}
+
+fn expr_mentions(expression: &Expr, parameter: &str) -> bool {
+    walk_expr(expression, Walk::ALL, |node, _| {
+        mention_step(node, parameter)
+    })
+    .is_break()
+}
+
+fn mention_step(node: AstNode<'_>, parameter: &str) -> ControlFlow<(), Descend> {
+    let mentions = match node {
+        AstNode::Expr(Expr::Ident { name, .. }) => {
+            let name = semantic_argument_name(name);
+            name == parameter || FRAME_REFLECTION.contains(&bare_name(name))
+        }
+        AstNode::Expr(Expr::String(text, _)) => {
+            mentions_word(text, parameter) || FRAME_REFLECTION.contains(&text.as_str())
+        }
+        AstNode::Expr(Expr::Unknown(_)) => true,
+        // The walker enters nested bodies but not their formals.
+        AstNode::Expr(Expr::Function { params, .. })
+        | AstNode::Stmt(Stmt::FunctionDef { params, .. }) => params.iter().any(|formal| {
+            semantic_argument_name(&formal.name) == parameter
+                || formal
+                    .default
+                    .as_ref()
+                    .is_some_and(|default| expr_mentions(default, parameter))
+        }),
+        AstNode::Stmt(Stmt::For { name, .. }) => semantic_argument_name(name) == parameter,
+        _ => false,
+    };
+    if mentions {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(Descend::Into)
+    }
+}
+
+/// Whether `text` contains `word` delimited by non-identifier characters,
+/// as a glue template or constructed lookup would spell it.
+fn mentions_word(text: &str, word: &str) -> bool {
+    let identifier = |c: char| c.is_alphanumeric() || c == '.' || c == '_';
+    text.match_indices(word).any(|(start, _)| {
+        !text[..start].chars().next_back().is_some_and(identifier)
+            && !text[start + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(identifier)
+    })
 }
 
 /// Generic statement walker shared by the quoting-capture predicates:

@@ -1629,6 +1629,7 @@ impl Checker {
                 .collect();
             match_arguments(&names, args)
         });
+        let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
         // One match for the resolved signature; the loop below used to redo it
         // for every argument.
         let declared_binding = resolved_sig
@@ -1670,6 +1671,14 @@ impl Checker {
             } else {
                 injection
             };
+            if unforced_args.get(index).copied().unwrap_or(false) {
+                // R never evaluates this actual. Like a quoted argument it
+                // is visited without diagnostics or effects on the caller.
+                let mut unevaluated = scope.independent_execution_scope();
+                self.infer_discarding(&a.value, &mut unevaluated);
+                arg_types.push(RType::unknown());
+                continue;
+            }
             if let Some(parameter) = user_param
                 && (parameter.quoting
                     || declared_mode.is_none_or(|mode| matches!(mode, EvalMode::Normal)))
@@ -1744,6 +1753,44 @@ impl Checker {
             lexical_callable,
             locally_shadows_stub: false,
         }
+    }
+
+    /// Per actual, whether it binds a formal the called definition can never
+    /// force. Only a direct, unaliased call to one exact literal qualifies,
+    /// and forwarded `...` leaves the positional binding unknown.
+    fn unforced_arguments(
+        &self,
+        name: &str,
+        semantic_name: &str,
+        args: &[Arg],
+        scope: &Scope,
+    ) -> Vec<bool> {
+        if name != semantic_name
+            || name.contains("::")
+            || args
+                .iter()
+                .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
+        {
+            return Vec::new();
+        }
+        let Some(function) = self.declaration_helper(name, scope).filter(|function| {
+            function.params.iter().any(|parameter| parameter.unforced)
+                && !self
+                    .fn_table
+                    .was_rebound_after_capture(&function.source_path, function.definition_span)
+        }) else {
+            return Vec::new();
+        };
+        let names: Vec<&str> = function
+            .params
+            .iter()
+            .map(|parameter| parameter.name.as_str())
+            .collect();
+        match_arguments(&names, args)
+            .param_for_arg
+            .iter()
+            .map(|formal| formal.is_some_and(|formal| function.params[formal].unforced))
+            .collect()
     }
 
     /// The definition whose adopted contract a call checks: the exact

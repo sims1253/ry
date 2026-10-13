@@ -270,9 +270,10 @@ pub(crate) fn run_check(
     result.discovery_errors = scan.read_errors.len();
     if let Some(path) = write_baseline.as_deref() {
         config::write_baseline_file(path, &result.diagnostics, state.config_root())?;
-        // The run's own baseline write is not an edit to react to.
+        // The run's own baseline write is not an edit to react to; any other
+        // static input edited during the check still is.
         if watch {
-            state.sync_static_stamps();
+            state.refresh_static_stamp(path);
         }
     }
     result.print_summary(state.format(), statistics);
@@ -502,6 +503,19 @@ impl WatchState {
             self.cfg.baseline.as_deref(),
             &self.cfg.typeshed,
         );
+    }
+
+    /// Re-record one static input's stamp, leaving the others as they were.
+    fn refresh_static_stamp(&mut self, path: &std::path::Path) {
+        let identity = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let target = identity(path);
+        for (watched, stamp) in &mut self.static_stamps {
+            if identity(watched) == target {
+                *stamp = std::fs::metadata(&*watched)
+                    .and_then(|meta| meta.modified())
+                    .ok();
+            }
+        }
     }
 
     /// Derive the package-metadata dependency set together with its

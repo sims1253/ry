@@ -127,10 +127,19 @@ pub fn assert_converges(live: &Value, fresh: &Value, context: &str) {
 /// Deliver a watched creation event for `uri`, the way the client reports
 /// a file generated outside the editor.
 pub async fn notify_created(session: &mut ClientSession, uri: &str) {
+    notify_watched(session, uri, 1).await;
+}
+
+/// Send a `workspace/didChangeWatchedFiles` change event for `uri`.
+pub async fn notify_changed(session: &mut ClientSession, uri: &str) {
+    notify_watched(session, uri, 2).await;
+}
+
+async fn notify_watched(session: &mut ClientSession, uri: &str, kind: u8) {
     session
         .notify(
             "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": uri, "type": 1}]}),
+            json!({"changes": [{"uri": uri, "type": kind}]}),
         )
         .await
         .unwrap();

@@ -37,16 +37,6 @@ const USE2: &str = "x <- never_bound_here\n";
 const NEWDEFS: &str = "never_bound_here <- function() 1L\n";
 
 /// Deliver a watched change event for `uri`.
-async fn notify_changed(session: &mut harness::ClientSession, uri: &str) {
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
-}
-
 /// Drive one fresh publication of the committed index with a no-op edit
 /// and return it. The edit's pass follows every event sent before it.
 async fn observe_current_index(
@@ -93,7 +83,7 @@ async fn notify_watched(session: &mut harness::ClientSession, uri: &str, created
     if created {
         notify_created(session, uri).await;
     } else {
-        notify_changed(session, uri).await;
+        harness::notify_changed(session, uri).await;
     }
 }
 
@@ -217,7 +207,7 @@ async fn refresh_of_indexed_file_at_cap_still_lands() {
     // refresh republishes, which is the observation — no gate needed.
     std::fs::write(fixture.path("a.R"), "f <- function() 1L\n").unwrap();
     let edit_mark = session.publication_mark();
-    notify_changed(&mut session, &a_uri).await;
+    harness::notify_changed(&mut session, &a_uri).await;
     let after = session
         .published_diagnostics_after(&use_uri, edit_mark)
         .await

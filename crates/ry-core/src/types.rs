@@ -954,9 +954,20 @@ impl RType {
     pub fn seq(self, other: RType, non_factor_endpoint: bool) -> RType {
         // Endpoints R rejects outright (`1:NULL`, `1:list()`,
         // `1:as.raw(1)`, `1:function() 1`): no result type is worth
-        // propagating into code that never runs.
-        let rejected =
-            |t: &RType| matches!(t.mode, Mode::List | Mode::Function | Mode::Null | Mode::Raw);
+        // propagating into code that never runs. A character endpoint
+        // works only when its text parses as a finite number (`"1":"3"`);
+        // `1:"a"` errors at the `:`, so a numeric result would move that
+        // error onto later uses of the value. Character and maybe-character
+        // endpoints therefore stay unknown, as before #648.
+        let rejected = |t: &RType| {
+            matches!(
+                t.mode,
+                Mode::List | Mode::Function | Mode::Null | Mode::Raw | Mode::Character
+            ) || (t.mode == Mode::Union
+                && t.members
+                    .as_ref()
+                    .is_some_and(|ms| ms.iter().any(|m| m.mode == Mode::Character)))
+        };
         if rejected(&self) || rejected(&other) {
             return RType::unknown();
         }
@@ -1675,11 +1686,17 @@ mod tests {
 
     #[test]
     fn seq_rejected_endpoints_stay_unknown() {
-        // R errors for `1:NULL`, `1:list(3)`, and `1:as.raw(3)`.
+        // R errors for `1:NULL`, `1:list(3)`, `1:as.raw(3)`, and `1:"a"`
+        // ("NA/NaN argument"); character text is unknown statically.
         for bad in [
             RType::new(Mode::Null, Length::Zero),
             RType::scalar(Mode::List),
             RType::scalar(Mode::Raw),
+            RType::scalar(Mode::Character),
+            RType::union(Arc::from(vec![
+                RType::scalar(Mode::Character),
+                RType::scalar(Mode::Double),
+            ])),
         ] {
             assert_eq!(exact(Mode::Double, 1.0).seq(bad, true).mode, Mode::Opaque);
         }

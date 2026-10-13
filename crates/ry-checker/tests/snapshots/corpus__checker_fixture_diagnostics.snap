@@ -2058,6 +2058,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_coercible_condition.R
 - diagnostics: []
+  fixture: ok_colon_character_endpoint.R
+- diagnostics: []
   fixture: ok_colon_factor_endpoint_routes.R
 - diagnostics: []
   fixture: ok_colon_unknown_endpoint.R

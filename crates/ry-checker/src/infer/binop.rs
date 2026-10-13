@@ -113,6 +113,12 @@ impl Checker {
                 expr,
                 ..
             } => {
+                // The negation must provably be base `-`: an attached
+                // package with an open search path (`library(stats)`) may
+                // mask it, so `(-1):n` then proves nothing while `1:n`
+                // still does. `:` itself only yields to an explicit mask,
+                // as the literal-range path did before #648; this check
+                // is stricter, which errs toward silence.
                 self.resolves_to_base("-", scope)
                     && !self.has_explicit_operator_mask("-", "`-`", scope)
                     && self.colon_literal_endpoint(expr, scope)

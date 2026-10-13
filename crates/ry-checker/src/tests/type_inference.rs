@@ -2344,3 +2344,44 @@ fn masked_unary_operator_result_is_unknown() {
     let x = scope.get("x").expect("x should be bound");
     assert_eq!(x.mode, Mode::Opaque, "got {x:?}");
 }
+
+#[test]
+fn colon_literal_fast_path_stops_at_int_range() {
+    // R: typeof(2147483647:2147483647) and typeof(-2147483647:0) are
+    // "integer"; typeof(1:2147483648), typeof(-2147483648:0), and
+    // typeof(2147483648:1) are "double".
+    let (_, scope) = check_with_scope("x <- 2147483647:2147483647\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Integer, "got {x:?}");
+    assert_eq!(x.length, Length::Known(1), "got {x:?}");
+    let (_, scope) = check_with_scope("x <- -2147483647:0\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Integer, "got {x:?}");
+    for src in ["x <- 1:2147483648\n", "x <- -2147483648:0\n"] {
+        let (_, scope) = check_with_scope(src);
+        let x = scope.get("x").expect("x should be bound");
+        assert!(is_integer_or_double_union(x), "`{src}`: got {x:?}");
+        assert_eq!(x.length, Length::Nonempty, "`{src}`: got {x:?}");
+    }
+    let (_, scope) = check_with_scope("x <- 2147483648:1\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Double, "got {x:?}");
+}
+
+#[test]
+fn colon_character_endpoint_stays_unknown() {
+    // R: 1:"a" errors at the `:` ("NA/NaN argument"), so the later
+    // arithmetic never runs; "1":"3" works. Character text is unknown
+    // statically, so neither gets a numeric type.
+    for src in [
+        "x <- 1:\"a\"\ny <- x + \"a\"\n",
+        "s <- \"a\"\nx <- 1:s\ny <- x + \"a\"\n",
+        "x <- 1:\"Inf\"\ny <- x + \"a\"\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "`{src}`: got {diags:?}"
+        );
+    }
+}

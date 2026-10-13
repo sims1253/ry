@@ -3178,15 +3178,27 @@ impl Checker {
                 }
                 // `:` sequence operator: when both operands are
                 // integer-valued literals we can pin the result length
-                // exactly as `|b - a| + 1` (R always returns integer
-                // for whole-number endpoints). We need the raw AST to
-                // read the literal values, so this case lives here in
-                // the `Expr::BinOp` arm rather than in the type-only
-                // `infer_binop`. Non-literal operands fall through to
-                // `infer_binop`'s lattice-based `seq` (Unknown length).
+                // exactly as `|b - a| + 1` (R returns integer for
+                // whole-number endpoints in int range). We need the raw
+                // AST to read the literal values, so this case lives here
+                // in the `Expr::BinOp` arm rather than in the type-only
+                // `infer_binop`. Other operands fall through to
+                // `infer_binop`'s `RType::seq` (nonempty, unknown length).
                 if matches!(*op, BinOpKind::Colon) {
                     scope.invalidate_ops_environment();
+                    // A user-defined `:` replaces the primitive entirely;
+                    // nothing below describes its result.
+                    if self.has_explicit_operator_mask(":", "`:`", scope) {
+                        let _ = self.infer(lhs, scope);
+                        let _ = self.infer(rhs, scope);
+                        return RType::unknown();
+                    }
+                    // Endpoints beyond int range make R return double
+                    // (`1:3e9`); those fall through to `RType::seq`.
+                    let in_int_range = |v: i64| v.unsigned_abs() <= i32::MAX as u64;
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
+                        && in_int_range(a)
+                        && in_int_range(b)
                     {
                         let len = (b - a).unsigned_abs() as usize;
                         // `saturating_add` keeps `len` a positive usize, so

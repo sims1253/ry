@@ -57,6 +57,13 @@ All notable changes to ry are documented in this file.
   all of its stubbed core packages resolvable (purrr, stringr, tibble,
   readr, ggplot2, not only dplyr and tidyr's verbs), while forcats and
   lubridate, which have no stubs, keep the search path open.
+- Type `a:b` by R's `:` rules when an endpoint is unknown. If either
+  endpoint is provably not a factor, the result is a nonempty integer or
+  double vector, so `x <- 1:n; x + "a"` now reports RY040. The result is
+  integer only when `from` is integer-valued and the end stays in int range;
+  `1.5:n` is double and `1:3e9` is no longer claimed as integer. Two
+  endpoints of unknown class may be a factor interaction and stay unknown,
+  as does `:` under a user-defined `` `:` `` (#648).
 
 ### Fixed
 

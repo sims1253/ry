@@ -98,6 +98,16 @@ expression: snapshots
         start: 82
   fixture: err_call_non_function.R
 - diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `union` and `character`"
+      severity: error
+      span:
+        column: 2
+        end: 238
+        line: 6
+        start: 231
+  fixture: err_colon_unknown_endpoint.R
+- diagnostics:
     - code: RY033
       message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
       severity: warning
@@ -2047,6 +2057,8 @@ expression: snapshots
   fixture: ok_closure_factory.R
 - diagnostics: []
   fixture: ok_coercible_condition.R
+- diagnostics: []
+  fixture: ok_colon_unknown_endpoint.R
 - diagnostics: []
   fixture: ok_compare.R
 - diagnostics: []

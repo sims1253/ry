@@ -36,7 +36,6 @@ const USE2: &str = "x <- never_bound_here\n";
 /// A definition of that name which, once indexed, would clear the RY010.
 const NEWDEFS: &str = "never_bound_here <- function() 1L\n";
 
-/// Deliver a watched change event for `uri`.
 /// Drive one fresh publication of the committed index with a no-op edit
 /// and return it. The edit's pass follows every event sent before it.
 async fn observe_current_index(

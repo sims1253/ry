@@ -25,8 +25,10 @@ impl Checker {
             plain_vectors,
         } = operand_proof;
         if matches!(op, BinOpKind::Colon) {
+            // `Expr::BinOp` inference handles `:` with its endpoint syntax;
+            // types alone cannot rule out a factor interaction.
             scope.invalidate_ops_environment();
-            return lt.seq(rt);
+            return lt.seq(rt, false);
         }
         // Membership returns one logical per LHS element, regardless of RHS length.
         if matches!(op, BinOpKind::In) {
@@ -95,6 +97,28 @@ impl Checker {
             return self.infer_factor_arithmetic(&lt, Some(&rt), span);
         }
         self.infer_primitive_binop(op, lt, rt, span, known_null_is_actionable)
+    }
+
+    /// Whether a `:` endpoint is a numeric or logical literal, possibly
+    /// negated by base `-`, so it cannot be a factor. `f1:f2` builds a
+    /// factor interaction only when both endpoints are factors. Inferred
+    /// class vectors are not used as that proof: `c(factor("a"))`,
+    /// `attr<-`, `oldClass<-` and similar routes can yield a factor whose
+    /// inferred class is plain.
+    pub(crate) fn colon_literal_endpoint(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Integer(..) | Expr::Double(..) | Expr::Logical(..) => true,
+            Expr::UnaryOp {
+                op: UnaryOpKind::Neg,
+                expr,
+                ..
+            } => {
+                self.resolves_to_base("-", scope)
+                    && !self.has_explicit_operator_mask("-", "`-`", scope)
+                    && self.colon_literal_endpoint(expr, scope)
+            }
+            _ => false,
+        }
     }
 
     fn infer_primitive_binop(

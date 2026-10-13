@@ -943,13 +943,15 @@ impl RType {
     ///   endpoint *values*, not only their storage modes.
     /// - A successful result always has length >= 1 (`1:0` is `c(1, 0)`).
     ///
-    /// With an unknown endpoint the result stays numeric as long as the
-    /// other endpoint is provably not a factor (`1:n`); when neither is
-    /// proven, `a:b` may be a factor interaction and stays opaque. An
+    /// `non_factor_endpoint` is the caller's proof that at least one
+    /// endpoint cannot be a factor (a literal, as in `1:n`). Without it,
+    /// `a:b` may be a factor interaction and stays opaque: inferred class
+    /// vectors are not proof, since several routes (`c()` of a factor,
+    /// `attr<-`) yield a factor whose inferred class is plain. An
     /// integer-versus-double split the operands cannot settle becomes an
     /// `integer | double` union, which still lets arithmetic with
     /// character fail in every member.
-    pub fn seq(self, other: RType) -> RType {
+    pub fn seq(self, other: RType, non_factor_endpoint: bool) -> RType {
         // Endpoints R rejects outright (`1:NULL`, `1:list()`,
         // `1:as.raw(1)`, `1:function() 1`): no result type is worth
         // propagating into code that never runs.
@@ -958,7 +960,7 @@ impl RType {
         if rejected(&self) || rejected(&other) {
             return RType::unknown();
         }
-        if !self.provably_not_factor() && !other.provably_not_factor() {
+        if !non_factor_endpoint {
             return RType::unknown();
         }
         let integer = RType::new(Mode::Integer, Length::Nonempty);
@@ -1007,19 +1009,6 @@ impl RType {
             Some((low, high)) if low == high => Some(f64::from_bits(low)),
             _ => None,
         }
-    }
-
-    /// Whether the value cannot inherit from `factor`: its whole class
-    /// vector is known (not merely guarded by a class test) and lacks
-    /// `factor`. Union members must each qualify.
-    fn provably_not_factor(&self) -> bool {
-        if self.mode == Mode::Union {
-            return self
-                .members
-                .as_ref()
-                .is_some_and(|ms| ms.iter().all(RType::provably_not_factor));
-        }
-        self.class.known && !self.class.guarded && !self.class.contains("factor")
     }
 }
 
@@ -1611,16 +1600,6 @@ mod tests {
         assert_eq!(format!("{malformed}"), "opaque");
     }
 
-    #[test]
-    fn seq_int_int_is_integer() {
-        let a = RType::scalar(Mode::Integer);
-        let b = RType::scalar(Mode::Integer);
-        let seq = a.seq(b);
-        assert_eq!(seq.mode, Mode::Integer);
-        // `a:b` always has at least one element (`1:0` is `c(1, 0)`).
-        assert_eq!(seq.length, Length::Nonempty);
-    }
-
     fn exact(mode: Mode, value: f64) -> RType {
         RType::scalar(mode).with_value_facts(ValueFacts::exact_number(value))
     }
@@ -1635,23 +1614,29 @@ mod tests {
     }
 
     #[test]
+    fn seq_int_int_is_integer() {
+        let a = RType::scalar(Mode::Integer);
+        let b = RType::scalar(Mode::Integer);
+        let seq = a.seq(b, true);
+        assert_eq!(seq.mode, Mode::Integer);
+        // `a:b` always has at least one element (`1:0` is `c(1, 0)`).
+        assert_eq!(seq.length, Length::Nonempty);
+    }
+
+    #[test]
     fn seq_whole_number_double_literals_are_integer() {
         // R: typeof(1:3) is "integer" although 1 and 3 are doubles.
-        let seq = exact(Mode::Double, 1.0).seq(exact(Mode::Double, 3.0));
+        let seq = exact(Mode::Double, 1.0).seq(exact(Mode::Double, 3.0), true);
         assert_eq!(seq.mode, Mode::Integer);
     }
 
     #[test]
     fn seq_fractional_or_huge_from_is_double() {
         // R: typeof(1.5:n) and typeof(1e10:1e10) are "double".
-        let n = RType::unknown();
-        assert_eq!(exact(Mode::Double, 1.5).seq(n.clone()).mode, Mode::Double);
-        assert_eq!(
-            exact(Mode::Double, 1e10)
-                .seq(exact(Mode::Double, 1e10))
-                .mode,
-            Mode::Double
-        );
+        let seq = exact(Mode::Double, 1.5).seq(RType::unknown(), true);
+        assert_eq!(seq.mode, Mode::Double);
+        let seq = exact(Mode::Double, 1e10).seq(exact(Mode::Double, 1e10), true);
+        assert_eq!(seq.mode, Mode::Double);
     }
 
     #[test]
@@ -1659,31 +1644,33 @@ mod tests {
         // R: typeof(1:5) is "integer" but typeof(1:3e9) is "double", and
         // typeof(x:3) depends on whether x is whole. Unknown values keep
         // both possibilities.
-        let to_unknown = exact(Mode::Double, 1.0).seq(RType::unknown());
+        let to_unknown = exact(Mode::Double, 1.0).seq(RType::unknown(), true);
         assert!(numeric_union(&to_unknown), "got {to_unknown:?}");
         assert_eq!(to_unknown.length, Length::Nonempty);
-        let from_unknown_double = RType::scalar(Mode::Double).seq(RType::scalar(Mode::Double));
-        assert!(
-            numeric_union(&from_unknown_double),
-            "got {from_unknown_double:?}"
-        );
-        let to_huge = exact(Mode::Double, 1.0).seq(exact(Mode::Double, 3e9));
+        let unknown_doubles = RType::scalar(Mode::Double).seq(RType::scalar(Mode::Double), true);
+        assert!(numeric_union(&unknown_doubles), "got {unknown_doubles:?}");
+        let to_huge = exact(Mode::Double, 1.0).seq(exact(Mode::Double, 3e9), true);
         assert!(numeric_union(&to_huge), "got {to_huge:?}");
     }
 
     #[test]
-    fn seq_two_maybe_factor_endpoints_stay_unknown() {
-        // R: f1:f2 with two factors is their interaction, a factor.
-        let unknown = RType::unknown().seq(RType::unknown());
-        assert_eq!(unknown.mode, Mode::Opaque);
+    fn seq_without_a_non_factor_endpoint_stays_unknown() {
+        // R: f1:f2 with two factors is their interaction, a factor. Inferred
+        // classes are not proof, so even plain-looking endpoints stay
+        // unknown unless the caller proves one is not a factor.
+        let plain = exact(Mode::Integer, 1.0);
+        assert_eq!(plain.clone().seq(plain.clone(), false).mode, Mode::Opaque);
+        assert_eq!(
+            RType::unknown().seq(RType::unknown(), false).mode,
+            Mode::Opaque
+        );
+        // R: a single factor endpoint contributes its first integer code.
         let factor =
             RType::new(Mode::Integer, Length::Unknown).with_class(ClassVector::single("factor"));
-        assert_eq!(factor.clone().seq(factor.clone()).mode, Mode::Opaque);
-        let guarded =
-            RType::new(Mode::Integer, Length::Unknown).with_class(ClassVector::guard("foo"));
-        assert_eq!(guarded.clone().seq(RType::unknown()).mode, Mode::Opaque);
-        // R: a single factor endpoint contributes its first integer code.
-        assert_eq!(factor.seq(exact(Mode::Double, 3.0)).mode, Mode::Integer);
+        assert_eq!(
+            factor.seq(exact(Mode::Double, 3.0), true).mode,
+            Mode::Integer
+        );
     }
 
     #[test]
@@ -1694,7 +1681,7 @@ mod tests {
             RType::scalar(Mode::List),
             RType::scalar(Mode::Raw),
         ] {
-            assert_eq!(exact(Mode::Double, 1.0).seq(bad).mode, Mode::Opaque);
+            assert_eq!(exact(Mode::Double, 1.0).seq(bad, true).mode, Mode::Opaque);
         }
     }
 

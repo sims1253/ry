@@ -2306,4 +2306,41 @@ fn colon_without_a_non_factor_endpoint_stays_unknown() {
     let (_, scope) = check_with_scope("`:` <- function(a, b) \"s\"\nx <- 1:3\n");
     let x = scope.get("x").expect("x should be bound");
     assert_eq!(x.mode, Mode::Opaque, "got {x:?}");
+    // Inferred plain classes are not proof that an endpoint is not a factor:
+    // in R each of these `a` is a factor, so `a:g` is an interaction and
+    // `+.factor` handles the addition.
+    for setup in [
+        "a <- c(factor(\"a\"))",
+        "a <- structure(1L, levels = \"a\", class = c(\"c1\", \"c2\", \"c3\", \"c4\", \"factor\"))",
+        "a <- 1L\n  class(a) <- c(\"c1\", \"c2\", \"c3\", \"c4\", \"factor\")\n  levels(a) <- \"a\"",
+        "a <- 1L\n  attr(a, \"levels\") <- \"a\"\n  oldClass(a) <- \"factor\"",
+        "a <- 1L\n  attributes(a) <- list(levels = \"a\", class = \"factor\")",
+    ] {
+        let src = format!(
+            "`+.factor` <- function(a, b) \"ok\"\nf <- function(g) {{\n  {setup}\n  x <- a:g\n  x + \"a\"\n}}\n"
+        );
+        let diags = check(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "`{src}`: got {diags:?}"
+        );
+    }
+    // A user-defined unary `-` can return a factor, so `(-1)` is no longer a
+    // literal endpoint.
+    let diags = check(
+        "`-` <- function(x) factor(\"a\")\n`+.factor` <- function(a, b) \"ok\"\nf <- function(n) {\n  x <- (-1):n\n  x + \"a\"\n}\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY040"), "got {diags:?}");
+    // Without a mask, a negated literal is still a non-factor endpoint.
+    let diags = check("f <- function(n) {\n  x <- (-1):n\n  x + \"a\"\n}\n");
+    assert!(diags.iter().any(|d| d.code == "RY040"), "got {diags:?}");
+}
+
+#[test]
+fn masked_unary_operator_result_is_unknown() {
+    // A user-defined `-` replaces the primitive; its result need not be
+    // numeric.
+    let (_, scope) = check_with_scope("`-` <- function(x) \"s\"\nx <- -1\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Opaque, "got {x:?}");
 }

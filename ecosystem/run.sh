@@ -10,11 +10,12 @@ audit_corpus=""
 check=false
 local_only=false
 tier=full
+reports_out=""
 
 usage() {
   cat <<'EOF'
 Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
-                        [--ledger FILE] [--tier {fast,full}]
+                        [--ledger FILE] [--tier {fast,full}] [--reports-out DIR]
 
   --check        Compare generated reports with committed snapshots.
   --local        Check only the locally vendored glue R/ sources; do not clone.
@@ -23,6 +24,8 @@ Usage: ecosystem/run.sh [--check] [--local] [--manifest FILE]
                  `# ledger:` directive, then docs/corpus/tidyverse-0.7.1.json.
   --tier T       fast = only the manifest's fast-tier (signal-dense) packages;
                  full = every package in the manifest (default).
+  --reports-out D Export this successful non-local --check's fresh reports to
+                  a new directory for ledger mutation tests; never a cache.
 
 A manifest may carry a `# ledger: <path-relative-to-repo>` directive selecting
 the corpus its hermetic root reports reconcile against, and a `# === full tier`
@@ -38,11 +41,19 @@ while (($#)); do
     --manifest) [[ $# -ge 2 ]] || { echo "ecosystem: --manifest requires a value" >&2; usage >&2; exit 2; }; packages_file="$2"; shift ;;
     --ledger) [[ $# -ge 2 ]] || { echo "ecosystem: --ledger requires a value" >&2; usage >&2; exit 2; }; audit_corpus="$2"; shift ;;
     --tier) [[ $# -ge 2 ]] || { echo "ecosystem: --tier requires a value" >&2; usage >&2; exit 2; }; tier="$2"; shift ;;
+    --reports-out) [[ $# -ge 2 ]] || { echo "ecosystem: --reports-out requires a value" >&2; usage >&2; exit 2; }; reports_out="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
+
+if [[ -n "$reports_out" ]]; then
+  if ! $check || $local_only || [[ -e "$reports_out" ]]; then
+    echo "ecosystem: --reports-out needs a non-local --check and a new output directory" >&2
+    exit 2
+  fi
+fi
 
 if [[ "$tier" != "fast" && "$tier" != "full" ]]; then
   echo "ecosystem: --tier must be 'fast' or 'full' (got: $tier)" >&2
@@ -407,16 +418,8 @@ if ! $local_only; then
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
     exit 1
   }
-  Rscript - "$audit_corpus" "$generated_dir" "$report_prefix" "$ecosystem_dir/reconcile.R" "${root_packages[@]}" <<'RS'
-args <- commandArgs(trailingOnly = TRUE)
-corpus_path <- args[[1]]
-reports_dir <- args[[2]]
-report_prefix <- args[[3]]
-source(args[[4]])
-processed <- args[-c(1, 2, 3, 4)]
-status <- reconcile(corpus_path, reports_dir, report_prefix, processed)
-if (status != 0L) quit(status = status)
-RS
+  Rscript "$ecosystem_dir/reconcile-reports.R" \
+    "$audit_corpus" "$generated_dir" "$report_prefix" "${root_packages[@]}"
 fi
 
 # The identity ledger intentionally omits prose. The companion Posit message
@@ -491,3 +494,10 @@ if ((drift)); then
   exit 1
 fi
 echo "ecosystem: committed reports are current"
+
+if [[ -n "$reports_out" ]]; then
+  mkdir -- "$reports_out"
+  cp "$generated_dir"/*.txt "$reports_out/"
+  printf '%s\n' "$report_prefix" > "$reports_out/report-prefix.txt"
+  printf '%s\n' "${root_packages[@]}" > "$reports_out/packages.txt"
+fi

@@ -1,11 +1,11 @@
 //! Adopted source annotations use the same warm checking path in the editor.
 
-mod harness;
+use crate::harness;
 
-use harness::{join_session, spawn_session, sync_barrier};
+use harness::{count_code, join_session, spawn_session, sync_barrier};
 use ry_lsp::test_seam::Seam;
 use ry_testkit::{FixtureProject, file_uri};
-use serde_json::{Value, json};
+use serde_json::json;
 
 const ADOPT: &str = "[annotations.typehint]\nadopt = true\nversion = '0.1.0'\npaths = ['R/**']\n";
 
@@ -18,15 +18,6 @@ fn colliding_paths(fixture: &FixtureProject) -> [std::path::PathBuf; 2] {
             .path("R")
             .join(std::ffi::OsString::from_vec(name.to_vec()))
     })
-}
-
-fn count_code(publish: &Value, code: &str) -> usize {
-    publish["params"]["diagnostics"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == code)
-        .count()
 }
 
 #[tokio::test]

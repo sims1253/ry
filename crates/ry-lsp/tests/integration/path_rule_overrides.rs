@@ -1,7 +1,7 @@
 //! Per-file rule severities use the same config-root scope in CLI and LSP,
 //! and a watched config edit republishes the new policy without a source edit.
 
-mod harness;
+use crate::harness;
 
 use harness::{join_session, spawn_session};
 use ry_testkit::{CliProcess, FixtureProject, file_uri};

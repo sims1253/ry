@@ -26,17 +26,25 @@ use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-/// Counts baseline file reads performed by `load_folder_baseline`, the
-/// only baseline disk-read site in the LSP, so tests can assert the
+/// Canonical paths of the baseline files read by `load_folder_baseline`,
+/// the only baseline disk-read site in the LSP, so tests can assert the
 /// publish path performs none.
 #[cfg(feature = "test-util")]
-static BASELINE_DISK_READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static BASELINE_DISK_READS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
 
-/// Number of baseline file reads since process start. A publish/inlay-hint
-/// that does not change this value performs zero baseline disk I/O.
+/// Number of reads of the baseline file at `path` since process start. A
+/// publish/inlay-hint that does not change this value performs zero
+/// baseline disk I/O. Counted per file so tests running in parallel, each
+/// with its own fixture, never observe each other's reads.
 #[cfg(feature = "test-util")]
-pub fn baseline_disk_reads() -> usize {
-    BASELINE_DISK_READS.load(std::sync::atomic::Ordering::Relaxed)
+pub fn baseline_disk_reads(path: &Path) -> usize {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    BASELINE_DISK_READS
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|read| **read == path)
+        .count()
 }
 
 #[derive(Clone)]
@@ -1215,7 +1223,10 @@ fn load_folder_baseline(
     // Baseline-read accounting for the `test-util` counter above; see
     // `baseline_disk_reads`.
     #[cfg(feature = "test-util")]
-    BASELINE_DISK_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    BASELINE_DISK_READS
+        .lock()
+        .unwrap()
+        .push(resolved.canonicalize().unwrap_or_else(|_| resolved.clone()));
     ry_config::load_baseline(&resolved)
         .map(Some)
         .map_err(|e| format!("{e}"))

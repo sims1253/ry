@@ -13,7 +13,7 @@
 //! publication for it. Without the fix the publication arrives (via the
 //! #528 scheduling) but carries the spurious RY010.
 
-mod harness;
+use crate::harness;
 
 use harness::{
     file_uri, join_session, normalize_diagnostics, spawn_watching_session, sync_barrier,
@@ -104,7 +104,7 @@ async fn watched_edit_moves_load_bindings_to_the_new_line() {
 
     std::fs::write(
         fixture.path("data.rda"),
-        include_bytes!("../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
+        include_bytes!("../../../ry-testkit/testdata/complete-package/data/ordinary.rda"),
     )
     .unwrap();
     // `a` used on line 0 (before the load) fires; `a` on line 2

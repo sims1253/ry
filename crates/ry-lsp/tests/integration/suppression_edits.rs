@@ -3,7 +3,7 @@
 //! code, and removes only its target; a malformed directive withholds it.
 //! The marker table lives with the unit tests.
 
-mod harness;
+use crate::harness;
 
 use harness::{ClientSession, file_uri, join_session, normalize_diagnostics, spawn_session};
 use ry_testkit::FixtureProject;

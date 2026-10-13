@@ -12,7 +12,7 @@
 //! names stay isolated, while files inside one package — and plain
 //! non-package scripts — keep sharing definitions.
 
-mod harness;
+use crate::harness;
 
 use harness::{
     Published, file_uri, join_session, published_from_cli_value, published_from_lsp, ry_binary,

@@ -15,7 +15,7 @@
 //! require an (empty) publication for `util.R`. Without the fix the final
 //! await times out and the test fails.
 
-mod harness;
+use crate::harness;
 
 use harness::{
     file_uri, join_session, normalize_diagnostics, spawn_session, spawn_watching_session,

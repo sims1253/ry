@@ -23,7 +23,7 @@
 //! last publication per URI wins), not the latest publication for one
 //! document.
 
-mod harness;
+use crate::harness;
 
 use harness::{file_uri, join_session, spawn_session, sync_barrier};
 use ry_testkit::FixtureProject;

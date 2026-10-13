@@ -48,7 +48,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-mod harness;
+use crate::harness;
 
 use harness::{
     ClientSession, SourceVariant, apply_incremental_edit, file_uri, first_line_utf16_len,
@@ -1002,7 +1002,7 @@ fn pr_session_seeds() {
 }
 
 /// 1,000 fixed nightly seeds. `#[ignore]`'d because it takes minutes.
-/// Run with: `cargo test -p ry-lsp --test session_state_machine -- --ignored nightly`
+/// Run with: `cargo test -p ry-lsp --test integration session_state_machine -- --ignored nightly`
 #[test]
 #[ignore = "Nightly: 1,000 fixed seeds — run explicitly"]
 fn nightly_session_seeds() {

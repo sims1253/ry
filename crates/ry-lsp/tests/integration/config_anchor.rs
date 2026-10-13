@@ -15,22 +15,11 @@
 //! root, so only inherited or external configs change behavior — which is
 //! why the single-root parity fixtures never caught this.
 
-mod harness;
+use crate::harness;
 
-use harness::{file_uri, join_session, spawn_session, sync_barrier};
+use harness::{count_code, file_uri, join_session, spawn_session, sync_barrier};
 use ry_testkit::{CliProcess, FixtureProject};
 use serde_json::{Value, json};
-
-/// Count occurrences of a rule code in a publishDiagnostics `diagnostics`
-/// array.
-fn count_code(publish: &Value, code: &str) -> usize {
-    publish["params"]["diagnostics"]
-        .as_array()
-        .expect("publishDiagnostics array")
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == code)
-        .count()
-}
 
 /// Run the production CLI inside the fixture and return the JSON
 /// diagnostic stream, asserting the run itself succeeded.

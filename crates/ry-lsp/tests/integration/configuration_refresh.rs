@@ -16,22 +16,11 @@
 
 use ry_lsp::test_seam::Seam;
 use ry_testkit::{FixtureProject, file_uri};
-use serde_json::{Value, json};
+use serde_json::json;
 
-mod harness;
+use crate::harness;
 
-use harness::spawn_session;
-
-/// Count occurrences of a rule code in a publishDiagnostics `diagnostics`
-/// array.
-fn count_code(publish: &Value, code: &str) -> usize {
-    publish["params"]["diagnostics"]
-        .as_array()
-        .expect("publishDiagnostics array")
-        .iter()
-        .filter(|diagnostic| diagnostic["code"] == code)
-        .count()
-}
+use harness::{count_code, spawn_session};
 
 // ════════════════════════════════════════════════════════════════════════════
 // didChangeConfiguration refreshes the cached filter values

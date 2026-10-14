@@ -1605,12 +1605,17 @@ fn literal_constructors_pin_exact_lengths() {
     for (src, mode, length) in [
         // `:` with integer-valued literal endpoints (whole-number
         // doubles included) yields an integer vector; `5:5` is the
-        // single-element case; a non-literal LHS stays Unknown.
+        // single-element case; a non-literal LHS has no exact count,
+        // but `a:b` always has at least one element (`1:0` is `c(1, 0)`).
         ("x <- 1:10\n", Some(Mode::Integer), Length::Known(10)),
         ("x <- 10:1\n", Some(Mode::Integer), Length::Known(10)),
         ("x <- 1.0:5.0\n", Some(Mode::Integer), Length::Known(5)),
         ("x <- 5:5\n", None, Length::Known(1)),
-        ("n <- 1L\nx <- n:10\n", Some(Mode::Integer), Length::Unknown),
+        (
+            "n <- 1L\nx <- n:10\n",
+            Some(Mode::Integer),
+            Length::Nonempty,
+        ),
         // `rep`: positional, named (`times =`), and `each =`
         // multipliers; `rep(0, 5)` keeps double (`0` has no `L`);
         // a non-literal `times` stays Unknown.
@@ -2246,4 +2251,137 @@ fn logical_condition_length_survives_nested_math_warning() {
         diagnostics.iter().any(|d| d.code == "RY002"),
         "{diagnostics:?}"
     );
+}
+
+fn is_integer_or_double_union(t: &RType) -> bool {
+    t.mode == Mode::Union
+        && t.members.as_ref().is_some_and(|ms| {
+            ms.len() == 2
+                && ms.iter().any(|m| m.mode == Mode::Integer)
+                && ms.iter().any(|m| m.mode == Mode::Double)
+        })
+}
+
+/// `a:b` with a non-literal endpoint: R's `:` returns a plain integer or
+/// double vector of length >= 1 unless both endpoints are factors (their
+/// interaction). Issue #648.
+#[test]
+fn colon_with_unknown_endpoint_is_nonempty_numeric() {
+    for src in [
+        // R: typeof(1:5) is "integer" but typeof(1:3e9) is "double", so an
+        // unproven `to` (or a non-literal `from`) leaves both possible.
+        "n <- runif(1)\nx <- 1:n\n",
+        "n <- runif(1)\nx <- n:1\n",
+        // The literal fast path must not claim an integer vector past int
+        // range.
+        "x <- 1:3e9\n",
+    ] {
+        let (_, scope) = check_with_scope(src);
+        let x = scope.get("x").expect("x should be bound");
+        assert!(is_integer_or_double_union(x), "`{src}`: got {x:?}");
+        assert_eq!(x.length, Length::Nonempty, "`{src}`: got {x:?}");
+    }
+    // R: typeof(1.5:n) is "double" whatever `n` is.
+    let (_, scope) = check_with_scope("n <- runif(1)\nx <- 1.5:n\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Double, "got {x:?}");
+    assert_eq!(x.length, Length::Nonempty, "got {x:?}");
+    // R: `1:n` with any `n` is integer/double (a lone factor contributes its
+    // first code), so arithmetic with character errors.
+    let diags = check("f <- function(n) {\n  x <- 1:n\n  x + \"a\"\n}\n");
+    assert!(diags.iter().any(|d| d.code == "RY040"), "got {diags:?}");
+}
+
+#[test]
+fn colon_without_a_non_factor_endpoint_stays_unknown() {
+    // R: factor(c("a", "b")):factor(c("x", "y")) is a factor interaction,
+    // so two endpoints of unknown class prove nothing about the result.
+    let diags = check("f <- function(a, b) {\n  x <- a:b\n  x + \"a\"\n}\n");
+    assert!(diags.iter().all(|d| d.code != "RY040"), "got {diags:?}");
+    // A user-defined `:` replaces the primitive.
+    let diags = check(
+        "g <- function(n) {\n  `:` <- function(a, b) \"s\"\n  x <- 1:n\n  paste0(x + \"a\")\n}\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY040"), "got {diags:?}");
+    let (_, scope) = check_with_scope("`:` <- function(a, b) \"s\"\nx <- 1:3\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Opaque, "got {x:?}");
+    // Inferred plain classes are not proof that an endpoint is not a factor:
+    // in R each of these `a` is a factor, so `a:g` is an interaction and
+    // `+.factor` handles the addition.
+    for setup in [
+        "a <- c(factor(\"a\"))",
+        "a <- structure(1L, levels = \"a\", class = c(\"c1\", \"c2\", \"c3\", \"c4\", \"factor\"))",
+        "a <- 1L\n  class(a) <- c(\"c1\", \"c2\", \"c3\", \"c4\", \"factor\")\n  levels(a) <- \"a\"",
+        "a <- 1L\n  attr(a, \"levels\") <- \"a\"\n  oldClass(a) <- \"factor\"",
+        "a <- 1L\n  attributes(a) <- list(levels = \"a\", class = \"factor\")",
+    ] {
+        let src = format!(
+            "`+.factor` <- function(a, b) \"ok\"\nf <- function(g) {{\n  {setup}\n  x <- a:g\n  x + \"a\"\n}}\n"
+        );
+        let diags = check(&src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "`{src}`: got {diags:?}"
+        );
+    }
+    // A user-defined unary `-` can return a factor, so `(-1)` is no longer a
+    // literal endpoint.
+    let diags = check(
+        "`-` <- function(x) factor(\"a\")\n`+.factor` <- function(a, b) \"ok\"\nf <- function(n) {\n  x <- (-1):n\n  x + \"a\"\n}\n",
+    );
+    assert!(diags.iter().all(|d| d.code != "RY040"), "got {diags:?}");
+    // Without a mask, a negated literal is still a non-factor endpoint.
+    let diags = check("f <- function(n) {\n  x <- (-1):n\n  x + \"a\"\n}\n");
+    assert!(diags.iter().any(|d| d.code == "RY040"), "got {diags:?}");
+}
+
+#[test]
+fn masked_unary_operator_result_is_unknown() {
+    // A user-defined `-` replaces the primitive; its result need not be
+    // numeric.
+    let (_, scope) = check_with_scope("`-` <- function(x) \"s\"\nx <- -1\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Opaque, "got {x:?}");
+}
+
+#[test]
+fn colon_literal_fast_path_stops_at_int_range() {
+    // R: typeof(2147483647:2147483647) and typeof(-2147483647:0) are
+    // "integer"; typeof(1:2147483648), typeof(-2147483648:0), and
+    // typeof(2147483648:1) are "double".
+    let (_, scope) = check_with_scope("x <- 2147483647:2147483647\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Integer, "got {x:?}");
+    assert_eq!(x.length, Length::Known(1), "got {x:?}");
+    let (_, scope) = check_with_scope("x <- -2147483647:0\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Integer, "got {x:?}");
+    for src in ["x <- 1:2147483648\n", "x <- -2147483648:0\n"] {
+        let (_, scope) = check_with_scope(src);
+        let x = scope.get("x").expect("x should be bound");
+        assert!(is_integer_or_double_union(x), "`{src}`: got {x:?}");
+        assert_eq!(x.length, Length::Nonempty, "`{src}`: got {x:?}");
+    }
+    let (_, scope) = check_with_scope("x <- 2147483648:1\n");
+    let x = scope.get("x").expect("x should be bound");
+    assert_eq!(x.mode, Mode::Double, "got {x:?}");
+}
+
+#[test]
+fn colon_character_endpoint_stays_unknown() {
+    // R: 1:"a" errors at the `:` ("NA/NaN argument"), so the later
+    // arithmetic never runs; "1":"3" works. Character text is unknown
+    // statically, so neither gets a numeric type.
+    for src in [
+        "x <- 1:\"a\"\ny <- x + \"a\"\n",
+        "s <- \"a\"\nx <- 1:s\ny <- x + \"a\"\n",
+        "x <- 1:\"Inf\"\ny <- x + \"a\"\n",
+    ] {
+        let diags = check(src);
+        assert!(
+            diags.iter().all(|d| d.code != "RY040"),
+            "`{src}`: got {diags:?}"
+        );
+    }
 }

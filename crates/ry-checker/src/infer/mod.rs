@@ -3178,15 +3178,26 @@ impl Checker {
                 }
                 // `:` sequence operator: when both operands are
                 // integer-valued literals we can pin the result length
-                // exactly as `|b - a| + 1` (R always returns integer
-                // for whole-number endpoints). We need the raw AST to
-                // read the literal values, so this case lives here in
-                // the `Expr::BinOp` arm rather than in the type-only
-                // `infer_binop`. Non-literal operands fall through to
-                // `infer_binop`'s lattice-based `seq` (Unknown length).
+                // exactly as `|b - a| + 1` (R returns integer for
+                // whole-number endpoints in int range). We need the raw
+                // AST to read the literal values and endpoint syntax, so
+                // `:` lives here in the `Expr::BinOp` arm rather than in
+                // the type-only `infer_binop`.
                 if matches!(*op, BinOpKind::Colon) {
                     scope.invalidate_ops_environment();
+                    // A user-defined `:` replaces the primitive entirely;
+                    // nothing below describes its result.
+                    if self.has_explicit_operator_mask(":", "`:`", scope) {
+                        let _ = self.infer(lhs, scope);
+                        let _ = self.infer(rhs, scope);
+                        return RType::unknown();
+                    }
+                    // Endpoints beyond int range make R return double
+                    // (`1:3e9`); those fall through to `RType::seq`.
+                    let in_int_range = |v: i64| v.unsigned_abs() <= i32::MAX as u64;
                     if let (Some(a), Some(b)) = (extract_literal_int(lhs), extract_literal_int(rhs))
+                        && in_int_range(a)
+                        && in_int_range(b)
                     {
                         let len = (b - a).unsigned_abs() as usize;
                         // `saturating_add` keeps `len` a positive usize, so
@@ -3194,6 +3205,15 @@ impl Checker {
                         let len = len.saturating_add(1);
                         return RType::new(Mode::Integer, Length::Known(len));
                     }
+                    // R evaluates `from` before `to`, so a mask installed
+                    // while forcing `from` already applies to `to`.
+                    let literal_from = self.colon_literal_endpoint(lhs, scope);
+                    let lt = self.infer(lhs, scope);
+                    let literal_to = self.colon_literal_endpoint(rhs, scope);
+                    let rt = self.infer(rhs, scope);
+                    scope.invalidate_literal_values_for_dispatch(&lt);
+                    scope.invalidate_literal_values_for_dispatch(&rt);
+                    return lt.seq(rt, literal_from || literal_to);
                 }
                 if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) {
                     return self.infer_short_circuit_binop(*op, lhs, rhs, scope, *span);
@@ -3233,9 +3253,8 @@ impl Checker {
                     UnaryOpKind::Neg => "-",
                     UnaryOpKind::Not => "!",
                 };
-                if !self.resolves_to_base(symbol, scope)
-                    || self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope)
-                {
+                let masked = self.has_explicit_operator_mask(symbol, &format!("`{symbol}`"), scope);
+                if !self.resolves_to_base(symbol, scope) || masked {
                     // Unary lookup is executable too. A masked operator may
                     // replace a declared callable before forcing its operand.
                     self.invalidate_declaration_identities(scope);
@@ -3261,6 +3280,12 @@ impl Checker {
                 }
                 let t = self.infer(expr, scope);
                 scope.invalidate_literal_values_for_dispatch(&t);
+                // A user-defined `-` or `!` replaces the primitive: its
+                // result need not be numeric or logical
+                // (`` `-` <- function(x) factor("a") ``).
+                if masked {
+                    return RType::unknown();
+                }
                 // Base R's `Math.data.frame`/`Ops.data.frame` apply unary
                 // operators column-wise. Preserve the frame rather than
                 // treating its list storage mode as primitive evidence.

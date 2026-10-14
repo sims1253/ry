@@ -102,7 +102,30 @@ for (i in seq_along(prefix_cases)) {
   if (actual != case$expected) {
     stop(sprintf("Test %d (%s): expected exit %d, got %d", 9 + i, case$description, case$expected, actual))
   }
+  # The production subprocess must propagate the same verdict, including
+  # nonzero exits. A working function alone cannot prove the CLI fails CI.
+  cli <- suppressWarnings(system2("Rscript", c(
+    shQuote(file.path(repo_root, "ecosystem", "reconcile-reports.R")),
+    shQuote(file.path(tmp, "corpus.json")), shQuote(tmp), shQuote("posit."), "pkg"
+  ), stdout = FALSE, stderr = FALSE))
+  stopifnot(identical(cli, case$expected))
   cat("  PASS\n")
 }
+
+cat("Test 13: missing processed-package arguments must not reconcile an empty subset\n")
+cli <- suppressWarnings(system2("Rscript", c(
+  shQuote(file.path(repo_root, "ecosystem", "reconcile-reports.R")),
+  shQuote(file.path(tmp, "corpus.json")), shQuote(tmp), shQuote("posit.")
+), stdout = FALSE, stderr = FALSE))
+stopifnot(cli != 0L)
+cat("  PASS\n")
+
+cat("Test 14: an empty processed-package argument must fail closed\n")
+cli <- suppressWarnings(system2("Rscript", c(
+  shQuote(file.path(repo_root, "ecosystem", "reconcile-reports.R")),
+  shQuote(file.path(tmp, "corpus.json")), shQuote(tmp), shQuote("posit."), shQuote("")
+), stdout = FALSE, stderr = FALSE))
+stopifnot(cli != 0L)
+cat("  PASS\n")
 
 cat("\nAll reconciliation tests passed.\n")

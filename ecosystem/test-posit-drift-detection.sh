@@ -17,7 +17,11 @@ cp "$ledger" "$clean"
 
 # This first non-local check clones/fetches the pinned fast-tier Posit sources
 # when they are not already cached, and proves the reviewed ledger is clean.
-"$run_sh" --check --manifest "$manifest" --ledger "$clean" --tier fast   >"$tmp/clean.log" 2>&1
+if ! "$run_sh" --check --manifest "$manifest" --ledger "$clean" --tier fast \
+  --reports-out "$tmp/reports" >"$tmp/clean.log" 2>&1; then
+  cat "$tmp/clean.log" >&2
+  exit 1
+fi
 
 Rscript - "$clean" "$corrupt" "$identity_file" <<'RS'
 args <- commandArgs(trailingOnly = TRUE)
@@ -34,7 +38,13 @@ writeLines(sprintf(
 RS
 
 expected="$(cat "$identity_file")"
-if "$run_sh" --check --manifest "$manifest" --ledger "$corrupt" --tier fast   >"$tmp/corrupt.log" 2>&1; then
+# Only the ledger changed. Reconcile against fresh current-binary reports
+# from this test's successful non-local run, not committed/cached reports.
+processed=()
+while IFS= read -r package; do processed+=("$package"); done < "$tmp/reports/packages.txt"
+report_prefix="$(cat "$tmp/reports/report-prefix.txt")"
+if Rscript "$root/ecosystem/reconcile-reports.R" "$corrupt" "$tmp/reports" \
+  "$report_prefix" "${processed[@]}" >"$tmp/corrupt.log" 2>&1; then
   echo "FAIL: corrupted Posit ledger identity was not detected" >&2
   exit 1
 fi

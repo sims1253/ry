@@ -27,7 +27,7 @@ jobs:
         run: python3 scripts/release/binary_checksums.py --artifacts target/distrib --output target/binary-checksums
       # The generated host job collects artifacts-* before creating the
       # release. Failure here blocks that job, so no release lacks sidecars.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: artifacts-binary-checksums
           path: target/binary-checksums/*.bin.sha256

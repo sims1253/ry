@@ -113,6 +113,16 @@ jobs:
       - name: Test installed VSIX (xvfb)
         run: xvfb-run -a bun run test
 
+      - name: Upload installed-extension evidence
+        if: always() && hashFiles('editors/code/test-results/installed/manifest.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installed-extension-evidence
+          path: editors/code/test-results/installed/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
   # Publisher identity consistency check
   publisher-consistency:
     runs-on: ubuntu-latest

@@ -4,3 +4,4 @@ out/
 .vscode-test/
 *.vsix
 bundled/bin/
+test-results/

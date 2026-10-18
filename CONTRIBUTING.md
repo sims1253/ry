@@ -124,6 +124,8 @@ The Linux extension tests install a VSIX into a temporary extensions directory
 and open fresh trusted and untrusted profiles. Build `ry`, copy it into
 `editors/code/bundled/bin/ry`, then run `bun run vsce-package` and `bun run test`
 from `editors/code` (use `xvfb-run -a` on a headless machine).
+The [end-to-end testing guide](docs/testing.md) describes the diagnostic journey,
+saved evidence, and how to reproduce a run.
 
 ### The `--no-dependencies` rule
 

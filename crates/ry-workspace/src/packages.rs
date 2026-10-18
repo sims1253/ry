@@ -14,6 +14,9 @@ use std::ops::ControlFlow;
 /// Per-file package facts that are not R bindings.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PackageFacts {
+    /// DESCRIPTION's Package name for a file in the package's R sources.
+    /// Tests and scripts do not install their definitions in that namespace.
+    pub source_package: Option<String>,
     /// `useDynLib(..., .fixes = "prefix")` prefixes. Any name starting with
     /// one resolves to a native routine.
     pub native_routine_prefixes: HashSet<String>,

@@ -1,5 +1,101 @@
 use super::*;
 
+#[test]
+fn qualified_calls_do_not_borrow_project_returns_or_quoting() {
+    for source in [
+        "identity <- function(x) 'project'; result <- base::identity(1L); result + 1L",
+        "identity <- function(x) 'project'; result <- base:::identity(1L); result + 1L",
+    ] {
+        let (diagnostics, scope) = check_with_scope(source);
+        assert_eq!(
+            scope.get("result").unwrap().mode,
+            Mode::Integer,
+            "{source}: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{diagnostics:?}"
+        );
+    }
+    let diagnostics = check("identity <- function(x) substitute(x); base::identity(not_bound)");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY010"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn qualified_calls_keep_stub_checks_and_real_operand_errors() {
+    let diagnostics = check("substr <- function(x) x; base::substr('abc')");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY091"),
+        "{diagnostics:?}"
+    );
+    let diagnostics = check("identity <- function(x) 1L; base::identity('text') + 1L");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn a_qualified_call_without_a_stub_stays_unknown() {
+    let (diagnostics, scope) = check_with_scope(
+        "helper <- function(x) 'project'; result <- not_a_stubbed_package::helper(1L); result + 1L",
+    );
+    assert_eq!(scope.get("result").unwrap().mode, Mode::Opaque);
+    assert!(
+        diagnostics.iter().all(|d| d.code != "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn qualified_predicates_do_not_resolve_to_project_expectation_factories() {
+    // testthat's old-style expectation factories return functions, while
+    // rlang's same-spelled predicates return logical values.
+    let diagnostics = check(
+        "is_null <- function() function(x) x\nis_false <- function() function(x) x\ncheck <- function(x, allow_null) { if (allow_null && rlang::is_null(x)) TRUE else FALSE }\nif (rlang::is_false(FALSE)) 1L\ncheck(NULL, TRUE)",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, "RY031" | "RY001")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn arguments_cannot_replace_the_current_call_head() {
+    let (diagnostics, scope) = check_with_scope(
+        "f <- function(x) { x; 'selected' }; result <- f({ f <- function(x, y) { x; y; 1L }; 1L }); result + 1L; later <- f(1L, 2L)",
+    );
+    assert_eq!(
+        scope.get("result").unwrap().mode,
+        Mode::Character,
+        "{diagnostics:?}"
+    );
+    assert_eq!(
+        scope.get("later").unwrap().mode,
+        Mode::Integer,
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY040"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn argument_rebinding_does_not_erase_the_selected_functions_required_formals() {
+    let diagnostics =
+        check("f <- function(x, y) { x; y; 1L }; f({ f <- function(x) { x; 1L }; 1L })");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "RY091"),
+        "{diagnostics:?}"
+    );
+}
+
 // R's function-mode call-head lookup (#381/#384): a bare symbol in call
 // position searches every frame for a *function* binding and skips
 // non-function values. A symbol-head RY070 may therefore fire only when

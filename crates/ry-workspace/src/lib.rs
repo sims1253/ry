@@ -581,6 +581,11 @@ pub fn resolve_workspace_context<'a>(
             let package_path = package_relative_path(Path::new(&file.path), &root);
             let relative = package_path.as_deref();
             let package_r_file = relative.is_some_and(is_package_r_file);
+            if package_r_file {
+                file_package_facts
+                    .source_package
+                    .clone_from(&source_package);
+            }
             if package_r_file || relative.is_some_and(is_testthat_runner_file) {
                 file_attached.extend(metadata.imported_packages.iter().cloned());
                 // Without a NAMESPACE, R installs one that imports every

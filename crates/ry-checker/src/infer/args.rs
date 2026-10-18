@@ -2,34 +2,6 @@
 
 use super::*;
 
-/// The callee resolution the argument rules share: a collected user
-/// definition shadows the typeshed stub, and a lexical callable
-/// resolves to neither (its formals are unknown at the call site) --
-/// one copy, so RY090/RY091/RY092 and RY111's identical-name gate
-/// cannot drift apart.
-pub(crate) enum ResolvedCallee<'a> {
-    User(&'a UserFn),
-    Stub(&'a FunctionSig),
-    Unknown,
-}
-
-impl Checker {
-    pub(crate) fn resolve_callee<'a>(
-        &self,
-        user_function: Option<&'a UserFn>,
-        resolved_sig: Option<&'a FunctionSig>,
-        lexical_callable: bool,
-    ) -> ResolvedCallee<'a> {
-        if let Some(user_function) = user_function {
-            ResolvedCallee::User(user_function)
-        } else if !lexical_callable && let Some(signature) = resolved_sig {
-            ResolvedCallee::Stub(signature)
-        } else {
-            ResolvedCallee::Unknown
-        }
-    }
-}
-
 /// RY111's dead-formal index: for every function the file defines, the
 /// set of that function's own formals its body reads. Keyed by the
 /// function's span and computed once per pass-3 run in the
@@ -587,9 +559,7 @@ impl Checker {
     pub(crate) fn check_constant_shadowed_arguments(
         &mut self,
         function_name: &str,
-        user_function: Option<&UserFn>,
-        resolved_sig: Option<&FunctionSig>,
-        lexical_callable: bool,
+        callee: ResolvedCallee<'_>,
         args: &[Arg],
     ) {
         if self.discarding || self.enclosing_formals.is_empty() {
@@ -645,26 +615,24 @@ impl Checker {
             return;
         }
         // Gate 2: the callee must actually have that formal, under the
-        // shared `resolve_callee` precedence (a user definition shadows
-        // the stub; a lexical callable resolves to neither).
-        let callee_formals: Option<Vec<&str>> =
-            match self.resolve_callee(user_function, resolved_sig, lexical_callable) {
-                ResolvedCallee::User(user_function) => Some(
-                    user_function
-                        .params
-                        .iter()
-                        .map(|parameter| parameter.name.as_str())
-                        .collect(),
-                ),
-                ResolvedCallee::Stub(signature) => Some(
-                    signature
-                        .params
-                        .iter()
-                        .map(|parameter| parameter.name.as_str())
-                        .collect(),
-                ),
-                ResolvedCallee::Unknown => None,
-            };
+        // call-head selection, captured before its arguments ran.
+        let callee_formals: Option<Vec<&str>> = match callee {
+            ResolvedCallee::User(user_function) => Some(
+                user_function
+                    .params
+                    .iter()
+                    .map(|parameter| parameter.name.as_str())
+                    .collect(),
+            ),
+            ResolvedCallee::Stub(signature) => Some(
+                signature
+                    .params
+                    .iter()
+                    .map(|parameter| parameter.name.as_str())
+                    .collect(),
+            ),
+            ResolvedCallee::Unknown => None,
+        };
         let Some(callee_formals) = callee_formals else {
             return;
         };

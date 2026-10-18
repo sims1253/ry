@@ -51,6 +51,21 @@ fn a_qualified_call_without_a_stub_stays_unknown() {
 }
 
 #[test]
+fn qualified_predicates_do_not_resolve_to_project_expectation_factories() {
+    // testthat's old-style expectation factories return functions, while
+    // rlang's same-spelled predicates return logical values.
+    let diagnostics = check(
+        "is_null <- function() function(x) x\nis_false <- function() function(x) x\ncheck <- function(x, allow_null) { if (allow_null && rlang::is_null(x)) TRUE else FALSE }\nif (rlang::is_false(FALSE)) 1L\ncheck(NULL, TRUE)",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !matches!(d.code, "RY031" | "RY001")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn arguments_cannot_replace_the_current_call_head() {
     let (diagnostics, scope) = check_with_scope(
         "f <- function(x) { x; 'selected' }; result <- f({ f <- function(x, y) { x; y; 1L }; 1L }); result + 1L; later <- f(1L, 2L)",

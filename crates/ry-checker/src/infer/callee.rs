@@ -16,15 +16,16 @@ pub(crate) enum ResolvedCallee<'a> {
 
 enum CallTarget {
     User(UserFn),
-    Stub(FunctionSig),
+    Stub,
     Lexical,
     Unknown,
 }
 
 pub(super) struct CallHead {
     target: CallTarget,
-    // A project wrapper or lexical callable can inherit evaluation metadata.
-    // This does not make the stub the selected callee for arity or returns.
+    // The selected stub's contract, or evaluation metadata inherited by a
+    // project wrapper or lexical callable. Inherited metadata does not select
+    // the stub for arity or returns.
     metadata: Option<FunctionSig>,
     pub(super) inherited_s3_metadata: bool,
     pub(super) declaration_function: Option<UserFn>,
@@ -43,17 +44,21 @@ impl CallHead {
         }
     }
 
+    /// The selected stub's contract, or inherited evaluation metadata for a
+    /// project/lexical callable. Inherited metadata supplies neither arity nor
+    /// ordinary return inference; those use `callee` and `user_function`.
     pub(super) fn signature(&self) -> Option<&FunctionSig> {
-        match &self.target {
-            CallTarget::Stub(signature) => Some(signature),
-            _ => self.metadata.as_ref(),
-        }
+        self.metadata.as_ref()
     }
 
     pub(super) fn callee(&self) -> ResolvedCallee<'_> {
         match &self.target {
             CallTarget::User(function) => ResolvedCallee::User(function),
-            CallTarget::Stub(signature) => ResolvedCallee::Stub(signature),
+            CallTarget::Stub => ResolvedCallee::Stub(
+                self.metadata
+                    .as_ref()
+                    .expect("stub call head retains its contract"),
+            ),
             CallTarget::Lexical | CallTarget::Unknown => ResolvedCallee::Unknown,
         }
     }
@@ -61,7 +66,8 @@ impl CallHead {
 
 impl FnTable {
     /// A qualified name can use a collected definition only from that package's
-    /// R sources. Bare calls also accept quoted infix binding spellings.
+    /// R sources. Unknown provenance cannot establish namespace membership.
+    /// Bare calls also accept quoted infix binding spellings.
     pub(crate) fn call_function(&self, name: &str) -> Option<&UserFn> {
         let (package, member) = if name.starts_with('%') && name.ends_with('%') {
             (None, name)
@@ -93,6 +99,9 @@ impl Checker {
         scope: &Scope,
         call_span: Span,
     ) -> CallHead {
+        // An alias to pkg::f selects that namespace even though its raw head is
+        // bare. Lexical binding/evidence below describes the raw call site's
+        // environment, and cannot replace a qualified selection.
         let qualified = !(semantic_name.starts_with('%') && semantic_name.ends_with('%'))
             && crate::resolve::split_qualified(semantic_name).is_some();
         let lexical_callable = !qualified && scope.is_lexical_function(lookup_name);
@@ -111,6 +120,8 @@ impl Checker {
             } else {
                 self.declaration_function(lookup_name, function.as_ref(), scope, call_span)
             };
+        // R selects the function before forcing its arguments. A write among
+        // the actuals changes later calls, not this call's arity or return.
         let check_project_arguments = !qualified
             && self.fn_table.has_single_contract(lookup_name)
             && (scope.get(lookup_name).is_none()
@@ -128,7 +139,7 @@ impl Checker {
         let (target, metadata) = match (function, lexical_callable, signature) {
             (Some(function), _, signature) => (CallTarget::User(function), signature),
             (None, true, signature) => (CallTarget::Lexical, signature),
-            (None, false, Some(signature)) => (CallTarget::Stub(signature), None),
+            (None, false, Some(signature)) => (CallTarget::Stub, Some(signature)),
             (None, false, None) => (CallTarget::Unknown, None),
         };
         CallHead {
@@ -155,9 +166,11 @@ impl Checker {
             return None;
         }
         let definitions = self.fn_table.capture_literal_bindings.get(name)?;
-        let [key] = definitions.iter().collect::<Vec<_>>()[..] else {
+        let mut definitions = definitions.iter();
+        let key = definitions.next()?;
+        if definitions.next().is_some() {
             return None;
-        };
+        }
         if self.fn_table.rebound_after_capture.contains(key) {
             return None;
         }

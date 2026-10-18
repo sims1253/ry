@@ -402,11 +402,9 @@ impl Checker {
                 continue;
             };
 
-            // An explicit namespace call bypasses any same-named user
-            // binding, just as normal call resolution does.
-            let user_callee = (!call.stub_callee.contains("::"))
-                .then(|| self.fn_table.fns.get(&call.callee))
-                .flatten();
+            // Forwarding and direct calls use the same package provenance
+            // when selecting a collected definition.
+            let user_callee = self.fn_table.call_function(&call.stub_callee);
             let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
             if user_callee.is_none() && stub_callee.is_none() {
                 for (_, source) in &call.arguments {

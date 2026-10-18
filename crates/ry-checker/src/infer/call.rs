@@ -1,3 +1,4 @@
+use super::callee::{CallHead, CallHeadFunctionEvidence};
 use super::*;
 use crate::collect::WriteSet;
 use crate::higher_order::s3_group_generic;
@@ -175,34 +176,6 @@ impl Checker {
             })
     }
 
-    /// The literal a call head currently names: the exact lexical
-    /// definition, else the single collected global literal that no write
-    /// may have rebound.
-    fn declaration_helper(&self, name: &str, scope: &Scope) -> Option<&UserFn> {
-        if let Some(span) = scope.lexical_definition(name) {
-            return self.fn_table.definition(&self.path, span);
-        }
-        if scope.get(name).is_some() {
-            return None;
-        }
-        let definitions = self.fn_table.capture_literal_bindings.get(name)?;
-        let [key] = definitions.iter().collect::<Vec<_>>()[..] else {
-            return None;
-        };
-        if self.fn_table.rebound_after_capture.contains(key) {
-            return None;
-        }
-        let (path, start, end) = key;
-        self.fn_table.definition(
-            path,
-            Span {
-                start: *start,
-                end: *end,
-                ..Span::default()
-            },
-        )
-    }
-
     pub(crate) fn infer_call_inner(
         &mut self,
         func: &Expr,
@@ -241,12 +214,8 @@ impl Checker {
             return result;
         }
 
-        // For namespace-qualified calls (`pkg::fn(args)`), strip the
-        // package prefix for the lookups below, so `stats::rnorm(10)`
-        // resolves the same way `rnorm(10)` does. The special-case
-        // string-equality checks keep using the full `name`, because
-        // those builtins are always invoked unqualified. `bare_name`
-        // handles both `::` and `:::` forms.
+        // Callee selection retains the full semantic name and its package.
+        // The constructor and dispatch stages also need the bare spelling.
         let semantic_name = scope.function_alias(&name).unwrap_or(&name).to_string();
         let lookup_name = if is_user_infix_name(&semantic_name) {
             // `%::%` is an infix operator, not a namespace-qualified call.
@@ -428,7 +397,7 @@ impl Checker {
             self.infer_argument_types(&name, &semantic_name, &lookup_name, args, scope, span);
 
         // The argument-validation stage.
-        self.check_call_arguments(&name, &lookup_name, &call, args, span, scope);
+        self.check_call_arguments(&name, &lookup_name, &call.head, &call.arg_types, args, span);
 
         // The dynamic-loader stage; also records `locally_shadows_stub`
         // on the resolution for the assertion stage below.
@@ -449,8 +418,7 @@ impl Checker {
         // A project `UseMethod` generic returns whatever its selected method
         // returns, so dispatch before the lexical stage reads the generic's
         // own opaque return.
-        if let Some(receiver) = self.user_generic_receiver(&name, &lookup_name, &call, args, scope)
-        {
+        if let Some(receiver) = call.head.generic_receiver {
             if self.caller_method_may_shadow(&lookup_name, &call.arg_types[receiver], scope) {
                 return RType::unknown();
             }
@@ -464,14 +432,9 @@ impl Checker {
         // The lexical-callable stage. Must run before the constructor and
         // dispatch stages below so a local binding shadows a same-named
         // builtin (R's lexical scoping).
-        if let Some(t) = self.infer_lexical_callable_call(
-            &name,
-            &lookup_name,
-            args,
-            &call.arg_types,
-            span,
-            scope,
-        ) {
+        if let Some(t) =
+            self.infer_lexical_callable_call(&name, args, &call.arg_types, span, &call.head)
+        {
             return t;
         }
 
@@ -482,10 +445,10 @@ impl Checker {
         // function-mode call lookup skips the dataset binding in favor
         // of any such outward function. An uncertain outward state
         // (open search path, unenumerable data mask) silences too.
-        if scope.get(&lookup_name).is_none()
+        if call.head.lexical_binding.is_none()
             && let Some(value_type) = self.resolve_typeshed_value(&name)
             && matches!(
-                self.call_head_function_evidence(&name, scope),
+                call.head.function_evidence,
                 CallHeadFunctionEvidence::Diagnose
             )
         {
@@ -547,7 +510,7 @@ impl Checker {
         // unbound name inside it still fires. Must run before the
         // FnTable stage below so a project-local `lapply` wrapper still
         // gets callback inference.
-        if let Some(signature) = &call.resolved_sig
+        if let Some(signature) = call.head.signature()
             && let Some(result) = self.infer_higher_order_call(
                 &semantic_name,
                 signature,
@@ -563,7 +526,7 @@ impl Checker {
         // User functions: the refined FnTable return slot (stabilized by
         // the fixpoint loop in `check()`; refining on demand would risk
         // exponential blowup).
-        if let Some(function) = call.user_function.as_ref() {
+        if let Some(function) = call.head.user_function() {
             let result = self.read_return_slot(function.return_slot);
             // A callee without a computed return yet has no known way to
             // return, so this path contributes nothing to merges. A
@@ -588,7 +551,7 @@ impl Checker {
         // collapses to logical when the test may be empty or is all-NA
         // (RY106). Runs after every dispatch shape above so only a call
         // that reaches the plain typeshed stage is claimed.
-        if let Some(signature) = &call.resolved_sig
+        if let Some(signature) = call.head.signature()
             && signature.return_mode.is_some()
             && let Some(result) = self.infer_test_template_call(
                 &lookup_name,
@@ -679,8 +642,8 @@ impl Checker {
         // The typeshed stage: a qualified call (`pkg::fun`) resolves
         // against `load_package(pkg)`; an unqualified call falls back
         // from base to loaded packages (reverse load order).
-        if let Some(sig) = call.resolved_sig {
-            return self.apply_sig(&sig, &call.arg_types, args);
+        if let Some(sig) = call.head.signature() {
+            return self.apply_sig(sig, &call.arg_types, args);
         }
 
         // Unknown function: opaque.
@@ -1620,12 +1583,13 @@ impl Checker {
         scope: &mut Scope,
         call_span: Span,
     ) -> CallResolution {
-        let inherited_sig = self.resolve_user_s3_inherited_sig(lookup_name);
-        let inherited_s3_metadata = inherited_sig.is_some();
-        let resolved_sig = self.resolve_typeshed_sig(semantic_name).or(inherited_sig);
-        // Bind and infer data once before visiting masked expressions. R's
-        // named arguments can put the data source after those expressions.
-        let supplied_data_mask_source = resolved_sig.as_ref().and_then(|signature| {
+        let head = self.resolve_call_head(name, semantic_name, lookup_name, args, scope, call_span);
+        let resolved_sig = head.signature();
+        let user_function = head.user_function();
+        if let Some(function) = user_function {
+            self.record_signature_read(function.return_slot);
+        }
+        let supplied_data_mask_source = resolved_sig.and_then(|signature| {
             data_mask_source_arg(signature, args).map(|argument_index| {
                 (
                     argument_index,
@@ -1633,35 +1597,7 @@ impl Checker {
                 )
             })
         });
-        // Function definitions may use a quoted binding name (`'%as%' <-
-        // function(...)`), whereas an infix call is looked up as `%as%`.
-        // Match the normalized spelling as well so user-function metadata
-        // (notably NSE/quoting parameters) reaches those calls.
-        // A function value in the current lexical scope shadows the flat
-        // project function table. The table intentionally indexes by name and
-        // may contain a same-named nested/top-level definition from elsewhere;
-        // using that signature here produces bogus RY090/RY091 diagnostics.
-        let lexical_callable = !name.contains("::") && scope.is_lexical_function(lookup_name);
-        let user_function = if lexical_callable {
-            None
-        } else {
-            self.fn_table.fns.get(lookup_name).cloned().or_else(|| {
-                self.fn_table
-                    .fns
-                    .iter()
-                    .find(|(name, _)| semantic_argument_name(name) == lookup_name)
-                    .map(|(_, function)| function.clone())
-            })
-        };
-        let declaration_function = if self.discarding || !self.declarations.has_contracts() {
-            None
-        } else {
-            self.declaration_function(lookup_name, user_function.as_ref(), scope, call_span)
-        };
-        if let Some(function) = &user_function {
-            self.record_signature_read(function.return_slot);
-        }
-        let user_argument_matches = user_function.as_ref().map(|function| {
+        let user_argument_matches = user_function.map(|function| {
             let names: Vec<&str> = function
                 .params
                 .iter()
@@ -1669,7 +1605,7 @@ impl Checker {
                 .collect();
             match_arguments(&names, args)
         });
-        let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
+        let unforced_args = &head.unforced_args;
         // One match for the resolved signature; the loop below used to redo it
         // for every argument.
         let declared_binding = resolved_sig
@@ -1680,7 +1616,7 @@ impl Checker {
             let declared_mode = declared_binding
                 .as_ref()
                 .and_then(|(signature, bindings)| eval_mode_for_arg(signature, bindings, index));
-            let user_dispatch = inherited_s3_metadata
+            let user_dispatch = head.inherited_s3_metadata
                 || user_function.is_some()
                 || supplied_data_mask_source
                     .as_ref()
@@ -1693,7 +1629,7 @@ impl Checker {
             let user_param = user_argument_matches
                 .as_ref()
                 .and_then(|matches| matches.param_for_arg[index].or(matches.dots))
-                .and_then(|parameter| user_function.as_ref()?.params.get(parameter));
+                .and_then(|parameter| user_function?.params.get(parameter));
             let injection = resolved_sig
                 .as_ref()
                 .and_then(|sig| argument_supports_injection(sig, args, index))
@@ -1787,258 +1723,9 @@ impl Checker {
         }
         CallResolution {
             arg_types,
-            resolved_sig,
-            user_function,
-            declaration_function,
-            lexical_callable,
+            head,
             locally_shadows_stub: false,
         }
-    }
-
-    /// Per actual, whether it binds a formal the called definition can never
-    /// force. Only a direct, unaliased call to one exact literal qualifies,
-    /// and forwarded `...` leaves the positional binding unknown.
-    fn unforced_arguments(
-        &self,
-        name: &str,
-        semantic_name: &str,
-        args: &[Arg],
-        scope: &Scope,
-    ) -> Vec<bool> {
-        if name != semantic_name
-            || name.contains("::")
-            || args
-                .iter()
-                .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
-        {
-            return Vec::new();
-        }
-        let Some(function) = self.declaration_helper(name, scope).filter(|function| {
-            function.params.iter().any(|parameter| parameter.unforced)
-                && !self
-                    .fn_table
-                    .was_rebound_after_capture(&function.source_path, function.definition_span)
-                && self.runs_only_stub_code(function)
-        }) else {
-            return Vec::new();
-        };
-        let names: Vec<&str> = function
-            .params
-            .iter()
-            .map(|parameter| parameter.name.as_str())
-            .collect();
-        match_arguments(&names, args)
-            .param_for_arg
-            .iter()
-            .map(|formal| formal.is_some_and(|formal| function.params[formal].unforced))
-            .collect()
-    }
-
-    /// Whether evaluating `function` runs no project code, which could reach
-    /// its caller's frame (`get("x", envir = parent.frame())`). Every call
-    /// head must name a typeshed function the project does not bind, no
-    /// project function may be passed by value or by name, and no call or
-    /// operator may dispatch while the project defines methods.
-    fn runs_only_stub_code(&self, function: &UserFn) -> bool {
-        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
-        let mut dispatches = false;
-        let mut visit = |node: AstNode<'_>, _| {
-            let closed = match node {
-                AstNode::Expr(Expr::Call { func, .. }) => {
-                    dispatches = true;
-                    match func.as_ref() {
-                        Expr::Ident { name, .. } => {
-                            let name = semantic_argument_name(name);
-                            !project_function(name)
-                                && !project_function(&format!("{name}<-"))
-                                && !self.fn_table.known_vars.contains(name)
-                                && self.resolve_typeshed_sig(name).is_some()
-                        }
-                        _ => false,
-                    }
-                }
-                AstNode::Expr(Expr::Ident { name, .. }) => {
-                    !project_function(semantic_argument_name(name))
-                }
-                AstNode::Expr(Expr::String(text, _)) => !project_function(text),
-                AstNode::Expr(Expr::BinOp { .. } | Expr::UnaryOp { .. } | Expr::Index { .. }) => {
-                    dispatches = true;
-                    true
-                }
-                _ => true,
-            };
-            if closed {
-                ControlFlow::Continue(Descend::Into)
-            } else {
-                ControlFlow::Break(())
-            }
-        };
-        let closed = function
-            .source_params
-            .iter()
-            .filter_map(|parameter| parameter.default.as_ref())
-            .all(|default| walk_expr(default, Walk::ALL, &mut visit).is_continue())
-            && walk_stmts(&function.body, Walk::ALL, &mut visit).is_continue();
-        closed && !(dispatches && self.project_defines_methods())
-    }
-
-    /// Whether any project function is named like a method of a typeshed or
-    /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
-    fn project_defines_methods(&self) -> bool {
-        self.fn_table.fns.keys().any(|name| {
-            let name = semantic_argument_name(name);
-            name.starts_with("__s4__")
-                || name.match_indices('.').any(|(end, _)| {
-                    end > 0
-                        && (crate::semantic_lists::is_group_generic(&name[..end])
-                            || self.resolve_typeshed_sig(&name[..end]).is_some())
-                })
-        })
-    }
-
-    /// The definition whose adopted contract a call checks: the exact
-    /// current or nearest enclosing literal, else the flat entry when its
-    /// source identity agrees with the current binding.
-    fn declaration_function(
-        &self,
-        lookup_name: &str,
-        user_function: Option<&UserFn>,
-        scope: &Scope,
-        call_span: Span,
-    ) -> Option<UserFn> {
-        // R's function-position lookup skips a proven nonfunction local and
-        // searches enclosing environments. A current callable/unknown local
-        // instead masks those environments. Keep the nearest exact literal
-        // identity when one exists, regardless of which same-spelled entry
-        // survived in the flat inference table.
-        let local_binding = scope.get(lookup_name);
-        let local_is_nonfunction = local_binding
-            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
-        let outward = scope.outward_function_definition(lookup_name);
-        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
-            frame
-                .possible_default_writes
-                .may_write(semantic_argument_name(lookup_name))
-        });
-        let local_definition = scope.lexical_definition(lookup_name);
-        // Function walks start with a copy of the captured scope. An exact
-        // literal that is identical to the nearest enclosing frame is still
-        // an outward binding, not a new local one: R's closure keeps the
-        // environment live after the literal is created.
-        let from_outward = local_is_nonfunction
-            || (local_binding.is_none() && local_definition.is_none())
-            || (local_definition.is_some() && local_definition == outward.flatten());
-        let exact_definition = if from_outward {
-            outward.flatten()
-        } else {
-            local_definition
-        };
-        let exact = exact_definition
-            .filter(|definition| {
-                !possible_default_shadow
-                    && (!from_outward
-                        || !self
-                            .fn_table
-                            .was_rebound_after_capture(&self.path, *definition))
-                    && self
-                        .declarations
-                        .target(&self.path, *definition)
-                        .is_some_and(|decision| decision.signature.is_some())
-            })
-            .and_then(|definition| self.fn_table.definition(&self.path, definition));
-        if exact.is_some() {
-            return exact.cloned();
-        }
-        // A local binding may be an earlier literal, a later rebind, or a
-        // branch join. The flat table is last-definition-wins, so its
-        // declaration is safe only when the current binding is absent (a
-        // cross-file/deferred lookup) or has the identical source span.
-        user_function
-            .filter(|function| {
-                if possible_default_shadow || local_is_nonfunction || outward.is_some() {
-                    false
-                } else if local_binding.is_some() {
-                    function.source_path == self.path
-                        && exact_definition == Some(function.definition_span)
-                } else {
-                    // A deferred call inside a function may resolve a later
-                    // definition. An eager top-level call cannot use a function
-                    // defined later in this same file; the table's future entry
-                    // is not evidence about the current binding.
-                    !self.enclosing_formals.is_empty()
-                        || function.source_path != self.path
-                        || function.definition_span.start < call_span.start
-                }
-            })
-            .cloned()
-    }
-
-    /// The argument-validation stage: matching is validated only for
-    /// signatures whose origin is known. A user definition shadows a
-    /// same-named stub. A lexical function binding (a function literal
-    /// defined inside an enclosing function body) shadows both the flat
-    /// project table and the typeshed/base signature, so neither is
-    /// consulted for it — checking `inherits("x")` against
-    /// `base::inherits` is a lookup-order bug, not a missing argument.
-    fn check_call_arguments(
-        &mut self,
-        original_name: &str,
-        lookup_name: &str,
-        resolution: &CallResolution,
-        args: &[Arg],
-        span: Span,
-        scope: &Scope,
-    ) {
-        // RY111's identical-name shadow check reads the same resolved
-        // formals (user table or stub) the arity checks below consult, and
-        // its own gates decide.
-        self.check_constant_shadowed_arguments(
-            lookup_name,
-            resolution.user_function.as_ref(),
-            resolution.resolved_sig.as_ref(),
-            resolution.lexical_callable,
-            args,
-        );
-        // The shared resolution precedence: a user definition shadows the
-        // stub, and a lexical callable resolves to neither. The flat table
-        // is name-keyed, so its entry validates a call only when it is the
-        // binding R reaches: not another package's export, not one of
-        // several definitions, and either no binding is in scope (a
-        // cross-file or later definition) or the scope still binds that
-        // exact literal (a formal or local rebinding is called instead).
-        let reaches_project_definition = !original_name.contains("::")
-            && self.fn_table.has_single_contract(lookup_name)
-            && (scope.get(lookup_name).is_none()
-                || resolution.user_function.as_ref().is_some_and(|function| {
-                    function.source_path == self.path
-                        && scope.lexical_definition(lookup_name) == Some(function.definition_span)
-                }));
-        match self.resolve_callee(
-            resolution.user_function.as_ref(),
-            resolution.resolved_sig.as_ref(),
-            resolution.lexical_callable,
-        ) {
-            ResolvedCallee::User(user_function) if reaches_project_definition => {
-                self.check_user_call_arguments(lookup_name, user_function, args, span);
-            }
-            ResolvedCallee::Stub(signature) => {
-                self.check_typeshed_call_arguments(
-                    lookup_name,
-                    signature,
-                    args,
-                    &resolution.arg_types,
-                    span,
-                );
-            }
-            _ => {}
-        }
-        self.check_declaration_call(
-            original_name,
-            lookup_name,
-            resolution.declaration_function.as_ref(),
-            args,
-            &resolution.arg_types,
-        );
     }
 
     /// The dynamic-loader stage: scope-populating calls suppress
@@ -2056,8 +1743,8 @@ impl Checker {
             && scope.get(name).is_some()
             && scope.function_alias(name).is_none();
         if !resolution.locally_shadows_stub
-            && (name.contains("::") || resolution.user_function.is_none())
-            && resolution.resolved_sig.as_ref().is_some_and(|signature| {
+            && (name.contains("::") || resolution.head.user_function().is_none())
+            && resolution.head.signature().is_some_and(|signature| {
                 scope_effect_populates_current_scope(
                     signature,
                     args,
@@ -2102,22 +1789,25 @@ impl Checker {
         scope: &mut Scope,
     ) -> Option<RType> {
         let locally_shadows_stub = resolution.locally_shadows_stub;
-        let assertion_signature = resolution.resolved_sig.as_ref().or_else(|| {
-            (!name.contains("::") && (!locally_shadows_stub || resolution.user_function.is_some()))
-                .then(|| ry_typeshed::load_package("rlang"))
-                .flatten()
-                .and_then(|typeshed| typeshed.functions.get(lookup_name))
+        let assertion_signature = resolution.head.signature().or_else(|| {
+            (!name.contains("::")
+                && (!locally_shadows_stub || resolution.head.user_function().is_some()))
+            .then(|| ry_typeshed::load_package("rlang"))
+            .flatten()
+            .and_then(|typeshed| typeshed.functions.get(lookup_name))
         });
         // The assertion path consults the argument match three times. Build it
         // once, and only for signatures that actually declare an assertion.
         let assertion_binding = assertion_signature
             .filter(|signature| signature.assertion.is_some())
             .map(|signature| (signature, match_params(&signature.params, args)));
-        if (name.contains("::") || !locally_shadows_stub || resolution.user_function.is_some())
+        if (name.contains("::")
+            || !locally_shadows_stub
+            || resolution.head.user_function().is_some())
             && let Some((signature, bindings)) = assertion_binding
             && let Some(assertion) = signature.assertion.as_ref()
             && assertion_is_provenanced(signature, assertion)
-            && resolution.user_function.as_ref().is_none_or(|function| {
+            && resolution.head.user_function().is_none_or(|function| {
                 assertion
                     .provenance
                     .fingerprint_params
@@ -2206,81 +1896,6 @@ impl Checker {
         }
     }
 
-    /// A bare call skips non-functions while searching outward. An open
-    /// package search path or data mask can still supply the function.
-    /// Eager calls use source order. Deferred bodies retain enclosing-frame
-    /// evidence and the project inventory, since they may run later.
-    fn call_head_function_evidence(&self, name: &str, scope: &Scope) -> CallHeadFunctionEvidence {
-        if scope.search_path_unknown
-            || scope.data_mask_unknown
-            || scope.has_possible_outward_function(name)
-        {
-            return CallHeadFunctionEvidence::Uncertain;
-        }
-        // An eager top-level call sees the binding installed so far. The
-        // project inventory also contains later or overwritten functions.
-        if !self.discarding && self.enclosing_formals.is_empty() {
-            return if self.has_external_function(name) {
-                CallHeadFunctionEvidence::Suppress
-            } else {
-                CallHeadFunctionEvidence::Diagnose
-            };
-        }
-        if !self.has_function_anywhere(name) {
-            return CallHeadFunctionEvidence::Diagnose;
-        }
-        if !scope.is_default_parameter(name) && self.fn_table.callable_vars.contains(name) {
-            return CallHeadFunctionEvidence::Diagnose;
-        }
-        CallHeadFunctionEvidence::Suppress
-    }
-
-    /// The actual a project `UseMethod` generic dispatches on: the one bound
-    /// to its first formal, when the call reaches the table's generic (no
-    /// local definition shadows it) and that binding is determinable.
-    fn user_generic_receiver(
-        &self,
-        name: &str,
-        lookup_name: &str,
-        call: &CallResolution,
-        args: &[Arg],
-        scope: &Scope,
-    ) -> Option<usize> {
-        let generic = call.user_function.as_ref()?;
-        if name.contains("::")
-            || scope.is_parameter(lookup_name)
-            || !self.is_user_generic(lookup_name)
-        {
-            return None;
-        }
-        if scope
-            .get(lookup_name)
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
-            && (generic.source_path != self.path
-                || scope.lexical_definition(lookup_name) != Some(generic.definition_span))
-        {
-            return None;
-        }
-        // Forwarded dots hide which actual reaches the first formal.
-        if args
-            .iter()
-            .any(|arg| matches!(&arg.value, Expr::Ident { name, .. } if name == "..."))
-        {
-            return None;
-        }
-        let formals: Vec<&str> = generic
-            .params
-            .iter()
-            .map(|param| param.name.as_str())
-            .collect();
-        let matched = match_arguments(&formals, args);
-        if formals.first() == Some(&"...") {
-            matched.param_for_arg.iter().position(Option::is_none)
-        } else {
-            matched.arg_for_param(0)
-        }
-    }
-
     /// `UseMethod` looks up methods in the calling environment before the
     /// generic's: a `<generic>.<class>` binding in scope that is not the
     /// table's definition may be the selected method.
@@ -2313,16 +1928,15 @@ impl Checker {
     fn infer_lexical_callable_call(
         &mut self,
         name: &str,
-        lookup_name: &str,
         args: &[Arg],
         arg_types: &[RType],
         span: Span,
-        scope: &mut Scope,
+        head: &CallHead,
     ) -> Option<RType> {
         if name.contains("::") {
             return None;
         }
-        let t = scope.get(lookup_name)?;
+        let t = head.lexical_binding.as_ref()?;
         if matches!(t.mode, Mode::Function) {
             if let Some(sig) = &t.fn_sig {
                 return Some((*sig.return_type).clone());
@@ -2350,10 +1964,7 @@ impl Checker {
             // calling the non-function value warrant RY070; an
             // uncertain outward state also falls through in silence
             // (see `call_head_function_evidence`).
-            if matches!(
-                self.call_head_function_evidence(name, scope),
-                CallHeadFunctionEvidence::Diagnose
-            ) {
+            if matches!(head.function_evidence, CallHeadFunctionEvidence::Diagnose) {
                 // RY070: no function of this name is reachable in any
                 // frame, so R errors at runtime with
                 // "could not find function". Args have already been
@@ -2671,42 +2282,15 @@ fn r6_rebound_members(member_lists: &[&Expr]) -> HashSet<String> {
     names
 }
 
-/// The per-call resolution state produced by the argument-inference stage
-/// and shared by every stage after it.
+/// Inferred actuals paired with the call head selected before evaluation.
 struct CallResolution {
-    /// The inferred argument types, honoring the declared eval modes.
     arg_types: Vec<RType>,
-    /// The typeshed (or inherited-S3) signature for the call, if any.
-    resolved_sig: Option<FunctionSig>,
-    /// The project FnTable entry for the call, unless a lexical callable
-    /// shadows it.
-    user_function: Option<UserFn>,
-    /// The definition whose adopted contract applies, if any.
-    declaration_function: Option<UserFn>,
-    /// Whether a lexical function binding shadows every table lookup.
-    lexical_callable: bool,
-    /// Whether a local non-alias binding shadows a same-named stub; the
-    /// stub-assertion stage consults it.
+    head: CallHead,
     locally_shadows_stub: bool,
 }
 
 fn is_user_infix_name(name: &str) -> bool {
     name.len() > 2 && name.starts_with('%') && name.ends_with('%')
-}
-
-/// The diagnostic decision for a bare symbol call head. Eager calls use
-/// current bindings and external functions. Deferred bodies also consult
-/// the project inventory; that inventory does not prove call-time identity.
-enum CallHeadFunctionEvidence {
-    /// A function binding is modeled reachable outward; the call head
-    /// resolves to it, the local value is skipped, and no RY070 fires.
-    Suppress,
-    /// An open search path or an unenumerable data mask can hide a
-    /// function binding, so silence is the only truthful action.
-    Uncertain,
-    /// Under the current model no function binding is reachable, so
-    /// RY070 fires with R's function-mode error text.
-    Diagnose,
 }
 
 /// The callee of a direct call, spelled as an identifier or a string

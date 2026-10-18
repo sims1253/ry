@@ -456,6 +456,7 @@ impl Project {
 
     pub fn set_package_facts(&mut self, facts: HashMap<String, ry_workspace::PackageFacts>) {
         if set_if_changed(&mut self.package_facts, facts) {
+            self.collected_files.clear();
             self.mark_all_dirty();
         }
     }
@@ -537,6 +538,8 @@ impl Project {
             .map(|(path, file)| {
                 let mut collector = Checker::new(path);
                 collector.set_user_stubs(Arc::clone(&self.user_stubs));
+                collector
+                    .set_package_facts(self.package_facts.get(path).cloned().unwrap_or_default());
                 let loaded = collector.collect_file_fns(file);
                 let (fn_table, return_slots) = collector.into_tables();
                 let collected = CollectedFile {
@@ -688,8 +691,7 @@ impl Project {
         // Evaluation metadata is propagated outside the body read recorder.
         // Include these edges even before any quoting/injection is present.
         for call in &self.fn_table.forwarded_calls {
-            if !call.stub_callee.contains("::")
-                && self.fn_table.fns.contains_key(&call.callee)
+            if self.fn_table.call_function(&call.stub_callee).is_some()
                 && self.fn_table.fns.contains_key(&call.caller)
             {
                 callers

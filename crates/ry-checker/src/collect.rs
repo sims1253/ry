@@ -714,6 +714,7 @@ impl Checker {
             params,
             source_params,
             source_path: self.path.clone(),
+            source_package: self.package_facts.source_package.clone(),
             source_native_path: self.native_path.clone(),
             definition_span: span,
             body,

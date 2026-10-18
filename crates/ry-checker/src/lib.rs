@@ -990,6 +990,7 @@ pub(crate) struct UserFn {
     pub(crate) source_params: Arc<[Param]>,
     /// Definition identity, independent of a same-spelled binding elsewhere.
     pub(crate) source_path: String,
+    pub(crate) source_package: Option<String>,
     pub(crate) definition_span: Span,
     /// Physical source identity for relative imports in functions defined
     /// by an on-disk file whose diagnostic path may be lossy.

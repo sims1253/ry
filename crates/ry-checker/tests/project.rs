@@ -12,6 +12,81 @@ fn parse(path: &str, src: &str) -> ry_core::SourceFile {
 }
 
 #[test]
+fn qualified_project_calls_follow_package_identity_across_metadata_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let sources = [
+        ("R/definitions.R", "helper <- function(x) { x; 'project' }"),
+        (
+            "R/consumer.R",
+            "ownpkg::helper(1L) + 1L\nexternal::helper(1L) + 1L\nforward <- function() ownpkg::helper(1L)\nforward() + 1L\nownpkg::test_helper() + 1L",
+        ),
+        (
+            "tests/testthat/helper-local.R",
+            "test_helper <- function() 'test only'",
+        ),
+    ];
+    for (path, source) in &sources {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    let files: Vec<_> = sources
+        .iter()
+        .map(|(path, source)| {
+            let path = dir.path().join(path).to_string_lossy().into_owned();
+            (path.clone(), parse(&path, source))
+        })
+        .collect();
+    let context = |package| {
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            format!("Package: {package}\n"),
+        )
+        .unwrap();
+        ry_workspace::resolve_workspace_context(
+            dir.path(),
+            &ry_config::Config::default(),
+            ry_workspace::ResolutionEnvironment {
+                files: files.iter().map(|(_, file)| file).collect(),
+                user_stubs: &Default::default(),
+            },
+        )
+        .unwrap()
+    };
+    let project = |workspace| {
+        let mut project = Project::new();
+        ry_checker::frontend::set_workspace_context(&mut project, workspace);
+        for (path, file) in &files {
+            project.add_file(path.clone(), file.clone());
+        }
+        project
+    };
+    let mut warm = project(context("ownpkg"));
+    let initial = warm.check_incremental();
+    let errors: Vec<_> = initial
+        .iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|d| d.code == "RY040")
+        .map(|d| d.span.line)
+        .collect();
+    assert_eq!(errors, vec![0, 3], "{initial:?}");
+    ry_checker::frontend::set_workspace_context(&mut warm, context("renamed"));
+    let edited = warm.check_incremental();
+    let cold = project(context("renamed")).check();
+    assert_eq!(
+        edited, cold,
+        "a package rename must retract qualified project evidence"
+    );
+    assert!(
+        edited
+            .iter()
+            .flat_map(|(_, d)| d)
+            .all(|d| d.code != "RY040"),
+        "{edited:?}"
+    );
+}
+
+#[test]
 fn cross_file_function_visibility() {
     // utils.R defines a function, analysis.R calls it. Without
     // project mode, the call would emit RY010 because the per-file

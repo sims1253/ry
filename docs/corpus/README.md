@@ -107,11 +107,12 @@ non-`posit` `*.root.txt` report — all 32 `ecosystem/packages.txt` manifest
 entries — while the index’s “24 Packages” counts ledger packages-block
 entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
 testthat, withr) have no block entry. Three of their reports (cli, rlang,
-testthat) contain 36 unowned findings in total; four of the remaining five
-(curl, fs, scales, withr) are empty — scales since #459, curl since the
-#374 superassignment modeling — and jsonlite carries the single unowned
-RY111 at R/stop.R:2, the deliberate `call. = FALSE` wrapper explained in
-the ledger’s #361 note.
+testthat) contain 24 unowned findings in total; the remaining five
+(curl, fs, jsonlite, scales, withr) are empty. Package-aware call-head
+selection (#668) removes 12 testthat false positives from qualified
+`rlang` predicates and jsonlite's deliberate `base::stop` wrapper warning.
+The ledger's #668 note records every removed identity; reviewed findings
+and their labels are unchanged.
 
 The Posit ledger’s `source_sha256` hashes the concatenated bytes of all
 `ecosystem/reports/posit.*.root.txt` files, sorted by filename. Recompute it

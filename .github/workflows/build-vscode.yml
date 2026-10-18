@@ -114,7 +114,7 @@ jobs:
         run: xvfb-run -a bun run test
 
       - name: Upload installed-extension evidence
-        if: always()
+        if: always() && hashFiles('editors/code/test-results/installed/manifest.json') != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installed-extension-evidence

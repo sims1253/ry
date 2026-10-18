@@ -109,8 +109,9 @@ entries: eight manifest packages (cli, curl, fs, jsonlite, rlang, scales,
 testthat, withr) have no block entry. Three of their reports (cli, rlang,
 testthat) contain 24 unowned findings in total; the remaining five
 (curl, fs, jsonlite, scales, withr) are empty. Package-aware call-head
-selection (#668) removes 12 testthat false positives from qualified
-`rlang` predicates and jsonlite's deliberate `base::stop` wrapper warning.
+selection (#668) removes 13 unowned identities: 12 testthat false positives
+from qualified `rlang` predicates and one jsonlite RY111 for its deliberate
+`base::stop` wrapper.
 The ledger's #668 note records every removed identity; reviewed findings
 and their labels are unchanged.
 

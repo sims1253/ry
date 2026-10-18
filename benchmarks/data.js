@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792318509091,
+  "lastUpdate": 1792319465136,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -39261,6 +39261,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.224377,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c1757f873ef8383f6b4c244e293266708e0565ce",
+          "message": "refactor(checker): centralize call-head selection (#668)\n\nA project `identity()` returning character could make `base::identity(1L) + 1L` receive a false RY040. Rebinding the callee inside an argument could also change the return or arity attributed to the call already in progress.\n\n`infer/callee.rs` selects the ordinary call head before evaluating actuals. Argument validation, declaration/unforced-argument proof, and return inference reuse that selection. Forwarding shares package-aware lookup; only matching package `R/` definitions supply qualified project metadata, and package-name edits invalidate collection caches.\n\n```diff\n- evaluate actuals, then read current bindings for validation and returns\n+ select the head, evaluate actuals, then reuse the selected evidence\n```\n\nControls retain genuine operand errors, stub arity checks, lexical shadowing, callable unions, and quoting. A cross-file test checks own versus external namespaces, test helpers, forwarding, and warm package renames against a fresh check. Special constructor/dispatch provenance remains separate from this ordinary-call change. Qualified own-package arity checks and forwarded-default matching retain their pre-existing behavior as follow-up work.\n\nExplicit review points: five new oracle fixtures; the new arity fixture was corrected from `must-flag` to `must-warn RY091` with R assertions for the missing-`y` error. Regenerated snapshots remove exactly 13 unowned false positives in both suites: 12 testthat calls borrowing expectation factories for qualified `rlang` predicates, and jsonlite's deliberate `base::stop` wrapper. The ledger records every identity and rationale. Audited findings and labels, including all 11 RY111 true positives, are unchanged.\n\nFinal review dispositions: retained the private stub-construction invariant (the proposed owned enum reproduces the observed Clippy size error), existing normalized-name selection (a source-order/index redesign is follow-up work), and the alias/contract gate (both names come from the semantic spelling; qualified aliases short-circuit the gate). The auxiliary forwarding-edge suggestion did not reproduce a stale result: a local quoted-definition edit probe verified warm-equals-cold returns/signatures/diagnostics and the observed dependency under the selected definition's actual key. Canonicalizing that auxiliary edge remains follow-up work.\n\nValidation observed:\n\n- Final-head CI (`979ea852`): all checks green, including Build & test, Oracle (R), ecosystem, Posit, and MSRV. OpenCodeReview and Pullfrog finished; CodeRabbit reviewed the implementation before the final documentation-only update, whose review was rate limited. All inline findings are resolved. The rebase and README clarification leave checker code and corpus report bytes unchanged.\n- `cargo test --workspace` — passed; `cargo test -p ry-checker --lib` — 1,081 passed after review fixes. The new return/arity regressions failed before the implementation.\n- `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all -- --check` — passed.\n- `Rscript --vanilla` witnesses — namespace/rebinding fixtures and jsonlite wrapper assertions agree with R.\n- `cargo test -p ry-checker --test oracle -- --include-ignored` — 315 fixtures passed, 11 known gaps, 25 dependency skips; one unchanged fixture (`ops_plain_vector_fallback.R`) fails on local R 4.5.0 because it asserts `structure(NULL, ...)` errors where this R version warns. The same fixture from the base reproduces that failure; it passed in the initial CI oracle job. Local R lacks `data.table`, `box`, and `foreach`.\n- `RY_BINARY=/home/m0hawk/.cache/cargo-target/debug/ry ecosystem/run.sh` — passed for all 32 pins; exactly the 13 audited removals per suite, no additions, and every other diagnostic identity preserved. `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json` — passed.\n\nRefs #658\n\nGPT-6.1-Sol on behalf of Max\n\n\n<!-- Macroscope's pull request summary starts here -->\n<!-- Macroscope will only edit the content between these invisible markers, and the markers themselves will not be visible in the GitHub rendered markdown. -->\n<!-- If you delete either of the start / end markers from your PR's description, Macroscope will append its summary at the bottom of the description. -->\n> [!NOTE]\n> ### Centralize call-head selection in checker via `CallHead`\n> - Adds `Checker.resolve_call_head` in [callee.rs](https://github.com/sims1253/ry/pull/668/files#diff-47968a4f9068cb8372fecd3635a802601c4e72b076e81985311f49bd9515e0e3), which picks one call target (project function, lexical callable, stub, or unknown) before argument inference. All downstream stages — arity, declaration, generic dispatch, unforced-argument, and stub checks — now share that single `CallHead` instead of re-resolving independently in [call.rs](https://github.com/sims1253/ry/pull/668/files#diff-c80063ebd5f40137b758e492573a7e3566179bd6c6155c5c91e2a4a39caff7c6)\n> - Qualified calls now resolve package-aware: `UserFn` carries a `source_package` from workspace `PackageFacts`, and `FnTable::call_function` filters qualified calls by the definition's package. Removes 12 testthat findings and one jsonlite RY111 finding, per the regenerated reports in [SUMMARY.md](https://github.com/sims1253/ry/pull/668/files#diff-c18752ed0c5da745bdcaa254d6ad0f4244a991b9177b7137b7a2f7da6fc9728d)\n> - Call-head selection is fixed before argument evaluation, so an argument rebinding the call name no longer changes the callee's arity or return type\n> - `Project::set_package_facts` clears collected file records and marks all files dirty, so package renames trigger recollection and incremental results match a cold check\n> - Risk: changed resolution semantics in `Checker.declaration_function`, `Checker.runs_only_stub_code`, and `Checker.unforced_arguments` — ambiguous or rebound declarations no longer count as stub-only evidence, which suppresses prior findings; see the oracle fixtures in `crates/ry-checker/testdata/oracle/` for the new expected behavior\n>\n> <!-- Macroscope's review summary starts here -->\n>\n> <sup><a href=\"https://app.macroscope.com\">Macroscope</a> summarized ae24c6b.</sup>\n> <!-- Macroscope's review summary ends here -->\n>\n<!-- Macroscope's pull request summary ends here -->\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n  * Qualified calls now use the appropriate package’s function behavior, avoiding incorrect return types and checks based on same-named project functions.\n  * Calls retain the function selected before their arguments are evaluated, producing more consistent results and argument diagnostics.\n  * Updating package metadata now refreshes affected checks, helping incremental results match a fresh analysis.\n  * Forwarded calls are handled more consistently in package-level analysis.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
+          "timestamp": "2026-10-18T12:23:22+02:00",
+          "tree_id": "615fb3ff0aee0721f74c6ffeacbb5a5fda44b9f6",
+          "url": "https://github.com/sims1253/ry/commit/c1757f873ef8383f6b4c244e293266708e0565ce"
+        },
+        "date": 1792319465034,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 11958281.721134642,
+            "range": "11909308.95–12014576.71",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 801040.9872030228,
+            "range": "798206.29–804454.29",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 13716562.983631155,
+            "range": "13629994.53–13820034.45",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 923779.0781157464,
+            "range": "919355.54–928563.90",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 16804162.04281905,
+            "range": "16708047.38–16925955.37",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1299402.4336787665,
+            "range": "1289226.81–1312770.61",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 14623636.634228516,
+            "range": "14377231.00–14984900.44",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 18391358.843156207,
+            "range": "18308245.59–18481920.11",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 1791024.3481593928,
+            "range": "1783652.53–1799516.82",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 14672196.429383408,
+            "range": "14598385.35–14763232.30",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 1458953.898151362,
+            "range": "1452125.73–1467388.82",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 18333102.75271874,
+            "range": "18283697.53–18382607.94",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 1756601.5609041583,
+            "range": "1752807.87–1760774.94",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 151027138.85,
+            "range": "149335698.37–153096619.07",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 11518867.254009714,
+            "range": "11462978.67–11583771.68",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6230662.408851266,
+            "range": "6080562.04–6416563.43",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 11509809.656473812,
+            "range": "11477685.92–11545297.97",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 4897447.04986391,
+            "range": "4852298.48–4951695.41",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 13264142.062447298,
+            "range": "13232632.05–13297701.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 3821778.2990718344,
+            "range": "3812244.87–3832531.88",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 10372168,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 397927,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 65.43326499999966,
+            "range": "60.53–112.96",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 60.52597499999683, 63.14167499996256, 65.43326499999966, 76.35694600001443, 112.96034300001338"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 422.53298000001814,
+            "range": "408.78–480.34",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 408.7849170000991, 409.3958589999238, 422.53298000001814, 453.0239030000521, 480.33822400006466"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 194.904984,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 181.956194,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.08191,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.834691,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 181.905043,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 181.861867,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 181.920507,
             "unit": "ms"
           }
         ]

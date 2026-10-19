@@ -80,6 +80,8 @@ pub(crate) struct Definitions {
     /// evaluation and collation order), and names a global non-literal or
     /// outward write may rebind.
     unstable: FxSet<String>,
+    /// Names more than one literal binds.
+    redefined: FxSet<String>,
 }
 
 impl Definitions {
@@ -129,6 +131,11 @@ impl Definitions {
         !self.unstable.contains(semantic_argument_name(name))
     }
 
+    /// Whether `name` has a single contract and only one literal binds it.
+    pub(crate) fn has_single_definition(&self, name: &str) -> bool {
+        self.has_single_contract(name) && !self.redefined.contains(semantic_argument_name(name))
+    }
+
     /// Note that a non-literal or outward write may rebind `name`.
     pub(crate) fn mark_unstable(&mut self, name: String) {
         self.unstable.insert(name);
@@ -176,7 +183,7 @@ impl Definitions {
         let id = function.id();
         // Quoted spellings (`` `f` ``, `"f"`) bind the same R name as `f`.
         let semantic = semantic_argument_name(&raw).to_string();
-        let disagrees = [
+        let others: Vec<&UserFn> = [
             semantic.clone(),
             format!("`{semantic}`"),
             format!("'{semantic}'"),
@@ -184,9 +191,13 @@ impl Definitions {
         ]
         .iter()
         .filter_map(|spelling| self.live.get(spelling))
-        .any(|other| other.id() != id && !other.formals_agree(&function));
-        if disagrees {
-            self.unstable.insert(semantic);
+        .filter(|other| other.id() != id)
+        .collect();
+        if others.iter().any(|other| !other.formals_agree(&function)) {
+            self.unstable.insert(semantic.clone());
+        }
+        if !others.is_empty() {
+            self.redefined.insert(semantic);
         }
         let previous = self.live.insert(raw.clone(), function)?;
         let previous_id = previous.id();
@@ -227,6 +238,7 @@ impl Definitions {
                 .map(|(id, function)| (id.clone(), shifted(function))),
         );
         self.unstable.extend(later.unstable.iter().cloned());
+        self.redefined.extend(later.redefined.iter().cloned());
     }
 }
 
@@ -272,6 +284,7 @@ mod tests {
             source_native_path: None,
             body: Arc::from(Vec::new()),
             outward_writes: Arc::new(OnceLock::new()),
+            contract: None,
             return_slot: start,
         }
     }
@@ -324,6 +337,21 @@ mod tests {
         assert_eq!(select("%+%"), 40);
         assert!(definitions.binds("f") && !definitions.binds("%+%"));
         assert!(!definitions.has_single_contract("f"));
+    }
+
+    #[test]
+    fn a_second_literal_for_a_name_ends_its_single_definition() {
+        let mut definitions = Definitions::default();
+        let shared = literal("a.R", 1, &["x"], None);
+        definitions.bind("f".into(), shared.clone());
+        definitions.bind("g".into(), shared);
+        assert!(definitions.has_single_definition("f"));
+        let mut later = Definitions::default();
+        later.bind("`f`".into(), literal("b.R", 1, &["x"], None));
+        definitions.append(&later, 0);
+        assert!(!definitions.has_single_definition("f"));
+        assert!(definitions.has_single_contract("f"));
+        assert!(definitions.has_single_definition("g"));
     }
 
     #[test]

@@ -182,6 +182,23 @@ bad <- map_dbl(1:4, function(i) as.character(i))
 ry reports RY080 because the callback returns character values where `map_dbl`
 requires doubles. `in_parallel()` preserves the callback's inferred type.
 
+Calls to a project function whose whole body is one formal, or one base
+operation on one formal, are checked against that body:
+
+```r
+f <- function(x) x + 1L
+f("oops")      # RY092: `x` is an operand of `+`
+nm <- function(df) df$value * 2
+nm(1:3)        # RY092: `$` is invalid for atomic vectors
+id <- function(x) x
+id("a") + 1    # RY040: `id` returns its argument
+```
+
+Only unbraced, unparenthesized bodies qualify, because `{`, `(` and `return`
+are ordinary bindings in R. The function must be the only literal bound to its
+name, and no project binding or import may replace the operator. Classed and
+`NULL` actuals stay quiet.
+
 ## Box imports
 
 ry reads static `box::use()` imports without loading a module or running R.

@@ -1006,6 +1006,8 @@ pub(crate) struct UserFn {
     /// Writes outside this function's frame. Shared clones compute the
     /// summary only if an opted-in declaration call needs it.
     outward_writes: Arc<OnceLock<collect::WriteSet>>,
+    /// What a call learns from a one-operation body (#646).
+    pub(crate) contract: Option<infer::CallContract>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -1035,6 +1037,7 @@ pub(crate) struct UserParam {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
+    contract: Option<infer::CallContract>,
 }
 
 impl UserFn {
@@ -1057,6 +1060,7 @@ impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
+            contract: self.contract,
         }
     }
 

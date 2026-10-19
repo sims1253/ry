@@ -691,6 +691,7 @@ impl Checker {
         // A forced default may assign a sibling formal, which a later read
         // then sees instead of the missing argument.
         let default_writes = default_local_writes(params);
+        let contract = CallContract::derive(params, &body, span);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -735,6 +736,7 @@ impl Checker {
             definition_span: span,
             body,
             outward_writes,
+            contract,
             return_slot: slot,
         };
         if let Some(prev_slot) = fn_table.functions.bind(name.clone(), function) {

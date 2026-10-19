@@ -2,6 +2,7 @@ pub(crate) mod ops_chooser;
 use super::*;
 pub(crate) use args::*;
 pub(crate) use callee::ResolvedCallee;
+pub(crate) use contract::CallContract;
 pub(crate) use index::*;
 pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
@@ -14,6 +15,7 @@ mod callee;
 #[cfg(test)]
 mod cloned_scope_reference;
 pub(crate) mod construct;
+mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
 pub(crate) mod ifelse;

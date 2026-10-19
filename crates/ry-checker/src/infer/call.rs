@@ -429,6 +429,12 @@ impl Checker {
             }
         }
 
+        // A contract describes the selected definition, which is also the
+        // lexical binding whenever one exists.
+        if let Some(result) = self.contract_return(&call.head, args, &call.arg_types) {
+            return result;
+        }
+
         // The lexical-callable stage. Must run before the constructor and
         // dispatch stages below so a local binding shadows a same-named
         // builtin (R's lexical scoping).

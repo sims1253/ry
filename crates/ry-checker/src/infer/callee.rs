@@ -34,6 +34,7 @@ pub(super) struct CallHead {
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
+    single_definition: bool,
 }
 
 impl CallHead {
@@ -49,6 +50,16 @@ impl CallHead {
     /// ordinary return inference; those use `callee` and `user_function`.
     pub(super) fn signature(&self) -> Option<&FunctionSig> {
         self.metadata.as_ref()
+    }
+
+    /// The selected definition's call contract, under the proof that lets
+    /// RY090/RY091 read its formals, while no other literal binds the name:
+    /// definitions that merely agree on formals may still disagree on bodies.
+    pub(super) fn contract(&self) -> Option<(&UserFn, CallContract)> {
+        let function = self
+            .user_function()
+            .filter(|_| self.check_project_arguments && self.single_definition)?;
+        Some((function, function.contract?))
     }
 
     pub(super) fn callee(&self) -> ResolvedCallee<'_> {
@@ -104,6 +115,7 @@ impl Checker {
                     function.source_path == self.path
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
+        let single_definition = self.fn_table.functions.has_single_definition(lookup_name);
         let generic_receiver =
             self.user_generic_receiver(name, lookup_name, function.as_ref(), args, scope);
         let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
@@ -127,6 +139,7 @@ impl Checker {
             function_evidence,
             generic_receiver,
             check_project_arguments,
+            single_definition,
         }
     }
 
@@ -368,6 +381,7 @@ impl Checker {
         match head.callee() {
             ResolvedCallee::User(user_function) if head.check_project_arguments => {
                 self.check_user_call_arguments(lookup_name, user_function, args, span);
+                self.check_contract_demand(lookup_name, head, args, arg_types);
             }
             ResolvedCallee::Stub(signature) => {
                 self.check_typeshed_call_arguments(lookup_name, signature, args, arg_types, span);

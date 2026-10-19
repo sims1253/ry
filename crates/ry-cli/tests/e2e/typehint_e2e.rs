@@ -57,11 +57,9 @@ fn dump(root: &Path, flags: &[&str]) -> Value {
 #[test]
 fn adopted_contract_checks_and_exports_the_same_source_record() {
     let temp = project(None);
-    // A checked call runs user code, which ends later contract checks in
-    // its frame (docs/declarations.md), so the bad actual comes first.
     fs::write(
         temp.path().join("R/main.R"),
-        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\nf(1L)\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nf(1L)\nf(\"bad\")\n",
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 0);
@@ -364,7 +362,7 @@ fn omitted_default_is_not_checked_but_explicit_actual_is() {
     assert_eq!(count(temp.path(), "RY114"), 0);
     fs::write(
         &file,
-        "f <- function(x = \"wrong\") {\n #| x integer\n x\n}\nf(x = \"wrong\")\nf()\n",
+        "f <- function(x = \"wrong\") {\n #| x integer\n x\n}\nf()\nf(x = \"wrong\")\n",
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 1);
@@ -447,7 +445,7 @@ fn multi_file_package_uses_one_adopted_source_for_checks_and_export() {
     .unwrap();
     fs::write(
         temp.path().join("R/calls.R"),
-        "accepted(\"wrong\")\naccepted(1L)\n",
+        "accepted(1L)\naccepted(\"wrong\")\n",
     )
     .unwrap();
     assert_eq!(count(temp.path(), "RY114"), 1);

@@ -99,7 +99,7 @@ use ry_typeshed::{
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 fn string_literals(expr: &Expr) -> Vec<String> {
     match expr {
@@ -1001,6 +1001,9 @@ pub(crate) struct UserFn {
     // `record_fn`, so sharing is safe. `Arc` (not `Rc`) so the
     // `FnTable` stays `Send` -- the LSP moves it across async tasks.
     pub(crate) body: Arc<[Stmt]>,
+    /// Writes outside this function's frame. Shared clones compute the
+    /// summary only if an opted-in declaration call needs it.
+    outward_writes: Arc<OnceLock<collect::WriteSet>>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -1036,6 +1039,11 @@ impl UserFn {
     fn definition_key(&self) -> (String, usize, usize) {
         let span = self.definition_span;
         (self.source_path.clone(), span.start, span.end)
+    }
+
+    pub(crate) fn outward_writes(&self) -> &collect::WriteSet {
+        self.outward_writes
+            .get_or_init(|| collect::function_outward_writes(&self.source_params, &self.body))
     }
 
     /// Same formal names, order, and requiredness: the facts RY090/RY091

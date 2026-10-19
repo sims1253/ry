@@ -27,7 +27,7 @@ impl Checker {
         // classify the effect now and apply it after the call is checked.
         let effect = self.call_effect(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
-        self.apply_call_effect(effect, scope);
+        self.apply_call_effect(&effect, scope);
         if !pure {
             scope.invalidate_ops_environment();
         }

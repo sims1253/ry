@@ -10,28 +10,37 @@ use crate::semantic_lists::{
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
 
-/// What one call may do to bindings its caller observes, ordered
-/// `None < ForcesPromises < RebindsAny < Unknown`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// What one call may do to bindings its caller observes, from weakest to
+/// strongest: `None < ForcesPromises < Writes < RebindsAny < Unknown`.
+///
+/// Polarity: a kept scalar fact only suppresses RY032, so trusting a call
+/// too much there costs a false negative. A kept declaration identity
+/// enables RY114, so the user-function summary below is the same rule the
+/// declaration checks used before this classifier existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CallEffect {
-    /// An audited base call whose actuals read no formal.
+    /// An audited base call whose actuals read no formal, or an exactly
+    /// identified user function with literal actuals and no outward writes.
     None,
     /// An audited base call with an actual that may force a formal's
     /// promise. Promise code runs in the frame that supplied it: it can
     /// rebind names this frame resolves outward, but reaches this frame's
     /// own bindings only through frame reflection, which is not modelled.
     ForcesPromises,
+    /// An exactly identified user function with literal actuals whose body
+    /// can replace only these names, through plain `<<-`.
+    Writes(FxSet<String>),
     /// An exported external `pkg::fn` or base `I()`: it may assign ordinary
     /// values, but is trusted not to install active or delayed bindings.
     RebindsAny,
-    /// Everything else, including every user-function call.
+    /// Everything else.
     Unknown,
 }
 
 impl CallEffect {
     /// Whether current scalar facts survive the call.
-    pub(crate) fn keeps_scalar_facts(self) -> bool {
-        self <= CallEffect::ForcesPromises
+    pub(crate) fn keeps_scalar_facts(&self) -> bool {
+        matches!(self, CallEffect::None | CallEffect::ForcesPromises)
     }
 }
 
@@ -42,7 +51,7 @@ impl Checker {
     /// configuration gets the same answer.
     pub(crate) fn call_effect(&self, func: &Expr, args: &[Arg], scope: &Scope) -> CallEffect {
         let Some(name) = callee_name(func) else {
-            return CallEffect::Unknown;
+            return self.user_function_effect(func, args, scope);
         };
         if self.audited_base_call(&name, args, scope) {
             if args.iter().any(|arg| reads_formal(&arg.value, scope)) {
@@ -53,24 +62,59 @@ impl Checker {
         } else if self.trusted_external_call(&name, args, scope) {
             CallEffect::RebindsAny
         } else {
-            CallEffect::Unknown
+            self.user_function_effect(func, args, scope)
         }
     }
 
-    /// The only writer of call-driven invalidation for both fact families.
-    pub(crate) fn apply_call_effect(&self, effect: CallEffect, scope: &mut Scope) {
-        if effect == CallEffect::None {
-            return;
+    /// A function literal head, or a name that identifies exactly one user
+    /// definition, called with literal actuals (forcing any other promise
+    /// may read an active binding): its syntactic outward-write summary.
+    fn user_function_effect(&self, func: &Expr, args: &[Arg], scope: &Scope) -> CallEffect {
+        if !args.iter().all(|arg| is_scalar_literal(&arg.value)) {
+            return CallEffect::Unknown;
         }
+        let summary = |writes: &crate::collect::WriteSet| {
+            if writes.opaque {
+                CallEffect::Unknown
+            } else if writes.names.is_empty() {
+                CallEffect::None
+            } else {
+                CallEffect::Writes(writes.names.clone())
+            }
+        };
+        if let Expr::Function { params, body, .. } = func {
+            return summary(&crate::collect::function_outward_writes(params, body));
+        }
+        callee_name(func)
+            .and_then(|name| self.declaration_helper(semantic_argument_name(&name), scope))
+            .map_or(CallEffect::Unknown, |function| {
+                summary(function.outward_writes())
+            })
+    }
+
+    /// The only writer of call-driven invalidation for both fact families.
+    pub(crate) fn apply_call_effect(&self, effect: &CallEffect, scope: &mut Scope) {
         // A frame that already refuses facts has none left to drop.
         if !scope.uncertainty.dynamic_bindings {
             match effect {
                 CallEffect::Unknown => scope.invalidate_scalar_assertions(),
                 CallEffect::RebindsAny => scope.clear_scalar_assertions(),
+                CallEffect::Writes(names) => scope
+                    .retain_scalar_assertions(|name| !names.contains(semantic_argument_name(name))),
                 CallEffect::None | CallEffect::ForcesPromises => {}
             }
         }
-        self.invalidate_declaration_identities(scope);
+        match effect {
+            CallEffect::None => {}
+            CallEffect::Writes(names) => {
+                if !self.discarding && self.declarations.has_contracts() {
+                    for name in names {
+                        scope.insert(name.clone(), RType::unknown());
+                    }
+                }
+            }
+            _ => self.invalidate_declaration_identities(scope),
+        }
     }
 
     /// A short-circuit RHS runs in this frame on a cloned scope. Every
@@ -287,10 +331,12 @@ mod tests {
     }
 
     #[test]
-    fn audited_calls_are_the_only_inert_ones() {
+    fn call_effect_grades_each_call_shape() {
         use CallEffect::*;
-        let checker = checker_for("noop <- function() NULL\n");
-        let calls = "length('a')\nlength(x)\nstopifnot(TRUE)\nstopifnot(exprs = TRUE)\nnoop()\n(function() 1L)()\nlifecycle::deprecate_warn('1.0.0', 'f()')\nI('a')\nI(function() 1L)\nsum(1:3)\nmatch.arg(x)\nbase::message('hi')\n";
+        let checker = checker_for(
+            "noop <- function() NULL\nbump <- function() g <<- 1L\ntouch <- function() get('x')\n",
+        );
+        let calls = "length('a')\nlength(x)\nstopifnot(TRUE)\nstopifnot(exprs = TRUE)\nnoop()\nnoop(x)\nbump()\ntouch()\n(function() 1L)()\nlifecycle::deprecate_warn('1.0.0', 'f()')\nI('a')\nI(function() 1L)\nsum(1:3)\nmatch.arg(x)\nbase::message('hi')\n";
         assert_eq!(
             classify(&checker, calls),
             vec![
@@ -298,8 +344,11 @@ mod tests {
                 ForcesPromises,
                 None,
                 Unknown,
+                None,
                 Unknown,
+                Writes(["g".to_string()].into_iter().collect()),
                 Unknown,
+                None,
                 RebindsAny,
                 RebindsAny,
                 Unknown,
@@ -308,8 +357,9 @@ mod tests {
                 None,
             ]
         );
-        assert!(None < ForcesPromises && ForcesPromises < RebindsAny && RebindsAny < Unknown);
-        assert!(ForcesPromises.keeps_scalar_facts() && !RebindsAny.keeps_scalar_facts());
+        assert!(
+            ForcesPromises.keeps_scalar_facts() && !Writes(FxSet::default()).keeps_scalar_facts()
+        );
     }
 
     #[test]

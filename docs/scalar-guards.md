@@ -77,9 +77,20 @@ must be a character string, and a forwarded `...` is refused.
 `stopifnot` with `exprs` or `exprObject` evaluates quoted code and keeps
 nothing.
 
-Any other call, including every user-defined function, a generic, formal,
-box call, or callback-taking function, ends the fact, and so does a
-replacement or subassignment. Such a call before the assertion also keeps
+A project function keeps the fact when the call head names exactly one
+current definition (or is a function literal), every argument is a scalar
+literal, and its body and defaults read only formals and literals and run no
+call, operator, or subscript. Its plain `<<-` targets then drop only their
+own facts. This summary trusts the body's syntax: a project mask of `if` or
+`{`, an active binding whose setter runs on `<<-`, or a later `body<-`
+replacement can still change the caller's binding. A kept fact only
+suppresses RY032, so these are false negatives, pinned by
+`known_gap_helper_masked_syntax.R`, `known_gap_helper_superassign_setter.R`,
+and `known_gap_replaced_helper_body.R`.
+
+Any other call, including a generic, formal, box call, callback-taking
+function, or user-defined function outside that summary, ends the fact, and
+so does a replacement or subassignment. Such a call before the assertion also keeps
 it from proving anything in that frame, and in a loop it taints the whole
 repeated body. Before the assertion only, base `I()` and a `pkg::fn` call
 into another package are exempt: an external package deliberately

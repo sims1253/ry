@@ -614,7 +614,7 @@ impl Checker {
         };
         let table = Arc::make_mut(&mut self.fn_table);
         let Some(generic) = formal(formals[0]).and_then(string_literal) else {
-            table.functions.s4_mut().mark_all_incomplete();
+            table.functions.s4_mut().mark_computed_name();
             return;
         };
         if name == "setGeneric" {

@@ -27,8 +27,12 @@ use ry_typeshed::ParamSpec;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct S4Inventory {
     generics: FxMap<String, S4Generic>,
-    /// A registration with a non-literal generic name may belong to any generic.
+    /// Some registration may not mean what it spells (a computed generic
+    /// name, or a masked registration helper).
     all_incomplete: bool,
+    /// A registration with a computed generic name may belong to any
+    /// generic, including one with no recorded entry.
+    computed_name: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -114,6 +118,12 @@ impl S4Inventory {
         !self.defines_method(|generic| generic == "initialize")
     }
 
+    /// Record a `setMethod`/`setGeneric` whose generic name is computed.
+    pub(crate) fn mark_computed_name(&mut self) {
+        self.computed_name = true;
+        self.all_incomplete = true;
+    }
+
     pub(crate) fn mark_all_incomplete(&mut self) {
         self.all_incomplete = true;
     }
@@ -130,6 +140,7 @@ impl S4Inventory {
     /// Merge a later file's registrations after this table's.
     pub(crate) fn append(&mut self, later: &S4Inventory) {
         self.all_incomplete |= later.all_incomplete;
+        self.computed_name |= later.computed_name;
         for (name, entry) in &later.generics {
             let generic = self.generics.entry(name.clone()).or_default();
             generic.decl = merge_decl(&generic.decl, &entry.decl);
@@ -212,7 +223,13 @@ impl Definitions {
             .get(call.head.member())
             .filter(|generic| generic.incomplete || !generic.methods.is_empty())
         else {
-            return S4Selection::NoCandidate;
+            // A computed registration may have made this any generic with a
+            // method for an actual's proven `new()` class.
+            return if self.s4.computed_name && call.instances.contains(&true) {
+                S4Selection::Uncertain
+            } else {
+                S4Selection::NoCandidate
+            };
         };
         // Fall through, as before full signatures, when no method names
         // any actual's explicit class. An uninterpreted registration may

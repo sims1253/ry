@@ -1430,6 +1430,9 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
+        if scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds {
+            return;
+        }
         let complex = binding_name(target).is_none()
             || !ops_chooser::base_assignment(self, target, value, scope);
         scope.uncertainty.unseen_rebinds |= complex;
@@ -1459,7 +1462,8 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        let replaces = self.body_may_replace_bindings(body, scope);
+        let replaces = !(scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds)
+            && self.body_may_replace_bindings(body, scope);
         scope.uncertainty.unseen_rebinds |= replaces;
         if !scope.uncertainty.dynamic_bindings && replaces {
             scope.invalidate_scalar_assertions();

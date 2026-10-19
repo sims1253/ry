@@ -61,6 +61,15 @@ fn eager_calls_relate_to_the_current_binding() {
 }
 
 #[test]
+fn a_backticked_formal_relates_to_its_whole_spelling() {
+    let src = "helper <- function(`my arg`, scale) `my arg` + scale\nhelper(scale = 1)\n";
+    assert_eq!(
+        arity(&check(src)),
+        [("RY091", vec![nth(src, "`my arg`", 0)])]
+    );
+}
+
+#[test]
 fn a_nested_shadow_is_never_cited_for_a_global_call() {
     // `g`'s own `helper` is a lexical callable (unchecked); `f`'s call
     // reaches the global literal.
@@ -121,6 +130,10 @@ fn unproven_origins_keep_the_finding_without_a_location() {
             "{helper}length.foo <- function(x) {{\n  do.call(\"<<-\", list(\"helper\", function(x) x))\n  1L\n}}\nuse <- function(x) {{\n  length(x)\n  helper(1)\n}}\n"
         ),
         &format!("{helper}formals(helper) <- pairlist(x = 1)\nhelper(1)\n"),
+        // pullfrog: a short-circuit operand's call reaches the continuation.
+        &format!(
+            "{helper}flag <- TRUE\nok <- flag && do.call(\"<-\", list(\"helper\", function(x) x))\nhelper(1)\n"
+        ),
         // Captured from an intermediate frame.
         &format!("{helper}f <- function() {{\n  g <- function() helper(1)\n  g\n}}\n"),
         // Expected absence: `local()` runs code in the global frame's flow.

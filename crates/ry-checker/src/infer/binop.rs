@@ -1097,6 +1097,7 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
         scope.invalidate_literal_values();
     }
     scope.uncertainty.effects |= evaluated.uncertainty.effects;
+    scope.uncertainty.unseen_rebinds |= evaluated.uncertainty.unseen_rebinds;
     if evaluated.uncertainty.dynamic_bindings && !scope.uncertainty.dynamic_bindings {
         scope.invalidate_scalar_assertions();
     }

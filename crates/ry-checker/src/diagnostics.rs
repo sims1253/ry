@@ -45,8 +45,8 @@ pub struct Diagnostic {
 /// Renderers show at most this many related items per diagnostic.
 pub const MAX_RELATED: usize = 3;
 
-/// A secondary location the checker proved, such as the formal a call
-/// failed to supply.
+/// A secondary location the checker proved, such as the formal that a
+/// call failed to supply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Related {
     /// Display path, in the same namespace as [`Diagnostic::path`].

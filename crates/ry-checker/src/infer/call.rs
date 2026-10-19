@@ -29,7 +29,10 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         // R selects the callee before its arguments run; classify it first.
-        let keeps_bindings = self.call_keeps_scalar_facts(func, args, scope);
+        // Both facts are sticky; once both are set, skip the classification.
+        let keeps_bindings = !(scope.uncertainty.dynamic_bindings
+            && scope.uncertainty.unseen_rebinds)
+            && self.call_keeps_scalar_facts(func, args, scope);
         let may_replace_bindings = !scope.uncertainty.dynamic_bindings && !keeps_bindings;
         let blocks_later_facts =
             may_replace_bindings && !self.call_allowed_before_assertion(func, args, scope);

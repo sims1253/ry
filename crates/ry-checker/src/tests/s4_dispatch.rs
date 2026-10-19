@@ -49,6 +49,16 @@ fn unproven_positions_and_inventories_give_an_unknown_result() {
         // Only a plain literal has an exact implicit class.
         (CHR_NUM, "g(new(\"A\"), structure(1, dim = c(1L, 1L)))"),
         (CHR_NUM, "g(new(\"A\"), readRDS(\"f\"))"),
+        // A constructor class need not be the dispatched one.
+        (
+            "setMethod(\"g\", signature(\"A\", \"factor\"), function(x, y) \"text\")\n",
+            "g(new(\"A\"), factor(\"a\", ordered = TRUE))",
+        ),
+        // A dispatched formal never takes the method's default.
+        (
+            "setMethod(\"g\", signature(\"A\", \"numeric\"), function(x, y = \"text\") y)\n",
+            "g(new(\"A\"), 1)",
+        ),
         // A class test bounds the class from below.
         (
             &format!("{CHR_NUM}v <- readRDS(\"f\")\nstopifnot(inherits(v, \"A\"))\n"),

@@ -294,7 +294,7 @@ impl Definitions {
                     continue;
                 };
                 for (formal, class) in signature.iter().zip(classes) {
-                    if class != "ANY" && class != "missing" && !LITERAL_CLASSES.contains(&class) {
+                    if class != "ANY" && class != "missing" {
                         let index = formals.iter().position(|f| f == formal);
                         seeds.push((
                             function.to_string(),
@@ -307,16 +307,22 @@ impl Definitions {
             }
         }
         for (function, index, formal, class) in seeds {
-            // R conforms a method's formals to the generic's; seed only a
-            // method whose formal at that position has the generic's name.
-            if let Some(parameter) = self
+            let Some(parameter) = self
                 .live
                 .get_mut(&function)
                 .and_then(|function| function.params.get_mut(index?))
-                .filter(|parameter| parameter.name == formal)
-            {
-                parameter.type_ = RType::unknown().with_class(ClassVector::s4_instance(&class));
-            }
+            else {
+                continue;
+            };
+            // The formal receives a supplied actual, never its default. R
+            // conforms a method's formals to the generic's; seed a class
+            // only where the names agree, and never a literal's implicit one.
+            parameter.type_ =
+                if parameter.name == formal && !LITERAL_CLASSES.contains(&class.as_str()) {
+                    RType::unknown().with_class(ClassVector::s4_instance(&class))
+                } else {
+                    RType::unknown()
+                };
         }
     }
 }
@@ -351,7 +357,10 @@ fn dispatch_classes(
             return Some("missing".to_string());
         };
         let class = &arg_types.get(actual)?.class;
-        if class.has_known_class() && (!class.guarded || class.exact_s4) {
+        // Only `new("A")` proves an exact class: other constructors and
+        // class attributes can name a superclass of the dispatched one
+        // (`factor(ordered = TRUE)` is an `ordered`).
+        if class.has_known_class() && class.exact_s4 {
             return class.first().map(|first| first.to_string());
         }
         // Only a plain literal proves its class is the implicit one: a

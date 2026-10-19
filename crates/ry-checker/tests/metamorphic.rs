@@ -352,6 +352,14 @@ fn shift_diagnostic(
         code: d.code,
         message: d.message.clone(),
         confidence: d.confidence,
+        related: d
+            .related
+            .iter()
+            .map(|related| ry_checker::Related {
+                span: shift_span(related.span, offset, inserted_len, inserted_newlines),
+                ..related.clone()
+            })
+            .collect(),
     }
 }
 

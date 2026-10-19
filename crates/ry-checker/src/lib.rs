@@ -46,9 +46,10 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, SuppressionKind,
-    SuppressionOrigin, apply_filter_to_diagnostics, filter_suppressed_with_comments,
-    has_file_suppression_from_comments, is_suppressed, parse_suppressions_from_comments,
+    Confidence, Diagnostic, MAX_RELATED, Related, Severity, SeverityFilter, Suppression,
+    SuppressionKind, SuppressionOrigin, apply_filter_to_diagnostics,
+    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
+    parse_suppressions_from_comments,
 };
 pub use post_process::PostProcess;
 
@@ -396,6 +397,12 @@ pub(crate) struct Uncertainty {
     /// A later read need not return the value an assertion just checked.
     pub(crate) dynamic_bindings: bool,
     pub(crate) literal_values: bool,
+    /// A call no allowlist proves inert ran in this frame, or this walk
+    /// models code that may run after later statements of its frame. Either
+    /// may have rebound a name unseen, so a call site's exact lexical binding
+    /// no longer proves which definition it reaches. Only a function body
+    /// walk starts without it.
+    pub(crate) unseen_rebinds: bool,
     /// Raw escaped slot names were supplied directly to a scope. This records
     /// possible masks, never absence of dynamically created bindings.
     pub(crate) escaped_slot_names: bool,
@@ -419,6 +426,7 @@ impl std::ops::BitOr for Uncertainty {
             effects: self.effects || other.effects,
             dynamic_bindings: self.dynamic_bindings || other.dynamic_bindings,
             literal_values: self.literal_values || other.literal_values,
+            unseen_rebinds: self.unseen_rebinds || other.unseen_rebinds,
             escaped_slot_names: self.escaped_slot_names || other.escaped_slot_names,
         }
     }
@@ -501,6 +509,7 @@ impl Scope {
         // Code here may run after the caller's binding changes, so it gets
         // no scalar facts; it may prove its own.
         scope.uncertainty.dynamic_bindings = false;
+        scope.uncertainty.unseen_rebinds = true;
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
@@ -1123,6 +1132,11 @@ pub(crate) struct FnTable {
     /// (including expressions, control tests, and `for` binders) and
     /// outward writes from any depth. Nested local writes are excluded.
     pub(crate) capture_writes: collect::WriteSet,
+    /// Some file's top-level code may run code whose binding effects are
+    /// unknown (any call, operator, index, or non-literal read). A deferred
+    /// body then cannot prove that a captured global literal is still the
+    /// binding when it runs.
+    pub(crate) unproven_top_level: bool,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
@@ -1231,6 +1245,7 @@ impl FnTable {
                 .retain(|call| !replaced.contains(&call.caller));
         }
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
+        self.unproven_top_level |= collected.unproven_top_level;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
         self.functions.append(&collected.functions, slot_offset);

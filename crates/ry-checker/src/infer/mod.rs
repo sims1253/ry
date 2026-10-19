@@ -1060,6 +1060,9 @@ impl Checker {
         let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
+        // A new frame's own bindings start with nothing run in it. Bindings
+        // captured from enclosing frames keep their own origin rule.
+        fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
@@ -1090,6 +1093,8 @@ impl Checker {
         let assigned = assigned_names_in_body(body);
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
+        // A default is forced lazily, possibly after any body statement.
+        default_scope.uncertainty.unseen_rebinds = true;
         for name in &assigned {
             default_scope.insert(name.clone(), RType::unknown());
         }
@@ -3503,7 +3508,7 @@ impl Checker {
     }
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
-        let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
+        let possible_default_writes = if self.discarding {
             crate::collect::WriteSet::default()
         } else {
             crate::collect::default_local_writes(params)

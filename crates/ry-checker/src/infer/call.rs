@@ -29,11 +29,12 @@ impl Checker {
             scope.invalidate_ops_environment();
         }
         // R selects the callee before its arguments run; classify it first.
-        let may_replace_bindings =
-            !scope.uncertainty.dynamic_bindings && !self.call_keeps_scalar_facts(func, args, scope);
+        let keeps_bindings = self.call_keeps_scalar_facts(func, args, scope);
+        let may_replace_bindings = !scope.uncertainty.dynamic_bindings && !keeps_bindings;
         let blocks_later_facts =
             may_replace_bindings && !self.call_allowed_before_assertion(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        scope.uncertainty.unseen_rebinds |= !keeps_bindings;
         if blocks_later_facts {
             scope.invalidate_scalar_assertions();
         } else if may_replace_bindings {

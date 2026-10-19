@@ -126,6 +126,8 @@ pub(super) struct State {
     supports_document_changes: bool,
     /// Whether the client preserves diagnostic data in code-action requests.
     supports_diagnostic_data: bool,
+    /// Whether the client accepts `relatedInformation` on published diagnostics.
+    supports_related_information: bool,
     /// Whether the client supports dynamic registration of
     /// `workspace/didChangeWatchedFiles`.
     supports_did_change_watched_files: bool,
@@ -298,6 +300,7 @@ impl FolderAnalysisContext {
         policy_path: Option<&Path>,
         file: &SourceFile,
         origin: Option<serde_json::Value>,
+        related_uri: Option<&Url>,
     ) -> Vec<LspDiagnostic> {
         let filter = policy_path.map(|native| self.scoped_policy.filter_for(native, &self.filter));
         let post = ry_checker::PostProcess {
@@ -312,7 +315,8 @@ impl FolderAnalysisContext {
         diagnostics
             .iter()
             .map(|diagnostic| {
-                let mut diagnostic = diagnostic_to_lsp_with_source(diagnostic, &file.source);
+                let mut diagnostic =
+                    diagnostic_to_lsp_with_source(diagnostic, &file.source, related_uri);
                 diagnostic.data = origin.clone();
                 diagnostic
             })

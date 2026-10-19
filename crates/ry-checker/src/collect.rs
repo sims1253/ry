@@ -348,6 +348,9 @@ impl Checker {
             },
         );
         self.collect_capture_writes(stmts);
+        if function_outward_writes(&[], stmts).opaque {
+            Arc::make_mut(&mut self.fn_table).unproven_top_level = true;
+        }
     }
 
     /// Inventory syntactically visible writes separately from the narrower

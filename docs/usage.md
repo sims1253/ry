@@ -57,6 +57,25 @@ Human-readable diagnostics use ANSI color on terminals; select the
 color policy with `--color auto|always|never`. Automatic color respects
 `NO_COLOR`, and machine-readable formats never contain ANSI escapes.
 
+### JSON output and related locations
+
+`--output-format json` prints an array of objects with `code`, `severity`,
+`message`, `path`, `line`, `column`, `confidence`, and an optional `related`
+array. Lines and columns are 1-based; columns count Unicode scalar values.
+`related` is omitted when empty. Each item has a `message` and, when its span
+fits the checked source, the `path`, `line`, and `column` of the location;
+ry never guesses a location. A diagnostic carries at most three items.
+
+Today only RY090 and RY091 on calls to a project function relate the call to
+the formal it names, and only when the call site provably reaches that
+definition: the exact literal bound in the same file, with no unproven call,
+default argument, or alias that could have rebound it. Cross-file calls carry
+no related locations yet. `full` output prints each item as an indented
+`note:` line; `concise`, `github`, `gitlab`, and `junit` show the primary
+location only. Related items never change messages, baselines, suppressions,
+or the exit status. The language server reports them as
+`relatedInformation` to clients that advertise that capability.
+
 ### CI
 
 `--output-format github` emits GitHub Actions annotations. Use `gitlab` for

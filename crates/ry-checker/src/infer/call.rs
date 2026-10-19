@@ -83,7 +83,7 @@ impl Checker {
         {
             // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
             !crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
-                && !self.fn_table.fns.contains_key(member)
+                && !self.fn_table.functions.binds(member)
                 && !self.known_vars.contains(member)
                 && !ops_chooser::operator_rebound(self, "::", scope)
         } else {
@@ -98,7 +98,7 @@ impl Checker {
                 Expr::Ident { name, .. } => {
                     scope.get(name).is_some_and(|ty| {
                         !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
-                    }) && !self.fn_table.fns.contains_key(name)
+                    }) && !self.fn_table.functions.binds(name)
                 }
                 _ => true,
             })
@@ -145,8 +145,8 @@ impl Checker {
             .collect::<FxSet<_>>();
         names.extend(
             self.fn_table
-                .fns
-                .iter()
+                .functions
+                .live()
                 .filter(|(_, function)| {
                     self.declarations
                         .target(&function.source_path, function.definition_span)
@@ -917,8 +917,8 @@ impl Checker {
         let custom_infix_is_known = self.has_function_anywhere(semantic_name)
             || self
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| semantic_argument_name(name) == semantic_name);
         if !custom_infix_is_known {
             let mut quoted_scope = scope.independent_execution_scope();
@@ -1909,10 +1909,14 @@ impl Checker {
         for class in classes.map(|class| &**class).chain(["default"]) {
             let method = format!("{generic}.{class}");
             if scope.get(&method).is_some() {
-                return !self.fn_table.fns.get(&method).is_some_and(|function| {
-                    function.source_path == self.path
-                        && scope.lexical_definition(&method) == Some(function.definition_span)
-                });
+                return !self
+                    .fn_table
+                    .functions
+                    .live_named(&method)
+                    .is_some_and(|function| {
+                        function.source_path == self.path
+                            && scope.lexical_definition(&method) == Some(function.definition_span)
+                    });
             }
             if self.s3_lookup_method(generic, class).is_some() {
                 return false;

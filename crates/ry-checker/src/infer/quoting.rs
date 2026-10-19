@@ -852,7 +852,7 @@ fn body_defuses_formal(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
                     AstNode::Expr(Expr::Call { func, .. })
                         if ident_name(func).is_some_and(|callee| {
                             !callee.contains("::")
-                                && (checker.fn_table.fns.contains_key(callee)
+                                && (checker.fn_table.functions.binds(callee)
                                     || checker.fn_table.known_vars.contains(callee))
                         }) =>
                     {

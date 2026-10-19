@@ -962,7 +962,7 @@ impl Checker {
                 .external_s3_methods
                 .iter()
                 .any(|(name, _)| generic(name))
-            || self.fn_table.fns.keys().any(|name| named(name))
+            || self.fn_table.functions.names().any(|name| named(name))
             || self.imported_from.keys().any(|name| named(name))
             || self.external_bindings.iter().any(|name| named(name))
     }

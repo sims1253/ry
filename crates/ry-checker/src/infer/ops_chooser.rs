@@ -216,7 +216,7 @@ pub(crate) fn pure_literal_constructor(
             && scope.get("`structure`").is_none()
             && !checker.fn_table.known_vars.contains("structure")
             && !checker.fn_table.known_vars.contains("`structure`")
-            && !checker.fn_table.fns.contains_key("structure")
+            && !checker.fn_table.functions.binds("structure")
             && checker.bare_loaded.is_empty()
             && !checker.external_bindings.contains("structure")
             && checker

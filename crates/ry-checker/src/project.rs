@@ -17,6 +17,7 @@
 //! tests rely on this).
 
 use crate::declaration_check::DeclarationSet;
+use crate::definitions::Callee;
 use crate::{
     CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
 };
@@ -244,7 +245,7 @@ impl Project {
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
         if let Some(previous) = self.collected_files.remove(&path) {
             self.invalidated_fns
-                .extend(previous.fn_table.fns.keys().cloned());
+                .extend(previous.fn_table.functions.names().cloned());
         }
         self.file_known_vars.remove(&path);
         self.dirty_paths.insert(path.clone());
@@ -315,7 +316,7 @@ impl Project {
         // collection, which order cannot move.)
         let mut definers: HashMap<&str, usize> = HashMap::new();
         for collected in self.collected_files.values() {
-            for name in collected.fn_table.fns.keys() {
+            for name in collected.fn_table.functions.names() {
                 *definers.entry(name).or_insert(0) += 1;
             }
         }
@@ -329,8 +330,8 @@ impl Project {
         for (path, collected) in &self.collected_files {
             if collected
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| shadowed.contains(name.as_str()))
             {
                 self.dirty_paths.insert(path.clone());
@@ -346,7 +347,7 @@ impl Project {
         self.files.retain(|(existing, _)| existing != path);
         if let Some(previous) = self.collected_files.remove(path) {
             self.invalidated_fns
-                .extend(previous.fn_table.fns.keys().cloned());
+                .extend(previous.fn_table.functions.names().cloned());
         }
         self.file_known_vars.remove(path);
         self.file_read_fns.remove(path);
@@ -674,7 +675,7 @@ impl Project {
         let mut affected = self.invalidated_fns.clone();
         for dirty_path in &self.dirty_paths {
             if let Some(collected) = self.collected_files.get(dirty_path) {
-                affected.extend(collected.fn_table.fns.keys().cloned());
+                affected.extend(collected.fn_table.functions.names().cloned());
             }
         }
         Some(self.with_refinement_callers(affected))
@@ -691,8 +692,12 @@ impl Project {
         // Evaluation metadata is propagated outside the body read recorder.
         // Include these edges even before any quoting/injection is present.
         for call in &self.fn_table.forwarded_calls {
-            if self.fn_table.call_function(&call.stub_callee).is_some()
-                && self.fn_table.fns.contains_key(&call.caller)
+            if self
+                .fn_table
+                .functions
+                .select(Callee::parse(&call.stub_callee))
+                .is_some()
+                && self.fn_table.functions.binds(&call.caller)
             {
                 callers
                     .entry(&call.callee)
@@ -717,11 +722,11 @@ impl Project {
     }
 
     fn callable_names_changed(&self) -> bool {
-        self.fn_table.fns.len() != self.prev_fn_returns.len()
+        self.fn_table.functions.len() != self.prev_fn_returns.len()
             || self
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| !self.prev_fn_returns.contains_key(name))
     }
 
@@ -747,7 +752,7 @@ impl Project {
                 if !self.file_depends_on(path, &affected) {
                     continue;
                 }
-                for caller in collected.fn_table.fns.keys() {
+                for caller in collected.fn_table.functions.names() {
                     changed |= affected.insert(caller.clone());
                 }
             }
@@ -823,7 +828,7 @@ impl Project {
         self.refinement_dependencies
             .extend(refiner.refinement_dependencies.take().unwrap());
         self.refinement_dependencies
-            .retain(|name, _| refiner.fn_table.fns.contains_key(name));
+            .retain(|name, _| refiner.fn_table.functions.binds(name));
         #[cfg(test)]
         {
             self.last_refinement_counts = std::mem::take(&mut refiner.refinement_counts);
@@ -854,8 +859,8 @@ impl Project {
         // slot indices shift when functions are inserted or removed.
         let directly_changed_fns: HashSet<String> = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .filter_map(|(name, function)| {
                 let current_return = self.return_slots.0.get(function.return_slot);
                 let return_changed = self
@@ -955,7 +960,7 @@ impl Project {
         let capture_references = self.capture_references;
 
         let mut names_by_slot: HashMap<usize, Vec<&String>> = HashMap::new();
-        for (name, function) in &fn_table.fns {
+        for (name, function) in fn_table.functions.live() {
             names_by_slot
                 .entry(function.return_slot)
                 .or_default()
@@ -1109,14 +1114,14 @@ impl Project {
         // fixpoint seeding.
         self.prev_fn_returns = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .map(|(name, uf)| (name.clone(), self.return_slots.get(uf.return_slot)))
             .collect();
         self.prev_fn_signatures = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .map(|(name, function)| (name.clone(), function.caller_visible_signature()))
             .collect();
         self.dirty_paths.clear();

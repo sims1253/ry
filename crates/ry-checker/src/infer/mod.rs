@@ -688,7 +688,10 @@ impl Checker {
                     && ops_chooser::base_assignment(self, target, value, scope);
                 let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
                     let span = scope.lexical_definition(alias)?;
-                    self.fn_table.definition(&self.path, span).map(|_| span)
+                    self.fn_table
+                        .functions
+                        .get(&FunctionId::new(&self.path, span))
+                        .map(|_| span)
                 });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
@@ -1936,13 +1939,17 @@ impl Checker {
                 if !visited.insert(name.to_string()) {
                     return false;
                 }
-                let diverges = self.fn_table.fns.get(name).is_some_and(|function| {
-                    self.block_diverges_with_visited(
-                        &function.body,
-                        visited,
-                        DivergenceView::ReturnBlind,
-                    )
-                });
+                let diverges = self
+                    .fn_table
+                    .functions
+                    .live_named(name)
+                    .is_some_and(|function| {
+                        self.block_diverges_with_visited(
+                            &function.body,
+                            visited,
+                            DivergenceView::ReturnBlind,
+                        )
+                    });
                 visited.remove(name);
                 diverges
             }
@@ -2245,7 +2252,7 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
-            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+            if let Some(caller_fn) = self.fn_table.functions.live_named(&call.caller)
                 && may_rebind_source_before(&caller_fn.body, source, call.call_start)
             {
                 return None;
@@ -2947,7 +2954,7 @@ impl Checker {
                 }
                 // User-defined function in the FnTable used as a
                 // value? Same treatment.
-                if self.fn_table.fns.contains_key(name) {
+                if self.fn_table.functions.binds(name) {
                     return if functions_shadowed_by_mask {
                         RType::unknown()
                     } else {
@@ -3512,7 +3519,7 @@ impl Checker {
             || (!self.discarding
                 && self.declarations.has_contracts()
                 && (scope.lexical_definition(target).is_some()
-                    || self.fn_table.fns.contains_key(target))))
+                    || self.fn_table.functions.binds(target))))
         .then(|| target.to_string())
     }
 

@@ -415,7 +415,12 @@ impl Checker {
         for (name, spans) in literal_names {
             for span in spans {
                 let key = (self.path.clone(), span.start, span.end);
-                if global_literals.contains(&span) && table.definition(&self.path, span).is_some() {
+                if global_literals.contains(&span)
+                    && table
+                        .functions
+                        .get(&FunctionId::new(&self.path, span))
+                        .is_some()
+                {
                     table
                         .capture_literal_bindings
                         .entry(name.clone())
@@ -429,8 +434,12 @@ impl Checker {
                 .into_iter()
                 .map(|span| (self.path.clone(), span.start, span.end)),
         );
-        table.unstable_callees.extend(global_values);
-        table.unstable_callees.extend(outward.names.iter().cloned());
+        for name in global_values
+            .into_iter()
+            .chain(outward.names.iter().cloned())
+        {
+            table.functions.mark_unstable(name);
+        }
         table.capture_writes.extend(global_writes);
         table.capture_writes.extend(outward);
     }
@@ -585,8 +594,8 @@ impl Checker {
                 let method_name = format!("__s4__{generic}__{class}");
                 let slot = self.record_fn(method_name.clone(), params, body.clone(), *span);
                 if let Some(first) = Arc::make_mut(&mut self.fn_table)
-                    .fns
-                    .get_mut(&method_name)
+                    .functions
+                    .live_mut(&method_name)
                     .and_then(|function| function.params.first_mut())
                 {
                     first.type_ = RType::unknown().with_class(ClassVector::single(&class));
@@ -721,7 +730,7 @@ impl Checker {
             outward_writes,
             return_slot: slot,
         };
-        if let Some(prev_slot) = fn_table.insert_fn(name.clone(), function) {
+        if let Some(prev_slot) = fn_table.functions.bind(name.clone(), function) {
             fn_table.forwarded_calls.retain(|call| call.caller != name);
             tracing::debug!(fn_name = %name, prev_slot, "shadowed earlier def");
         }
@@ -733,7 +742,7 @@ impl Checker {
     // the trailing expression of the body, then joined. `None` means no
     // path produced a value.
     pub(crate) fn refine_fn_return(&mut self, name: &str) -> Option<RType> {
-        let function = self.fn_table.fns.get(name)?.clone();
+        let function = self.fn_table.functions.live_named(name)?.clone();
         self.infer_definition_return(name, &function)
     }
 
@@ -1710,28 +1719,24 @@ mod collect_walker_tests {
 
     #[test]
     fn identity_lookup_shares_live_entries_and_keeps_replaced_literals() {
-        let checker = collect(
-            "setMethod(\"show\", \"Person\", function(object) object)\n\
-             f <- function(x) 1L\n\
-             f <- function(y) 2L\n",
-        );
-        let table = &checker.fn_table;
-        let method = &table.fns["__s4__show__Person"];
-        let by_identity = table
-            .definition(&method.source_path, method.definition_span)
-            .unwrap();
-        assert_eq!(by_identity.params, method.params);
-        let [replaced] = table.replaced_fns.values().collect::<Vec<_>>()[..] else {
-            panic!("expected one replaced literal");
+        let src = "setMethod(\"show\", \"Person\", function(object) object)\n\
+                   f <- function(x) 1L\n\
+                   f <- function(y) 2L\n";
+        let checker = collect(src);
+        let functions = &checker.fn_table.functions;
+        let method = &functions["__s4__show__Person"];
+        assert_eq!(functions.get(&method.id()).unwrap().params, method.params);
+        let Stmt::Assign {
+            value: Expr::Function { span, .. },
+            ..
+        } = &parse_stmts(src)[1]
+        else {
+            panic!("expected a function assignment");
         };
-        assert_eq!(replaced.params[0].name, "x");
-        assert!(!table.is_live_definition(&replaced.source_path, replaced.definition_span));
-        assert!(
-            table
-                .definition(&replaced.source_path, replaced.definition_span)
-                .is_some_and(|function| function.params[0].name == "x")
-        );
-        assert_eq!(table.fns["f"].params[0].name, "y");
+        let replaced = FunctionId::new("collect_walker_test.R", *span);
+        assert!(!functions.is_live(&replaced));
+        assert_eq!(functions.get(&replaced).unwrap().params[0].name, "x");
+        assert_eq!(functions["f"].params[0].name, "y");
     }
 
     #[test]
@@ -1739,7 +1744,7 @@ mod collect_walker_tests {
         let statements = parse_stmts("f <- function() { g <<- 1L }");
         let mut checker = Checker::new("lazy-effect.R");
         checker.collect_fns(&statements);
-        let function = &checker.fn_table.fns["f"];
+        let function = &checker.fn_table.functions["f"];
         assert!(function.outward_writes.get().is_none());
         assert!(function.outward_writes().names.contains("g"));
         assert!(function.outward_writes.get().is_some());
@@ -1763,7 +1768,7 @@ mod collect_walker_tests {
             "delayedAssign(x='held', value=p, ...)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
-            let param = &checker.fn_table.fns["f"].params[0];
+            let param = &checker.fn_table.functions["f"].params[0];
             assert!(param.quoting && param.defused, "{call}: {param:?}");
             assert_eq!(
                 parameter_uses(call, "p"),
@@ -1797,7 +1802,7 @@ mod collect_walker_tests {
             "base::substitute(env=p, expr=p)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
-            let param = &checker.fn_table.fns["f"].params[0];
+            let param = &checker.fn_table.functions["f"].params[0];
             assert!(!param.quoting && !param.defused, "{call}: {param:?}");
             assert!(parameter_uses(call, "p").normal, "{call}");
             assert_eq!(
@@ -2051,23 +2056,23 @@ mod collect_walker_tests {
     #[test]
     fn fn_definitions_collected_from_branch_and_loop_bodies() {
         let checker = collect("if (c) { taken <- function() 1 } else { skipped <- function() 2 }");
-        assert!(checker.fn_table.fns.contains_key("taken"));
-        assert!(checker.fn_table.fns.contains_key("skipped"));
+        assert!(checker.fn_table.functions.binds("taken"));
+        assert!(checker.fn_table.functions.binds("skipped"));
         let checker = collect("for (i in xs) { loop_fn <- function() 1 }");
-        assert!(checker.fn_table.fns.contains_key("loop_fn"));
+        assert!(checker.fn_table.functions.binds("loop_fn"));
         let checker = collect("while (c) { while_fn <- function() 1 }");
-        assert!(checker.fn_table.fns.contains_key("while_fn"));
+        assert!(checker.fn_table.functions.binds("while_fn"));
         let checker = collect("function() 1");
-        assert!(checker.fn_table.fns.is_empty());
+        assert!(checker.fn_table.functions.names().next().is_none());
         let checker = collect("out <- lapply(xs, function() 1)");
-        assert!(!checker.fn_table.fns.contains_key("out"));
+        assert!(!checker.fn_table.functions.binds("out"));
         // The callback skips Expr nodes, so a block-valued condition's
         // statements are never visited and contribute no definitions.
         // (`control_tests: false` only spares the walker those visits;
         // the callback's skip is the load-bearing rule, and this pin
         // fails if it is relaxed.)
         let checker = collect("if ({ fn_in_cond <- function() 1 }) 1");
-        assert!(!checker.fn_table.fns.contains_key("fn_in_cond"));
+        assert!(!checker.fn_table.functions.binds("fn_in_cond"));
     }
 
     /// Nested definitions record under the mangled `<outer>$<inner>`
@@ -2082,13 +2087,13 @@ mod collect_walker_tests {
   3
 }",
         );
-        assert!(checker.fn_table.fns.contains_key("outer"));
-        assert!(checker.fn_table.fns.contains_key("outer$inner"));
-        assert!(checker.fn_table.fns.contains_key("outer$inner$deepest"));
+        assert!(checker.fn_table.functions.binds("outer"));
+        assert!(checker.fn_table.functions.binds("outer$inner"));
+        assert!(checker.fn_table.functions.binds("outer$inner$deepest"));
         let checker = collect("f <- function() { if (c) { branched <- function() 1 } }");
-        assert!(checker.fn_table.fns.contains_key("f$branched"));
+        assert!(checker.fn_table.functions.binds("f$branched"));
         let checker = collect("f <- function() lapply(xs, function(q) q)");
-        assert_eq!(checker.fn_table.fns.len(), 1);
-        assert!(checker.fn_table.fns.contains_key("f"));
+        assert_eq!(checker.fn_table.functions.len(), 1);
+        assert!(checker.fn_table.functions.binds("f"));
     }
 }

@@ -532,7 +532,7 @@ impl Checker {
                     }
                 }
                 // User-defined function in the FnTable?
-                if let Some(f) = self.fn_table.fns.get(lookup_name) {
+                if let Some(f) = self.fn_table.functions.live_named(lookup_name) {
                     let rt = self.read_return_slot(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);
@@ -755,7 +755,7 @@ impl Checker {
         }
         if self.is_user_generic(generic) {
             let method = format!("{generic}.{class}");
-            if let Some(function) = self.fn_table.fns.get(&method) {
+            if let Some(function) = self.fn_table.functions.live_named(&method) {
                 return Some(S3MethodSource::Project(function.return_slot));
             }
             if self.fn_table.known_vars.contains(&method) {

@@ -224,8 +224,13 @@ impl Definitions {
             .filter(|generic| generic.incomplete || !generic.methods.is_empty())
         else {
             // A computed registration may have made this any generic with a
-            // method for an actual's proven `new()` class.
-            return if self.s4.computed_name && call.instances.contains(&true) {
+            // method for any actual's class.
+            let classed = call.instances.contains(&true)
+                || call
+                    .arg_types
+                    .iter()
+                    .any(|actual| actual.class.has_known_class());
+            return if self.s4.computed_name && classed {
                 S4Selection::Uncertain
             } else {
                 S4Selection::NoCandidate

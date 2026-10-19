@@ -225,9 +225,13 @@ fn a_computed_generic_name_leaves_calls_on_new_instances_unknown() {
         f <- function(x) \"four\"\n\
         for (g in c(\"dim\", \"length\")) setMethod(g, \"A\", f)\n\
         n <- length(new(\"A\"))\n\
+        a <- methods::new(\"A\")\n\
+        b <- length(a)\n\
         m <- length(1:3)\n";
     let (diagnostics, scope) = check_with_scope(source);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("n").unwrap().mode, Mode::Opaque);
+    // A bound instance is no exact evidence, but it is classed.
+    assert_eq!(scope.get("b").unwrap().mode, Mode::Opaque);
     assert_eq!(scope.get("m").unwrap().mode, Mode::Integer);
 }

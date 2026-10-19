@@ -530,11 +530,18 @@ impl Checker {
                     && let Expr::Ident { name, .. } = func.as_ref()
                 {
                     let bare = bare_name(name);
+                    let package = match Callee::parse(name) {
+                        Callee::Qualified { package, .. } => Some(package.to_string()),
+                        Callee::Bare(_) => None,
+                    };
                     Arc::make_mut(&mut self.fn_table)
                         .call_sites
                         .entry(bare.to_string())
                         .or_default()
-                        .push(args.iter().map(|argument| argument.name.clone()).collect());
+                        .push(CallSite {
+                            package,
+                            arguments: args.iter().map(|argument| argument.name.clone()).collect(),
+                        });
                     if bare == "globalVariables" {
                         if let Some(first) = args.first() {
                             for declared in string_literals(&first.value) {

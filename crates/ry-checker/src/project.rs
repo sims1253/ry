@@ -1158,6 +1158,40 @@ mod tests {
     }
 
     #[test]
+    fn only_an_own_package_qualified_call_is_default_evidence() {
+        for (package, flagged) in [("mypkg", true), ("xfun", false)] {
+            let mut project = Project::new();
+            project.set_package_facts(
+                ["R/a.R", "R/b.R"]
+                    .map(|path| {
+                        let facts = ry_workspace::PackageFacts {
+                            source_package: Some("mypkg".into()),
+                            ..Default::default()
+                        };
+                        (path.to_string(), facts)
+                    })
+                    .into(),
+            );
+            project.add_file(
+                "R/a.R".into(),
+                parse_file(
+                    "R/a.R",
+                    "normalize_path <- function(path = 'none') path + 1L",
+                ),
+            );
+            let caller = format!("use <- function() {package}::normalize_path()");
+            project.add_file("R/b.R".into(), parse_file("R/b.R", &caller));
+            let diagnostics = project.check();
+            let a = &diagnostics
+                .iter()
+                .find(|(path, _)| path == "R/a.R")
+                .unwrap()
+                .1;
+            assert_eq!(a.iter().any(|d| d.code == "RY040"), flagged, "{a:?}");
+        }
+    }
+
+    #[test]
     fn function_dependencies_skip_unrelated_callers_and_retain_edges() {
         let mut project = Project::new();
         project.add_file(

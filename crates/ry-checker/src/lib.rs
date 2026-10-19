@@ -1146,8 +1146,8 @@ pub(crate) struct FnTable {
     // otherwise opaque.
     pub(crate) callable_vars: std::collections::HashSet<String>,
     // Syntactic call sites used only for conservative internal-helper
-    // default selection. Each argument records its optional exact name.
-    pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
+    // default selection, keyed by the unqualified member name.
+    pub(crate) call_sites: FxMap<String, Vec<CallSite>>,
     // Calls that forward an enclosing formal directly into another
     // function. Used to propagate evidence that a caller's default can reach
     // a callee parameter without treating every callee default as exhaustive.
@@ -1168,6 +1168,22 @@ fn rebind_captured(
 }
 
 impl FnTable {
+    /// The argument names of each call that can reach a project function
+    /// `name` defined in `package`'s sources: `pkg::name` reaches it only
+    /// when `pkg` is that package.
+    pub(crate) fn project_call_sites<'a>(
+        &'a self,
+        name: &str,
+        package: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a [Option<String>]> {
+        self.call_sites
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(move |site| site.package.is_none() || site.package.as_deref() == package)
+            .map(|site| site.arguments.as_slice())
+    }
+
     pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
         self.rebound_after_capture
             .contains(&(path.to_string(), span.start, span.end))
@@ -1251,6 +1267,14 @@ impl FnTable {
         self.forwarded_calls
             .extend(collected.forwarded_calls.iter().cloned());
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CallSite {
+    /// The syntactic `pkg::` or `pkg:::` qualifier, if any.
+    package: Option<String>,
+    /// Each argument's optional exact name.
+    arguments: Vec<Option<String>>,
 }
 
 #[derive(Debug, Clone)]

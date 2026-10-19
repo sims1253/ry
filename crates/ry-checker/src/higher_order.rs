@@ -503,13 +503,15 @@ impl Checker {
                 self.callback_literal_return(params, body, call_arg_types, scope, 0)
             }
             Expr::Ident { name, .. } => {
-                // Strip any `pkg::` namespace prefix so a qualified
-                // callback name (`base::sqrt` passed to `sapply`)
-                // resolves against the same entries as the bare name.
-                // `bare_name` handles both `::` and `:::`.
-                let lookup_name = crate::semantic_lists::bare_name(name);
+                // A qualified callback (`base::sqrt` passed to `sapply`)
+                // never reads a local binding, and names a project
+                // definition only from that package's sources.
+                let callee = Callee::parse(name);
+                let lookup_name = callee.member();
                 // Bound closure value in scope?
-                if let Some(t) = scope.get(lookup_name) {
+                if !callee.is_qualified()
+                    && let Some(t) = scope.get(lookup_name)
+                {
                     if matches!(t.mode, Mode::Function) {
                         if let Some(sig) = &t.fn_sig {
                             return Some((*sig.return_type).clone());
@@ -532,7 +534,12 @@ impl Checker {
                     }
                 }
                 // User-defined function in the FnTable?
-                if let Some(f) = self.fn_table.functions.live_named(lookup_name) {
+                let function = if callee.is_qualified() {
+                    self.fn_table.functions.select(callee)
+                } else {
+                    self.fn_table.functions.live_named(lookup_name)
+                };
+                if let Some(f) = function {
                     let rt = self.read_return_slot(f.return_slot);
                     if !matches!(rt.mode, Mode::Opaque) {
                         return Some(rt);

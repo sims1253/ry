@@ -290,6 +290,13 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
     writes
 }
 
+/// Whether `name` (possibly qualified) is a function that can bind names in
+/// an environment its caller does not spell out.
+fn may_install_bindings(name: &str) -> bool {
+    let name = bare_name(semantic_argument_name(name));
+    name == "load" || FRAME_REFLECTION.contains(&name)
+}
+
 /// Names the frame of `function(params) body` may bind while it runs:
 /// assignments and recognized installers in its body and defaults. Any
 /// frame-reflective call (`list2env(..., envir = environment())`,
@@ -304,9 +311,7 @@ pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
         if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
             collect_callable_binding_write(func, args, &mut writes);
             if let Expr::Ident { name, .. } = func.as_ref() {
-                let name = semantic_argument_name(name);
-                let name = strip_package(name, "base").unwrap_or(name);
-                writes.opaque |= name == "load" || FRAME_REFLECTION.contains(&name);
+                writes.opaque |= may_install_bindings(name);
             }
         }
         ControlFlow::Continue(Descend::Into)
@@ -554,6 +559,22 @@ impl Checker {
             s,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                // A frame-reflective function, called, passed, or named to
+                // `do.call`, may install bindings in any frame, including
+                // the global one call contracts rely on.
+                let installer = match node {
+                    AstNode::Expr(Expr::Ident { name, .. }) => may_install_bindings(name),
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
+                            && args.first().is_some_and(|first| {
+                                matches!(&first.value, Expr::String(name, _) if may_install_bindings(name))
+                            })
+                    }
+                    _ => false,
+                };
+                if installer && !self.fn_table.may_install_bindings {
+                    Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
+                }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Expr::Ident { name, .. } = func.as_ref()
                 {

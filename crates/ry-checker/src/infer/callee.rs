@@ -121,6 +121,7 @@ impl Checker {
         // local spelling (`` `f` ``) masks it.
         let semantic = semantic_argument_name(lookup_name);
         let contract_applies = check_project_arguments
+            && !self.fn_table.may_install_bindings
             && self.fn_table.functions.has_single_definition(lookup_name)
             && function.as_ref().is_some_and(|function| {
                 (!self.enclosing_formals.is_empty()

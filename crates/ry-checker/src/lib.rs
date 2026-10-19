@@ -1133,6 +1133,10 @@ pub(crate) struct FnTable {
     // project refinement, without broadening other syntax proof guards.
     pub(crate) has_escaped_operator_names: bool,
     pub(crate) has_escaped_slot_names: bool,
+    // Some project code names `load`, `source`, `list2env` or another
+    // frame-reflective function, which may install any binding anywhere:
+    // call contracts (#646) are then off project-wide.
+    pub(crate) may_install_bindings: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
@@ -1237,6 +1241,7 @@ impl FnTable {
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
+        self.may_install_bindings |= collected.may_install_bindings;
         self.functions.append(&collected.functions, slot_offset);
         for (name, definitions) in &collected.capture_literal_bindings {
             self.capture_literal_bindings

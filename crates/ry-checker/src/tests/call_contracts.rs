@@ -86,6 +86,12 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         "f <- function(x) x + 1L; h <- function(p) { sys.source(p, envir = environment()); f('a') }",
         "f <- function(x) x + 1L; h <- function(p) { source(p, local = TRUE); f('a') }",
         "f <- function(x) x + 1L; h <- function(p) { load(p); f('a') }",
+        // Anywhere in the project, these may install a global `f`.
+        "f <- function(x) x + 1L; load('p.RData'); f('a')",
+        "f <- function(x) x + 1L; source('d.R'); f('a')",
+        "f <- function(x) x + 1L; list2env(list(f = paste), envir = .GlobalEnv); f('a')",
+        "f <- function(x) x + 1L; k <- function() eval.parent(quote(f <- paste)); k(); f('a')",
+        "f <- function(x) x + 1L; do.call('load', list('p.RData')); f('a')",
         // S8: a default runs in the frame another default rebinds.
         "f <- function(x) x + 1L; h <- function(y = { z; f('a') }, z = { f <- paste; NULL }) y",
         "f <- function(x) x + 1L; h <- function(y = function() f('a'), z = { f <- paste; NULL }) y",
@@ -114,6 +120,8 @@ fn a_bare_formal_body_returns_its_actual() {
     let diagnostics = check(
         "id <- function(x) x; h <- function() { list2env(list(id = function(x) 1L), envir = environment()); id('a') + 1L }",
     );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let diagnostics = check("id <- function(x) x; load('p.RData'); id('a') + 1L");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     // S14 and braces: `return` and `{` are ordinary bindings in R.
     for source in [

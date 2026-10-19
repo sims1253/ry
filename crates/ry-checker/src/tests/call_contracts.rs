@@ -76,6 +76,11 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         // An eager call before the definition reaches base, and a quoted
         // local spelling binds the same name.
         "y <- sort('b'); sort <- function(x) x + 1L",
+        // An enclosing frame may bind the name: a forced default (S6), a
+        // later write (S7), or an installer.
+        "f <- function(x) x + 1L; h <- function(y = { f <- paste; NULL }) { y; f('a') }",
+        "f <- function(x) x + 1L; h <- function() { g <- function() f('a'); f <- paste; g() }",
+        "f <- function(x) x + 1L; h <- function() { r <- f('a'); assign('f', paste); r }",
         "f <- function(x) x + 1L; h <- function() { `f` <- function(x) paste(x); f('a') }",
     ] {
         assert_eq!(contract_errors(source), Vec::<String>::new(), "{source}");

@@ -114,17 +114,33 @@ impl Checker {
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
         // A contract also needs the body to be the one this call reaches: no
-        // other literal binds the name, no quoted local spelling (`` `f` ``)
-        // masks it, and an eager top-level call follows the definition.
+        // other literal binds the name, an eager top-level call follows the
+        // definition, an enclosing frame binds the name only to this exact
+        // unreplaced literal, no enclosing function's code (body or forced
+        // default, before or after this call) may bind it, and no quoted
+        // local spelling (`` `f` ``) masks it.
+        let semantic = semantic_argument_name(lookup_name);
         let contract_applies = check_project_arguments
             && self.fn_table.functions.has_single_definition(lookup_name)
             && function.as_ref().is_some_and(|function| {
-                !self.enclosing_formals.is_empty()
+                (!self.enclosing_formals.is_empty()
                     || function.source_path != self.path
-                    || function.definition_span.start < call_span.start
+                    || function.definition_span.start < call_span.start)
+                    && scope
+                        .outward_function_definition(lookup_name)
+                        .is_none_or(|outward| {
+                            outward.is_some_and(|span| {
+                                function.source_path == self.path
+                                    && span == function.definition_span
+                                    && !self.fn_table.was_rebound_after_capture(&self.path, span)
+                            })
+                        })
             })
+            && !self
+                .enclosing_formals
+                .iter()
+                .any(|frame| frame.frame_writes.may_write(semantic))
             && {
-                let semantic = semantic_argument_name(lookup_name);
                 [
                     semantic.to_string(),
                     format!("`{semantic}`"),

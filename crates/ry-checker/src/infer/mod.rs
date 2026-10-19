@@ -1140,7 +1140,7 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
-        self.push_enclosing_formals(params, span);
+        self.push_enclosing_formals(params, body, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
@@ -3504,7 +3504,7 @@ impl Checker {
         }
     }
 
-    fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
+    fn push_enclosing_formals(&mut self, params: &[Param], body: &[Stmt], function_span: Span) {
         let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
             crate::collect::WriteSet::default()
         } else {
@@ -3521,6 +3521,7 @@ impl Checker {
                 .iter()
                 .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
+            frame_writes: crate::collect::frame_writes(params, body),
             function_span,
         });
     }

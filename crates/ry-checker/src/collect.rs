@@ -290,6 +290,26 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
     writes
 }
 
+/// Names the frame of `function(params) body` may bind while it runs:
+/// assignments and recognized installers in its body and defaults.
+pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
+    let mut writes = WriteSet::default();
+    let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
+        if let Some((name, _)) = frame_binding(node) {
+            writes.insert_name(name);
+        }
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+            collect_callable_binding_write(func, args, &mut writes);
+        }
+        ControlFlow::Continue(Descend::Into)
+    };
+    for default in params.iter().filter_map(|param| param.default.as_ref()) {
+        let _ = walk_expr(default, FRAME_WALK, &mut visit);
+    }
+    let _ = walk_stmts(body, FRAME_WALK, &mut visit);
+    writes
+}
+
 /// Names that forcing a default may bind in the function's own frame.
 /// None is an unconditional effect at definition time.
 pub(crate) fn default_local_writes(params: &[Param]) -> WriteSet {

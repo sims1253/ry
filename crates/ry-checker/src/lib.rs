@@ -1310,6 +1310,8 @@ pub(crate) struct EnclosingFormals {
     /// A forced default may install one of these names in this frame at
     /// runtime; a same-named outward declaration is then not certain.
     pub(crate) possible_default_writes: collect::WriteSet,
+    /// Names this frame's own code (body or defaults) may bind, at any time.
+    pub(crate) frame_writes: collect::WriteSet,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,

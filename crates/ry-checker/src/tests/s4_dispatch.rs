@@ -162,27 +162,18 @@ fn only_registrations_ry_cannot_read_leave_the_result_unknown() {
 }
 
 #[test]
-fn arithmetic_on_an_s4_instance_is_not_that_instance() {
-    // Distinct `+` methods that both decline make R use the primitive,
-    // which keeps the left operand's class but is not that instance.
-    // `new()` instances are guarded, which this path declines today, so the
-    // operand is built unguarded to pin the class the result keeps.
-    let (_, mut scope) = check_with_scope(
-        "`+.A` <- function(e1, e2) 1L\n`+.B` <- function(e1, e2) 'b'\n\
-         chooseOpsMethod.A <- function(...) FALSE\nchooseOpsMethod.B <- function(...) FALSE\n",
-    );
-    let instance = ClassVector {
-        guarded: false,
-        ..ClassVector::s4_instance("A")
-    };
-    let scalar = |class| RType::scalar(Mode::Double).with_class(class);
-    scope.insert("a", scalar(instance));
-    scope.insert("b", scalar(ClassVector::single("B")));
-    let file = parse_file("test.R", "a + b\n");
-    let Stmt::Expr(expression) = &file.stmts[0] else {
-        panic!("expected an expression statement");
-    };
-    let result = Checker::new("test.R").infer(expression, &mut scope);
-    assert!(result.class.contains("A"), "{result:?}");
-    assert!(!result.class.exact_s4, "{result:?}");
+fn only_plain_copies_of_an_instance_are_exact() {
+    // `t()` of an `A` keeps its class names but need not be that instance.
+    let methods = "setClass(\"C\", representation(v = \"numeric\"))\n\
+        setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) 1L)\n\
+        a <- new(\"A\")\nb <- a\nd <- t(a)\n";
+    for (call, mode) in [
+        ("g(a, \"t\")", Mode::Integer),
+        ("g(b, \"t\")", Mode::Integer),
+        ("g(t(a), \"t\")", Mode::Opaque),
+        ("g(d, \"t\")", Mode::Opaque),
+        ("g(identity(a), \"t\")", Mode::Opaque),
+    ] {
+        assert_eq!(selected(methods, call).1, mode, "{call}");
+    }
 }

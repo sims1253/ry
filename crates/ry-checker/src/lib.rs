@@ -674,7 +674,10 @@ impl Scope {
         self.bindings.get(name)
     }
 
-    pub fn insert(&mut self, name: impl Into<String>, t: RType) {
+    /// Bind `name`. The binding forgets S4 instance exactness: only
+    /// [`Self::keep_s4_instance`] restores it, for a plain copy.
+    pub fn insert(&mut self, name: impl Into<String>, mut t: RType) {
+        t.class = t.class.derived();
         let name = name.into();
         if self.box_call_after_write(&name, &t) {
             self.insert_value(name.clone(), t);
@@ -733,9 +736,10 @@ impl Scope {
         self.bindings.insert(name, t);
     }
 
-    pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, t: RType) {
+    pub(crate) fn insert_narrowed(&mut self, name: impl Into<String>, mut t: RType) {
         // Preserve parameter, default-parameter, and list-origin markers;
         // clear function aliases and lexical-function markers, then mark narrowed.
+        t.class = t.class.derived();
         let name = name.into();
         let excludes_unclassed_vector =
             t.class.has_known_class() || matches!(t.length, Length::Zero | Length::One);
@@ -760,6 +764,21 @@ impl Scope {
         self.narrowed_bindings.insert(name);
     }
 
+    /// Restore the exactness of the S4 instance `value` that `name` was just
+    /// bound to by a plain copy: `a <- new("A")`, `b <- a`, or a method
+    /// formal its selected signature names. Any other binding of a value
+    /// computed from an instance (`t(a)`, `a + 1`, `a[1]`) stays inexact.
+    pub(crate) fn keep_s4_instance(&mut self, name: &str, value: &RType) {
+        if value.class.exact_s4
+            && let Some(bound) = self.bindings.get(name)
+            && bound.class == value.class.derived()
+        {
+            let mut bound = bound.clone();
+            bound.class.exact_s4 = true;
+            self.replace_binding_only(name, Some(bound));
+        }
+    }
+
     pub(crate) fn insert_parameter(&mut self, name: impl Into<String>, t: RType) {
         let name = name.into();
         self.insert(name.clone(), t);
@@ -767,9 +786,10 @@ impl Scope {
         self.parameter_bindings.insert(name);
     }
 
-    pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, t: RType) {
+    pub(crate) fn insert_parameter_default(&mut self, name: impl Into<String>, mut t: RType) {
         // Preserve lexical-function and list-origin markers; clear function
         // aliases and narrowing, then set both parameter markers.
+        t.class = t.class.derived();
         let name = name.into();
         if !self.uncertainty.escaped_slot_names {
             self.uncertainty.escaped_slot_names =

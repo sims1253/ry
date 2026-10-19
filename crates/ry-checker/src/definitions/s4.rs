@@ -333,6 +333,19 @@ impl Definitions {
     }
 }
 
+/// An expression whose value is an S4 instance itself rather than one
+/// computed from it: `new(...)` or a binding read. Scope bindings keep
+/// instance exactness only through such plain copies.
+pub(crate) fn is_s4_instance_copy(expr: &Expr) -> bool {
+    match expr {
+        Expr::Ident { .. } => true,
+        Expr::Call { func, .. } => {
+            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "new" || name == "methods::new")
+        }
+        _ => false,
+    }
+}
+
 fn param_names(params: &[ParamSpec]) -> Vec<String> {
     params.iter().map(|param| param.name.clone()).collect()
 }
@@ -365,8 +378,9 @@ fn dispatch_classes(
         let class = &arg_types.get(actual)?.class;
         // Only `new("A")` proves an exact class: other constructors and
         // class attributes can name a superclass of the dispatched one
-        // (`factor(ordered = TRUE)` is an `ordered`).
-        if class.has_known_class() && class.exact_s4 {
+        // (`factor(ordered = TRUE)` is an `ordered`). A value computed from
+        // an instance (`t(a)`) is not that instance.
+        if class.has_known_class() && class.exact_s4 && is_s4_instance_copy(&args[actual].value) {
             return class.first().map(|first| first.to_string());
         }
         // Only a plain literal proves its class is the implicit one: a

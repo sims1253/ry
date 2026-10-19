@@ -695,6 +695,10 @@ impl Checker {
                 });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
+                let s4_instance = (vt.class.exact_s4
+                    && matches!(target, Expr::Ident { .. })
+                    && crate::definitions::is_s4_instance_copy(value))
+                .then(|| vt.clone());
                 // A rebound name no longer carries any armed
                 // vacuous-all guard (RY110): later demands receive the
                 // new value, not the guarded one. Complex targets
@@ -727,6 +731,9 @@ impl Checker {
                     };
                     if let Some(value) = known_string {
                         scope.set_known_string(name, value);
+                    }
+                    if let Some(instance) = &s4_instance {
+                        scope.keep_s4_instance(name, instance);
                     }
                     if self.capture_references {
                         self.install_reference_definition(

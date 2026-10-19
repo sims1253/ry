@@ -822,6 +822,8 @@ impl Checker {
         scope.invalidate_ops_environment();
         for parameter in params {
             scope.insert_parameter(parameter.name.clone(), parameter.type_.clone());
+            // A seeded S4 method formal receives exactly its signature class.
+            scope.keep_s4_instance(&parameter.name, &parameter.type_);
         }
         // The function's own name stays unbound here, so recursive calls
         // resolve through the function table and read its return slot.

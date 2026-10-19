@@ -259,6 +259,7 @@ impl Checker {
                 )
                 .cloned()
                 .unwrap_or_else(RType::unknown);
+                result.class = result.class.derived();
                 if spec.result.unknown_length {
                     result.length = Length::Unknown;
                 }
@@ -461,7 +462,7 @@ impl Checker {
         }
         if "replace".starts_with(how.as_str()) {
             if let Some(input) = input.filter(|ty| ty.mode == Mode::List) {
-                return RType::new(Mode::List, input.length).with_class(input.class.clone());
+                return RType::new(Mode::List, input.length).with_class(input.class.derived());
             }
         }
         // replace also accepts expressions, whose runtime mode is not modeled.

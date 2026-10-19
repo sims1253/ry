@@ -147,3 +147,42 @@ fn a_method_body_sees_its_exact_signature_classes() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(scope.get("r").unwrap().mode, Mode::Integer);
 }
+
+#[test]
+fn only_registrations_ry_cannot_read_leave_the_result_unknown() {
+    let source = "setClass(\"A\", representation(v = \"numeric\"))\n\
+        setMethod(\"length\", c(x = \"A\"), function(x) list(k = 1L))\n\
+        n <- length(new(\"A\"))\n\
+        m <- length(1:3)\n";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("n").unwrap().mode, Mode::Opaque);
+    // An unclassed actual cannot reach a class-named registration.
+    assert_eq!(scope.get("m").unwrap().mode, Mode::Integer);
+}
+
+#[test]
+fn arithmetic_on_an_s4_instance_is_not_that_instance() {
+    // Distinct `+` methods that both decline make R use the primitive,
+    // which keeps the left operand's class but is not that instance.
+    // `new()` instances are guarded, which this path declines today, so the
+    // operand is built unguarded to pin the class the result keeps.
+    let (_, mut scope) = check_with_scope(
+        "`+.A` <- function(e1, e2) 1L\n`+.B` <- function(e1, e2) 'b'\n\
+         chooseOpsMethod.A <- function(...) FALSE\nchooseOpsMethod.B <- function(...) FALSE\n",
+    );
+    let instance = ClassVector {
+        guarded: false,
+        ..ClassVector::s4_instance("A")
+    };
+    let scalar = |class| RType::scalar(Mode::Double).with_class(class);
+    scope.insert("a", scalar(instance));
+    scope.insert("b", scalar(ClassVector::single("B")));
+    let file = parse_file("test.R", "a + b\n");
+    let Stmt::Expr(expression) = &file.stmts[0] else {
+        panic!("expected an expression statement");
+    };
+    let result = Checker::new("test.R").infer(expression, &mut scope);
+    assert!(result.class.contains("A"), "{result:?}");
+    assert!(!result.class.exact_s4, "{result:?}");
+}

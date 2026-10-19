@@ -241,6 +241,15 @@ impl ClassVector {
         }
     }
 
+    /// The class a value computed from this one keeps: the names, but not
+    /// `exact_s4`, which only the instance `new()` created carries.
+    pub fn derived(&self) -> Self {
+        ClassVector {
+            exact_s4: false,
+            ..self.clone()
+        }
+    }
+
     /// We couldn't determine the class at all (dynamic input). Used for
     /// `RType::unknown()` and any value whose class depends on unknown
     /// state. Distinguished from `empty()` so callers avoid emitting

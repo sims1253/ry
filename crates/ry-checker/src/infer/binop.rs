@@ -65,8 +65,8 @@ impl Checker {
                     };
                     let result_class = match (exact_length(lt.length), exact_length(rt.length)) {
                         (Some(0), _) | (_, Some(0)) => ClassVector::empty(),
-                        (Some(a), Some(b)) if b > a => rt.class.clone(),
-                        (Some(_), Some(_)) => lt.class.clone(),
+                        (Some(a), Some(b)) if b > a => rt.class.derived(),
+                        (Some(_), Some(_)) => lt.class.derived(),
                         _ => ClassVector::unknown(),
                     };
                     // Primitive fallback does not call Ops.factor or
@@ -1051,7 +1051,7 @@ fn data_frame_binop_result(op: BinOpKind, lhs: &RType, rhs: &RType) -> Option<RT
     if is_compare || is_logic {
         return Some(RType::unknown());
     }
-    let mut result = RType::new(Mode::List, frame.length).with_class(frame.class.clone());
+    let mut result = RType::new(Mode::List, frame.length).with_class(frame.class.derived());
     if let Some(schema) = &frame.columns {
         let scalar_primitive =
             other.class.known && other.class.len == 0 && matches!(other.length, Length::One);

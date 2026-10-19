@@ -665,7 +665,7 @@ impl Checker {
             .map(|t| RType {
                 mode: t.mode,
                 length: common_len,
-                class: t.class.clone(),
+                class: t.class.derived(),
                 // Nested column schemas on a data-frame column would
                 // mean nested data frames; v1 keeps those opaque.
                 columns: None,
@@ -896,7 +896,11 @@ impl Checker {
         match &sig.return_ {
             ReturnSpec::Slot(slot) => {
                 let result = match slot {
-                    ReturnSlot::Arg0 => first,
+                    // A stub result typed like its input is not that instance.
+                    ReturnSlot::Arg0 => RType {
+                        class: first.class.derived(),
+                        ..first
+                    },
                     ReturnSlot::ConcatOfArgs => self.infer_c(args, arg_types),
                 };
                 match semantic_return_length(

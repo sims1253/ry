@@ -199,21 +199,27 @@ impl Definitions {
             .s4
             .generics
             .get(call.head.member())
-            .filter(|generic| !generic.methods.is_empty())
+            .filter(|generic| generic.incomplete || !generic.methods.is_empty())
         else {
             return S4Selection::NoCandidate;
         };
         // Fall through, as before full signatures, when no method names
-        // any actual's explicit class.
+        // any actual's explicit class. An uninterpreted registration may
+        // name any of them.
         let named = |class: &str| {
             call.arg_types
                 .iter()
                 .any(|actual| actual.class.first().is_some_and(|first| *first == *class))
         };
-        if !generic
-            .methods
+        let classed = call
+            .arg_types
             .iter()
-            .any(|method| method.entries.iter().any(|(_, class)| named(class)))
+            .any(|actual| actual.class.first().is_some());
+        if !(generic.incomplete && classed)
+            && !generic
+                .methods
+                .iter()
+                .any(|method| method.entries.iter().any(|(_, class)| named(class)))
         {
             return S4Selection::NoCandidate;
         }

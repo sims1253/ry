@@ -600,6 +600,7 @@ fn subset_vector(base: &RType, index: &RType, expression: &Expr) -> Option<RType
     Some(RType {
         length,
         columns: None,
+        class: base.class.derived(),
         value_facts: base.value_facts.for_subset(),
         ..base.clone()
     })

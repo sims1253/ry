@@ -53,39 +53,25 @@ impl Checker {
     /// configuration gets the same answer.
     pub(crate) fn call_effect(&self, func: &Expr, args: &[Arg], scope: &Scope) -> CallEffect {
         let Some(name) = callee_name(func) else {
-            return self.user_function_effect(func, args, scope);
+            return match func {
+                Expr::Function { params, body, .. } => user_function_effect(args, || {
+                    crate::collect::function_outward_writes(params, body)
+                }),
+                _ => CallEffect::Unknown,
+            };
         };
+        // An exactly identified project definition is what runs, whatever
+        // its name spells (`"base::length"(...)`, `"pkg::f"(...)`).
+        if let Some(function) = self.declaration_helper(semantic_argument_name(&name), scope) {
+            return user_function_effect(args, || function.outward_writes().clone());
+        }
         if self.audited_base_call(&name, args, scope) {
             CallEffect::RunsCallerCode
         } else if self.trusted_external_call(&name, args, scope) {
             CallEffect::RebindsAny
         } else {
-            self.user_function_effect(func, args, scope)
+            CallEffect::Unknown
         }
-    }
-
-    /// A function literal head, or a name that identifies exactly one user
-    /// definition, called with literal actuals (forcing any other promise
-    /// may read an active binding): its syntactic outward-write summary.
-    fn user_function_effect(&self, func: &Expr, args: &[Arg], scope: &Scope) -> CallEffect {
-        if !args.iter().all(|arg| is_scalar_literal(&arg.value)) {
-            return CallEffect::Unknown;
-        }
-        let summary = |writes: &crate::collect::WriteSet| {
-            if writes.opaque || !writes.names.is_empty() {
-                CallEffect::Writes(writes.clone())
-            } else {
-                CallEffect::None
-            }
-        };
-        if let Expr::Function { params, body, .. } = func {
-            return summary(&crate::collect::function_outward_writes(params, body));
-        }
-        callee_name(func)
-            .and_then(|name| self.declaration_helper(semantic_argument_name(&name), scope))
-            .map_or(CallEffect::Unknown, |function| {
-                summary(function.outward_writes())
-            })
     }
 
     /// The only writer of call-driven invalidation for both fact families.
@@ -272,6 +258,23 @@ impl Checker {
     }
 }
 
+/// A user function called with literal actuals (forcing any other promise
+/// may read an active binding): its syntactic outward-write summary.
+fn user_function_effect(
+    args: &[Arg],
+    writes: impl FnOnce() -> crate::collect::WriteSet,
+) -> CallEffect {
+    if !args.iter().all(|arg| is_scalar_literal(&arg.value)) {
+        return CallEffect::Unknown;
+    }
+    let writes = writes();
+    if writes.opaque || !writes.names.is_empty() {
+        CallEffect::Writes(writes)
+    } else {
+        CallEffect::None
+    }
+}
+
 /// `message(..., domain = NULL, appendLF = TRUE)` matches formals after
 /// `...` exactly, so only those exact names are controls; every other
 /// actual is payload. A character literal payload needs no `as.character`
@@ -351,6 +354,15 @@ mod tests {
             ]
         );
         assert!(RunsCallerCode.keeps_scalar_facts() && !writes(&["g"], false).keeps_scalar_facts());
+        // A project definition named like a base or external head runs
+        // instead, whatever the head spells.
+        let shadowing = checker_for(
+            "`pkg::poke` <- function(...) { x <<- 1L; invisible(NULL) }\n`base::length` <- function(...) NULL\n",
+        );
+        assert_eq!(
+            classify(&shadowing, "\"pkg::poke\"('a')\n\"base::length\"('a')\n"),
+            vec![writes(&["x"], true), None]
+        );
         // A masked qualification operator runs instead of base `length`.
         let masked = checker_for("`::` <- function(pkg, name) function(...) NULL\n");
         assert_eq!(

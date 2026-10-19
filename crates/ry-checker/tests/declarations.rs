@@ -2718,3 +2718,22 @@ fn opaque_helper_still_replaces_its_named_writes() {
         .collect::<Vec<_>>();
     assert!(!codes.contains(&"RY040"), "{codes:?}");
 }
+
+/// Sol review S4: a project definition whose name spells a qualified head
+/// is what a string head calls, so its write summary applies even though
+/// the name looks like an external or base call (as on main).
+#[test]
+fn project_definitions_named_like_qualified_heads_keep_their_writes() {
+    for (name, head) in [("pkg::poke", "pkg::poke"), ("base::length", "base::length")] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\n`{name}` <- function(...) {{\n  x <<- 1L\n  invisible(NULL)\n}}\nx <- \"old\"\n\"{head}\"(\"a\")\nx + 1L\n"
+        );
+        let (_, mut checker) = check_adopted("qualified-name-helper.R", &source);
+        let codes = checker
+            .take_diagnostics()
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+        assert!(!codes.contains(&"RY040"), "{name}: {codes:?}");
+    }
+}

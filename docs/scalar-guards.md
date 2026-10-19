@@ -70,7 +70,8 @@ define or import a method for a generic the call dispatches internally:
 `length`, `is.na`, `nchar`, and `is.numeric` for themselves; `anyNA`,
 `is.na`, `all`, or the `Summary` group for a `stopifnot` predicate that is
 not a plain logical expression (a comparison, `&&`, `||`, `!`, an `is.*`
-call, or a logical literal); and `conditionMessage` for `message`. For
+call, or a logical literal) or a literal or local value known to carry no
+class attribute; and `conditionMessage` for `message`. For
 `message`, only arguments named exactly `domain` or `appendLF` are controls
 and must be literals; every other argument, named or not, is payload and
 must be a character string, and a forwarded `...` is refused.

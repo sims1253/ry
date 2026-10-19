@@ -175,13 +175,17 @@ impl Checker {
         }
         if bare == "stopifnot" {
             // `exprs`/`exprObject` evaluate quoted code the walk never sees.
-            // A plain logical predicate reaches none of its dispatch closure.
+            // A predicate value without a class attribute reaches none of
+            // its dispatch closure.
             return !stopifnot_evaluates_quoted(args)
                 && (dispatch_free
                     || args
                         .iter()
                         .filter(|arg| stopifnot_predicate_arg(arg))
-                        .all(|arg| self.plain_logical(&arg.value, scope)));
+                        .all(|arg| {
+                            self.plain_logical(&arg.value, scope)
+                                || proven_unclassed_atomic(&arg.value, scope)
+                        }));
         }
         dispatch_free
     }
@@ -255,6 +259,32 @@ impl Checker {
                 }
                 _ => true,
             })
+    }
+}
+
+/// A literal, or a local whose inferred value is an atomic vector known to
+/// carry no class attribute: internal dispatch cannot select a method for
+/// it. A formal's default says nothing about a supplied actual.
+fn proven_unclassed_atomic(expr: &Expr, scope: &Scope) -> bool {
+    match expr {
+        Expr::Ident { name, .. } => {
+            !scope.is_default_parameter(name)
+                && scope.get(name).is_some_and(|ty| {
+                    ty.class.known
+                        && ty.class.len == 0
+                        && matches!(
+                            ty.mode,
+                            Mode::Logical
+                                | Mode::Integer
+                                | Mode::Double
+                                | Mode::Complex
+                                | Mode::Character
+                                | Mode::Raw
+                                | Mode::Null
+                        )
+                })
+        }
+        expr => is_scalar_literal(expr),
     }
 }
 

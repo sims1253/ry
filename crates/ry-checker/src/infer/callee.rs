@@ -137,9 +137,9 @@ impl Checker {
                         })
             })
             && !self
-                .enclosing_formals
+                .frame_writes
                 .iter()
-                .any(|frame| frame.frame_writes.may_write(semantic))
+                .any(|writes| writes.may_write(semantic))
             && {
                 [
                     semantic.to_string(),

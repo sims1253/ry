@@ -1090,6 +1090,9 @@ impl Checker {
             self.note_vacuous_map_rebind(&parameter.name);
         }
         let assigned = assigned_names_in_body(body);
+        // Active before the defaults run: they execute in this frame too.
+        self.frame_writes
+            .push(crate::collect::frame_writes(params, body));
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
         for name in &assigned {
@@ -1140,12 +1143,13 @@ impl Checker {
             }
         }
         self.deferred_captures.push(assigned);
-        self.push_enclosing_formals(params, body, span);
+        self.push_enclosing_formals(params, span);
         self.check_discarded_branch_results(body);
         self.walk_block(body, &mut fn_scope, None);
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
+        self.frame_writes.pop();
         self.deferred_captures.pop();
         // Restore the enclosing function's RY110 `map` provenance (see
         // the save above): a nested function's verdicts must not leak
@@ -3504,7 +3508,7 @@ impl Checker {
         }
     }
 
-    fn push_enclosing_formals(&mut self, params: &[Param], body: &[Stmt], function_span: Span) {
+    fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
         let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
             crate::collect::WriteSet::default()
         } else {
@@ -3521,7 +3525,6 @@ impl Checker {
                 .iter()
                 .all(|parameter| parameter.default.as_ref().is_none_or(is_scalar_literal)),
             possible_default_writes,
-            frame_writes: crate::collect::frame_writes(params, body),
             function_span,
         });
     }

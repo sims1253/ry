@@ -81,6 +81,9 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         "f <- function(x) x + 1L; h <- function(y = { f <- paste; NULL }) { y; f('a') }",
         "f <- function(x) x + 1L; h <- function() { g <- function() f('a'); f <- paste; g() }",
         "f <- function(x) x + 1L; h <- function() { r <- f('a'); assign('f', paste); r }",
+        // S8: a default runs in the frame another default rebinds.
+        "f <- function(x) x + 1L; h <- function(y = { z; f('a') }, z = { f <- paste; NULL }) y",
+        "f <- function(x) x + 1L; h <- function(y = function() f('a'), z = { f <- paste; NULL }) y",
         "f <- function(x) x + 1L; h <- function() { `f` <- function(x) paste(x); f('a') }",
     ] {
         assert_eq!(contract_errors(source), Vec::<String>::new(), "{source}");

@@ -1310,8 +1310,6 @@ pub(crate) struct EnclosingFormals {
     /// A forced default may install one of these names in this frame at
     /// runtime; a same-named outward declaration is then not certain.
     pub(crate) possible_default_writes: collect::WriteSet,
-    /// Names this frame's own code (body or defaults) may bind, at any time.
-    pub(crate) frame_writes: collect::WriteSet,
     /// The function's own span, keying [`Checker::formal_reads`] for
     /// RY111's dead-formal gate.
     pub(crate) function_span: Span,
@@ -1413,6 +1411,9 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
+    // Per enclosing function frame, from before its defaults run: names its
+    // own code (body or defaults) may bind at any time.
+    frame_writes: Vec<collect::WriteSet>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
@@ -1634,6 +1635,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            frame_writes: Vec::new(),
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
             held_cast: None,

@@ -2074,6 +2074,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_constant_argument_shadowing_gates.R
 - diagnostics: []
+  fixture: ok_contract_unforced_actual_effect.R
+- diagnostics: []
   fixture: ok_custom_operator_lookup.R
 - diagnostics: []
   fixture: ok_data_frame_constructor.R

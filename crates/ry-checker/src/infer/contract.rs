@@ -170,7 +170,29 @@ impl Checker {
             .map(|parameter| parameter.name.as_str())
             .collect();
         let index = match_arguments(&names, args).arg_for_param(contract.formal())?;
-        (!matches!(args[index].value, Expr::Missing(_))).then_some((function, contract, index))
+        // R forces only the bound actual, but every actual was inferred in
+        // the caller's scope, so an effect in another one (`f({v <- "a"},
+        // x = v)`) may have changed the bound actual's type although it
+        // never runs. Other actuals must be inert: a literal or a bare name.
+        let inert = |value: &Expr| {
+            matches!(
+                value,
+                Expr::Logical(..)
+                    | Expr::Integer(..)
+                    | Expr::Double(..)
+                    | Expr::String(..)
+                    | Expr::Null(_)
+                    | Expr::Na(..)
+                    | Expr::Ident { .. }
+                    | Expr::Missing(_)
+            )
+        };
+        let others_inert = args
+            .iter()
+            .enumerate()
+            .all(|(position, arg)| position == index || inert(&arg.value));
+        (others_inert && !matches!(args[index].value, Expr::Missing(_)))
+            .then_some((function, contract, index))
     }
 
     /// RY092 for an actual the selected definition's body cannot evaluate.

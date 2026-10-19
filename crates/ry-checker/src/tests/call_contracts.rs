@@ -47,6 +47,9 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         "f <- function(df) df$value * 2; f(list(value = 1)); f(NULL)",
         "f <- function(x = 'a') x + 1L; f()",
         "f <- function(x) x + 1L; g <- function(...) f(...); g('a')",
+        // S1: an unforced actual's effect never reaches the bound one.
+        "f <- function(x, ...) x + 1L; v <- 1L; f({v <- 'a'}, x = v)",
+        "id <- function(x, ...) x; v <- 1L; id({v <- 'a'}, x = v) + 1L",
         // Bodies that evaluate more than one base operation on the formal.
         "f <- function(x) { x + 1L }; f('a')",
         "f <- function(x) (x + 1L); f('a')",

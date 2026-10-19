@@ -29,8 +29,9 @@ pub(crate) enum CallEffect {
     /// rebind any name this frame resolves outward (identities do not).
     RunsCallerCode,
     /// An exactly identified user function with literal actuals whose body
-    /// can replace only these names, through plain `<<-`.
-    Writes(FxSet<String>),
+    /// replaces these names through plain `<<-`. When `opaque`, the body may
+    /// also do anything else, as `Unknown`; the named writes still apply.
+    Writes(crate::collect::WriteSet),
     /// An exported external `pkg::fn` or base `I()`: it may assign ordinary
     /// values, but is trusted not to install active or delayed bindings.
     RebindsAny,
@@ -71,12 +72,10 @@ impl Checker {
             return CallEffect::Unknown;
         }
         let summary = |writes: &crate::collect::WriteSet| {
-            if writes.opaque {
-                CallEffect::Unknown
-            } else if writes.names.is_empty() {
-                CallEffect::None
+            if writes.opaque || !writes.names.is_empty() {
+                CallEffect::Writes(writes.clone())
             } else {
-                CallEffect::Writes(writes.names.clone())
+                CallEffect::None
             }
         };
         if let Expr::Function { params, body, .. } = func {
@@ -95,17 +94,26 @@ impl Checker {
         if !scope.uncertainty.dynamic_bindings {
             match effect {
                 CallEffect::Unknown => scope.invalidate_scalar_assertions(),
+                CallEffect::Writes(writes) if writes.opaque => {
+                    scope.invalidate_scalar_assertions();
+                }
                 CallEffect::RebindsAny => scope.clear_scalar_assertions(),
-                CallEffect::Writes(names) => scope
-                    .retain_scalar_assertions(|name| !names.contains(semantic_argument_name(name))),
+                CallEffect::Writes(writes) => scope.retain_scalar_assertions(|name| {
+                    !writes.names.contains(semantic_argument_name(name))
+                }),
                 CallEffect::None | CallEffect::RunsCallerCode => {}
             }
         }
         match effect {
             CallEffect::None => {}
-            CallEffect::Writes(names) => {
+            CallEffect::Writes(writes) => {
+                if writes.opaque {
+                    self.invalidate_declaration_identities(scope);
+                }
+                // Even beside unknown effects, the named targets lose their
+                // values; the declaration checks always replaced them.
                 if !self.discarding && self.declarations.has_contracts() {
-                    for name in names {
+                    for name in &writes.names {
                         scope.insert(name.clone(), RType::unknown());
                     }
                 }
@@ -308,6 +316,13 @@ mod tests {
         checker
     }
 
+    fn writes(names: &[&str], opaque: bool) -> CallEffect {
+        CallEffect::Writes(crate::collect::WriteSet {
+            names: names.iter().map(|name| name.to_string()).collect(),
+            opaque,
+        })
+    }
+
     #[test]
     fn call_effect_grades_each_call_shape() {
         use CallEffect::*;
@@ -324,8 +339,8 @@ mod tests {
                 Unknown,
                 None,
                 Unknown,
-                Writes(["g".to_string()].into_iter().collect()),
-                Unknown,
+                writes(&["g"], false),
+                writes(&[], true),
                 None,
                 RebindsAny,
                 RebindsAny,
@@ -335,9 +350,7 @@ mod tests {
                 RunsCallerCode,
             ]
         );
-        assert!(
-            RunsCallerCode.keeps_scalar_facts() && !Writes(FxSet::default()).keeps_scalar_facts()
-        );
+        assert!(RunsCallerCode.keeps_scalar_facts() && !writes(&["g"], false).keeps_scalar_facts());
         // A masked qualification operator runs instead of base `length`.
         let masked = checker_for("`::` <- function(pkg, name) function(...) NULL\n");
         assert_eq!(

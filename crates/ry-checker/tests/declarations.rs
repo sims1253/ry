@@ -2702,3 +2702,19 @@ fn promise_actual_drops_identity() {
     let (_, checker) = check_adopted("promise-direct-read.R", &source("y"));
     assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }
+
+/// Sol review S3: an opaque helper summary still reports its plain `<<-`
+/// targets. With adopted contracts, main replaced those bindings even when
+/// the rest of the body was unknown; keeping `x`'s old character type
+/// would report RY040 where R adds 1L to the new integer.
+#[test]
+fn opaque_helper_still_replaces_its_named_writes() {
+    let source = "f <- function(x) {\n  #| x integer\n  x\n}\nrun <- function() {\n  x <- \"old\"\n  (function() {\n    x <<- 1L\n    invisible(NULL)\n  })()\n  x + 1L\n}\nrun()\n";
+    let (_, mut checker) = check_adopted("opaque-named-writes.R", source);
+    let codes = checker
+        .take_diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert!(!codes.contains(&"RY040"), "{codes:?}");
+}

@@ -7,7 +7,7 @@ use std::ops::ControlFlow;
 /// Bindings some code may replace. `opaque` marks a write no name
 /// summarizes: a computed target, an escaped identifier (equating it with
 /// another spelling needs R's decoder), or code with unknown effects.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct WriteSet {
     pub(crate) names: FxSet<String>,
     pub(crate) opaque: bool,

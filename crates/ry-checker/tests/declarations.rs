@@ -2574,24 +2574,27 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
 }
 
 /// The frame-effect classifier (infer/call_effect.rs) is shared with scalar
-/// facts: an audited base call with literal actuals keeps identities.
+/// facts. An audited base call keeps scalar facts but not identities: even
+/// a literal call can force a caller's promise or signal a condition to a
+/// caller's calling handler, which can rebind an outward name
+/// (testdata/oracle/typehint_outer_handler_replacement.R). An inert user
+/// helper keeps both, as before.
 #[test]
-fn allowlisted_literal_calls_keep_contract_identity() {
+fn base_calls_drop_contract_identity_and_inert_helpers_keep_it() {
     for (between, mismatch) in [
-        ("message(\"hi\")", true),
-        ("message(\"hi\", appendLF = FALSE)", true),
-        ("is.null(NULL)", true),
-        ("length(\"a\")", true),
-        ("stopifnot(TRUE)", true),
+        ("message(\"hi\")", false),
+        ("is.null(NULL)", false),
+        ("length(\"a\")", false),
+        ("stopifnot(TRUE)", false),
         ("sum(1:3)", false),
-        ("message(\"hi\", appendL = FALSE)", false),
         ("noop()", true),
         ("touch()", false),
+        ("1L", true),
     ] {
         let source = format!(
             "f <- function(x) {{\n  #| x integer\n  x\n}}\nnoop <- function() NULL\ntouch <- function() get(\"x\")\n{between}\nf(\"after\")\n"
         );
-        let (_, checker) = check_adopted("allowlisted-calls.R", &source);
+        let (_, checker) = check_adopted("base-calls.R", &source);
         assert_eq!(
             kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
             mismatch,
@@ -2599,12 +2602,30 @@ fn allowlisted_literal_calls_keep_contract_identity() {
             checker.declaration_findings()
         );
     }
-    // A project `conditionMessage` method runs during any message().
-    let (_, checker) = check_adopted(
-        "message-method.R",
-        "f <- function(x) {\n  #| x integer\n  x\n}\nconditionMessage.simpleMessage <- function(c) { f <<- function(x) x; \"m\\n\" }\nmessage(\"hi\")\nf(\"after\")\n",
-    );
-    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+/// Sol review witnesses: a literal `message()` reaching an outer calling
+/// handler, and `base::length()` under a project `::` mask, can both
+/// replace the annotated local. RY114 stays silent, as on main.
+#[test]
+fn outer_handler_and_masked_namespace_operator_drop_identity() {
+    for (setup, between) in [
+        ("", "message(\"hi\")"),
+        (
+            "`::` <- function(pkg, name) function(...) assign(\"cls\", function(x) x, envir = parent.frame())\n",
+            "base::length(\"a\")",
+        ),
+    ] {
+        let source = format!(
+            "{setup}run <- function() {{\n  cls <- function(x) {{\n    #| x integer\n    x\n  }}\n  {between}\n  cls(\"after\")\n}}\nrun()\n"
+        );
+        let (_, checker) = check_adopted("sol-witness.R", &source);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
 }
 
 /// R evaluates the RHS of `&&` in this frame (testdata/oracle/
@@ -2615,8 +2636,9 @@ fn short_circuit_replacement_drops_contract_identity() {
     for (condition, mismatch) in [
         ("TRUE && swap()", false),
         ("FALSE || swap()", false),
-        ("TRUE && is.null(NULL)", true),
-        ("is.function(f) && TRUE", true),
+        // Base calls drop identities (see above); a literal RHS keeps them.
+        ("TRUE && is.null(NULL)", false),
+        ("TRUE && TRUE", true),
     ] {
         let source = format!(
             "f <- function(x) {{\n  #| x integer\n  x\n}}\nswap <- function() {{ f <<- function(x) x; TRUE }}\nif ({condition}) NULL\nf(\"after\")\n"
@@ -2664,7 +2686,7 @@ fn promise_actual_drops_identity() {
             "cls <- function(x) {{\n  #| x integer\n  x\n}}\nrun <- function(y) {{\n  {between}\n  cls(\"after\")\n}}\nrun(1L)\n"
         )
     };
-    for between in ["length(y)", "is.null(y)", "message(\"hi\"); nchar(y)"] {
+    for between in ["length(y)", "is.null(y)", "length(\"a\")"] {
         let (_, checker) = check_adopted("promise-actual.R", &source(between));
         assert!(
             !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
@@ -2672,7 +2694,7 @@ fn promise_actual_drops_identity() {
             checker.declaration_findings()
         );
     }
-    let (_, checker) = check_adopted("promise-literal.R", &source("length(\"a\")"));
+    let (_, checker) = check_adopted("promise-none.R", &source("1L"));
     assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
     // Known gap: a direct statement-level read of the formal forces the
     // same promise but keeps the identity (`proven_parameter_read`); R

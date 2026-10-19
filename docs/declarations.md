@@ -144,19 +144,18 @@ checks, and independent return evidence remain available. A typeshed
 signature alone does not establish that a call is effect-free.
 For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
-absent. Calls follow the same rule as [scalar facts](scalar-guards.md#scalar-facts-from-stopifnot).
-An audited base call keeps later contract checks when no argument reads a
-formal: forcing a formal's promise runs caller code that can replace a name
-this frame resolves outward. A call keeps them when it invokes a known user
+absent. Calls go through the same classifier as [scalar facts](scalar-guards.md#scalar-facts-from-stopifnot),
+but a base call that keeps a scalar fact does not keep contract checks: even
+a literal `message("hi")` or `length("a")` can force a caller's promise or
+signal a condition to a caller's calling handler, and that code can replace
+a name this frame resolves outward. A call keeps them only when it invokes a known user
 function with literal arguments whose body reads nothing but its formals and
 runs no call, operator, or subscript; its `<<-` targets are then the only
 bindings it can replace. That summary trusts syntax a project may mask (a
 masked `if` in the body) and does not see an active binding's setter behind
 `<<-`; both can leave a stale identity, a known false-positive boundary pinned
 in `tests/declarations.rs`. An effect inside the right operand of `&&` or
-`||` reaches the rest of the frame. The scalar-fact exclusions apply here
-too: code established outside the frame, such as a caller's calling handler,
-is not modelled. A direct statement-level read of a formal also forces its
+`||` reaches the rest of the frame. A direct statement-level read of a formal also forces its
 promise but keeps identities; `typehint_parameter_force_replacement.R` pins
 that known gap.
 

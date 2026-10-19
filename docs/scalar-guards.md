@@ -75,7 +75,9 @@ call, or a logical literal); and `conditionMessage` for `message`. For
 and must be literals; every other argument, named or not, is payload and
 must be a character string, and a forwarded `...` is refused.
 `stopifnot` with `exprs` or `exprObject` evaluates quoted code and keeps
-nothing.
+nothing. A qualified head such as `base::length` counts only while `::`
+itself is not masked. These base calls keep scalar facts only; adopted
+declaration identities do not survive them (see the exclusions below).
 
 A project function keeps the fact when the call head names exactly one
 current definition (or is a function literal), every argument is a scalar
@@ -105,6 +107,8 @@ partial argument match warns under `options(warnPartialMatchArgs = TRUE)`),
 hooks, finalizers, external active bindings, and promise code a caller
 supplied for a formal that an allowed call forces. Such code reaches this
 frame's bindings only through frame reflection (`sys.frames()`,
-`sys.frame()`, `parent.frame(n)`). The oracle fixtures
+`sys.frame()`, `parent.frame(n)`), so a kept scalar fact can at worst miss
+an RY032. Such code can also replace a name the frame resolves outward, so
+declaration identities are dropped after every one of these base calls. The oracle fixtures
 `known_gap_outer_calling_handler.R` and `known_gap_promise_reaches_frame.R`
 pin this boundary.

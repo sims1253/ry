@@ -7,26 +7,27 @@ use super::*;
 use crate::semantic_lists::{
     LITERAL_MESSAGE_CALLS, SCALAR_FACT_SAFE_CALLS, bare_name, frame_effect_dispatch_closure,
 };
-use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::ops::ControlFlow;
 
 /// What one call may do to bindings its caller observes, from weakest to
-/// strongest: `None < ForcesPromises < Writes < RebindsAny < Unknown`.
+/// strongest: `None < RunsCallerCode < Writes < RebindsAny < Unknown`.
 ///
 /// Polarity: a kept scalar fact only suppresses RY032, so trusting a call
 /// too much there costs a false negative. A kept declaration identity
-/// enables RY114, so the user-function summary below is the same rule the
-/// declaration checks used before this classifier existed.
+/// enables RY114, so declarations never keep an identity across a call
+/// that the declaration checks dropped it for before this classifier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CallEffect {
-    /// An audited base call whose actuals read no formal, or an exactly
-    /// identified user function with literal actuals and no outward writes.
+    /// An exactly identified user function with literal actuals and no
+    /// outward writes.
     None,
-    /// An audited base call with an actual that may force a formal's
-    /// promise. Promise code runs in the frame that supplied it: it can
-    /// rebind names this frame resolves outward, but reaches this frame's
-    /// own bindings only through frame reflection, which is not modelled.
-    ForcesPromises,
+    /// An audited base call: it runs no project code of its own, but may
+    /// force a caller's promise or signal a condition to a caller's calling
+    /// handler. That code reaches this frame's own bindings only through
+    /// frame reflection (not modelled, so scalar facts survive), but can
+    /// rebind any name this frame resolves outward (identities do not).
+    RunsCallerCode,
     /// An exactly identified user function with literal actuals whose body
     /// can replace only these names, through plain `<<-`.
     Writes(FxSet<String>),
@@ -40,7 +41,7 @@ pub(crate) enum CallEffect {
 impl CallEffect {
     /// Whether current scalar facts survive the call.
     pub(crate) fn keeps_scalar_facts(&self) -> bool {
-        matches!(self, CallEffect::None | CallEffect::ForcesPromises)
+        matches!(self, CallEffect::None | CallEffect::RunsCallerCode)
     }
 }
 
@@ -54,11 +55,7 @@ impl Checker {
             return self.user_function_effect(func, args, scope);
         };
         if self.audited_base_call(&name, args, scope) {
-            if args.iter().any(|arg| reads_formal(&arg.value, scope)) {
-                CallEffect::ForcesPromises
-            } else {
-                CallEffect::None
-            }
+            CallEffect::RunsCallerCode
         } else if self.trusted_external_call(&name, args, scope) {
             CallEffect::RebindsAny
         } else {
@@ -101,7 +98,7 @@ impl Checker {
                 CallEffect::RebindsAny => scope.clear_scalar_assertions(),
                 CallEffect::Writes(names) => scope
                     .retain_scalar_assertions(|name| !names.contains(semantic_argument_name(name))),
-                CallEffect::None | CallEffect::ForcesPromises => {}
+                CallEffect::None | CallEffect::RunsCallerCode => {}
             }
         }
         match effect {
@@ -123,15 +120,10 @@ impl Checker {
         if self.discarding || !self.declarations.has_contracts() {
             return;
         }
-        // Guard narrowing also drops a clone's lexical definition, but leaves
-        // the narrowed marker that a later write would have cleared.
         let lost: Vec<String> = scope
             .lexical_definitions
             .iter()
-            .filter(|(name, span)| {
-                evaluated.lexical_definitions.get(*name) != Some(*span)
-                    && !evaluated.narrowed_bindings.contains(*name)
-            })
+            .filter(|(name, span)| evaluated.lexical_definitions.get(*name) != Some(*span))
             .map(|(name, _)| name.clone())
             .chain(
                 self.adopted_function_names()
@@ -178,7 +170,7 @@ impl Checker {
         let Some(closure) = frame_effect_dispatch_closure(bare) else {
             return false;
         };
-        if !self.resolves_to_base_lenient(name, scope) {
+        if !self.base_call_head(name, scope) {
             return false;
         }
         let dispatch_free = !closure
@@ -198,6 +190,14 @@ impl Checker {
                         .all(|arg| self.plain_logical(&arg.value, scope)));
         }
         dispatch_free
+    }
+
+    /// A head that resolves to base, including the `::`/`:::` operator of a
+    /// qualified head: a project mask of the operator runs instead.
+    fn base_call_head(&self, name: &str, scope: &Scope) -> bool {
+        let operator = if name.contains(":::") { ":::" } else { "::" };
+        self.resolves_to_base_lenient(name, scope)
+            && (!name.contains("::") || !ops_chooser::operator_rebound(self, operator, scope))
     }
 
     /// A predicate whose value is an unclassed logical, so `stopifnot`'s
@@ -223,7 +223,7 @@ impl Checker {
                 let bare = bare_name(&name);
                 bare.starts_with("is.")
                     && SCALAR_FACT_SAFE_CALLS.contains(&bare)
-                    && self.resolves_to_base_lenient(&name, scope)
+                    && self.base_call_head(&name, scope)
             }),
             _ => false,
         }
@@ -279,28 +279,6 @@ fn literal_message_arguments(args: &[Arg]) -> bool {
         })
 }
 
-/// Whether evaluating `expr` may force a promise: it reads this frame's or
-/// an enclosing frame's formal, or forwards `...`.
-fn reads_formal(expr: &Expr, scope: &Scope) -> bool {
-    walk_expr(expr, Walk::ALL, |node, _| match node {
-        AstNode::Expr(Expr::Ident { name, .. }) if is_formal(name, scope) => ControlFlow::Break(()),
-        _ => ControlFlow::Continue(Descend::Into),
-    })
-    .is_break()
-}
-
-fn is_formal(name: &str, scope: &Scope) -> bool {
-    let semantic = semantic_argument_name(name);
-    semantic == "..."
-        || semantic
-            .strip_prefix("..")
-            .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
-        || scope
-            .parameter_bindings
-            .iter()
-            .any(|parameter| semantic_argument_name(parameter) == semantic)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,9 +318,9 @@ mod tests {
         assert_eq!(
             classify(&checker, calls),
             vec![
-                None,
-                ForcesPromises,
-                None,
+                RunsCallerCode,
+                RunsCallerCode,
+                RunsCallerCode,
                 Unknown,
                 None,
                 Unknown,
@@ -354,11 +332,17 @@ mod tests {
                 Unknown,
                 Unknown,
                 Unknown,
-                None,
+                RunsCallerCode,
             ]
         );
         assert!(
-            ForcesPromises.keeps_scalar_facts() && !Writes(FxSet::default()).keeps_scalar_facts()
+            RunsCallerCode.keeps_scalar_facts() && !Writes(FxSet::default()).keeps_scalar_facts()
+        );
+        // A masked qualification operator runs instead of base `length`.
+        let masked = checker_for("`::` <- function(pkg, name) function(...) NULL\n");
+        assert_eq!(
+            classify(&masked, "base::length('a')\nlength('a')\n"),
+            vec![Unknown, RunsCallerCode]
         );
     }
 
@@ -382,7 +366,7 @@ mod tests {
             assert_eq!(
                 classify(&checker, call),
                 vec![if inert {
-                    CallEffect::None
+                    CallEffect::RunsCallerCode
                 } else {
                     CallEffect::Unknown
                 }],
@@ -406,15 +390,15 @@ mod tests {
             ),
             vec![
                 CallEffect::Unknown,
-                CallEffect::None,
-                CallEffect::None,
-                CallEffect::None,
+                CallEffect::RunsCallerCode,
+                CallEffect::RunsCallerCode,
+                CallEffect::RunsCallerCode,
             ]
         );
         let checker = checker_for("length.probe <- function(x) 1L\n");
         assert_eq!(
             classify(&checker, "length(y)\nnchar('a')\n"),
-            vec![CallEffect::Unknown, CallEffect::None]
+            vec![CallEffect::Unknown, CallEffect::RunsCallerCode]
         );
     }
 

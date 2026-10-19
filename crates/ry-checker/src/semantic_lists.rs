@@ -374,10 +374,10 @@ pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
 /// Base functions that can bind or replace names in an existing frame
 /// other than a fresh one they create (`load()` binds into its caller's
 /// frame by default, `eval.parent(quote(f <- g))` into its caller's caller).
-/// Also the accessors of an existing (global or caller) frame, which
-/// `e$f <- g` or `assign(name, g, envir = e)` can then rebind; `environment`
-/// and `parent.frame` are deliberately left out (too common to give up
-/// contracts for).
+/// Also the accessors that can return the global frame, which `e$f <- g`
+/// or `assign(name, g, envir = e)` can then rebind. Caller-frame handles
+/// (`environment`, `parent.frame`, `sys.frames`) are deliberately left out
+/// (too common to give up contracts for).
 pub const BINDING_INSTALLERS: &[&str] = &[
     "load",
     "source",
@@ -389,7 +389,6 @@ pub const BINDING_INSTALLERS: &[&str] = &[
     "globalenv",
     ".GlobalEnv",
     "sys.frame",
-    "sys.frames",
     "as.environment",
     "pos.to.env",
     "topenv",

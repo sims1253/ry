@@ -223,7 +223,9 @@ fn binding_installers_match_r_oracle() {
            eval = {{ f <- function(x) 1; (function() eval(quote(f <- paste), globalenv()))(); identical(f, paste) }},
            evalq = {{ f <- function(x) 1; (function() evalq(f <- paste, globalenv()))(); identical(f, paste) }},
            globalenv = {{ f <- function(x) 1; (function() {{ e <- globalenv(); e$f <- paste }})(); identical(f, paste) }},
+           .GlobalEnv = {{ f <- function(x) 1; (function() {{ e <- .GlobalEnv; e$f <- paste }})(); identical(f, paste) }},
            sys.frame = {{ f <- function(x) 1; (function() {{ e <- sys.frame(0); e$f <- paste }})(); identical(f, paste) }},
+           pos.to.env = {{ f <- function(x) 1; (function() {{ e <- pos.to.env(1); e$f <- paste }})(); identical(f, paste) }},
            as.environment = {{ f <- function(x) 1; (function() {{ e <- as.environment(1); e$f <- paste }})(); identical(f, paste) }},
            topenv = {{ f <- function(x) 1; (function() {{ e <- topenv(); e$f <- paste }})(); identical(f, paste) }})
          cat(all(hits), '\\n')"

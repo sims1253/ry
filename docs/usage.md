@@ -197,7 +197,10 @@ id("a") + 1    # RY040: `id` returns its argument
 Only unbraced, unparenthesized bodies qualify, because `{`, `(` and `return`
 are ordinary bindings in R. The function must be the only literal bound to its
 name, and no project binding or import may replace the operator. Classed and
-`NULL` actuals stay quiet.
+`NULL` actuals stay quiet. Any call anywhere in the project that can rebind
+names in an existing frame (`source()`, `load()`, `eval()`, `list2env()`,
+`.GlobalEnv`, and the other entries of `BINDING_INSTALLERS`) switches these
+checks off for the whole project.
 
 ## Box imports
 

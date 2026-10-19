@@ -64,31 +64,6 @@ impl CallHead {
     }
 }
 
-impl FnTable {
-    /// A qualified name can use a collected definition only from that package's
-    /// R sources. Unknown provenance cannot establish namespace membership.
-    /// Bare calls also accept quoted infix binding spellings.
-    pub(crate) fn call_function(&self, name: &str) -> Option<&UserFn> {
-        let (package, member) = if name.starts_with('%') && name.ends_with('%') {
-            (None, name)
-        } else {
-            crate::resolve::split_qualified(name)
-                .map_or((None, name), |(package, member)| (Some(package), member))
-        };
-        self.fns
-            .get(member)
-            .or_else(|| {
-                self.fns
-                    .iter()
-                    .find(|(name, _)| semantic_argument_name(name) == member)
-                    .map(|(_, function)| function)
-            })
-            .filter(|function| {
-                package.is_none_or(|package| function.source_package.as_deref() == Some(package))
-            })
-    }
-}
-
 impl Checker {
     pub(super) fn resolve_call_head(
         &self,
@@ -102,11 +77,11 @@ impl Checker {
         // An alias to pkg::f selects that namespace even though its raw head is
         // bare. Lexical binding/evidence below describes the raw call site's
         // environment, and cannot replace a qualified selection.
-        let qualified = !(semantic_name.starts_with('%') && semantic_name.ends_with('%'))
-            && crate::resolve::split_qualified(semantic_name).is_some();
+        let callee = Callee::parse(semantic_name);
+        let qualified = callee.is_qualified();
         let lexical_callable = !qualified && scope.is_lexical_function(lookup_name);
         let function = (!lexical_callable)
-            .then(|| self.fn_table.call_function(semantic_name))
+            .then(|| self.fn_table.functions.select(callee))
             .flatten()
             .cloned();
         let inherited = (!qualified)
@@ -123,7 +98,7 @@ impl Checker {
         // R selects the function before forcing its arguments. A write among
         // the actuals changes later calls, not this call's arity or return.
         let check_project_arguments = !qualified
-            && self.fn_table.has_single_contract(lookup_name)
+            && self.fn_table.functions.has_single_contract(lookup_name)
             && (scope.get(lookup_name).is_none()
                 || function.as_ref().is_some_and(|function| {
                     function.source_path == self.path
@@ -160,7 +135,10 @@ impl Checker {
     /// may have rebound.
     pub(super) fn declaration_helper(&self, name: &str, scope: &Scope) -> Option<&UserFn> {
         if let Some(span) = scope.lexical_definition(name) {
-            return self.fn_table.definition(&self.path, span);
+            return self
+                .fn_table
+                .functions
+                .get(&FunctionId::new(&self.path, span));
         }
         if scope.get(name).is_some() {
             return None;
@@ -175,14 +153,14 @@ impl Checker {
             return None;
         }
         let (path, start, end) = key;
-        self.fn_table.definition(
+        self.fn_table.functions.get(&FunctionId::new(
             path,
             Span {
                 start: *start,
                 end: *end,
                 ..Span::default()
             },
-        )
+        ))
     }
 
     /// Per actual, whether it binds a formal the called definition can never
@@ -230,7 +208,7 @@ impl Checker {
     /// project function may be passed by value or by name, and no call or
     /// operator may dispatch while the project defines methods.
     fn runs_only_stub_code(&self, function: &UserFn) -> bool {
-        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
+        let project_function = |name: &str| self.fn_table.functions.binds(name);
         let mut dispatches = false;
         let mut visit = |node: AstNode<'_>, _| {
             let closed = match node {
@@ -275,7 +253,7 @@ impl Checker {
     /// Whether any project function is named like a method of a typeshed or
     /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
     fn project_defines_methods(&self) -> bool {
-        self.fn_table.fns.keys().any(|name| {
+        self.fn_table.functions.names().any(|name| {
             let name = semantic_argument_name(name);
             name.starts_with("__s4__")
                 || name.match_indices('.').any(|(end, _)| {
@@ -335,7 +313,11 @@ impl Checker {
                         .target(&self.path, *definition)
                         .is_some_and(|decision| decision.signature.is_some())
             })
-            .and_then(|definition| self.fn_table.definition(&self.path, definition));
+            .and_then(|definition| {
+                self.fn_table
+                    .functions
+                    .get(&FunctionId::new(&self.path, definition))
+            });
         if exact.is_some() {
             return exact.cloned();
         }

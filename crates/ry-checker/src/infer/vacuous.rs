@@ -710,7 +710,7 @@ impl Checker {
             || scope
                 .get(name)
                 .is_some_and(|ty| !matches!(ty.mode, Mode::Function))
-            || !self.fn_table.fns.contains_key(name);
+            || !self.fn_table.functions.binds(name);
         if shadowed {
             return None;
         }
@@ -1045,11 +1045,11 @@ impl Checker {
 /// disqualifies.
 fn shadowed_map_callee(checker: &Checker, name: &str, scope: &Scope) -> bool {
     if name.contains("::") {
-        return checker.fn_table.fns.contains_key(name);
+        return checker.fn_table.functions.binds(name);
     }
     scope.is_lexical_function(name)
         || scope.get(name).is_some()
-        || checker.fn_table.fns.contains_key(name)
+        || checker.fn_table.functions.binds(name)
 }
 
 /// Whether a `map`-family call's arguments have the provenance shape:

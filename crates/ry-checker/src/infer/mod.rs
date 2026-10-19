@@ -688,7 +688,10 @@ impl Checker {
                     && ops_chooser::base_assignment(self, target, value, scope);
                 let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
                     let span = scope.lexical_definition(alias)?;
-                    self.fn_table.definition(&self.path, span).map(|_| span)
+                    self.fn_table
+                        .functions
+                        .get(&FunctionId::new(&self.path, span))
+                        .map(|_| span)
                 });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
@@ -1095,7 +1098,9 @@ impl Checker {
                 Some(e) => {
                     let _ = self.infer(e, &mut default_scope);
                     function_name
-                        .map(|function| self.diagnostic_parameter_type(function, p, params, e))
+                        .map(|function| {
+                            self.diagnostic_parameter_type(function, span, p, params, e)
+                        })
                         .unwrap_or_else(RType::unknown)
                 }
                 None => RType::unknown(),
@@ -1936,13 +1941,17 @@ impl Checker {
                 if !visited.insert(name.to_string()) {
                     return false;
                 }
-                let diverges = self.fn_table.fns.get(name).is_some_and(|function| {
-                    self.block_diverges_with_visited(
-                        &function.body,
-                        visited,
-                        DivergenceView::ReturnBlind,
-                    )
-                });
+                let diverges = self
+                    .fn_table
+                    .functions
+                    .live_named(name)
+                    .is_some_and(|function| {
+                        self.block_diverges_with_visited(
+                            &function.body,
+                            visited,
+                            DivergenceView::ReturnBlind,
+                        )
+                    });
                 visited.remove(name);
                 diverges
             }
@@ -2182,9 +2191,11 @@ impl Checker {
         );
     }
 
+    /// `function` names the literal at `span` in the current file.
     pub(crate) fn diagnostic_parameter_type(
         &self,
         function: &str,
+        span: Span,
         parameter: &Param,
         parameters: &[Param],
         default: &Expr,
@@ -2197,9 +2208,11 @@ impl Checker {
         }) else {
             return RType::unknown();
         };
-        let Some(call_sites) = self.fn_table.call_sites.get(function) else {
-            return RType::unknown();
-        };
+        let package = self.package_facts.source_package.as_deref();
+        let call_sites: Vec<_> = self
+            .fn_table
+            .project_call_sites(function, package)
+            .collect();
         if call_sites.is_empty() {
             return RType::unknown();
         }
@@ -2212,9 +2225,12 @@ impl Checker {
         });
         if omitted_somewhere {
             infer_literal_default(default)
-        } else if let Some(forwarded) =
-            self.forwarded_default_type(function, &parameter.name, index)
-        {
+        } else if let Some(forwarded) = self.forwarded_default_type(
+            function,
+            &FunctionId::new(&self.path, span),
+            &parameter.name,
+            index,
+        ) {
             forwarded
         } else {
             RType::unknown()
@@ -2224,11 +2240,23 @@ impl Checker {
     pub(crate) fn forwarded_default_type(
         &self,
         function: &str,
+        id: &FunctionId,
         parameter: &str,
         index: usize,
     ) -> Option<RType> {
         self.fn_table.forwarded_calls.iter().find_map(|call| {
-            if semantic_argument_name(&call.callee) != semantic_argument_name(function) {
+            let forwards_here = match Callee::parse(&call.stub_callee) {
+                Callee::Bare(_) => {
+                    semantic_argument_name(&call.callee) == semantic_argument_name(function)
+                }
+                // `pkg::f` reaches this literal only by selecting it.
+                callee => self
+                    .fn_table
+                    .functions
+                    .select(callee)
+                    .is_some_and(|selected| selected.id() == *id),
+            };
+            if !forwards_here {
                 return None;
             }
             let argument = call
@@ -2245,7 +2273,8 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
-            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+            let caller_fn = self.fn_table.functions.live_named(&call.caller);
+            if let Some(caller_fn) = caller_fn
                 && may_rebind_source_before(&caller_fn.body, source, call.call_start)
             {
                 return None;
@@ -2258,8 +2287,11 @@ impl Checker {
                         semantic_argument_name(&candidate.name) == semantic_argument_name(source)
                     })?;
             let source_default = source_parameter.default.as_ref()?;
-            let caller_sites = self.fn_table.call_sites.get(&call.caller)?;
-            let omitted = caller_sites.iter().any(|arguments| {
+            let caller_package = caller_fn.and_then(|caller| caller.source_package.as_deref());
+            let mut caller_sites = self
+                .fn_table
+                .project_call_sites(&call.caller, caller_package);
+            let omitted = caller_sites.any(|arguments| {
                 let exact = arguments
                     .iter()
                     .flatten()
@@ -2947,7 +2979,7 @@ impl Checker {
                 }
                 // User-defined function in the FnTable used as a
                 // value? Same treatment.
-                if self.fn_table.fns.contains_key(name) {
+                if self.fn_table.functions.binds(name) {
                     return if functions_shadowed_by_mask {
                         RType::unknown()
                     } else {
@@ -3512,7 +3544,7 @@ impl Checker {
             || (!self.discarding
                 && self.declarations.has_contracts()
                 && (scope.lexical_definition(target).is_some()
-                    || self.fn_table.fns.contains_key(target))))
+                    || self.fn_table.functions.binds(target))))
         .then(|| target.to_string())
     }
 

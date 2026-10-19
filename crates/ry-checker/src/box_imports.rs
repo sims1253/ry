@@ -836,7 +836,7 @@ impl Checker {
                     // Refinement starts from formals, without the module's
                     // lexical imports. It can borrow a base signature for a
                     // replaced name, so retain formals with an unknown return.
-                    nested.fn_table.fns.get(&name).map(|function| {
+                    nested.fn_table.functions.live_named(&name).map(|function| {
                         BoxCallable::Function(Arc::new(BoxFunction {
                             params: function.params.clone(),
                             return_type: if load.imports {

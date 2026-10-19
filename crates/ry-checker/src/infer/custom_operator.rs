@@ -18,9 +18,7 @@ impl Checker {
             self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings
         };
         let local = names.iter().find_map(|name| scope.get(name));
-        let project_function = names
-            .iter()
-            .any(|name| self.fn_table.fns.contains_key(*name));
+        let project_function = names.iter().any(|name| self.fn_table.functions.binds(name));
         let external = names.iter().any(|name| {
             self.imported_from
                 .get(*name)

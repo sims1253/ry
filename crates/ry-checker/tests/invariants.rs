@@ -305,3 +305,58 @@ fn fuzz_regression_unquote_does_not_panic_on_non_char_boundary() {
         assert!(src.is_char_boundary(span.end));
     }
 }
+
+/// `Mode::Opaque` means "unknown", and known environment or language values
+/// have their own modes. Production code asks the `Mode` predicates
+/// (`is_unknown`, `is_unknown_or_non_vector`, `may_be_function`, ...)
+/// instead of testing the variant, so a new kind cannot slip through a
+/// negative `matches!` list. Exhaustive `match` arms are still fine.
+#[test]
+fn production_code_tests_unknown_mode_through_predicates() {
+    fn rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).expect("read src dir") {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() && path.file_name().is_none_or(|name| name != "tests") {
+                rust_files(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    for krate in ["ry-checker", "ry-core", "ry-cli", "ry-lsp"] {
+        rust_files(&crates.join(krate).join("src"), &mut files);
+    }
+    let mut offenders = Vec::new();
+    for path in files
+        .iter()
+        .filter(|path| !path.ends_with("ry-core/src/types.rs"))
+    {
+        let src = fs::read_to_string(path).expect("read source");
+        let production = src.split("\n#[cfg(test)]\nmod ").next().unwrap_or_default();
+        for (start, _) in production.match_indices("matches!(") {
+            let mut depth = 0;
+            let end = production[start..]
+                .char_indices()
+                .find_map(|(i, c)| {
+                    depth += i32::from(c == '(') - i32::from(c == ')');
+                    (c == ')' && depth == 0).then_some(start + i)
+                })
+                .unwrap_or(production.len());
+            if production[start..end].contains("Mode::Opaque") {
+                offenders.push(format!("{}: {}", path.display(), &production[start..end]));
+            }
+        }
+        for line in production.lines() {
+            if line.contains("== Mode::Opaque") || line.contains("!= Mode::Opaque") {
+                offenders.push(format!("{}: {}", path.display(), line.trim()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "test `Mode` through its predicates:\n{}",
+        offenders.join("\n")
+    );
+}

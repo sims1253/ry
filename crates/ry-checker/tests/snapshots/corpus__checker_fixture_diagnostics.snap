@@ -63,6 +63,16 @@ expression: snapshots
   fixture: err_bom.R
 - diagnostics:
     - code: RY070
+      message: "could not find function `registry` (bound here as `environment`)"
+      severity: error
+      span:
+        column: 0
+        end: 178
+        line: 4
+        start: 168
+  fixture: err_call_environment_local.R
+- diagnostics:
+    - code: RY070
       message: "cannot call a value of mode `double`"
       severity: error
       span:
@@ -599,6 +609,40 @@ expression: snapshots
         line: 11
         start: 292
   fixture: err_is_null_narrowing_no_leak.R
+- diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `language` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 199
+        line: 4
+        start: 194
+    - code: RY040
+      message: "cannot apply arithmetic op to `language` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 219
+        line: 6
+        start: 214
+    - code: RY040
+      message: "cannot apply arithmetic op to `language` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 262
+        line: 8
+        start: 252
+    - code: RY040
+      message: "cannot apply arithmetic op to `union` and `double`"
+      severity: error
+      span:
+        column: 0
+        end: 311
+        line: 10
+        start: 306
+  fixture: err_language_arithmetic.R
 - diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `integer` and `character`"
@@ -2120,6 +2164,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_dynamic_list_extract.R
 - diagnostics: []
+  fixture: ok_environment_kind_idioms.R
+- diagnostics: []
   fixture: ok_exact_then_partial_argument_match.R
 - diagnostics: []
   fixture: ok_factor_character_compare.R
@@ -2193,6 +2239,8 @@ expression: snapshots
   fixture: ok_is_function_guard.R
 - diagnostics: []
   fixture: ok_is_null_guard_narrowing.R
+- diagnostics: []
+  fixture: ok_language_kind_idioms.R
 - diagnostics: []
   fixture: ok_lapply_list_arith.R
 - diagnostics: []

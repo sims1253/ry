@@ -39,7 +39,9 @@ includes this entry:
 Positions are 1-based `[row, column]` pairs; columns count characters,
 not bytes. Scopes are ordered by start position, bindings by name.
 `unknown` marks bindings whose types ry could not infer. It does not cause
-the command to fail.
+the command to fail. Known environments and language objects print as
+`environment<...>` and `language<...>`, for example `e <- new.env()` and
+`q <- quote(a + b)`.
 
 Binding kinds:
 

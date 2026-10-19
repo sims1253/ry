@@ -807,3 +807,14 @@ fn plain_new_classes_do_not_gain_object_dispatch() {
         assert_eq!(output.trim(), "TRUE", "{class}");
     }
 }
+
+#[test]
+fn environment_constructors_match_r_oracle() {
+    if !rscript_available() {
+        return;
+    }
+    for constructor in semantic_lists::ENVIRONMENT_CONSTRUCTORS {
+        let output = r_eval(&format!("cat(is.environment(base::{constructor}()))"));
+        assert_eq!(output.trim(), "TRUE", "{constructor}");
+    }
+}

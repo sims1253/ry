@@ -67,6 +67,17 @@ All notable changes to ry are documented in this file.
   character endpoints (`1:"a"` errors at the `:`) and `:` under a
   user-defined `` `:` ``. A user-defined unary `-` or `!` now makes its
   result unknown (#648).
+- Separate unknown values from known environments and language objects.
+  `quote(<symbol or call>)` builds a classless language value, so
+  `q <- quote(a + b); q * 2` now reports RY040 unless an operand may select
+  an `Ops` method. `new.env()`, `globalenv()`, `emptyenv()`, `baseenv()`
+  and two-sided formulas build values of unknown class and stay quiet in
+  arithmetic. Calling a local environment or language binding reports
+  RY070 when no function of that name exists, and otherwise resolves the
+  function past it. `dump-facts` exports the new `mode` values
+  `environment` and `language`, without a schema bump; `dump-types`,
+  hovers and inlay hints show them where they used to show `unknown`
+  (#648).
 
 ### Fixed
 

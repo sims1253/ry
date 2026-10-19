@@ -3,10 +3,7 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
 
 fn atomic_mode(member: &RType) -> bool {
-    matches!(
-        member.mode,
-        Mode::Integer | Mode::Double | Mode::Character | Mode::Logical | Mode::Complex | Mode::Raw
-    ) && member.columns.is_none()
+    member.mode.is_atomic() && member.columns.is_none()
 }
 
 /// Whether a `[` receiver is table-shaped, making its index arguments
@@ -24,7 +21,8 @@ fn atomic_mode(member: &RType) -> bool {
 /// eagerly and keep the eager diagnostics — `flights[month == 6L]` on a
 /// base data.frame errors at runtime when `month` is a closure.
 fn table_index_receiver(bt: &RType) -> bool {
-    !bt.class.contains("matrix") && (bt.class.contains("data.table") || bt.mode == Mode::Opaque)
+    !bt.class.contains("matrix")
+        && (bt.class.contains("data.table") || bt.mode.is_unknown_or_non_vector())
 }
 
 /// A light table mask: the receiver is opaque without column knowledge,
@@ -40,10 +38,9 @@ fn light_table_mask(scope: &Scope) -> bool {
 /// for other types return a length-1 value of the base mode. A union base
 /// would build a malformed union, so it degrades to opaque.
 fn conservative_element_type(bt: &RType) -> RType {
-    if matches!(
-        bt.mode,
-        Mode::List | Mode::Opaque | Mode::Function | Mode::Union
-    ) {
+    if bt.mode.is_unknown_or_non_vector()
+        || matches!(bt.mode, Mode::List | Mode::Function | Mode::Union)
+    {
         RType::unknown()
     } else {
         RType::new(bt.mode, Length::One)
@@ -366,7 +363,7 @@ impl Checker {
                 {
                     return result;
                 }
-                if bt.mode == Mode::Opaque {
+                if bt.mode.is_unknown_or_non_vector() {
                     RType::unknown()
                 } else {
                     bt
@@ -565,7 +562,7 @@ fn base_subscript_receiver(receiver: &RType) -> bool {
         Mode::List => classless || receiver.class == ClassVector::single("data.frame"),
         // NULL and functions are never data.table receivers.
         Mode::Null | Mode::Function => true,
-        Mode::Opaque => false,
+        Mode::Opaque | Mode::Environment | Mode::Language => false,
         Mode::Union => receiver.members.as_ref().is_some_and(|members| {
             !members.is_empty() && members.iter().all(base_subscript_receiver)
         }),

@@ -365,7 +365,7 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
                 Evidence::Incompatible
             }
         }
-        _ if ty.mode == Mode::Opaque => Evidence::Insufficient,
+        _ if ty.mode.is_unknown_or_non_vector() => Evidence::Insufficient,
         TypeExpr::Unknown => Evidence::Insufficient,
         TypeExpr::Union(alternatives) => {
             combine_any(alternatives.iter().map(|part| compare(ty, part)))

@@ -1133,8 +1133,8 @@ pub(crate) struct FnTable {
     // project refinement, without broadening other syntax proof guards.
     pub(crate) has_escaped_operator_names: bool,
     pub(crate) has_escaped_slot_names: bool,
-    // Some project code names `load`, `source`, `list2env` or another
-    // frame-reflective function, which may install any binding anywhere:
+    // Some project code names a binding installer (`load`, `source`,
+    // `list2env`, `eval`, ...), which may replace any binding anywhere:
     // call contracts (#646) are then off project-wide.
     pub(crate) may_install_bindings: bool,
     // `(generic, class)` -> return slot index. Mirrors the same

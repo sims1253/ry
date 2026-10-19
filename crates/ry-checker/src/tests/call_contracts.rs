@@ -33,6 +33,11 @@ fn a_one_operation_body_demands_its_formal_at_call_sites() {
             "g <- function() f('a'); f <- function(x) x + 1L; g()",
             "an operand of `+`",
         ),
+        // Frame readers and fresh environments install nothing elsewhere.
+        (
+            "p <- function(x) UseMethod('p'); q <- function() get('p', envir = environment()); r <- local({ n <- 1L; n }); f <- function(x) x + 1L; f('oops')",
+            "an operand of `+`",
+        ),
     ] {
         let errors = contract_errors(source);
         assert!(
@@ -92,6 +97,8 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         "f <- function(x) x + 1L; list2env(list(f = paste), envir = .GlobalEnv); f('a')",
         "f <- function(x) x + 1L; k <- function() eval.parent(quote(f <- paste)); k(); f('a')",
         "f <- function(x) x + 1L; do.call('load', list('p.RData')); f('a')",
+        "f <- function(x) x + 1L; k <- function(n) assign(n, paste, envir = globalenv()); k('f'); f('a')",
+        "f <- function(x) x + 1L; e <- globalenv(); e$f <- paste; f('a')",
         // S8: a default runs in the frame another default rebinds.
         "f <- function(x) x + 1L; h <- function(y = { z; f('a') }, z = { f <- paste; NULL }) y",
         "f <- function(x) x + 1L; h <- function(y = function() f('a'), z = { f <- paste; NULL }) y",

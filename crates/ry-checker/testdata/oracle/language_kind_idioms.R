@@ -32,3 +32,21 @@ for (p in c(TRUE, FALSE)) {
 }
 # `sapply()` keeps language results in a list.
 stopifnot(is.list(sapply(1:2, function(i) quote(a))))
+# ... including language values inside unions and record fields.
+for (p in c(TRUE, FALSE)) {
+  member <- if (p) quote(a + b) else "x"
+  oldClass(member) <- "foo"
+  stopifnot(identical(member + 1, "dispatched"))
+  member <- if (p) quote(a + b) else "x"
+  attributes(member) <- list(class = "foo")
+  stopifnot(identical(member + 1, "dispatched"))
+}
+record <- list(q = quote(a + b))
+class(record$q) <- "foo"
+stopifnot(identical(record$q + 1, "dispatched"))
+record <- list(q = quote(a + b))
+oldClass(record$q) <- "foo"
+stopifnot(identical(record$q + 1, "dispatched"))
+record <- list(q = quote(a + b))
+attr(record$q, "class") <- "foo"
+stopifnot(identical(record$q + 1, "dispatched"))

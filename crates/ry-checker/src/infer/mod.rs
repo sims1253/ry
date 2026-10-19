@@ -549,6 +549,20 @@ fn carries_zero_length_leaf(t: &RType) -> bool {
     }
 }
 
+/// Whether a language value occurs anywhere in the type: the value itself, a
+/// union member, or a record field.
+fn contains_language(ty: &RType) -> bool {
+    ty.mode == Mode::Language
+        || ty
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(contains_language))
+        || ty
+            .columns
+            .as_ref()
+            .is_some_and(|schema| schema.columns.iter().any(|(_, ty)| contains_language(ty)))
+}
+
 /// Whether every possible mode of the value is a list — a plain list or a
 /// union whose members are all lists (the join of two differently-shaped
 /// list branches).
@@ -2299,6 +2313,25 @@ impl Checker {
             // Replacement functions may install bindings in the caller.
             scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
+        }
+        // A replacement call may attach a class to a language value nested
+        // in a union member or a record field, where the precise forms below
+        // cannot follow it. Its root loses every classless-language proof.
+        if let Expr::Call { args, .. } = target
+            && let Some(receiver) = args.first().map(|arg| &arg.value)
+        {
+            let mut root = receiver;
+            while let Expr::Index { base, .. } = root {
+                root = base;
+            }
+            if let Expr::Ident { name, .. } = root
+                && scope.get(name).is_some_and(|ty| {
+                    !(std::ptr::eq(root, receiver) && ty.mode == Mode::Language)
+                        && contains_language(ty)
+                })
+            {
+                scope.insert(name.clone(), RType::unknown());
+            }
         }
 
         if self.assign_class_attribute(target, class_write, scope)

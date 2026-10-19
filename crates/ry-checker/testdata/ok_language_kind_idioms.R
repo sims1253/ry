@@ -42,3 +42,22 @@ local({
 })
 with_default <- function(x = quote(x)) x + 1
 with_default(1)
+# A replacement reaches language values inside unions and record fields.
+union_classed <- if (runif(1) > 0.5) quote(a + b) else "x"
+oldClass(union_classed) <- "foo"
+union_classed + 1
+union_attributes <- if (runif(1) > 0.5) quote(a + b) else "x"
+attributes(union_attributes) <- list(class = "foo")
+union_attributes + 1
+union_class <- if (runif(1) > 0.5) quote(a + b) else "x"
+class(union_class) <- "foo"
+union_class + 1
+record <- list(q = quote(a + b))
+class(record$q) <- "foo"
+record$q + 1
+old_record <- list(q = quote(a + b))
+oldClass(old_record$q) <- "foo"
+old_record$q + 1
+attr_record <- list(q = quote(a + b))
+attr(attr_record$q, "class") <- "foo"
+attr_record$q + 1

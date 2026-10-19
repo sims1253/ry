@@ -206,3 +206,15 @@ fn a_masked_registration_helper_leaves_every_generic_unknown() {
     }
     assert_eq!(selected(CHR_NUM, "g(new(\"A\"), 2)").1, Mode::Integer);
 }
+
+#[test]
+fn a_masked_helper_leaves_a_registered_generic_unknown_for_any_class() {
+    // The masked `signature("Q")` registers `length` for `A` in R.
+    let source = "setClass(\"A\", representation(v = \"numeric\"))\n\
+        signature <- function(...) methods::signature(\"A\")\n\
+        setMethod(\"length\", signature(\"Q\"), function(x) \"chr\")\n\
+        n <- length(new(\"A\"))\n";
+    let (diagnostics, scope) = check_with_scope(source);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(scope.get("n").unwrap().mode, Mode::Opaque);
+}

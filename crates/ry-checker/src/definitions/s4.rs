@@ -226,7 +226,7 @@ impl Definitions {
             .arg_types
             .iter()
             .any(|actual| actual.class.first().is_some());
-        if !(generic.incomplete && classed)
+        if !((generic.incomplete || self.s4.all_incomplete) && classed)
             && !generic
                 .methods
                 .iter()

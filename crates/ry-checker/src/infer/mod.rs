@@ -10,6 +10,7 @@ pub(crate) use types::*;
 mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
+mod call_effect;
 mod callee;
 #[cfg(test)]
 mod cloned_scope_reference;
@@ -1449,7 +1450,7 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        if !scope.uncertainty.dynamic_bindings && self.body_may_replace_bindings(body, scope) {
+        if !scope.uncertainty.dynamic_bindings && self.loop_body_may_replace_bindings(body, scope) {
             scope.invalidate_scalar_assertions();
         }
     }

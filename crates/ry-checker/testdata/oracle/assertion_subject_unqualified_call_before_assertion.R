@@ -1,7 +1,6 @@
-# oracle: must-warn RY032
-# Conservative boundary: an unqualified call before the assertion may have
-# installed an active binding for `x`, so the assertion proves nothing, even
-# though message() is harmless here.
+# oracle: must-pass
+# A literal base message() before the assertion runs no project code here,
+# so the assertion still proves `x` NULL or scalar for the later `||`.
 f <- function(x) {
   message("checking")
   stopifnot(is.null(x) || length(x) == 1L)

@@ -14,13 +14,6 @@ pub(crate) struct WriteSet {
 }
 
 impl WriteSet {
-    pub(crate) fn unknown() -> Self {
-        Self {
-            opaque: true,
-            ..Self::default()
-        }
-    }
-
     pub(crate) fn may_write(&self, name: &str) -> bool {
         self.opaque || self.names.contains(name)
     }
@@ -231,63 +224,6 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
             _ => {}
         },
     }
-}
-
-/// Bindings that running a function can replace outside its own frame:
-/// its plain `<<-` targets. Anything that may run other code makes the
-/// effect unknown: a call, operator, or index (each may dispatch or force
-/// an active binding), a read of anything but a formal, or a complex
-/// assignment target. Defaults are included because forcing one runs it.
-pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
-    let formals: FxSet<&str> = params
-        .iter()
-        .map(|param| semantic_argument_name(&param.name))
-        .collect();
-    let mut writes = WriteSet::default();
-    let policy = Walk {
-        assign_targets: false,
-        assign_operands: false,
-        ..FRAME_WALK
-    };
-    let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
-        let opaque = match node {
-            AstNode::Stmt(Stmt::Assign { target, .. }) => binding_name(target).is_none(),
-            AstNode::Expr(Expr::BinOp {
-                op: op @ (BinOpKind::Assign | BinOpKind::SuperAssign),
-                lhs,
-                ..
-            }) => {
-                if *op == BinOpKind::SuperAssign && binding_name(lhs).is_some() {
-                    writes.insert_name(target_name(lhs));
-                }
-                binding_name(lhs).is_none()
-            }
-            AstNode::Expr(Expr::Ident { name, .. }) => {
-                !formals.contains(semantic_argument_name(name))
-            }
-            AstNode::Expr(
-                Expr::Call { .. }
-                | Expr::BinOp { .. }
-                | Expr::UnaryOp { .. }
-                | Expr::Index { .. }
-                | Expr::Unknown(_),
-            ) => true,
-            _ => false,
-        };
-        if opaque {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(Descend::Into)
-        }
-    };
-    let unsummarized = params
-        .iter()
-        .filter_map(|param| param.default.as_ref())
-        .any(|default| walk_expr(default, policy, &mut visit).is_break())
-        || walk_stmts(body, policy, &mut visit).is_break();
-    // An undecodable `<<-` target already marked the set opaque.
-    writes.opaque |= unsummarized;
-    writes
 }
 
 /// Names that forcing a default may bind in the function's own frame.
@@ -670,7 +606,6 @@ impl Checker {
         body: Vec<Stmt>,
         span: Span,
     ) -> usize {
-        let outward_writes = Arc::new(OnceLock::new());
         let source_params = Arc::from(params.to_vec());
         // A forced default may assign a sibling formal, which a later read
         // then sees instead of the missing argument.
@@ -718,7 +653,6 @@ impl Checker {
             source_native_path: self.native_path.clone(),
             definition_span: span,
             body,
-            outward_writes,
             return_slot: slot,
         };
         if let Some(prev_slot) = fn_table.insert_fn(name.clone(), function) {
@@ -1732,17 +1666,6 @@ mod collect_walker_tests {
                 .is_some_and(|function| function.params[0].name == "x")
         );
         assert_eq!(table.fns["f"].params[0].name, "y");
-    }
-
-    #[test]
-    fn unannotated_collection_does_not_build_helper_effect_summaries() {
-        let statements = parse_stmts("f <- function() { g <<- 1L }");
-        let mut checker = Checker::new("lazy-effect.R");
-        checker.collect_fns(&statements);
-        let function = &checker.fn_table.fns["f"];
-        assert!(function.outward_writes.get().is_none());
-        assert!(function.outward_writes().names.contains("g"));
-        assert!(function.outward_writes.get().is_some());
     }
 
     #[test]

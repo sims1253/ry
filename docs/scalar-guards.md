@@ -60,13 +60,40 @@ still fake the proof for a value of unknown class. The rest
 of an `&&` assertion may use only literals, the subject, other local values,
 and base comparisons.
 
-Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
-`is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, and the
-`is.character`-style type predicates. Any other call, including a generic,
-closure, formal, box call, or callback-taking function, ends it, and so does
-a replacement or subassignment. Such a call before the assertion also keeps
+Scalar facts and adopted declaration identities
+([declarations](declarations.md#shared-checking-boundary)) share one call
+rule. Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
+`is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, the
+`is.character`-style type predicates, and `message` with only character
+literal arguments. Each must resolve to base, and the project must not
+define or import a method for a generic the call dispatches internally:
+`length`, `is.na`, `nchar`, and `is.numeric` for themselves; `anyNA`,
+`is.na`, `all`, or the `Summary` group for a `stopifnot` predicate that is
+not a plain logical expression (a comparison, `&&`, `||`, `!`, an `is.*`
+call, or a logical literal); and `conditionMessage` for `message`. For
+`message`, only arguments named exactly `domain` or `appendLF` are controls
+and must be literals; every other argument, named or not, is payload and
+must be a character string, and a forwarded `...` is refused.
+`stopifnot` with `exprs` or `exprObject` evaluates quoted code and keeps
+nothing.
+
+Any other call, including every user-defined function, a generic, formal,
+box call, or callback-taking function, ends the fact, and so does a
+replacement or subassignment. Such a call before the assertion also keeps
 it from proving anything in that frame, and in a loop it taints the whole
 repeated body. Before the assertion only, base `I()` and a `pkg::fn` call
 into another package are exempt: an external package deliberately
-installing an active binding for its caller's variable is not modelled. A harmless call therefore leaves the RY032 warning ry gave
-before this proof existed.
+installing an active binding for its caller's variable is not modelled. A
+harmless call therefore leaves the RY032 warning ry gave before this proof
+existed.
+
+Code that runs while an allowed call executes, but is established outside
+the current frame, is not modelled: a caller's calling handlers or restarts
+(`message()` signals a condition, `is.na(function() NULL)` warns, and a
+partial argument match warns under `options(warnPartialMatchArgs = TRUE)`),
+hooks, finalizers, external active bindings, and promise code a caller
+supplied for a formal that an allowed call forces. Such code reaches this
+frame's bindings only through frame reflection (`sys.frames()`,
+`sys.frame()`, `parent.frame(n)`). The oracle fixtures
+`known_gap_outer_calling_handler.R` and `known_gap_promise_reaches_frame.R`
+pin this boundary.

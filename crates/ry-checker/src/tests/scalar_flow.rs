@@ -143,13 +143,18 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
         "is.na(x)",
         "identical(x, 1L)",
         "g <- function() assign('x', c(1L, 2L), envir = parent.frame())",
+        // A literal message runs no project code without a
+        // conditionMessage method.
+        "message('checked')",
+        "message('checked', appendLF = FALSE)",
     ] {
         assert!(!warns_ry032(&asserted_then(between)), "{between}");
     }
     // Every other call may install a binding, even when it is harmless.
     for between in [
         "assign('x', c(1L, 2L))",
-        "message('checked')",
+        "message(x)",
+        "message('checked', appendL = FALSE)",
         "print(x)",
         "as.character(x)",
         "do.call(identity, list(1L))",
@@ -174,11 +179,9 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
     // unless it is base `I()` or a call into another package's namespace.
     let guard = "stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }";
     for before in [
-        "message('start')",
         "helper()",
         "own::helper()",
         "pkg::run(function() NULL)",
-        "base::message('start')",
         // Every package sharing the base stub database counts as base.
         "graphics::plot.new()",
         "grDevices::dev.off()",
@@ -189,6 +192,8 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
     for before in [
         "I('a')",
         "lifecycle::deprecate_warn('1.0.0', 'f()', I('g()'))",
+        "message('start')",
+        "base::message('start')",
     ] {
         let source = format!("{helper}f <- function(x = 1L) {{ {before}; {guard}");
         assert!(!warns_ry032(&source), "{before}");

@@ -1,0 +1,389 @@
+//! What one call may do to the bindings its caller observes. This is the only
+//! place scalar facts (docs/scalar-guards.md) and adopted declaration
+//! identities (docs/declarations.md) learn about a call's frame effect.
+
+use super::call::callee_name;
+use super::*;
+use crate::semantic_lists::{
+    LITERAL_MESSAGE_CALLS, SCALAR_FACT_SAFE_CALLS, bare_name, frame_effect_dispatch_closure,
+};
+use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
+use std::ops::ControlFlow;
+
+/// What one call may do to bindings its caller observes, ordered
+/// `None < ForcesPromises < RebindsAny < Unknown`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CallEffect {
+    /// An audited base call whose actuals read no formal.
+    None,
+    /// An audited base call with an actual that may force a formal's
+    /// promise. Promise code runs in the frame that supplied it: it can
+    /// rebind names this frame resolves outward, but reaches this frame's
+    /// own bindings only through frame reflection, which is not modelled.
+    ForcesPromises,
+    /// An exported external `pkg::fn` or base `I()`: it may assign ordinary
+    /// values, but is trusted not to install active or delayed bindings.
+    RebindsAny,
+    /// Everything else, including every user-function call.
+    Unknown,
+}
+
+impl CallEffect {
+    /// Whether current scalar facts survive the call.
+    pub(crate) fn keeps_scalar_facts(self) -> bool {
+        self <= CallEffect::ForcesPromises
+    }
+}
+
+impl Checker {
+    /// Classify a call before its arguments run (R fixes the head first).
+    /// Pure in the AST, the scope's bindings, and the project tables: it
+    /// reads neither `discarding` nor declaration state, so every pass and
+    /// configuration gets the same answer.
+    pub(crate) fn call_effect(&self, func: &Expr, args: &[Arg], scope: &Scope) -> CallEffect {
+        let Some(name) = callee_name(func) else {
+            return CallEffect::Unknown;
+        };
+        if self.audited_base_call(&name, args, scope) {
+            if args.iter().any(|arg| reads_formal(&arg.value, scope)) {
+                CallEffect::ForcesPromises
+            } else {
+                CallEffect::None
+            }
+        } else if self.trusted_external_call(&name, args, scope) {
+            CallEffect::RebindsAny
+        } else {
+            CallEffect::Unknown
+        }
+    }
+
+    /// The only writer of call-driven invalidation for both fact families.
+    pub(crate) fn apply_call_effect(&self, effect: CallEffect, scope: &mut Scope) {
+        if effect == CallEffect::None {
+            return;
+        }
+        // A frame that already refuses facts has none left to drop.
+        if !scope.uncertainty.dynamic_bindings {
+            match effect {
+                CallEffect::Unknown => scope.invalidate_scalar_assertions(),
+                CallEffect::RebindsAny => scope.clear_scalar_assertions(),
+                CallEffect::None | CallEffect::ForcesPromises => {}
+            }
+        }
+        self.invalidate_declaration_identities(scope);
+    }
+
+    /// A short-circuit RHS runs in this frame on a cloned scope. Every
+    /// declaration identity its effects dropped is gone here too.
+    pub(crate) fn merge_condition_identities(&self, scope: &mut Scope, evaluated: &Scope) {
+        if self.discarding || !self.declarations.has_contracts() {
+            return;
+        }
+        // Guard narrowing also drops a clone's lexical definition, but leaves
+        // the narrowed marker that a later write would have cleared.
+        let lost: Vec<String> = scope
+            .lexical_definitions
+            .iter()
+            .filter(|(name, span)| {
+                evaluated.lexical_definitions.get(*name) != Some(*span)
+                    && !evaluated.narrowed_bindings.contains(*name)
+            })
+            .map(|(name, _)| name.clone())
+            .chain(
+                self.adopted_function_names()
+                    .filter(|name| evaluated.get(name).is_some() && scope.get(name).is_none()),
+            )
+            .collect();
+        for name in lost {
+            scope.insert(name, RType::unknown());
+        }
+    }
+
+    /// Whether any call or replacement assignment in `body` (outside nested
+    /// function bodies) may replace a binding, judged against the loop's
+    /// entry scope.
+    pub(crate) fn loop_body_may_replace_bindings(&self, body: &[Stmt], scope: &Scope) -> bool {
+        let policy = Walk {
+            fn_bodies: false,
+            ..Walk::ALL
+        };
+        walk_stmts(body, policy, |node, _| match node {
+            AstNode::Expr(Expr::Call { func, args, .. })
+                if !self.call_effect(func, args, scope).keeps_scalar_facts() =>
+            {
+                ControlFlow::Break(())
+            }
+            AstNode::Stmt(Stmt::Assign { target, .. }) if binding_name(target).is_none() => {
+                ControlFlow::Break(())
+            }
+            AstNode::Expr(Expr::BinOp {
+                op: BinOpKind::Assign | BinOpKind::SuperAssign,
+                lhs,
+                ..
+            }) if binding_name(lhs).is_none() => ControlFlow::Break(()),
+            _ => ControlFlow::Continue(Descend::Into),
+        })
+        .is_break()
+    }
+
+    /// An R-audited base call that runs no project code. Each entry names
+    /// the generics it may dispatch internally; a project or imported
+    /// method for any of them could run arbitrary code.
+    fn audited_base_call(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
+        let bare = bare_name(name);
+        let Some(closure) = frame_effect_dispatch_closure(bare) else {
+            return false;
+        };
+        if !self.resolves_to_base_lenient(name, scope) {
+            return false;
+        }
+        let dispatch_free = !closure
+            .iter()
+            .any(|generic| self.project_defines_frame_effect_method(generic));
+        if LITERAL_MESSAGE_CALLS.contains(&bare) {
+            return dispatch_free && literal_message_arguments(args);
+        }
+        if bare == "stopifnot" {
+            // `exprs`/`exprObject` evaluate quoted code the walk never sees.
+            // A plain logical predicate reaches none of its dispatch closure.
+            return !stopifnot_evaluates_quoted(args)
+                && (dispatch_free
+                    || args
+                        .iter()
+                        .filter(|arg| stopifnot_predicate_arg(arg))
+                        .all(|arg| self.plain_logical(&arg.value, scope)));
+        }
+        dispatch_free
+    }
+
+    /// A predicate whose value is an unclassed logical, so `stopifnot`'s
+    /// own `anyNA`/`all` calls cannot dispatch on it.
+    fn plain_logical(&self, expr: &Expr, scope: &Scope) -> bool {
+        match expr {
+            Expr::Logical(..) => true,
+            Expr::BinOp { op, .. } if matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr) => {
+                !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+            }
+            Expr::BinOp { op, .. } if is_comparison(*op) => {
+                !ops_chooser::operator_rebound(self, op_symbol(*op), scope)
+                    && !self.project_defines_comparison_method()
+            }
+            Expr::UnaryOp {
+                op: UnaryOpKind::Not,
+                expr,
+                ..
+            } => {
+                !ops_chooser::operator_rebound(self, "!", scope) && self.plain_logical(expr, scope)
+            }
+            Expr::Call { func, .. } => callee_name(func).is_some_and(|name| {
+                let bare = bare_name(&name);
+                bare.starts_with("is.")
+                    && SCALAR_FACT_SAFE_CALLS.contains(&bare)
+                    && self.resolves_to_base_lenient(&name, scope)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Calls that end current scalar facts but still let a later assertion
+    /// prove one: base `I()`, and a call into another package's namespace.
+    /// This trades soundness for the common deprecation or validation call
+    /// at the top of a function: an external package that deliberately
+    /// installs an active binding for its caller's variable is not modelled.
+    fn trusted_external_call(&self, name: &str, args: &[Arg], scope: &Scope) -> bool {
+        let callee = if bare_name(name) == "I" {
+            self.resolves_to_base_lenient(name, scope)
+        } else if let Some((package, member)) = crate::resolve::split_qualified(name)
+            && !name.contains(":::")
+        {
+            // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
+            !crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
+                && !self.fn_table.fns.contains_key(member)
+                && !self.known_vars.contains(member)
+                && !ops_chooser::operator_rebound(self, "::", scope)
+        } else {
+            false
+        };
+        // Nested calls classify themselves. A closure, or a name that may
+        // hold one, could run later; only a value of known non-function
+        // mode is safe to pass.
+        callee
+            && args.iter().all(|arg| match &arg.value {
+                Expr::Function { .. } => false,
+                Expr::Ident { name, .. } => {
+                    scope.get(name).is_some_and(|ty| {
+                        !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+                    }) && !self.fn_table.fns.contains_key(name)
+                }
+                _ => true,
+            })
+    }
+}
+
+/// `message(..., domain = NULL, appendLF = TRUE)` matches formals after
+/// `...` exactly, so only those exact names are controls; every other
+/// actual is payload. A character literal payload needs no `as.character`
+/// dispatch, and a forwarded `...` may carry anything.
+fn literal_message_arguments(args: &[Arg]) -> bool {
+    args.iter()
+        .all(|arg| match (arg.name.as_deref(), &arg.value) {
+            (Some("domain"), value) => {
+                matches!(value, Expr::Null(_) | Expr::Na(..) | Expr::String(..))
+            }
+            (Some("appendLF"), value) => matches!(value, Expr::Logical(..)),
+            (_, value) => matches!(value, Expr::String(..)),
+        })
+}
+
+/// Whether evaluating `expr` may force a promise: it reads this frame's or
+/// an enclosing frame's formal, or forwards `...`.
+fn reads_formal(expr: &Expr, scope: &Scope) -> bool {
+    walk_expr(expr, Walk::ALL, |node, _| match node {
+        AstNode::Expr(Expr::Ident { name, .. }) if is_formal(name, scope) => ControlFlow::Break(()),
+        _ => ControlFlow::Continue(Descend::Into),
+    })
+    .is_break()
+}
+
+fn is_formal(name: &str, scope: &Scope) -> bool {
+    let semantic = semantic_argument_name(name);
+    semantic == "..."
+        || semantic
+            .strip_prefix("..")
+            .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+        || scope
+            .parameter_bindings
+            .iter()
+            .any(|parameter| semantic_argument_name(parameter) == semantic)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ry_config::config::ScopedPaths;
+
+    /// Classify every top-level call statement of `source`, with `x` a
+    /// formal of the classifying frame.
+    fn classify(checker: &Checker, source: &str) -> Vec<CallEffect> {
+        let file = crate::tests::parse_file("call-effect.R", source);
+        let mut scope = Scope::default();
+        scope.insert_parameter("x", RType::unknown());
+        file.stmts
+            .iter()
+            .filter_map(|statement| match statement {
+                Stmt::Expr(Expr::Call { func, args, .. }) => {
+                    Some(checker.call_effect(func, args, &scope))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn checker_for(source: &str) -> Checker {
+        let file = crate::tests::parse_file("call-effect.R", source);
+        let mut checker = Checker::new("call-effect.R");
+        checker.collect_fns(&file.stmts);
+        checker
+    }
+
+    #[test]
+    fn audited_calls_are_the_only_inert_ones() {
+        use CallEffect::*;
+        let checker = checker_for("noop <- function() NULL\n");
+        let calls = "length('a')\nlength(x)\nstopifnot(TRUE)\nstopifnot(exprs = TRUE)\nnoop()\n(function() 1L)()\nlifecycle::deprecate_warn('1.0.0', 'f()')\nI('a')\nI(function() 1L)\nsum(1:3)\nmatch.arg(x)\nbase::message('hi')\n";
+        assert_eq!(
+            classify(&checker, calls),
+            vec![
+                None,
+                ForcesPromises,
+                None,
+                Unknown,
+                Unknown,
+                Unknown,
+                RebindsAny,
+                RebindsAny,
+                Unknown,
+                Unknown,
+                Unknown,
+                None,
+            ]
+        );
+        assert!(None < ForcesPromises && ForcesPromises < RebindsAny && RebindsAny < Unknown);
+        assert!(ForcesPromises.keeps_scalar_facts() && !RebindsAny.keeps_scalar_facts());
+    }
+
+    #[test]
+    fn message_matches_controls_exactly_and_needs_literal_payload() {
+        let checker = checker_for("");
+        for (call, inert) in [
+            ("message('hi')", true),
+            ("message('a', 'b', appendLF = TRUE)", true),
+            ("message('hi', domain = NA)", true),
+            ("message('hi', domain = NULL, appendLF = FALSE)", true),
+            ("message(payload = 'hi')", true),
+            ("message(obj)", false),
+            ("message(payload = obj)", false),
+            ("message('hi', appendL = FALSE)", false),
+            ("message('hi', appendLF = flag)", false),
+            ("message('hi', domain = d)", false),
+            ("message(...)", false),
+            ("message(1L)", false),
+        ] {
+            assert_eq!(
+                classify(&checker, call),
+                vec![if inert {
+                    CallEffect::None
+                } else {
+                    CallEffect::Unknown
+                }],
+                "{call}"
+            );
+        }
+        let screened = checker_for("conditionMessage.simpleMessage <- function(c) 'm'\n");
+        assert_eq!(
+            classify(&screened, "message('hi')"),
+            vec![CallEffect::Unknown]
+        );
+    }
+
+    #[test]
+    fn dispatch_closures_screen_only_their_own_generics() {
+        let checker = checker_for("anyNA.probe <- function(x, recursive = FALSE) FALSE\n");
+        assert_eq!(
+            classify(
+                &checker,
+                "stopifnot(y)\nstopifnot(is.null(y) || y > 0L)\nlength(y)\nnchar('a')\n"
+            ),
+            vec![
+                CallEffect::Unknown,
+                CallEffect::None,
+                CallEffect::None,
+                CallEffect::None,
+            ]
+        );
+        let checker = checker_for("length.probe <- function(x) 1L\n");
+        assert_eq!(
+            classify(&checker, "length(y)\nnchar('a')\n"),
+            vec![CallEffect::Unknown, CallEffect::None]
+        );
+    }
+
+    #[test]
+    fn classification_ignores_pass_mode_and_adopted_records() {
+        let source = "f <- function(x) {\n  #| x integer\n  x\n}\nnoop <- function() NULL\n";
+        let calls = "f('a')\nnoop()\nlength(x)\nmessage('hi')\nis.null(NULL)\npkg::run()\n";
+        let file = crate::tests::parse_file("call-effect.R", source);
+        let mut plain = checker_for(source);
+        let mut adopted = checker_for(source);
+        let scope = ScopedPaths::new(std::path::Path::new("."), &["**".into()]).unwrap();
+        adopted.set_declaration_records(crate::typehint::read_records(&file, &scope));
+        assert!(adopted.declarations.has_contracts());
+        let expected = classify(&plain, calls);
+        for checker in [&mut plain, &mut adopted] {
+            for discarding in [false, true] {
+                checker.discarding = discarding;
+                assert_eq!(classify(checker, calls), expected);
+            }
+        }
+    }
+}

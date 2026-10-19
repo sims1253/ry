@@ -276,7 +276,8 @@ fn adopted_entry_and_return_are_independent_and_rebinding_is_ordinary() {
 fn call_matching_respects_names_defaults_missing_and_dots() {
     let file = parse(
         "calls.R",
-        "f <- function(longname, ..., y = 2L) { longname }\nf(long = \"bad\")\nf(1L, y = \"bad\")\nf(y = 2L, longname = 1L)\nf(1L, extra = \"anything\")\nf(, y = 2L)\n",
+        // Each call runs in its own frame: a user call ends later identities.
+        "f <- function(longname, ..., y = 2L) { longname }\nc1 <- function() f(long = \"bad\")\nc2 <- function() f(1L, y = \"bad\")\nc3 <- function() f(y = 2L, longname = 1L)\nc4 <- function() f(1L, extra = \"anything\")\nc5 <- function() f(, y = 2L)\n",
     );
     let mut declaration = record(
         &file,
@@ -344,7 +345,7 @@ fn call_matching_respects_names_defaults_missing_and_dots() {
 fn default_mismatch_is_separate_from_omission_and_known_call_mismatch() {
     let file = parse(
         "defaults.R",
-        "f <- function(x = \"wrong\") { x }\nf()\nf(1L)\nf(\"wrong\")\n",
+        "f <- function(x = \"wrong\") { x }\nc1 <- function() f()\nc2 <- function() f(1L)\nc3 <- function() f(\"wrong\")\n",
     );
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![record(
@@ -378,7 +379,7 @@ fn default_mismatch_is_separate_from_omission_and_known_call_mismatch() {
 fn plain_annotated_function_reports_only_its_bad_actual() {
     let file = parse(
         "plain.R",
-        "f <- function(x, y = 1L) {\n  #| x integer\n  #| y integer\n  x\n}\nf(1L)\nf(\"bad\", y = 2L)\n",
+        "f <- function(x, y = 1L) {\n  #| x integer\n  #| y integer\n  x\n}\nc1 <- function() f(1L)\nc2 <- function() f(\"bad\", y = 2L)\n",
     );
     let mut project = new_project(&[&file], &adopted_records(&file));
     let mut diagnostics = project.check();
@@ -400,7 +401,7 @@ fn plain_annotated_function_reports_only_its_bad_actual() {
 fn supplied_only_constraint_checks_only_explicit_actuals() {
     let (file, checker) = check_adopted(
         "supplied-only.R",
-        "f <- function(x = \"default\") {\n  #| x integer\n  x\n}\nf()\nf(1L)\nf(\"wrong\")\n",
+        "f <- function(x = \"default\") {\n  #| x integer\n  x\n}\nc1 <- function() f()\nc2 <- function() f(1L)\nc3 <- function() f(\"wrong\")\n",
     );
     // The omitted default is not a supplied actual, and a supplied-only
     // constraint establishes no body type, which is not an incomplete check.
@@ -744,7 +745,9 @@ fn explicit_global_environment_writes_invalidate_captured_contracts() {
         ("assign(\"f\", function(x) x, envir = new.env())", false),
         ("eval(base::quote(1L))", false),
         ("eval(quote(1L), envir = .GlobalEnv)", false),
-        ("helper()", true),
+        // Any user call ends identities (S13).
+        ("helper()", false),
+        ("1L", true),
     ] {
         let source = format!(
             "f <- function(x) {{\n  #| x integer\n  x\n}}\nhelper <- function() 1L\nouter <- function() {{ {body}; f(\"bad\") }}\nouter()\n"
@@ -795,7 +798,10 @@ fn eager_calls_use_the_binding_before_but_not_after_a_runtime_installation() {
 }
 
 #[test]
-fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
+fn an_invoked_helper_drops_later_contract_identity() {
+    // No user body is trusted: an ordinary `<<-` can run an active setter
+    // (S5, testdata/oracle/typehint_active_setter_replacement.R), and even
+    // braces may be masked (S13, typehint_masked_if_helper.R).
     for (body, expected_after_mismatch) in [
         ("f <<- function(x) x", false),
         ("`\\x66` <<- function(x) x", false),
@@ -803,8 +809,8 @@ fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
             "base::assign(\"f\", function(x) x, envir = .GlobalEnv)",
             false,
         ),
-        ("g <<- function(x) x", true),
-        ("local <- function(x) x", true),
+        ("g <<- function(x) x", false),
+        ("local <- function(x) x", false),
     ] {
         let source = format!(
             "f <- function(x) {{\n  #| x integer\n  x\n}}\nmutate <- function() {{ {body} }}\nf(\"before\")\nmutate()\nf(\"after\")\n"
@@ -888,10 +894,11 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
             "(function() mutate())()",
             false,
         ),
+        // Function literals and helpers are user code (S13).
         (
             "mutate <- function() f <<- function(x) x",
             "(function() 1L)()",
-            true,
+            false,
         ),
         (
             "mutate <- function() f <<- function(x) x\nsaved <- function() 1L\nbridge <- function(saved) saved()",
@@ -906,7 +913,7 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
         (
             "mutate <- function() f <<- function(x) x\nbridge <- function() 1L",
             "bridge()",
-            true,
+            false,
         ),
         (
             "mutate <- function() f <<- function(x) x\npure <- function() 1L\nbridge <- function() pure()",
@@ -915,8 +922,9 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
         ),
         ("mutate <- function() f <<- function(x) x", "1L", true),
     ] {
+        // No `f("before")`: that call would itself end the identity.
         let source = format!(
-            "f <- function(x) {{\n  #| x integer\n  x\n}}\n{setup}\nf(\"before\")\n{invoke}\nf(\"after\")\n"
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\n{setup}\n{invoke}\nf(\"after\")\n"
         );
         let (file, checker) = check_adopted("known-wrapper.R", &source);
         let spans = checker
@@ -926,16 +934,18 @@ fn wrapper_alias_and_forced_default_keep_before_call_but_drop_stale_after_call()
             .map(|finding| &file.source[finding.span.start..finding.span.end])
             .collect::<Vec<_>>();
         let expected = if after_mismatch {
-            vec!["\"before\"", "\"after\""]
+            vec!["\"after\""]
         } else {
-            vec!["\"before\""]
+            vec![]
         };
         assert_eq!(spans, expected, "setup: {setup}, invoke: {invoke}");
     }
 }
 
 #[test]
-fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
+fn a_checked_call_and_a_pure_looking_helper_end_later_contract_identity() {
+    // Both calls run user bodies, which a masked `{` can turn into a
+    // replacement (S13); neither keeps the identity for `f("after")`.
     let (file, checker) = check_adopted(
         "pure-helper.R",
         "f <- function(x) {\n  #| x integer\n  x\n}\npure <- function() 1L\nf(\"before\")\npure()\nf(\"after\")\n",
@@ -946,7 +956,7 @@ fn a_checked_call_and_known_pure_helper_do_not_erase_its_own_contract() {
         .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
         .map(|finding| &file.source[finding.span.start..finding.span.end])
         .collect::<Vec<_>>();
-    assert_eq!(spans, vec!["\"before\"", "\"after\""]);
+    assert_eq!(spans, vec!["\"before\""]);
 }
 
 #[test]
@@ -1090,9 +1100,10 @@ fn evaluated_assignment_targets_can_replace_a_declared_callable() {
         ("e$trigger[1] <- 1L", vec!["\"before\""]),
         ("result <- (e$trigger[1] <- 1L)", vec!["\"before\""]),
         ("e[[swap()]] <- 1L", vec!["\"before\""]),
+        // A user call ends identities even without outward writes (S13).
         (
             "touch <- function() { local <- 1L; 1L }\ntouch()",
-            vec!["\"before\"", "\"after\""],
+            vec!["\"before\""],
         ),
     ] {
         let source = format!(
@@ -1135,12 +1146,13 @@ fn warm_helper_value_read_edits_match_cold_declaration_findings() {
             "e <- new.env()\nmakeActiveBinding(\"trigger\", function() {{ assign(\"f\", function(x) x, envir = .GlobalEnv); 1L }}, e)\nf <- function(x) {{\n  #| x integer\n  x\n}}\ntouch <- function() {body}\ntouch()\nf(\"after\")\n"
         )
     };
+    // `touch()` is a user call whatever its body reads (S13).
     let first = parse("reader.R", &source("1L"));
     let mut project = new_project(&[&first], &adopted_records(&first));
     project.check_incremental();
-    assert_eq!(project_mismatch_count(&project, &first.path), 1);
+    assert_eq!(project_mismatch_count(&project, &first.path), 0);
 
-    for (body, expected) in [("e$trigger", 0), ("1L", 1)] {
+    for (body, expected) in [("e$trigger", 0), ("1L", 0)] {
         let edited = parse("reader.R", &source(body));
         edit_warm(&mut project, &edited, &[&edited], &adopted_records(&edited));
         assert_eq!(project_mismatch_count(&project, &first.path), expected);
@@ -1168,11 +1180,12 @@ fn forcing_a_nonliteral_actual_promise_can_replace_the_declared_callee() {
             "f(1L)",
             vec!["\"before\""],
         ),
+        // Even a literal actual: the call runs f's body, user code (S13).
         (
             "f <- function(x) x",
             SupplyStatus::Required,
             "f(1L)",
-            vec!["\"before\"", "\"after\""],
+            vec!["\"before\""],
         ),
     ] {
         let source = format!(
@@ -1204,7 +1217,8 @@ fn loop_binder_callable_shadows_a_same_named_pure_outer_helper() {
             "for (h in list(function() f <<- function(x) x)) h()",
             vec!["\"before\""],
         ),
-        ("for (h in 1L) 1L", vec!["\"before\"", "\"after\""]),
+        // `bridge()` is a user call either way (S13).
+        ("for (h in 1L) 1L", vec!["\"before\""]),
     ] {
         let source = format!(
             "f <- function(x) {{\n  #| x integer\n  x\n}}\nh <- function() 1L\nbridge <- function() {{ {body} }}\nf(\"before\")\nbridge()\nf(\"after\")\n"
@@ -1223,7 +1237,8 @@ fn loop_binder_callable_shadows_a_same_named_pure_outer_helper() {
 #[test]
 fn saved_alias_keeps_the_aliased_function_identity_after_name_rebinding() {
     for (first, second, after_mismatch) in [
-        ("1L", "f <<- function(x) x", true),
+        // `saved()` is a user call either way (S13).
+        ("1L", "f <<- function(x) x", false),
         ("f <<- function(x) x", "1L", false),
     ] {
         let source = format!(
@@ -1252,7 +1267,7 @@ fn saved_alias_keeps_the_aliased_function_identity_after_name_rebinding() {
 fn mutating_argument_does_not_change_the_selected_call_head() {
     let file = parse(
         "argument-mutates-callee.R",
-        "f <- function(x) x\nmutate <- function() f <<- function(x) x\nf(\"before\")\nf({ mutate(); \"during\" })\nf(\"after\")\n",
+        "f <- function(x) x\nmutate <- function() f <<- function(x) x\nf({ mutate(); \"during\" })\nf(\"after\")\n",
     );
     let mut checker = Checker::new(&file.path);
     checker.set_declaration_records(vec![record(
@@ -1268,7 +1283,7 @@ fn mutating_argument_does_not_change_the_selected_call_head() {
         .filter(|finding| finding.kind == DeclarationFindingKind::Mismatch)
         .map(|finding| &file.source[finding.span.start..finding.span.end])
         .collect::<Vec<_>>();
-    assert_eq!(spans, vec!["\"before\"", "{ mutate(); \"during\" }"]);
+    assert_eq!(spans, vec!["{ mutate(); \"during\" }"]);
 }
 
 #[test]
@@ -1293,8 +1308,9 @@ fn cross_file_helper_installation_changes_only_later_eager_calls_and_warm_edits(
     };
     assert_eq!(kinds_in_first(&project), vec!["\"before\""]);
 
+    // `mutate()` is a user call whatever it writes (S5/S13).
     for (body, expected) in [
-        ("mutate <- function() g <<- function(x) x", 2),
+        ("mutate <- function() g <<- function(x) x", 1),
         ("mutate <- function() f <<- function(x) x", 1),
     ] {
         let edited = parse("mutator.R", body);
@@ -1451,7 +1467,7 @@ fn project_mismatch_count(project: &Project, path: &str) -> usize {
 fn project_capture_inventory_includes_global_expression_control_binder_and_outward_writes() {
     let first = parse(
         "first.R",
-        "f <- function(x) {\n  #| x integer\n  x\n}\nf(\"bad\")\nouter <- function() { f(\"bad\") }\n",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nouter <- function() { f(\"bad\") }\nf(\"bad\")\n",
     );
     let records = adopted_records(&first);
     for (second_source, expected) in [
@@ -2569,4 +2585,109 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
     project.set_declaration_records(Vec::new());
     project.check_incremental();
     assert_eq!(project.emit_count, 0);
+}
+
+/// The frame-effect classifier (infer/call_effect.rs) is shared with scalar
+/// facts: an audited base call with literal actuals keeps identities.
+#[test]
+fn allowlisted_literal_calls_keep_contract_identity() {
+    for (between, mismatch) in [
+        ("message(\"hi\")", true),
+        ("message(\"hi\", appendLF = FALSE)", true),
+        ("is.null(NULL)", true),
+        ("length(\"a\")", true),
+        ("stopifnot(TRUE)", true),
+        ("sum(1:3)", false),
+        ("message(\"hi\", appendL = FALSE)", false),
+        ("noop()", false),
+    ] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nnoop <- function() NULL\n{between}\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("allowlisted-calls.R", &source);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+    // A project `conditionMessage` method runs during any message().
+    let (_, checker) = check_adopted(
+        "message-method.R",
+        "f <- function(x) {\n  #| x integer\n  x\n}\nconditionMessage.simpleMessage <- function(c) { f <<- function(x) x; \"m\\n\" }\nmessage(\"hi\")\nf(\"after\")\n",
+    );
+    assert!(!kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+}
+
+/// R evaluates the RHS of `&&` in this frame (testdata/oracle/
+/// typehint_short_circuit_replacement.R), so its effects reach the
+/// continuation even though inference ran it on a cloned scope.
+#[test]
+fn short_circuit_replacement_drops_contract_identity() {
+    for (condition, mismatch) in [
+        ("TRUE && swap()", false),
+        ("FALSE || swap()", false),
+        ("TRUE && is.null(NULL)", true),
+        ("is.function(f) && TRUE", true),
+    ] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nswap <- function() {{ f <<- function(x) x; TRUE }}\nif ({condition}) NULL\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("short-circuit.R", &source);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "condition: {condition}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+/// S13: a body without calls still runs syntax functions, which a project
+/// may mask (testdata/oracle/typehint_masked_if_helper.R). No user body is
+/// trusted to keep identities.
+#[test]
+fn masked_syntax_helper_drops_identity() {
+    for mask in [
+        "`if` <- function(cond, yes, no) do.call(\"assign\", list(\"f\", function(x) x, envir = globalenv()))",
+        "",
+    ] {
+        let source = format!(
+            "{mask}\nf <- function(x) {{\n  #| x integer\n  x\n}}\npure <- function() if (TRUE) NULL\npure()\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("masked-syntax.R", &source);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "mask: {mask}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+/// S4: an audited call whose actual reads a formal may force the caller's
+/// promise, which can replace an outward name
+/// (testdata/oracle/typehint_parameter_force_replacement.R).
+#[test]
+fn promise_actual_drops_identity() {
+    let source = |between: &str| {
+        format!(
+            "cls <- function(x) {{\n  #| x integer\n  x\n}}\nrun <- function(y) {{\n  {between}\n  cls(\"after\")\n}}\nrun(1L)\n"
+        )
+    };
+    for between in ["length(y)", "is.null(y)", "message(\"hi\"); nchar(y)"] {
+        let (_, checker) = check_adopted("promise-actual.R", &source(between));
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+    let (_, checker) = check_adopted("promise-literal.R", &source("length(\"a\")"));
+    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    // Known gap: a direct statement-level read of the formal forces the
+    // same promise but keeps the identity (`proven_parameter_read`); R
+    // returns "after". Fixing it needs forced-parameter tracking.
+    let (_, checker) = check_adopted("promise-direct-read.R", &source("y"));
+    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
 }

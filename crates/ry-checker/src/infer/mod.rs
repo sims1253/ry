@@ -1430,10 +1430,10 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
-        if !scope.uncertainty.dynamic_bindings
-            && (binding_name(target).is_none()
-                || !ops_chooser::base_assignment(self, target, value, scope))
-        {
+        let complex = binding_name(target).is_none()
+            || !ops_chooser::base_assignment(self, target, value, scope);
+        scope.uncertainty.unseen_rebinds |= complex;
+        if !scope.uncertainty.dynamic_bindings && complex {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -1459,7 +1459,9 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        if !scope.uncertainty.dynamic_bindings && self.body_may_replace_bindings(body, scope) {
+        let replaces = self.body_may_replace_bindings(body, scope);
+        scope.uncertainty.unseen_rebinds |= replaces;
+        if !scope.uncertainty.dynamic_bindings && replaces {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -3508,7 +3510,7 @@ impl Checker {
     }
 
     fn push_enclosing_formals(&mut self, params: &[Param], function_span: Span) {
-        let possible_default_writes = if self.discarding {
+        let possible_default_writes = if self.discarding || !self.declarations.has_contracts() {
             crate::collect::WriteSet::default()
         } else {
             crate::collect::default_local_writes(params)

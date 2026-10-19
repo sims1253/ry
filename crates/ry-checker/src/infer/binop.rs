@@ -914,7 +914,7 @@ impl Checker {
     /// safe calls that may run before its use. A project or imported S3/S4
     /// method for any of them could lie about the length or run arbitrary
     /// code, so such a project gets no scalar facts at all.
-    fn project_defines_scalar_proof_method(&self) -> bool {
+    pub(super) fn project_defines_scalar_proof_method(&self) -> bool {
         self.method_screens().scalar_proof
     }
 

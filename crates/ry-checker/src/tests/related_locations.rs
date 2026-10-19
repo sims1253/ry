@@ -106,6 +106,21 @@ fn unproven_origins_keep_the_finding_without_a_location() {
         ),
         &format!("{helper}f <- function(v = helper(1)) v\n"),
         &format!("{helper}lapply(1:2, function(i) helper(i))\n"),
+        // Sol code review r1: an unproven default, an earlier loop iteration,
+        // a project replacement function, and project dispatch from a safe call.
+        &format!(
+            "{helper}use <- function(v = do.call(\"<-\", list(\"helper\", function(x) x))) {{\n  v\n  helper(1)\n}}\n"
+        ),
+        &format!(
+            "{helper}for (i in 1:2) {{\n  if (i == 2) helper(1)\n  do.call(\"<-\", list(\"helper\", function(x) x))\n}}\n"
+        ),
+        &format!(
+            "{helper}`names<-` <- function(x, value) {{\n  do.call(\"<<-\", list(\"helper\", function(x) x))\n  x\n}}\nx <- 1\nnames(x) <- \"a\"\nhelper(1)\n"
+        ),
+        &format!(
+            "{helper}length.foo <- function(x) {{\n  do.call(\"<<-\", list(\"helper\", function(x) x))\n  1L\n}}\nuse <- function(x) {{\n  length(x)\n  helper(1)\n}}\n"
+        ),
+        &format!("{helper}formals(helper) <- pairlist(x = 1)\nhelper(1)\n"),
         // Captured from an intermediate frame.
         &format!("{helper}f <- function() {{\n  g <- function() helper(1)\n  g\n}}\n"),
         // Expected absence: `local()` runs code in the global frame's flow.

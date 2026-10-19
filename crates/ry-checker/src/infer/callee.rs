@@ -152,7 +152,10 @@ impl Checker {
 
     /// Whether `function` is the binding this call site reaches: the exact
     /// lexical literal of this file, which nothing may have rebound since.
-    /// A binding made in this frame needs no unproven call in between. A
+    /// A binding made in this frame needs no unproven call in between, and
+    /// an enclosing default that is not a scalar literal may be forced at
+    /// any point. A project method for a safe call, operator, or index may
+    /// run arbitrary code, so it removes all evidence. A
     /// global literal captured by a top-level function's body needs effect-free
     /// top levels, as the body may run after any of them. Bindings captured
     /// from an intermediate frame are not proven.
@@ -165,18 +168,14 @@ impl Checker {
             && function.source_path == self.path
             && scope.lexical_definition(name) == Some(span)
             && !scope.uncertainty.unseen_rebinds
-            && !self.default_may_rebind(name)
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|frame| frame.literal_defaults_only)
+            && !self.project_defines_scalar_proof_method()
             && !self.fn_table.was_rebound_after_capture(&self.path, span)
             && (!captured
                 || (self.enclosing_formals.len() == 1 && !self.fn_table.unproven_top_level))
-    }
-
-    /// Whether forcing an enclosing default may install `name` in its frame.
-    fn default_may_rebind(&self, name: &str) -> bool {
-        let name = semantic_argument_name(name);
-        self.enclosing_formals
-            .iter()
-            .any(|frame| frame.possible_default_writes.may_write(name))
     }
 
     /// The literal a call head currently names: the exact lexical
@@ -332,7 +331,11 @@ impl Checker {
         let local_is_nonfunction = local_binding
             .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
         let outward = scope.outward_function_definition(lookup_name);
-        let possible_default_shadow = self.default_may_rebind(lookup_name);
+        let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
+            frame
+                .possible_default_writes
+                .may_write(semantic_argument_name(lookup_name))
+        });
         let local_definition = scope.lexical_definition(lookup_name);
         // Function walks start with a copy of the captured scope. An exact
         // literal that is identical to the nearest enclosing frame is still

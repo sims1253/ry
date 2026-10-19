@@ -798,6 +798,15 @@ fn ops_proof_syntax_names_can_be_rebound() {
 }
 
 #[test]
+fn literal_classes_are_the_classes_of_plain_literals() {
+    if !rscript_available() {
+        return;
+    }
+    let output = r_eval("cat(class(2), class(2L), class('t'), class(TRUE))");
+    assert_eq!(output.trim(), semantic_lists::LITERAL_CLASSES.join(" "));
+}
+
+#[test]
 fn plain_new_classes_do_not_gain_object_dispatch() {
     if !rscript_available() {
         return;

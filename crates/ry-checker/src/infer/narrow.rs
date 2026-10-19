@@ -349,6 +349,7 @@ pub(crate) fn s3_predicate_target(name: &str) -> Option<RType> {
 /// closure's return type carry their own classes.
 pub(crate) fn guard_target(mut target: RType) -> RType {
     target.class.guarded = target.class.has_known_class();
+    target.class.exact_s4 = false;
     if let Some(sig) = &target.fn_sig {
         let mut sig = FunctionSignature::clone(sig);
         sig.return_type = Box::new(guard_target(*sig.return_type));

@@ -940,10 +940,7 @@ impl Checker {
     }
 
     fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
-        self.fn_table
-            .s4_methods
-            .keys()
-            .any(|(name, _)| generic(name))
+        self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }
 

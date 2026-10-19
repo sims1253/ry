@@ -1,4 +1,5 @@
 use super::*;
+use crate::definitions::GenericDecl;
 use crate::infer::*;
 use crate::semantic_lists::{FRAME_REFLECTION, bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
@@ -575,44 +576,79 @@ impl Checker {
     }
 
     fn collect_s4_call(&mut self, name: &str, args: &[Arg]) {
-        match name {
-            "setGeneric" => {
-                if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
-                    let table = Arc::make_mut(&mut self.fn_table);
-                    table.note_bound_name(generic);
-                    table.known_vars.insert(generic.to_string());
-                }
-            }
-            "setMethod" => {
-                let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) else {
-                    return;
-                };
-                let Some(class) = args.get(1).and_then(|arg| s4_signature_class(&arg.value)) else {
-                    return;
-                };
-                let Some(Expr::Function { params, body, span }) = args
+        let formals: &[&str] = match name {
+            "setGeneric" => &[
+                "name",
+                "def",
+                "group",
+                "valueClass",
+                "where",
+                "package",
+                "signature",
+                "useAsDefault",
+                "genericFunction",
+                "simpleInheritanceOnly",
+            ],
+            "setMethod" => &[
+                "f",
+                "signature",
+                "definition",
+                "where",
+                "valueClass",
+                "sealed",
+            ],
+            _ => return,
+        };
+        let matched = match_arguments(formals, args);
+        let formal = |name: &str| {
+            let index = formals.iter().position(|formal| *formal == name)?;
+            matched
+                .arg_for_param(index)
+                .map(|actual| &args[actual].value)
+        };
+        let table = Arc::make_mut(&mut self.fn_table);
+        let Some(generic) = formal(formals[0]).and_then(string_literal) else {
+            table.functions.s4_mut().mark_all_incomplete();
+            return;
+        };
+        if name == "setGeneric" {
+            table.note_bound_name(generic);
+            table.known_vars.insert(generic.to_string());
+            let decl = match formal("def") {
+                None if ["group", "signature", "genericFunction"]
                     .iter()
-                    .skip(2)
-                    .find(|arg| matches!(arg.value, Expr::Function { .. }))
-                    .map(|arg| &arg.value)
-                else {
-                    return;
-                };
-                let method_name = format!("__s4__{generic}__{class}");
-                let slot = self.record_fn(method_name.clone(), params, body.clone(), *span);
-                if let Some(first) = Arc::make_mut(&mut self.fn_table)
-                    .functions
-                    .live_mut(&method_name)
-                    .and_then(|function| function.params.first_mut())
+                    .all(|name| formal(name).is_none()) =>
                 {
-                    first.type_ = RType::unknown().with_class(ClassVector::single(&class));
+                    GenericDecl::Absent
                 }
-                Arc::make_mut(&mut self.fn_table)
-                    .s4_methods
-                    .insert((generic.to_string(), class), slot);
-            }
-            _ => {}
+                Some(def) if formal("group").is_none() && formal("genericFunction").is_none() => {
+                    literal_generic(generic, def, formal("signature"))
+                }
+                _ => GenericDecl::Opaque,
+            };
+            table.functions.s4_mut().declare_generic(generic, decl);
+            return;
         }
+        let entries = formal("signature").and_then(s4_signature_entries);
+        let function = match (formal("definition"), &entries) {
+            (Some(Expr::Function { params, body, span }), Some(entries)) => {
+                let spelled: Vec<String> = entries
+                    .iter()
+                    .map(|(formal, class)| match formal {
+                        Some(formal) => format!("{formal}={class}"),
+                        None => class.clone(),
+                    })
+                    .collect();
+                let method_name = format!("__s4__{generic}__{}", spelled.join(","));
+                self.record_fn(method_name.clone(), params, body.clone(), *span);
+                Some(method_name)
+            }
+            _ => None,
+        };
+        Arc::make_mut(&mut self.fn_table)
+            .functions
+            .s4_mut()
+            .register_method(generic, entries, function);
     }
 
     fn collect_forwarded_calls(&mut self, caller: &str, params: &[Param], body: &[Stmt]) {
@@ -1467,16 +1503,63 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
-fn s4_signature_class(expr: &Expr) -> Option<String> {
+/// A `setMethod` signature: a class string, or `signature()` of class
+/// strings, all positional or all named by formal.
+fn s4_signature_entries(expr: &Expr) -> Option<Vec<(Option<String>, String)>> {
     match expr {
-        Expr::String(class, _) => Some(class.clone()),
-        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "signature") => {
-            args.first()
-                .and_then(|argument| string_literal(&argument.value))
-                .map(str::to_string)
+        Expr::String(class, _) => Some(vec![(None, class.clone())]),
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "signature") => {
+            args.iter()
+                .map(|argument| {
+                    let class = string_literal(&argument.value)?;
+                    let formal = argument.name.as_deref().map(semantic_argument_name);
+                    Some((formal.map(str::to_string), class.to_string()))
+                })
+                .collect()
         }
         _ => None,
     }
+}
+
+/// A `setGeneric` definition that only forwards to its methods, with its
+/// formals and declared dispatch signature. A body that computes anything
+/// else is not the selected method's result.
+fn literal_generic(generic: &str, def: &Expr, signature: Option<&Expr>) -> GenericDecl {
+    let Expr::Function { params, body, .. } = def else {
+        return GenericDecl::Opaque;
+    };
+    let forwards = matches!(
+        body.as_slice(),
+        [Stmt::Expr(Expr::Call { func, args, .. })]
+            if matches!(func.as_ref(), Expr::Ident { name, .. }
+                if name == "standardGeneric" || name == "methods::standardGeneric")
+                && matches!(args.as_slice(), [only] if only.name.is_none()
+                    && string_literal(&only.value) == Some(generic))
+    );
+    let formals: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
+    let signature = match signature {
+        None => formals.iter().filter(|f| *f != "...").cloned().collect(),
+        Some(Expr::String(only, _)) => vec![only.clone()],
+        Some(Expr::Call { func, args, .. }) if is_c_call_head(func) => {
+            match args
+                .iter()
+                .map(|argument| string_literal(&argument.value).map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(entries) => entries,
+                None => return GenericDecl::Opaque,
+            }
+        }
+        Some(_) => return GenericDecl::Opaque,
+    };
+    if !forwards
+        || signature
+            .iter()
+            .any(|entry| entry == "..." || !formals.contains(entry))
+    {
+        return GenericDecl::Opaque;
+    }
+    GenericDecl::Literal { formals, signature }
 }
 
 /// Return whether evaluating a block must force `name`, whether control

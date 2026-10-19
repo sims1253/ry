@@ -1,6 +1,7 @@
 use super::callee::{CallHead, CallHeadFunctionEvidence};
 use super::*;
 use crate::collect::WriteSet;
+use crate::definitions::{S4Call, S4Selection};
 use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmts};
 use std::ops::ControlFlow;
@@ -464,8 +465,21 @@ impl Checker {
         // Class dispatch must run before the higher-order, FnTable, and
         // typeshed stages below: a method's inferred return type wins over
         // the generic's stub.
-        if let Some(rt) = self.try_s4_dispatch(&lookup_name, &call.arg_types) {
-            return rt;
+        let s4_call = S4Call {
+            head: Callee::parse(&semantic_name),
+            own_package: self.package_facts.source_package.as_deref(),
+            args,
+            arg_types: &call.arg_types,
+            core_formals: self
+                .typeshed
+                .functions
+                .get(&lookup_name)
+                .map(|signature| signature.params.as_slice()),
+        };
+        match self.fn_table.functions.select_s4(s4_call) {
+            S4Selection::Method(method) => return self.read_return_slot(method.return_slot),
+            S4Selection::Uncertain => return RType::unknown(),
+            S4Selection::NoCandidate => {}
         }
 
         if let Some(rt) = call
@@ -2077,19 +2091,6 @@ impl Checker {
         for argument in args {
             let _ = self.infer(&argument.value, scope);
         }
-    }
-
-    pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
-        let receiver = &arg_types.first()?.class;
-        let class = receiver.first()?;
-        let slot = self
-            .fn_table
-            .s4_methods
-            .get(&(generic.to_string(), class.to_string()))?;
-        Some(dispatch_result(
-            receiver.guarded,
-            self.read_return_slot(*slot),
-        ))
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an

@@ -114,6 +114,9 @@ impl Checker {
         if self.discarding || !self.declarations.has_contracts() {
             return;
         }
+        // A wipe replaces every local definition (first half) and binds every
+        // adopted name to unknown; the second half catches adopted functions
+        // with no binding in this scope, such as one from another file.
         let lost: Vec<String> = scope
             .lexical_definitions
             .iter()

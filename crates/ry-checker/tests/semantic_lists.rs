@@ -848,8 +848,8 @@ fn frame_inert_dispatch_closures_match_r() {
          calls <- list({calls})
          for (nm in names(calls)) {{
            ran <- character()
-           try(eval(calls[[nm]]), silent = TRUE)
-           cat(nm, ':', paste(sort(unique(ran)), collapse = ' '), '\\n', sep = '')
+           outcome <- tryCatch({{ eval(calls[[nm]]); 'ok' }}, error = function(e) 'error')
+           cat(nm, ':', paste(sort(unique(ran)), collapse = ' '), ':', outcome, '\\n', sep = '')
          }}"
     ));
     let lines: Vec<_> = output.lines().collect();
@@ -859,7 +859,18 @@ fn frame_inert_dispatch_closures_match_r() {
         "{output}"
     );
     for line in lines {
-        let (name, ran) = line.split_once(':').expect("name: generics");
+        let mut fields = line.split(':');
+        let (Some(name), Some(ran), Some(outcome)) = (fields.next(), fields.next(), fields.next())
+        else {
+            panic!("malformed probe line {line:?}");
+        };
+        // A probe call that errors may stop before reaching a generic; only
+        // `stop()` is expected to.
+        assert_eq!(
+            outcome.trim(),
+            if name == "stop" { "error" } else { "ok" },
+            "{name}"
+        );
         let ran: BTreeSet<&str> = ran.split_whitespace().collect();
         // `all.probe` takes precedence over the Summary group method.
         let declared: BTreeSet<&str> = semantic_lists::frame_effect_dispatch_closure(name)

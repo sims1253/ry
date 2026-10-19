@@ -392,7 +392,8 @@ pub const FRAME_EFFECT_DISPATCH_GENERICS: &[&str] = &[
 
 /// The dispatch closure of an audited inert base call: the members of
 /// [`FRAME_EFFECT_DISPATCH_GENERICS`] it may reach. `None` for any other
-/// call.
+/// call, including a new `SCALAR_FACT_SAFE_CALLS` member until its closure
+/// is audited (`frame_inert_dispatch_closures_match_r` then fails).
 pub fn frame_effect_dispatch_closure(call: &str) -> Option<&'static [&'static str]> {
     match call {
         "length" => Some(&["length"]),
@@ -401,7 +402,8 @@ pub fn frame_effect_dispatch_closure(call: &str) -> Option<&'static [&'static st
         "is.numeric" => Some(&["is.numeric"]),
         "stopifnot" => Some(&["anyNA", "is.na", "all", "Summary"]),
         "message" => Some(&["conditionMessage"]),
-        _ if SCALAR_FACT_SAFE_CALLS.contains(&call) => Some(&[]),
+        "is.null" | "identical" | "is.character" | "is.logical" | "is.integer" | "is.double"
+        | "is.function" | "is.list" | "inherits" | "missing" | "stop" => Some(&[]),
         _ => None,
     }
 }

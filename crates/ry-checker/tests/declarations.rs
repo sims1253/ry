@@ -2651,6 +2651,22 @@ fn short_circuit_replacement_drops_contract_identity() {
             checker.declaration_findings()
         );
     }
+    // An adopted function from another file has no binding in this file's
+    // scope, so only the adopted-name half of the merge carries the loss.
+    let contracts = parse(
+        "contracts.R",
+        "f <- function(x) {\n  #| x integer\n  x\n}\n",
+    );
+    for (condition, mismatch) in [("TRUE && h()", false), ("TRUE && TRUE", true)] {
+        let calls = parse("calls.R", &format!("if ({condition}) NULL\nf(\"after\")\n"));
+        let mut project = new_project(&[&contracts, &calls], &adopted_records(&contracts));
+        project.check();
+        assert_eq!(
+            project_mismatch_count(&project, &calls.path) > 0,
+            mismatch,
+            "cross-file condition: {condition}"
+        );
+    }
 }
 
 /// Known gap (S13, pre-existing): a helper body without calls still runs
@@ -2695,12 +2711,20 @@ fn promise_actual_drops_identity() {
         );
     }
     let (_, checker) = check_adopted("promise-none.R", &source("1L"));
-    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    assert!(
+        kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+        "a literal statement keeps the identity: {:?}",
+        checker.declaration_findings()
+    );
     // Known gap: a direct statement-level read of the formal forces the
     // same promise but keeps the identity (`proven_parameter_read`); R
     // returns "after". Fixing it needs forced-parameter tracking.
     let (_, checker) = check_adopted("promise-direct-read.R", &source("y"));
-    assert!(kinds(&checker).contains(&DeclarationFindingKind::Mismatch));
+    assert!(
+        kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+        "known gap: a direct formal read keeps the identity: {:?}",
+        checker.declaration_findings()
+    );
 }
 
 /// Sol review S3: an opaque helper summary still reports its plain `<<-`

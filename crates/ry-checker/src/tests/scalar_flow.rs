@@ -161,6 +161,8 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
     for between in [
         "assign('x', c(1L, 2L))",
         "message(x)",
+        // Deliberately misspelled: R matches formals after `...` exactly,
+        // so `appendL` is payload, not the `appendLF` control.
         "message('checked', appendL = FALSE)",
         "print(x)",
         "as.character(x)",
@@ -183,8 +185,10 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
     assert!(warns_ry032(
         "f <- function(g, x = 1L) { stopifnot(x > 0 && TRUE); g(); if (is.null(x) || x == 1L) TRUE else FALSE }"
     ));
-    // An unsafe call before the assertion keeps it from proving anything,
-    // unless it is base `I()` or a call into another package's namespace.
+    // A call before the assertion that may replace bindings keeps it from
+    // proving anything. Audited base calls (a literal `message`), inert
+    // project helpers, base `I()`, and a call into another package's
+    // namespace leave it free to prove the fact.
     let guard = "stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }";
     for before in [
         "helper(x)",

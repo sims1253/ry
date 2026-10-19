@@ -29,6 +29,10 @@ fn a_one_operation_body_demands_its_formal_at_call_sites() {
             "f <- function(x) x + 1L; g <- function() f('oops')",
             "an operand of `+`",
         ),
+        (
+            "g <- function() f('a'); f <- function(x) x + 1L; g()",
+            "an operand of `+`",
+        ),
     ] {
         let errors = contract_errors(source);
         assert!(
@@ -69,6 +73,10 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         // The call may reach a different literal.
         "f <- function(x) x + 1L; g <- function() f('a'); f <- function(x) paste(x)",
         "f <- function(x) x + 1L; f <- function(x, y) paste(x); g <- function() f('a')",
+        // An eager call before the definition reaches base, and a quoted
+        // local spelling binds the same name.
+        "y <- sort('b'); sort <- function(x) x + 1L",
+        "f <- function(x) x + 1L; h <- function() { `f` <- function(x) paste(x); f('a') }",
     ] {
         assert_eq!(contract_errors(source), Vec::<String>::new(), "{source}");
     }
@@ -87,11 +95,15 @@ fn a_bare_formal_body_returns_its_actual() {
         .map(|diagnostic| diagnostic.code)
         .collect();
     assert_eq!(codes, ["RY040"]);
+    let diagnostics =
+        check("id <- function(x) x; h <- function() { `id` <- function(x) 1L; id('a') + 1L }");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     // S14 and braces: `return` and `{` are ordinary bindings in R.
     for source in [
         "id <- function(x) return(x); r <- id('a')",
         "id <- function(x) { x }; r <- id('a')",
         "id <- function(x) (x); r <- id('a')",
+        "r <- length('ab'); length <- function(x) x",
         "id <- function(x) substitute(x); r <- id('a')",
     ] {
         let (_, scope) = check_with_scope(source);

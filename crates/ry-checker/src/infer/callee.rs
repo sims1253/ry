@@ -34,7 +34,7 @@ pub(super) struct CallHead {
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
-    single_definition: bool,
+    contract_applies: bool,
 }
 
 impl CallHead {
@@ -53,12 +53,10 @@ impl CallHead {
     }
 
     /// The selected definition's call contract, under the proof that lets
-    /// RY090/RY091 read its formals, while no other literal binds the name:
-    /// definitions that merely agree on formals may still disagree on bodies.
+    /// RY090/RY091 read its formals plus proof that its body is the one the
+    /// call reaches (definitions that agree on formals may differ in bodies).
     pub(super) fn contract(&self) -> Option<(&UserFn, CallContract)> {
-        let function = self
-            .user_function()
-            .filter(|_| self.check_project_arguments && self.single_definition)?;
+        let function = self.user_function().filter(|_| self.contract_applies)?;
         Some((function, function.contract?))
     }
 
@@ -115,7 +113,30 @@ impl Checker {
                     function.source_path == self.path
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
-        let single_definition = self.fn_table.functions.has_single_definition(lookup_name);
+        // A contract also needs the body to be the one this call reaches: no
+        // other literal binds the name, no quoted local spelling (`` `f` ``)
+        // masks it, and an eager top-level call follows the definition.
+        let contract_applies = check_project_arguments
+            && self.fn_table.functions.has_single_definition(lookup_name)
+            && function.as_ref().is_some_and(|function| {
+                !self.enclosing_formals.is_empty()
+                    || function.source_path != self.path
+                    || function.definition_span.start < call_span.start
+            })
+            && {
+                let semantic = semantic_argument_name(lookup_name);
+                [
+                    semantic.to_string(),
+                    format!("`{semantic}`"),
+                    format!("'{semantic}'"),
+                    format!("\"{semantic}\""),
+                ]
+                .iter()
+                .filter(|spelling| spelling.as_str() != lookup_name)
+                .all(|spelling| {
+                    scope.get(spelling).is_none() && !scope.is_lexical_function(spelling)
+                })
+            };
         let generic_receiver =
             self.user_generic_receiver(name, lookup_name, function.as_ref(), args, scope);
         let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
@@ -139,7 +160,7 @@ impl Checker {
             function_evidence,
             generic_receiver,
             check_project_arguments,
-            single_definition,
+            contract_applies,
         }
     }
 

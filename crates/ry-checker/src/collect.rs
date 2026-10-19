@@ -291,7 +291,10 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
 }
 
 /// Names the frame of `function(params) body` may bind while it runs:
-/// assignments and recognized installers in its body and defaults.
+/// assignments and recognized installers in its body and defaults. Any
+/// frame-reflective call (`list2env(..., envir = environment())`,
+/// `source(local = TRUE)`) or `load` (which binds into its caller's frame
+/// by default) may bind anything.
 pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
     let mut writes = WriteSet::default();
     let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
@@ -300,6 +303,11 @@ pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
         }
         if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
             collect_callable_binding_write(func, args, &mut writes);
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                let name = semantic_argument_name(name);
+                let name = strip_package(name, "base").unwrap_or(name);
+                writes.opaque |= name == "load" || FRAME_REFLECTION.contains(&name);
+            }
         }
         ControlFlow::Continue(Descend::Into)
     };

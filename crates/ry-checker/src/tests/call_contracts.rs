@@ -81,6 +81,11 @@ fn only_a_proven_base_operation_on_a_supplied_unclassed_actual_is_a_demand() {
         "f <- function(x) x + 1L; h <- function(y = { f <- paste; NULL }) { y; f('a') }",
         "f <- function(x) x + 1L; h <- function() { g <- function() f('a'); f <- paste; g() }",
         "f <- function(x) x + 1L; h <- function() { r <- f('a'); assign('f', paste); r }",
+        // Environment-targeting binders install `f` in the calling frame.
+        "f <- function(x) x + 1L; h <- function() { list2env(list(f = paste), envir = environment()); f('a') }",
+        "f <- function(x) x + 1L; h <- function(p) { sys.source(p, envir = environment()); f('a') }",
+        "f <- function(x) x + 1L; h <- function(p) { source(p, local = TRUE); f('a') }",
+        "f <- function(x) x + 1L; h <- function(p) { load(p); f('a') }",
         // S8: a default runs in the frame another default rebinds.
         "f <- function(x) x + 1L; h <- function(y = { z; f('a') }, z = { f <- paste; NULL }) y",
         "f <- function(x) x + 1L; h <- function(y = function() f('a'), z = { f <- paste; NULL }) y",
@@ -105,6 +110,10 @@ fn a_bare_formal_body_returns_its_actual() {
     assert_eq!(codes, ["RY040"]);
     let diagnostics =
         check("id <- function(x) x; h <- function() { `id` <- function(x) 1L; id('a') + 1L }");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let diagnostics = check(
+        "id <- function(x) x; h <- function() { list2env(list(id = function(x) 1L), envir = environment()); id('a') + 1L }",
+    );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     // S14 and braces: `return` and `{` are ordinary bindings in R.
     for source in [

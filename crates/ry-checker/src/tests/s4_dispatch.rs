@@ -189,3 +189,20 @@ fn only_a_proven_new_call_is_an_exact_instance() {
         Mode::Opaque
     );
 }
+
+#[test]
+fn a_masked_registration_helper_leaves_every_generic_unknown() {
+    for masking in [
+        "signature <- function(...) methods::signature(\"A\", \"character\")\n",
+        "local({ setMethod <- function(...) NULL })\n",
+        "assign(\"signature\", function(...) NULL)\n",
+    ] {
+        let methods = format!("{masking}{CHR_NUM}");
+        assert_eq!(
+            selected(&methods, "g(new(\"A\"), 2)").1,
+            Mode::Opaque,
+            "{masking}"
+        );
+    }
+    assert_eq!(selected(CHR_NUM, "g(new(\"A\"), 2)").1, Mode::Integer);
+}

@@ -527,6 +527,12 @@ impl Checker {
             s,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                if masks_s4_registration(node) {
+                    Arc::make_mut(&mut self.fn_table)
+                        .functions
+                        .s4_mut()
+                        .mark_all_incomplete();
+                }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Expr::Ident { name, .. } = func.as_ref()
                 {
@@ -1500,6 +1506,45 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::String(value, _) => Some(value),
         _ => None,
+    }
+}
+
+/// Whether `node` binds a name S4 registration collection reads by
+/// spelling (`signature <- function(...) ...`), so a registering call may
+/// not reach the methods function it is read as.
+fn masks_s4_registration(node: AstNode<'_>) -> bool {
+    let masks = |name: &str| {
+        matches!(
+            semantic_argument_name(name),
+            "setMethod" | "setGeneric" | "signature" | "standardGeneric" | "c"
+        )
+    };
+    fn root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::String(name, _) => Some(name),
+            _ => crate::infer::vacuous::assignment_root_name(target),
+        }
+    }
+    match node {
+        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
+        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            lhs,
+            ..
+        }) => root(lhs).is_some_and(masks),
+        AstNode::Expr(Expr::Function { params, .. }) => {
+            params.iter().any(|param| masks(&param.name))
+        }
+        AstNode::Expr(Expr::Call { func, args, .. }) => {
+            matches!(func.as_ref(), Expr::Ident { name, .. }
+                if matches!(bare_name(name), "assign" | "delayedAssign" | "makeActiveBinding"))
+                && args
+                    .first()
+                    .and_then(|argument| string_literal(&argument.value))
+                    .is_some_and(masks)
+        }
+        _ => false,
     }
 }
 

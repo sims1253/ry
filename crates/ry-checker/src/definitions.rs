@@ -10,7 +10,7 @@ use crate::{FxMap, FxSet, UserFn};
 use ry_core::Span;
 
 mod s4;
-pub(crate) use s4::{GenericDecl, S4Call, S4Inventory, S4Selection, is_s4_instance_copy};
+pub(crate) use s4::{GenericDecl, S4Call, S4Inventory, S4Selection};
 
 /// Source identity of one function literal.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

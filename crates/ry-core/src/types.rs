@@ -187,17 +187,12 @@ impl Length {
 /// `guarded` marks names established by a passing class test such as
 /// `inherits(x, "foo")` or `is.data.frame(x)`. Such a test proves the
 /// guard held, not the value's whole class vector.
-///
-/// `exact_s4` marks the instance an S4 `new("A")` call created: its S4
-/// class is exactly `names[0]`, though S3 dispatch and `inherits()` also
-/// see superclasses the vector does not list, so it stays `guarded`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClassVector {
     pub names: [Option<Arc<str>>; 4],
     pub len: u8,
     pub known: bool,
     pub guarded: bool,
-    pub exact_s4: bool,
 }
 
 impl ClassVector {
@@ -210,7 +205,6 @@ impl ClassVector {
             len: 0,
             known: true,
             guarded: false,
-            exact_s4: false,
         }
     }
 
@@ -221,7 +215,6 @@ impl ClassVector {
             len: 1,
             known: true,
             guarded: false,
-            exact_s4: false,
         }
     }
 
@@ -230,23 +223,6 @@ impl ClassVector {
         ClassVector {
             guarded: true,
             ..ClassVector::single(name)
-        }
-    }
-
-    /// The instance `new(name)` creates: see `exact_s4`.
-    pub fn s4_instance(name: &str) -> Self {
-        ClassVector {
-            exact_s4: true,
-            ..ClassVector::guard(name)
-        }
-    }
-
-    /// The class a value computed from this one keeps: the names, but not
-    /// `exact_s4`, which only the instance `new()` created carries.
-    pub fn derived(&self) -> Self {
-        ClassVector {
-            exact_s4: false,
-            ..self.clone()
         }
     }
 
@@ -260,7 +236,6 @@ impl ClassVector {
             len: 0,
             known: false,
             guarded: false,
-            exact_s4: false,
         }
     }
 

@@ -134,8 +134,7 @@ impl Checker {
             {
                 // S3 dispatch and `inherits()` also see an S4 instance's
                 // superclasses, which its class attribute does not list.
-                // Its own S4 class is exact, which S4 selection relies on.
-                RType::unknown().with_class(ClassVector::s4_instance(class))
+                RType::unknown().with_class(ClassVector::guard(class))
             }
             _ => RType::unknown(),
         }

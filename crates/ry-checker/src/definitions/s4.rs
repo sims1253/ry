@@ -10,8 +10,10 @@
 //! - receiver-only: every method has `ANY` after the first position, and
 //!   one method names the receiver's exact class.
 //!
-//! No class inheritance is modeled, so an absent relation never excludes a
-//! method.
+//! An exactly known class comes only from the argument expression itself:
+//! a `new("A")` call proven to reach `methods::new`, or a plain atomic
+//! literal. No class inheritance is modeled, so an absent relation never
+//! excludes a method.
 
 use super::{Callee, Definitions};
 use crate::infer::match_arguments;
@@ -69,6 +71,9 @@ pub(crate) struct S4Call<'a> {
     pub(crate) own_package: Option<&'a str>,
     pub(crate) args: &'a [Arg],
     pub(crate) arg_types: &'a [RType],
+    /// Per actual: the expression is a `new()` call whose head is proven to
+    /// be `methods::new`, the only producer of an exactly known class.
+    pub(crate) instances: &'a [bool],
     /// The formals of the base function of this name, if any.
     pub(crate) core_formals: Option<&'a [ParamSpec]>,
 }
@@ -101,6 +106,12 @@ impl S4Inventory {
             Some(entries) => generic.methods.push(S4Method { entries, function }),
             None => generic.incomplete = true,
         }
+    }
+
+    /// Whether `new("A")` returns an instance of exactly `A`: a project
+    /// `initialize` method may return any object.
+    fn instances_exact(&self) -> bool {
+        !self.defines_method(|generic| generic == "initialize")
     }
 
     pub(crate) fn mark_all_incomplete(&mut self) {
@@ -242,7 +253,7 @@ impl Definitions {
         };
         let (Some(methods), Some(classes)) = (
             generic.normalized(&signature),
-            dispatch_classes(&formals, &signature, call.args, call.arg_types),
+            dispatch_classes(&formals, &signature, &call, self.s4.instances_exact()),
         ) else {
             return S4Selection::Uncertain;
         };
@@ -281,9 +292,8 @@ impl Definitions {
             .map(|function| function.return_slot)
     }
 
-    /// Seed each method's dispatch formals with the exact classes its
-    /// signature names. A method's return is read only where those classes
-    /// were proven, so the seed holds wherever the return is used.
+    /// Seed each method's dispatch formals with the classes its signature
+    /// names, as lower bounds: a formal is a binding, never exact evidence.
     pub(crate) fn seed_s4_parameters<'p>(
         &mut self,
         core_formals: impl Fn(&str) -> Option<&'p [ParamSpec]>,
@@ -325,24 +335,11 @@ impl Definitions {
             // only where the names agree, and never a literal's implicit one.
             parameter.type_ =
                 if parameter.name == formal && !LITERAL_CLASSES.contains(&class.as_str()) {
-                    RType::unknown().with_class(ClassVector::s4_instance(&class))
+                    RType::unknown().with_class(ClassVector::guard(&class))
                 } else {
                     RType::unknown()
                 };
         }
-    }
-}
-
-/// An expression whose value is an S4 instance itself rather than one
-/// computed from it: `new(...)` or a binding read. Scope bindings keep
-/// instance exactness only through such plain copies.
-pub(crate) fn is_s4_instance_copy(expr: &Expr) -> bool {
-    match expr {
-        Expr::Ident { .. } => true,
-        Expr::Call { func, .. } => {
-            matches!(func.as_ref(), Expr::Ident { name, .. } if name == "new" || name == "methods::new")
-        }
-        _ => false,
     }
 }
 
@@ -356,9 +353,10 @@ fn param_names(params: &[ParamSpec]) -> Vec<String> {
 fn dispatch_classes(
     formals: &[String],
     signature: &[String],
-    args: &[Arg],
-    arg_types: &[RType],
+    call: &S4Call<'_>,
+    instances_exact: bool,
 ) -> Option<Vec<Option<String>>> {
+    let (args, arg_types) = (call.args, call.arg_types);
     if args.iter().any(|argument| {
         matches!(&argument.value, Expr::Missing(_))
             || matches!(&argument.value, Expr::Ident { name, .. } if name == "...")
@@ -375,12 +373,12 @@ fn dispatch_classes(
         let Some(actual) = matched.arg_for_param(index) else {
             return Some("missing".to_string());
         };
+        // Only a `new("A")` call itself proves an exact class. Other
+        // constructors and class attributes can name a superclass of the
+        // dispatched one (`factor(ordered = TRUE)` is an `ordered`), and a
+        // binding may have been replaced or modified since it was read.
         let class = &arg_types.get(actual)?.class;
-        // Only `new("A")` proves an exact class: other constructors and
-        // class attributes can name a superclass of the dispatched one
-        // (`factor(ordered = TRUE)` is an `ordered`). A value computed from
-        // an instance (`t(a)`) is not that instance.
-        if class.has_known_class() && class.exact_s4 && is_s4_instance_copy(&args[actual].value) {
+        if instances_exact && call.instances.get(actual) == Some(&true) && class.has_known_class() {
             return class.first().map(|first| first.to_string());
         }
         // Only a plain literal proves its class is the implicit one: a

@@ -121,10 +121,9 @@ fn a_single_dispatch_method_on_a_base_function_keeps_its_result() {
     let source = "setClass(\"E\", representation(v = \"numeric\"))\n\
         setMethod(\"as.vector\", signature(x = \"E\"), function(x, mode = \"any\") c(xmin = 1, xmax = 2))\n\
         setMethod(\"length\", \"E\", function(x) 4L)\n\
-        e <- new(\"E\")\n\
-        v <- as.vector(e)\n\
-        n <- length(e)\n\
-        q <- base::as.vector(e)\n";
+        v <- as.vector(new(\"E\"))\n\
+        n <- length(new(\"E\"))\n\
+        q <- base::as.vector(new(\"E\"))\n";
     let (diagnostics, scope) = check_with_scope(source);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     let v = scope.get("v").unwrap();
@@ -136,7 +135,8 @@ fn a_single_dispatch_method_on_a_base_function_keeps_its_result() {
 }
 
 #[test]
-fn a_method_body_sees_its_exact_signature_classes() {
+fn a_method_formal_is_no_exact_evidence() {
+    // The formal may hold a subclass with its own `h` method.
     let source = "setClass(\"A\", representation(v = \"numeric\"))\n\
         setGeneric(\"g\", function(x, y) standardGeneric(\"g\"))\n\
         setGeneric(\"h\", function(x) standardGeneric(\"h\"))\n\
@@ -145,7 +145,7 @@ fn a_method_body_sees_its_exact_signature_classes() {
         r <- g(new(\"A\"), \"t\")\n";
     let (diagnostics, scope) = check_with_scope(source);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    assert_eq!(scope.get("r").unwrap().mode, Mode::Integer);
+    assert_eq!(scope.get("r").unwrap().mode, Mode::Opaque);
 }
 
 #[test]
@@ -162,18 +162,30 @@ fn only_registrations_ry_cannot_read_leave_the_result_unknown() {
 }
 
 #[test]
-fn only_plain_copies_of_an_instance_are_exact() {
-    // `t()` of an `A` keeps its class names but need not be that instance.
-    let methods = "setClass(\"C\", representation(v = \"numeric\"))\n\
-        setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) 1L)\n\
-        a <- new(\"A\")\nb <- a\nd <- t(a)\n";
+fn only_a_proven_new_call_is_an_exact_instance() {
+    // A binding may be replaced or modified after `new()`, and `t()` of an
+    // `A` keeps its class names but need not be that instance.
+    let methods = "setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) 1L)\n\
+        a <- new(\"A\")\nb <- a\n";
     for (call, mode) in [
-        ("g(a, \"t\")", Mode::Integer),
-        ("g(b, \"t\")", Mode::Integer),
-        ("g(t(a), \"t\")", Mode::Opaque),
-        ("g(d, \"t\")", Mode::Opaque),
-        ("g(identity(a), \"t\")", Mode::Opaque),
+        ("g(new(\"A\"), \"t\")", Mode::Integer),
+        ("g(methods::new(\"A\"), \"t\")", Mode::Integer),
+        ("g(a, \"t\")", Mode::Opaque),
+        ("g(b, \"t\")", Mode::Opaque),
+        ("g(t(new(\"A\")), \"t\")", Mode::Opaque),
     ] {
         assert_eq!(selected(methods, call).1, mode, "{call}");
     }
+    // A masked `new` is not `methods::new`, whatever class it returns.
+    let masked = "new <- function(Class) structure(list(), class = \"A\")\n";
+    assert_eq!(
+        selected(&format!("{methods}{masked}"), "g(new(\"A\"), \"t\")").1,
+        Mode::Opaque
+    );
+    // An `initialize` method may return any object.
+    let initialize = "setMethod(\"initialize\", \"A\", function(.Object, ...) .Object)\n";
+    assert_eq!(
+        selected(&format!("{methods}{initialize}"), "g(new(\"A\"), \"t\")").1,
+        Mode::Opaque
+    );
 }

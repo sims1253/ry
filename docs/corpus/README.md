@@ -76,7 +76,8 @@ real bug disappearing is always surfaced.
 ## Updating the ledgers
 
 Checker and LSP changes may alter diagnostics intentionally. Any such change must
-regenerate the reports, update `posit-0.9.0.json` in the same change, preserve
+regenerate the reports, update every affected ledger (`posit-0.9.0.json`,
+`tidyverse-0.7.1.json`) in the same change, preserve
 or manually review every new identity's label, and explain all missing/unowned
 identities. Never weaken `reconciliation: hermetic` to accept a delta.
 

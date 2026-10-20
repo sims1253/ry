@@ -125,7 +125,8 @@ literal-lift experiment because that experiment installs no authored records.
 Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
 - **RY003 and RY113 (default-off)**: `enabled_by_default` returns `false`
-  for both. The tests `reverting_default_off_rules_fails` and
+  for both. RY113 postdates the table above, so its verdict lives only in
+  the executable matrix. The tests `reverting_default_off_rules_fails` and
   `default_off_verdicts_match_the_registry` gate this: enabling either rule
   in the registry fails one of them.
 - **RY095 (retired)**: absent from `RULES`. The test
@@ -147,4 +148,4 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values count finding records in the archived hermetic ledger.
 - Historical 0.9 verdicts: 35 keep, 1 default-off (RY003), 0 retire
-  (RY095 retired during the audit response); RY114–117 add four `keep` verdicts.
+  (RY095 retired during the audit response); RY114–117 add four `keep` verdicts and RY113 a `default-off` one.

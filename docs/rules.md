@@ -66,8 +66,8 @@ unless a severity override or rule selection names them (for example
 `warn = ["RY003", "RY113"]`).
 
 A capture function such as `enquo()` silences RY109 only when it resolves
-through an attached package or a `NAMESPACE` import. Without `library(rlang)`
-or `import(rlang)`, a bare `enquo(x)` does not count, and a project function of
+through an attached package or a `NAMESPACE` import. Without `library(rlang)`,
+`import(rlang)`, or `importFrom(rlang, enquo)`, a bare `enquo(x)` does not count, and a project function of
 the same name never counts. `{{ x }}` always counts.
 
 RY032 also has a parameter-pattern heuristic. See

@@ -1,6 +1,8 @@
 //! Real-process edit replay. The default one-sample run is a correctness gate;
 //! the Performance workflow requests enough warm samples for latency metrics.
 
+// This target uses only the CLI/LSP comparison helpers.
+#[allow(dead_code)]
 #[path = "integration/harness.rs"]
 mod harness;
 

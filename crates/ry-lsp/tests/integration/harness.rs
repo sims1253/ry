@@ -1,24 +1,11 @@
-//! Shared test harness for the LSP integration tests.
-//!
-//! Two halves, one module:
-//!
-//! * the session plumbing — the client-session type, the source variants
-//!   the properties edit between, the spawn/quiesce helpers, and the
-//!   publication predicates the suites share;
-//! * the cross-mode protocol gates — the `Published` normalization and
-//!   the CLI/LSP comparison plumbing — used by `protocol.rs`,
-//!   `protocol_contract.rs`, and `server_replay.rs`, so the contract stays
-//!   "LSP published diagnostics equal `ry check` run independently in
-//!   the same root".
-
-// `server_replay.rs` includes this module too and uses only the protocol half.
-#![allow(dead_code)]
+//! Session plumbing and the CLI/LSP comparison helpers the LSP integration
+//! tests share. `server_replay.rs` includes this module too.
 
 use ry_testkit::LspSession;
 use ry_testkit::{ObservedPosition, PositionEncoding, normalize_path, normalize_position};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 pub type ClientSession = LspSession<
@@ -26,56 +13,11 @@ pub type ClientSession = LspSession<
     tokio::io::WriteHalf<tokio::io::DuplexStream>,
 >;
 
+pub type Server = tokio::task::JoinHandle<ExitCode>;
+
 // ──────────────────────────────────────────────────────────────────────────
 // Session plumbing
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Source variants with varying Unicode prefixes so incremental-edit ranges
-/// exercise BMP, combining-mark, and astral-plane UTF-16 positions.  Each
-/// diagnostic variant emits RY090 (partial argument name) and RY091 so the
-/// oracle comparison is meaningful.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SourceVariant {
-    Clean,
-    AsciiDiagnostic,
-    BmpDiagnostic,
-    AstralDiagnostic,
-}
-
-impl SourceVariant {
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::Clean => "x <- 1L\ny <- 2L\n",
-            Self::AsciiDiagnostic => "z <- length(xx = 1L)\ny <- 2L\n",
-            Self::BmpDiagnostic => "café <- length(xx = 1L)\ny <- 2L\n",
-            Self::AstralDiagnostic => "\u{1f600} <- length(xx = 1L)\ny <- 2L\n",
-        }
-    }
-
-    /// The content of the first line without the trailing newline.  Used as
-    /// the replacement text for an incremental range edit targeting line 0.
-    pub fn first_line(self) -> &'static str {
-        self.text().lines().next().unwrap()
-    }
-}
-
-/// Compute the UTF-16 code-unit length of the first line of `text`.  This is
-/// the LSP character column at the end of line 0.
-pub fn first_line_utf16_len(text: &str) -> u32 {
-    let end = text.find('\n').unwrap_or(text.len());
-    text[..end].encode_utf16().count() as u32
-}
-
-/// Splice the first-line replacement, matching the server's incremental
-/// range-to-byte conversion: replace everything from (0, 0) to
-/// (0, first_line_utf16_len) with the new first line, keeping the rest.
-pub fn apply_incremental_edit(old: &str, source: SourceVariant) -> String {
-    let first_line_end_byte = old.find('\n').unwrap_or(old.len());
-    let mut result = String::with_capacity(old.len() + source.first_line().len());
-    result.push_str(source.first_line());
-    result.push_str(&old[first_line_end_byte..]);
-    result
-}
 
 /// Sort diagnostics for order-independent comparison.
 pub fn sorted_diagnostics(diagnostics: &[Value]) -> Vec<Value> {
@@ -135,6 +77,11 @@ pub async fn notify_changed(session: &mut ClientSession, uri: &str) {
     notify_watched(session, uri, 2).await;
 }
 
+/// Send a `workspace/didChangeWatchedFiles` deletion event for `uri`.
+pub async fn notify_deleted(session: &mut ClientSession, uri: &str) {
+    notify_watched(session, uri, 3).await;
+}
+
 async fn notify_watched(session: &mut ClientSession, uri: &str, kind: u8) {
     session
         .notify(
@@ -145,41 +92,86 @@ async fn notify_watched(session: &mut ClientSession, uri: &str, kind: u8) {
         .unwrap();
 }
 
-/// Spawn a fresh server on a duplex pair and initialize the client
-/// session with the given workspace folders (the first is the root
-/// URI), client `capabilities`, and — when `initialization_options` is
-/// `Some` — initialization options. Tests using the pull path answer
-/// the server's `workspace/configuration` request themselves right
-/// after this returns. No settle wait for the background indexer: it
-/// never publishes diagnostics itself (its caller republishes, and no
-/// document is open here), and open documents shadow disk files, so
-/// each test's `published_diagnostics_after` await (which has its own
-/// timeout) is the only synchronization needed.
+/// Open `uri` and return its next publication.
+pub async fn open_published(
+    session: &mut ClientSession,
+    uri: &str,
+    version: i32,
+    text: &str,
+) -> Value {
+    let mark = session.publication_mark();
+    session.open(uri, version, text).await.unwrap();
+    session
+        .published_diagnostics_after(uri, mark)
+        .await
+        .unwrap()
+}
+
+/// Replace the text of `uri` and return its next publication.
+pub async fn change_published(
+    session: &mut ClientSession,
+    uri: &str,
+    version: i32,
+    text: &str,
+) -> Value {
+    let mark = session.publication_mark();
+    session
+        .change(uri, version, json!([{"text": text}]))
+        .await
+        .unwrap();
+    session
+        .published_diagnostics_after(uri, mark)
+        .await
+        .unwrap()
+}
+
+/// Consume every queued or in-flight publication for `uri` until 500ms
+/// pass without one, so a later mark sees only publications that later
+/// actions cause. More than 16 publications means the server is stuck.
+pub async fn drain_publications(session: &mut ClientSession, uri: &str) {
+    for _ in 0..=16 {
+        let mark = session.publication_mark();
+        let wait = session.published_diagnostics_after(uri, mark);
+        match tokio::time::timeout(Duration::from_millis(500), wait).await {
+            Ok(received) => {
+                received.expect("publication receive error during drain");
+            }
+            Err(_) => return,
+        }
+    }
+    panic!("{uri} kept publishing after 16 drained publications");
+}
+
+/// Start a server on an in-memory duplex pair. The caller initializes it.
+pub fn spawn_server() -> (ClientSession, Server) {
+    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = tokio::io::split(server_stream);
+    let server = tokio::spawn(ry_lsp::run_with(server_reader, server_writer));
+    (LspSession::new(client_reader, client_writer), server)
+}
+
+/// Spawn a server and initialize it with `roots` as workspace folders (the
+/// first is also the root URI). Tests using the pull path answer the
+/// server's `workspace/configuration` request themselves.
 pub async fn spawn_session(
     roots: &[&Path],
     capabilities: Value,
     initialization_options: Option<Value>,
-) -> (ClientSession, tokio::task::JoinHandle<()>) {
-    let (client_stream, server_stream) = tokio::io::duplex(128 * 1024);
-    let (client_reader, client_writer) = tokio::io::split(client_stream);
-    let (server_reader, server_writer) = tokio::io::split(server_stream);
-    let server = tokio::spawn(async move {
-        let _ = ry_lsp::run_with(server_reader, server_writer).await;
-    });
-    let mut session = LspSession::new(client_reader, client_writer);
-    let root_uri = ry_testkit::file_uri(roots[0]).unwrap();
+) -> (ClientSession, Server) {
+    let (mut session, server) = spawn_server();
     let ws_folders: Vec<Value> = roots
         .iter()
         .map(|r| {
             json!({
-                "uri": ry_testkit::file_uri(r).unwrap(),
+                "uri": file_uri(r),
                 "name": r.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "fixture".to_string())
             })
         })
         .collect();
     let mut params = json!({
         "processId": null,
-        "rootUri": root_uri,
+        "rootUri": file_uri(roots[0]),
         "capabilities": capabilities,
         "workspaceFolders": ws_folders
     });
@@ -191,14 +183,16 @@ pub async fn spawn_session(
     (session, server)
 }
 
-/// Shut down a session and require the server to stop within 3s.
-pub async fn join_session(mut session: ClientSession, server: tokio::task::JoinHandle<()>) {
+/// Shut down a session and require the server to exit successfully
+/// within 3s.
+pub async fn join_session(mut session: ClientSession, server: Server) {
     session.shutdown().await.expect("clean shutdown");
     drop(session);
-    tokio::time::timeout(Duration::from_secs(3), server)
+    let code = tokio::time::timeout(Duration::from_secs(3), server)
         .await
         .expect("server stops after exit")
         .expect("server task completes");
+    assert_eq!(code, ExitCode::SUCCESS, "server exit code");
 }
 
 pub fn watching_capabilities() -> Value {
@@ -227,9 +221,7 @@ pub async fn answer_watcher_registration(session: &mut ClientSession) -> Vec<Val
 
 /// Spawn a session advertising dynamic watched-file registration and
 /// answer the registration request.
-pub async fn spawn_watching_session(
-    roots: &[&Path],
-) -> (ClientSession, tokio::task::JoinHandle<()>) {
+pub async fn spawn_watching_session(roots: &[&Path]) -> (ClientSession, Server) {
     let (mut session, server) = spawn_session(roots, watching_capabilities(), None).await;
     answer_watcher_registration(&mut session).await;
     (session, server)
@@ -251,7 +243,7 @@ pub async fn sync_barrier(session: &mut ClientSession, uri: &str) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Cross-mode protocol gates
+// CLI/LSP comparison
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A diagnostic normalized to file-relative coordinates so CLI and LSP
@@ -268,7 +260,7 @@ pub struct Published {
 
 /// The workspace root (this crate's parent's parent), where `target/`
 /// and the cargo invocations live.
-pub fn workspace_root() -> PathBuf {
+fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
@@ -304,13 +296,11 @@ pub fn ry_binary() -> PathBuf {
 }
 
 /// Extract the `ry` executable's path from `cargo build
-/// --message-format=json` stdout: one JSON object per line, the wanted
-/// one being the `compiler-artifact` message whose target is the `ry`
-/// bin (dependency artifacts report a null `executable` and are
-/// skipped). A relative report is anchored at the workspace root — the
-/// directory the build ran in — because a relative path would otherwise
-/// be resolved against the test process's working directory.
-pub fn ry_executable_from_cargo_json(stdout: &[u8]) -> Option<PathBuf> {
+/// --message-format=json` stdout. Dependency artifacts report a null
+/// `executable` and are skipped. A relative path is anchored at the
+/// workspace root, where the build ran, not at the test's working
+/// directory.
+fn ry_executable_from_cargo_json(stdout: &[u8]) -> Option<PathBuf> {
     let stdout = std::str::from_utf8(stdout).ok()?;
     let artifact = stdout
         .lines()
@@ -341,7 +331,10 @@ pub fn published_from_cli_value(value: &Value, root: &Path) -> Published {
     let path = value["path"].as_str().unwrap();
     let relative = normalize_path(Path::new(path), root);
     let relative = relative.strip_prefix("./").unwrap_or(&relative).to_string();
-    let source = std::fs::read_to_string(root.join(&relative)).unwrap_or_default();
+    // Lossy, because a finding can sit in a file that is not UTF-8.
+    let source = std::fs::read(root.join(&relative))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
     let scalar = ObservedPosition {
         line: value["line"].as_u64().unwrap() as u32 - 1,
         character: value["column"].as_u64().unwrap() as u32 - 1,
@@ -356,6 +349,34 @@ pub fn published_from_cli_value(value: &Value, root: &Path) -> Published {
         line: position.line,
         byte_column: position.character,
     }
+}
+
+/// Run `ry check --output-format json <extra> <target>` in `root` and return
+/// the sorted findings relative to `root`.
+pub fn cli_diagnostics(
+    root: &Path,
+    target: impl AsRef<std::ffi::OsStr>,
+    extra: &[&str],
+) -> Vec<Published> {
+    let output = Command::new(ry_binary())
+        .current_dir(root)
+        .args(["check", "--output-format", "json"])
+        .args(extra)
+        .arg(target)
+        .output()
+        .expect("run ry check");
+    assert!(
+        matches!(output.status.code(), Some(0 | 1)),
+        "CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let values: Vec<Value> = serde_json::from_slice(&output.stdout).expect("CLI JSON output");
+    let mut diagnostics: Vec<_> = values
+        .iter()
+        .map(|value| published_from_cli_value(value, root))
+        .collect();
+    diagnostics.sort();
+    diagnostics
 }
 
 /// Normalize an LSP `publishDiagnostics` message into sorted `Published`

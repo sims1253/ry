@@ -1,28 +1,16 @@
-//! #486: the disk index goes stale when R sources change outside open
-//! buffers, and closing a saved file restores the last indexed snapshot.
+//! R sources changed outside open buffers reach the disk index, and
+//! closing a file analyzes what the disk holds. Every persisted transition
+//! converges with a fresh server on the same final files.
 //!
-//! The language server used to register no watched globs for R sources and
-//! to early-return on their events, and `did_close` never re-read the
-//! file — so after "edit → save → close" (with another document open) the
-//! closed file was re-analyzed from its initialize-time snapshot until some
-//! unrelated event (config/DESCRIPTION/NAMESPACE/native/data change)
-//! triggered a full reindex.
-//!
-//! These tests pin the converged contract against a fresh server over the
-//! same final filesystem: every persisted source transition (unopened-file
-//! edit/create/delete, save-then-close) agrees with a cold start, while the
-//! open buffer always overrides disk.
-//!
-//! The observable is cross-file definition shadowing (see
-//! `cross_file_shadowing.rs`): `a.R` and `z.R` both define `f`, `use.R`
-//! calls `f()`, and only the character variant of `f` produces RY040 in
-//! `use.R` — so which file's content the server analyzes is directly
-//! visible in the published diagnostics.
+//! `a.R` and `z.R` both define `f`, `use.R` calls `f()`, and only the
+//! character `f` makes RY040 fire in `use.R`, so the published diagnostics
+//! show which file's bytes the server analyzed.
 
 use crate::harness;
 
 use harness::{
-    assert_converges, file_uri, has_ry040, join_session, spawn_session, spawn_watching_session,
+    assert_converges, cli_diagnostics, drain_publications, file_uri, has_ry040, join_session,
+    notify_changed, notify_created, notify_deleted, spawn_session, spawn_watching_session,
     sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
@@ -37,28 +25,13 @@ const F_INT: &str = "f <- function() 1L\n";
 /// character variant.
 const USE: &str = "x <- f() + 1L\n";
 
-/// Open only `use.R` (whose content never changes) and return the fresh
-/// publication for it after `mark`.
-async fn open_use_and_observe(
-    session: &mut harness::ClientSession,
-    use_uri: &str,
-    mark: u64,
-) -> Value {
-    session.open(use_uri, 1, USE).await.unwrap();
-    session
-        .published_diagnostics_after(use_uri, mark)
-        .await
-        .unwrap()
-}
-
 /// A fresh server over the same final filesystem, opening only `use.R`:
 /// the oracle every persisted transition must converge with.
 async fn fresh_use_diagnostics(fixture: &FixtureProject) -> Value {
     let use_uri = file_uri(&fixture.path("use.R"));
     let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
     sync_barrier(&mut session, &use_uri).await;
-    let mark = session.publication_mark();
-    let publish = open_use_and_observe(&mut session, &use_uri, mark).await;
+    let publish = harness::open_published(&mut session, &use_uri, 1, USE).await;
     join_session(session, server).await;
     publish
 }
@@ -103,13 +76,7 @@ async fn watched_event_during_initial_index_keeps_diagnostics_flowing() {
     // Rewrite the unopened `a.R` and deliver its watched change while
     // the initial scan, which read the character `f`, waits to install.
     std::fs::write(fixture.path("a.R"), F_INT).unwrap();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": a_uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    notify_changed(&mut session, &a_uri).await;
     // The event applies after the scan's install, so its refreshed
     // bytes win over the scan's older read.
     let mark = session.publication_mark();
@@ -147,8 +114,7 @@ async fn unopened_edit_refreshes_cross_file_diagnostics() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    let mark = session.publication_mark();
-    let first = open_use_and_observe(&mut session, &use_uri, mark).await;
+    let first = harness::open_published(&mut session, &use_uri, 1, USE).await;
     assert!(
         !has_ry040(&first),
         "integer f must win before the on-disk edit"
@@ -158,13 +124,7 @@ async fn unopened_edit_refreshes_cross_file_diagnostics() {
     // watched-file change the client would send for the save.
     std::fs::write(fixture.path("z.R"), A_CHAR).unwrap();
     let edit_mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": z_uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    notify_changed(&mut session, &z_uri).await;
     let after = session
         .published_diagnostics_after(&use_uri, edit_mark)
         .await
@@ -194,8 +154,7 @@ async fn unopened_create_refreshes_cross_file_diagnostics() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    let mark = session.publication_mark();
-    let first = open_use_and_observe(&mut session, &use_uri, mark).await;
+    let first = harness::open_published(&mut session, &use_uri, 1, USE).await;
     assert!(has_ry040(&first), "character f must win before z.R exists");
 
     // Create `z.R` on disk with the integer `f`, which sorts after
@@ -203,13 +162,7 @@ async fn unopened_create_refreshes_cross_file_diagnostics() {
     fixture.write_file("z.R", F_INT).unwrap();
     let z_uri = file_uri(&fixture.path("z.R"));
     let create_mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": z_uri, "type": 1}]}),
-        )
-        .await
-        .unwrap();
+    notify_created(&mut session, &z_uri).await;
     let after = session
         .published_diagnostics_after(&use_uri, create_mark)
         .await
@@ -241,19 +194,12 @@ async fn unopened_delete_refreshes_cross_file_diagnostics() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    let mark = session.publication_mark();
-    let first = open_use_and_observe(&mut session, &use_uri, mark).await;
+    let first = harness::open_published(&mut session, &use_uri, 1, USE).await;
     assert!(!has_ry040(&first), "integer f must win before the deletion");
 
     std::fs::remove_file(fixture.path("z.R")).unwrap();
     let delete_mark = session.publication_mark();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": z_uri, "type": 3}]}),
-        )
-        .await
-        .unwrap();
+    notify_deleted(&mut session, &z_uri).await;
     let after = session
         .published_diagnostics_after(&use_uri, delete_mark)
         .await
@@ -271,15 +217,13 @@ async fn unopened_delete_refreshes_cross_file_diagnostics() {
     join_session(session, server).await;
 }
 
-/// Save-then-close must analyze the saved bytes: with `a.R` the only
-/// definition of `f`, open it as the character variant, save the integer
-/// variant to disk, close, and the closed file's indexed snapshot must
-/// carry the integer `f` — matching a fresh server — rather than the
-/// initialize-time character snapshot.
+/// Save-then-close analyzes the saved bytes. `a.R` is the only `f` and
+/// starts as the character variant. The buffer is edited to the integer
+/// variant, saved with the client's save and watched events, and closed:
+/// the closed `a.R` must mean the integer `f`, like a fresh server and
+/// `ry check` on the final files.
 #[tokio::test]
 async fn save_then_close_converges_with_fresh_server() {
-    // On disk `a.R` starts as the character variant; it is the only
-    // `f`, so its content alone decides RY040 in `use.R`.
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("a.R", A_CHAR).unwrap();
     fixture.write_file("use.R", USE).unwrap();
@@ -288,7 +232,6 @@ async fn save_then_close_converges_with_fresh_server() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    // Open both with the on-disk contents: character `f` wins, RY040.
     let mark = session.publication_mark();
     session.open(&a_uri, 1, A_CHAR).await.unwrap();
     session.open(&use_uri, 1, USE).await.unwrap();
@@ -297,10 +240,8 @@ async fn save_then_close_converges_with_fresh_server() {
         .await
         .unwrap();
     assert!(has_ry040(&first), "character f must win while open");
+    drain_publications(&mut session, &use_uri).await;
 
-    // Edit the open buffer to the integer variant (RY040 clears),
-    // save it to disk (the client writes the file), then close. The
-    // closed `a.R` must keep meaning integer `f`.
     let edit_mark = session.publication_mark();
     session
         .change(&a_uri, 2, json!([{ "text": F_INT }]))
@@ -314,15 +255,24 @@ async fn save_then_close_converges_with_fresh_server() {
         !has_ry040(&edited),
         "the edited integer f must clear RY040 while open"
     );
-    std::fs::write(fixture.path("a.R"), F_INT).unwrap();
-    let close_mark = session.publication_mark();
+
+    // The watched refresh is a no-op while the buffer shadows the disk,
+    // and it may publish nothing. Drain it so the close mark sees only the
+    // close's publication.
+    fixture.write_file("a.R", F_INT).unwrap();
     session
         .notify(
-            "textDocument/didClose",
+            "textDocument/didSave",
             json!({"textDocument": {"uri": a_uri}}),
         )
         .await
         .unwrap();
+    notify_changed(&mut session, &a_uri).await;
+    sync_barrier(&mut session, &use_uri).await;
+    drain_publications(&mut session, &use_uri).await;
+
+    let close_mark = session.publication_mark();
+    session.close(&a_uri).await.unwrap();
     let after = session
         .published_diagnostics_after(&use_uri, close_mark)
         .await
@@ -336,17 +286,18 @@ async fn save_then_close_converges_with_fresh_server() {
         &fresh_use_diagnostics(&fixture).await,
         "save-then-close",
     );
-
     join_session(session, server).await;
+    let cli = cli_diagnostics(fixture.root(), fixture.root(), &[]);
+    assert!(cli.is_empty(), "CLI on the final tree is clean: {cli:?}");
 }
 
-/// Discard-then-close must analyze whatever the disk holds: editing the
-/// open buffer, saving, then editing again WITHOUT saving and closing
-/// restores the saved bytes — the same bytes a fresh server reads.
+/// Discard-then-close analyzes what the disk holds. `a.R` starts as the
+/// integer variant. The buffer is edited to the character variant and
+/// saved, then edited back to the integer variant without saving and
+/// closed: the closed `a.R` must mean the saved character `f` again, like
+/// a fresh server and `ry check` on the final files.
 #[tokio::test]
 async fn discard_then_close_converges_with_fresh_server() {
-    // On disk `a.R` starts as the integer variant; it is the only
-    // `f`, so its content alone decides RY040 in `use.R`.
     let fixture = FixtureProject::empty().unwrap();
     fixture.write_file("a.R", F_INT).unwrap();
     fixture.write_file("use.R", USE).unwrap();
@@ -355,7 +306,6 @@ async fn discard_then_close_converges_with_fresh_server() {
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
     sync_barrier(&mut session, &use_uri).await;
 
-    // Open both with the on-disk contents: integer `f` wins, clean.
     let mark = session.publication_mark();
     session.open(&a_uri, 1, F_INT).await.unwrap();
     session.open(&use_uri, 1, USE).await.unwrap();
@@ -364,11 +314,8 @@ async fn discard_then_close_converges_with_fresh_server() {
         .await
         .unwrap();
     assert!(!has_ry040(&first), "integer f must win while open");
+    drain_publications(&mut session, &use_uri).await;
 
-    // Edit the buffer to the character variant (RY040 appears) and
-    // save that to disk; then edit back to integer WITHOUT saving
-    // (RY040 clears) and close. The disk holds the character `f`, so
-    // the closed file must mean character `f` again.
     let edit_mark = session.publication_mark();
     session
         .change(&a_uri, 2, json!([{ "text": A_CHAR }]))
@@ -388,18 +335,17 @@ async fn discard_then_close_converges_with_fresh_server() {
         .change(&a_uri, 3, json!([{ "text": F_INT }]))
         .await
         .unwrap();
-    session
+    let discarded = session
         .published_diagnostics_after(&use_uri, discard_mark)
         .await
         .unwrap();
+    assert!(
+        !has_ry040(&discarded),
+        "the unsaved integer buffer must clean use.R: {discarded}"
+    );
+
     let close_mark = session.publication_mark();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": a_uri}}),
-        )
-        .await
-        .unwrap();
+    session.close(&a_uri).await.unwrap();
     let after = session
         .published_diagnostics_after(&use_uri, close_mark)
         .await
@@ -413,8 +359,13 @@ async fn discard_then_close_converges_with_fresh_server() {
         &fresh_use_diagnostics(&fixture).await,
         "discard-then-close",
     );
-
     join_session(session, server).await;
+    let cli = cli_diagnostics(fixture.root(), fixture.root(), &[]);
+    assert!(
+        cli.iter()
+            .any(|p| p.path.ends_with("use.R") && p.code == "RY040"),
+        "CLI on the final tree flags use.R: {cli:?}"
+    );
 }
 
 /// Send a watched event for a nonexistent `DESCRIPTION` path: the
@@ -425,44 +376,7 @@ async fn discard_then_close_converges_with_fresh_server() {
 /// the testkit's canonicalizing `file_uri` cannot encode it directly.
 async fn trigger_full_scan(session: &mut harness::ClientSession, root: &std::path::Path) {
     let fake = format!("{}/DESCRIPTION", file_uri(root).as_str());
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": fake, "type": 2}]}),
-        )
-        .await
-        .unwrap();
-}
-
-/// Open `use.R` and await its first publication. Publication waits for
-/// the initial scan's install, so this proves the session settled.
-async fn open_use_settled(session: &mut harness::ClientSession, use_uri: &str) -> Value {
-    session.open(use_uri, 1, USE).await.unwrap();
-    session
-        .published_diagnostics_after(use_uri, session.publication_mark())
-        .await
-        .unwrap()
-}
-
-/// A no-op edit (same text, bumped version) drives one debounced
-/// publish of whatever the index currently holds, without changing
-/// any file. The observation point every freshness test ends at: the
-/// publication reflects the committed state at its snapshot, which is
-/// strictly after every writer the test already rendezvoused with.
-async fn observe_current_index(
-    session: &mut harness::ClientSession,
-    use_uri: &str,
-    version: i32,
-) -> Value {
-    let mark = session.publication_mark();
-    session
-        .change(use_uri, version, json!([{ "text": USE }]))
-        .await
-        .unwrap();
-    session
-        .published_diagnostics_after(use_uri, mark)
-        .await
-        .unwrap()
+    notify_changed(session, &fake).await;
 }
 
 /// A watched edit queued behind an in-flight full scan applies after the
@@ -478,7 +392,7 @@ async fn watched_edit_queued_behind_a_scan_lands_after_it() {
     let a_uri = file_uri(&fixture.path("a.R"));
     let use_uri = file_uri(&fixture.path("use.R"));
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
-    let first = open_use_settled(&mut session, &use_uri).await;
+    let first = harness::open_published(&mut session, &use_uri, 1, USE).await;
     assert!(
         has_ry040(&first),
         "character f must win before the scenario"
@@ -491,15 +405,11 @@ async fn watched_edit_queued_behind_a_scan_lands_after_it() {
     // Strictly after the scan's walk: move the disk and deliver the
     // watched event, which queues behind the parked scan.
     std::fs::write(fixture.path("a.R"), F_INT).unwrap();
-    session
-        .notify(
-            "workspace/didChangeWatchedFiles",
-            json!({"changes": [{"uri": a_uri, "type": 2}]}),
-        )
-        .await
-        .unwrap();
+    notify_changed(&mut session, &a_uri).await;
     ry_lsp::test_seam::release(Seam::Scan);
-    let after = observe_current_index(&mut session, &use_uri, 2).await;
+    // A no-op edit publishes what the index holds after every writer the
+    // test already waited for.
+    let after = harness::change_published(&mut session, &use_uri, 2, USE).await;
     assert!(
         !has_ry040(&after),
         "the refresh queued behind the scan must win over its older read: {after}"
@@ -524,7 +434,7 @@ async fn close_queued_behind_a_scan_keeps_the_saved_bytes() {
     let a_uri = file_uri(&fixture.path("a.R"));
     let use_uri = file_uri(&fixture.path("use.R"));
     let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
-    let first = open_use_settled(&mut session, &use_uri).await;
+    let first = harness::open_published(&mut session, &use_uri, 1, USE).await;
     assert!(
         has_ry040(&first),
         "character f must win before the scenario"
@@ -544,15 +454,11 @@ async fn close_queued_behind_a_scan_keeps_the_saved_bytes() {
         .await
         .unwrap();
     std::fs::write(fixture.path("a.R"), F_INT).unwrap();
-    session
-        .notify(
-            "textDocument/didClose",
-            json!({"textDocument": {"uri": a_uri}}),
-        )
-        .await
-        .unwrap();
+    session.close(&a_uri).await.unwrap();
     ry_lsp::test_seam::release(Seam::Scan);
-    let after = observe_current_index(&mut session, &use_uri, 2).await;
+    // A no-op edit publishes what the index holds after every writer the
+    // test already waited for.
+    let after = harness::change_published(&mut session, &use_uri, 2, USE).await;
     assert!(
         !has_ry040(&after),
         "save-then-close must keep the saved integer f even with a scan in flight: {after}"

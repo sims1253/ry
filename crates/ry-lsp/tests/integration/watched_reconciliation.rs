@@ -12,11 +12,11 @@
 use crate::harness;
 
 use harness::{
-    ClientSession, Published, file_uri, join_session, normalize_diagnostics,
-    published_from_cli_value, spawn_watching_session, sync_barrier,
+    ClientSession, Server, cli_diagnostics, file_uri, join_session, normalize_diagnostics,
+    spawn_watching_session, sync_barrier,
 };
 use ry_lsp::test_seam::Seam;
-use ry_testkit::{CliProcess, FixtureProject, rpc_receive_timeout};
+use ry_testkit::{FixtureProject, rpc_receive_timeout};
 use serde_json::{Value, json};
 
 /// Await the next publication for `uri` whose diagnostics satisfy
@@ -63,26 +63,8 @@ fn has_ry010_for_a_at_line(diagnostics: &[Value], line: u64) -> bool {
     })
 }
 
-/// `ry check --output-format json` on the fixture tree: the fresh-analysis
-/// oracle the convergence assertions are measured against.
-fn cli_diagnostics(fixture: &FixtureProject) -> Vec<Published> {
-    let output = CliProcess::new(harness::ry_binary())
-        .check(fixture, fixture.root(), ["--output-format", "json"])
-        .unwrap();
-    assert!(
-        matches!(output.status.code(), Some(0 | 1)),
-        "CLI failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let values: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    values
-        .into_iter()
-        .map(|value| published_from_cli_value(&value, fixture.root()))
-        .collect()
-}
-
 fn cli_flags(fixture: &FixtureProject, name: &str) -> bool {
-    cli_diagnostics(fixture)
+    cli_diagnostics(fixture.root(), fixture.root(), &[])
         .iter()
         .any(|p| p.path.ends_with(name) && p.code == "RY010")
 }
@@ -90,7 +72,7 @@ fn cli_flags(fixture: &FixtureProject, name: &str) -> bool {
 struct Settled {
     fixture: FixtureProject,
     session: ClientSession,
-    server: tokio::task::JoinHandle<()>,
+    server: Server,
     a_uri: String,
     b_uri: String,
     c_uri: String,

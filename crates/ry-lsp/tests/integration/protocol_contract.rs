@@ -1401,13 +1401,16 @@ async fn per_file_publication_matches_cli_across_differing_files() {
 
 /// (#48): the same fixture tree must produce the same discovered path
 /// set in CLI and LSP. The fixture includes a `target/` directory, a hidden
-/// directory (both skip), and a normal file. Every file has a diagnostic so
-/// the discovery set is observable through published diagnostic paths.
+/// directory (both skip), an opened file, and a closed file. Every file has
+/// a diagnostic so the discovery set is observable through published
+/// diagnostic paths. The closed `other.R` must be published, so the
+/// absence of the skipped files means the LSP did not discover them.
 #[tokio::test]
 async fn cli_lsp_discovery_set_equality() {
     let fixture = FixtureProject::empty().unwrap();
-    // Normal file with a diagnostic.
+    // Normal files with a diagnostic. Only `normal.R` is opened.
     fixture.write_file("normal.R", "length(xx = 1L)\n").unwrap();
+    fixture.write_file("other.R", "length(xx = 1L)\n").unwrap();
     // File in target/ — both modes skip this directory.
     fixture
         .write_file("target/skipped.R", "length(xx = 1L)\n")

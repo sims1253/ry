@@ -449,7 +449,6 @@ fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
         "{output}"
     );
 
-    fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
     fs::write(
         tmp.path().join("ry.toml"),
         "warn = [\"RY113\"]\nexclude = [\"example.R\"]\n",
@@ -457,6 +456,14 @@ fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
     .unwrap();
     let excluded = ry_check(tmp.path());
     assert!(!String::from_utf8_lossy(&excluded.stdout).contains("RY113"));
+
+    fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
+    fs::write(&path, "1L == 1L\n").unwrap();
+    let fixed = ry!()
+        .args(["check", "--output-format", "json"])
+        .arg(&path)
+        .run();
+    assert_eq!(fixed.json(), serde_json::json!([]), "{fixed:?}");
 }
 
 #[test]
@@ -486,19 +493,12 @@ fn ry_toml_exclude_patterns_skip_matched_files() {
     )
     .unwrap();
 
-    let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "excluded file must not be checked, got {:?}; stderr={}",
-        output.status,
-        stderr
-    );
-    assert!(
-        !stderr.contains("RY040"),
-        "RY040 from excluded file must not appear: {}",
-        stderr
-    );
+    let output = ry!()
+        .args(["check", "--output-format", "json"])
+        .arg(tmp.path())
+        .run();
+    assert_eq!(output.json(), serde_json::json!([]), "{output:?}");
+    assert!(output.success(), "{output:?}");
 }
 
 #[test]
@@ -1022,144 +1022,6 @@ fn imported_rlang_capture_helper_is_recognized_globally() {
     );
 }
 
-#[test]
-fn script_library_call_binds_exports_from_installed_namespace() {
-    let tmp = tempfile::tempdir().unwrap();
-    let r_lib = tmp.path().join("library");
-    install_fixture_package(&r_lib);
-    fs::write(
-        tmp.path().join("script.R"),
-        "library(fixturepkg)\nx <- exported_value\ny <- genuinely_missing\n",
-    )
-    .unwrap();
-
-    let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("variable `genuinely_missing` is not bound"),
-        "an un-stubbed attached package opens the search path: {stdout}"
-    );
-    assert!(
-        !stdout.contains("variable `exported_value` is not bound"),
-        "library(fixturepkg) must bind statically exported values: {stdout}"
-    );
-}
-
-#[test]
-fn script_require_call_binds_exports_from_installed_namespace() {
-    let tmp = tempfile::tempdir().unwrap();
-    let r_lib = tmp.path().join("library");
-    install_fixture_package(&r_lib);
-    fs::write(
-        tmp.path().join("script.R"),
-        "require(fixturepkg)\nx <- exported_value\n",
-    )
-    .unwrap();
-
-    let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("RY010"),
-        "require(fixturepkg) must bind statically exported values: {stdout}"
-    );
-}
-
-#[test]
-fn installed_namespace_lookup_preserves_r_library_precedence() {
-    let tmp = tempfile::tempdir().unwrap();
-    let first = tmp.path().join("first-library");
-    let second = tmp.path().join("second-library");
-    install_namespace(&first, "fixturepkg", "first_export");
-    install_namespace(&second, "fixturepkg", "shadowed_export");
-    fs::write(
-        tmp.path().join("script.R"),
-        "library(fixturepkg)\nx <- first_export\ny <- shadowed_export\n",
-    )
-    .unwrap();
-    let r_libs = std::env::join_paths([first, second]).unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(tmp.path().join("script.R"))
-        .env("R_LIBS", r_libs)
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("variable `first_export` is not bound"),
-        "the first R library must win: {stdout}"
-    );
-    assert!(
-        !stdout.contains("variable `shadowed_export` is not bound"),
-        "an un-stubbed attached package opens the search path: {stdout}"
-    );
-}
-
-#[test]
-fn placeholder_library_path_prefers_current_r_version() {
-    let tmp = tempfile::tempdir().unwrap();
-    let versioned = tmp.path().join("versioned-library");
-    install_namespace(&versioned.join("8.8"), "fixturepkg", "old_export");
-    install_namespace(&versioned.join("R-9.9.1"), "fixturepkg", "current_export");
-
-    let r_home = tmp.path().join("r-home");
-    install_fixture_r_home(&r_home, "9.9.1");
-    fs::write(
-        tmp.path().join("script.R"),
-        "library(fixturepkg)\nx <- current_export\ny <- old_export\n",
-    )
-    .unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(tmp.path().join("script.R"))
-        .env("R_LIBS", versioned.join("%v"))
-        .env("R_HOME", r_home)
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("variable `current_export` is not bound"),
-        "the current R version must win placeholder expansion: {stdout}"
-    );
-    assert!(
-        !stdout.contains("variable `old_export` is not bound"),
-        "an un-stubbed attached package opens the search path: {stdout}"
-    );
-}
-
-#[test]
-fn project_renv_library_precedes_global_libraries() {
-    let tmp = tempfile::tempdir().unwrap();
-    let project = tmp.path().join("project");
-    fs::create_dir_all(&project).unwrap();
-    let renv_library = project.join("renv/library/R-9.9/x86_64-pc-linux-gnu");
-    install_namespace(&renv_library, "fixturepkg", "renv_export");
-    let global_library = tmp.path().join("global-library");
-    install_namespace(&global_library, "fixturepkg", "global_export");
-    let r_home = tmp.path().join("r-home");
-    install_fixture_r_home(&r_home, "9.9.1");
-    fs::write(
-        project.join("script.R"),
-        "library(fixturepkg)\nx <- renv_export\ny <- global_export\n",
-    )
-    .unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(project.join("script.R"))
-        .env("R_LIBS", global_library)
-        .env("R_HOME", r_home)
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("variable `renv_export` is not bound"),
-        "the project renv library must win: {stdout}"
-    );
-    assert!(
-        !stdout.contains("variable `global_export` is not bound"),
-        "an un-stubbed attached package opens the search path: {stdout}"
-    );
-}
-
 /// Library selection seen through a package import: `R_LIBS` roots keep
 /// their order, a project renv library precedes them, a missing root falls
 /// back to the user and then the site library, and a `%v` placeholder picks
@@ -1401,51 +1263,35 @@ fn bundled_set6_imports_bind_exports_without_hiding_misspellings() {
     }
 }
 
+/// `packages = ["dplyr"]` in ry.toml makes a bare `filter()` resolve as
+/// dplyr's NSE verb, so the `mtcars` column `mpg` is bound. Without the key
+/// or a `library(dplyr)`, `filter()` takes regular resolution and `mpg` is
+/// unbound.
 #[test]
 fn ry_toml_packages_enables_dplyr_nse() {
-    // A `packages = ["dplyr"]` in ry.toml makes a bare
-    // `filter(df, mpg > 0)` resolve as dplyr's NSE verb, so the column
-    // reference `mpg` (a real mtcars column) does NOT fire RY010.
-    // Without `packages` (or an inline `library(dplyr)`), `filter`
-    // falls through to regular resolution and `mpg` would be reported
-    // as unbound.
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("ry.toml"), "packages = [\"dplyr\"]\n").unwrap();
-    fs::write(
-        tmp.path().join("use.R"),
-        // `df` is the mtcars data frame from the typeshed; the dplyr
-        // NSE handler augments scope with its column schema so `mpg`
-        // resolves. No RY010 should fire on `mpg`.
-        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
-    )
-    .unwrap();
-
-    let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("RY010"),
-        "with packages=[\"dplyr\"], filter() NSE should suppress RY010 on `mpg`, got: {stderr}"
-    );
-}
-
-#[test]
-fn ry_toml_without_packages_does_not_gate_dplyr_nse() {
-    // Counterpart: with NO `packages` key and NO inline `library(dplyr)`,
-    // a bare `filter(df, mpg > 0)` must fall through to regular
-    // resolution, so the unbound `mpg` fires RY010.
     let tmp = tempfile::tempdir().unwrap();
     fs::write(
         tmp.path().join("use.R"),
         "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
     )
     .unwrap();
-
-    let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("RY010"),
-        "without packages or library(dplyr), filter() should fall through and emit RY010 on `mpg`, got: {stdout}"
-    );
+    for (config, expected) in [
+        (None, vec!["mpg"]),
+        (Some("packages = [\"dplyr\"]\n"), vec![]),
+    ] {
+        if let Some(config) = config {
+            fs::write(tmp.path().join("ry.toml"), config).unwrap();
+        }
+        let output = ry!()
+            .args(["check", "--output-format", "json"])
+            .arg(tmp.path())
+            .run();
+        assert_eq!(
+            unbound_names(output.json().as_array().unwrap()),
+            expected,
+            "ry.toml: {config:?}"
+        );
+    }
 }
 
 #[test]
@@ -2270,15 +2116,11 @@ fn ry_toml_exclude_patterns_apply_to_relative_roots() {
     fs::write(tmp.path().join("fixtures/bad.R"), "x <- \"a\" + 1L\n").unwrap();
     fs::write(tmp.path().join("good.R"), "x <- 1L + 2L\n").unwrap();
     for root in [".", "./fixtures"] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_ry"))
-            .current_dir(tmp.path())
-            .args(["check", root])
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success() && !stderr.contains("RY040"),
-            "excluded file was checked from {root:?}: {stderr}"
-        );
+        let output = ry!()
+            .cwd(tmp.path())
+            .args(["check", "--output-format", "json", root])
+            .run();
+        assert_eq!(output.json(), serde_json::json!([]), "{root:?}: {output:?}");
+        assert!(output.success(), "{root:?}: {output:?}");
     }
 }

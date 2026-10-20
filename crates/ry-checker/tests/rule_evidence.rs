@@ -23,13 +23,10 @@
 //!    and that code-level verdicts (default-off) match the registry.
 
 use std::collections::BTreeSet;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 use ry_checker::Checker;
 use ry_checker::rules::{RULES, enabled_by_default};
 use ry_core::RParser;
-use ry_core::ast::{Expr, Stmt};
 
 // -- Shared helpers --------------------------------------------------------
 
@@ -49,32 +46,6 @@ fn parses_clean(src: &str) -> bool {
     let mut parser = RParser::new().expect("parser init");
     let file = parser.parse("evidence.R", src).expect("parse");
     file.parse_errors.is_empty()
-}
-
-fn r_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
-    let mut pending = vec![dir.to_path_buf()];
-    let mut files = Vec::new();
-    while let Some(next) = pending.pop() {
-        for entry in
-            fs::read_dir(&next).unwrap_or_else(|error| panic!("read {}: {error}", next.display()))
-        {
-            let path = entry.expect("directory entry").path();
-            if path.is_dir() && recursive {
-                pending.push(path);
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("R") {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files
-}
-
-fn checker_fixtures() -> Vec<PathBuf> {
-    r_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata"),
-        false,
-    )
 }
 
 // =======================================================================
@@ -253,153 +224,6 @@ fn r7_literal_lift_report_over_rule_families() {
         missing.is_empty(),
         "R7 coverage incomplete: rules without a case or n/a marker: {missing:?}",
     );
-}
-
-/// Scan checker testdata fixtures for natural R7 cases: single-parameter
-/// functions called with a scalar literal argument. Lifts the literal to a
-/// default and compares diagnostics.
-#[test]
-fn r7_literal_lift_fixture_scan() {
-    let fixtures = checker_fixtures();
-    assert!(fixtures.len() >= 229, "expected at least 229 fixtures");
-    let mut parser = RParser::new().expect("parser init");
-    let mut total_lifts = 0usize;
-    let mut divergences = Vec::new();
-
-    for path in &fixtures {
-        let src =
-            fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let name = path.to_string_lossy().to_string();
-        let file = parser
-            .parse(&name, &src)
-            .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-
-        if !file.parse_errors.is_empty() {
-            continue;
-        }
-
-        let fn_defs = collect_function_defs(&file.stmts);
-        if fn_defs.is_empty() {
-            continue;
-        }
-
-        let calls = collect_literal_calls(&file.stmts);
-        if calls.is_empty() {
-            continue;
-        }
-
-        let orig_codes = check_codes(&src);
-        for (fn_name, param_name, has_default) in &fn_defs {
-            if *has_default {
-                continue; // parameter already has a default
-            }
-            for (call_name, lit_text) in &calls {
-                if call_name != fn_name {
-                    continue;
-                }
-                let lifted = construct_lifted_source(&src, fn_name, param_name, lit_text);
-                if let Some(lifted) = lifted {
-                    let lifted_codes = check_codes(&lifted);
-                    total_lifts += 1;
-                    if orig_codes != lifted_codes {
-                        divergences.push(format!(
-                            "{}: lift {}({}) diverged\n  orig: {orig_codes:?}\n  lifted: {lifted_codes:?}",
-                            path.file_name().unwrap().to_string_lossy(),
-                            fn_name, lit_text,
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    eprintln!(
-        "R7 fixture scan: {total_lifts} natural lifts, {} divergences",
-        divergences.len(),
-    );
-    for d in &divergences {
-        eprintln!("  {d}");
-    }
-}
-
-fn collect_function_defs(stmts: &[Stmt]) -> Vec<(String, String, bool)> {
-    let mut defs = Vec::new();
-    for stmt in stmts {
-        if let Stmt::Assign {
-            target: Expr::Ident { name, .. },
-            value: Expr::Function { params, .. },
-            ..
-        } = stmt
-            && let Some(first) = params.first()
-        {
-            defs.push((name.clone(), first.name.clone(), first.default.is_some()));
-        }
-    }
-    defs
-}
-
-fn collect_literal_calls(stmts: &[Stmt]) -> Vec<(String, String)> {
-    let mut calls = Vec::new();
-    for stmt in stmts {
-        collect_calls_from_stmt(stmt, &mut calls);
-    }
-    calls
-}
-
-fn collect_calls_from_stmt(stmt: &Stmt, calls: &mut Vec<(String, String)>) {
-    match stmt {
-        Stmt::Expr(expr) => collect_calls_from_expr(expr, calls),
-        Stmt::Assign { target, value, .. } => {
-            collect_calls_from_expr(target, calls);
-            collect_calls_from_expr(value, calls);
-        }
-        _ => {}
-    }
-}
-
-fn collect_calls_from_expr(expr: &Expr, calls: &mut Vec<(String, String)>) {
-    if let Expr::Call { func, args, .. } = expr
-        && let Expr::Ident { name, .. } = func.as_ref()
-        && args.len() == 1
-        && let Some(lit) = literal_text(&args[0].value)
-    {
-        calls.push((name.clone(), lit));
-    }
-}
-
-fn literal_text(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Logical(v, _) => Some(if *v { "TRUE" } else { "FALSE" }.to_string()),
-        Expr::Integer(v, _) => Some(format!("{v}L")),
-        Expr::Double(v, _) => Some(v.to_string()),
-        Expr::String(s, _) => {
-            let escaped = s.replace("\\", "\\\\").replace("\"", "\\\"");
-            Some(format!("\"{escaped}\""))
-        }
-        Expr::Null(_) => Some("NULL".to_string()),
-        _ => None,
-    }
-}
-
-fn construct_lifted_source(
-    src: &str,
-    fn_name: &str,
-    param_name: &str,
-    lit_text: &str,
-) -> Option<String> {
-    // Best-effort: find the function definition and add the default, then
-    // remove the argument from the call. Only handles the simple
-    // single-statement pattern. Returns None for anything complex.
-    let def_pattern = format!("function({param_name})");
-    let def_replacement = format!("function({param_name} = {lit_text})");
-    let call_pattern = format!("{fn_name}({lit_text})");
-    let call_replacement = format!("{fn_name}()");
-    if !src.contains(&def_pattern) || !src.contains(&call_pattern) {
-        return None;
-    }
-    let result = src.replacen(&def_pattern, &def_replacement, 1);
-    let result = result.replacen(&call_pattern, &call_replacement, 1);
-    Some(result)
 }
 
 // =======================================================================

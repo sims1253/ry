@@ -1269,16 +1269,16 @@ fn bundled_set6_imports_bind_exports_without_hiding_misspellings() {
 /// unbound.
 #[test]
 fn ry_toml_packages_enables_dplyr_nse() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("use.R"),
-        "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
-    )
-    .unwrap();
     for (config, expected) in [
         (None, vec!["mpg"]),
         (Some("packages = [\"dplyr\"]\n"), vec![]),
     ] {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("use.R"),
+            "df <- mtcars\nsmall <- filter(df, mpg > 0)\n",
+        )
+        .unwrap();
         if let Some(config) = config {
             fs::write(tmp.path().join("ry.toml"), config).unwrap();
         }

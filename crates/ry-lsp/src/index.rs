@@ -50,7 +50,7 @@ fn index_pool() -> Option<&'static rayon::ThreadPool> {
             .thread_name(|i| format!("ry-index-{i}"))
             .build()
             .inspect_err(|error| {
-                tracing::warn!(%error, threads, "failed to build index pool; using the global pool");
+                tracing::warn!(%error, threads, "failed to build index pool; indexing serially");
             })
             .ok()
     })

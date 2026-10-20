@@ -1852,12 +1852,27 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
         Expr::Ident {
             name: identifier, ..
         } => identifier == name,
+        // The inner target of `a <- b <- v` is written, not read: R
+        // evaluates only `v` before binding `b`. A replacement target
+        // (`names(x) <- v`) does read `x`, so it falls through below.
+        Expr::BinOp {
+            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            lhs,
+            rhs,
+            ..
+        } if binding_name(lhs).is_some() => expression_must_force(rhs, name),
         Expr::BinOp { op, lhs, rhs, .. } => {
             expression_must_force(lhs, name)
                 || (!matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr)
                     && expression_must_force(rhs, name))
         }
         Expr::UnaryOp { expr, .. } => expression_must_force(expr, name),
+        // `x$tt` and `x@tt` name a member; `tt` is never evaluated.
+        Expr::Index {
+            base,
+            kind: IndexKind::Dollar | IndexKind::Slot,
+            ..
+        } => expression_must_force(base, name),
         Expr::Index { base, args, .. } => {
             expression_must_force(base, name)
                 || args

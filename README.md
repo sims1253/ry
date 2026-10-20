@@ -73,6 +73,32 @@ missing signatures can produce false positives or missed bugs. See
 [package handling](docs/usage.md#package-awareness) and
 [known limits](docs/usage.md#known-limits).
 
+## CI
+
+ry needs no dedicated action. In GitHub Actions, run the installer and then
+`ry check`; the installer puts `ry` on the `PATH` of later steps:
+
+```yaml
+name: ry
+on: [push, pull_request]
+
+jobs:
+  ry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install ry
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/sims1253/ry/releases/latest/download/ry-cli-installer.sh | sh
+      - run: ry check --output-format github .
+```
+
+`--output-format github` shows findings as annotations on the pull request.
+To keep CI from changing when a new ry is released, replace
+`latest/download` with `download/v<version>`. See [CI](docs/usage.md#ci) for
+GitLab and JUnit output and a pre-commit hook.
+
 ## Editors
 
 Install **ry** from the

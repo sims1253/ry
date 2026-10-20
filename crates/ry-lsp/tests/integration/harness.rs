@@ -352,7 +352,9 @@ pub fn published_from_cli_value(value: &Value, root: &Path) -> Published {
 }
 
 /// Run `ry check --output-format json <extra> <target>` in `root` and return
-/// the sorted findings relative to `root`.
+/// the sorted findings relative to `root`. This blocks the calling thread.
+/// The child never talks to an in-process server, so a server sharing the
+/// runtime only pauses until the child exits.
 pub fn cli_diagnostics(
     root: &Path,
     target: impl AsRef<std::ffi::OsStr>,

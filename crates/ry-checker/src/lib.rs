@@ -529,10 +529,7 @@ impl Scope {
         let possible_functions: FxSet<String> = self
             .bindings
             .iter()
-            .filter(|(name, ty)| {
-                self.is_parameter(name)
-                    || matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
-            })
+            .filter(|(name, ty)| self.is_parameter(name) || ty.mode.may_be_function())
             .map(|(name, _)| infer::semantic_argument_name(name).to_string())
             .collect();
         let definitions = self

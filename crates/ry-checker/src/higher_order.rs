@@ -221,7 +221,7 @@ impl Checker {
                 let mut result = RType::new(Mode::List, length);
                 if spec.result.include_callback_schema {
                     if let Some(element_type) = callback_return
-                        && !matches!(element_type.mode, Mode::Opaque)
+                        && !element_type.mode.is_unknown()
                     {
                         let n = match length {
                             Length::Known(n) if n > 0 => n,
@@ -240,7 +240,7 @@ impl Checker {
             }
             HigherOrderResultKind::VectorOf => {
                 let mode = higher_order_mode(spec.result.mode.as_deref());
-                if matches!(mode, Mode::Opaque) {
+                if mode.is_unknown() {
                     return RType::unknown();
                 }
                 let length = spec
@@ -297,7 +297,8 @@ impl Checker {
                 match callback_return {
                     Some(ty)
                         if matches!(ty.length, Length::One)
-                            && !matches!(ty.mode, Mode::List | Mode::Opaque | Mode::Union) =>
+                            && !ty.mode.is_unknown_or_non_vector()
+                            && !matches!(ty.mode, Mode::List | Mode::Union) =>
                     {
                         let length = spec
                             .result
@@ -317,7 +318,8 @@ impl Checker {
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .cloned()
                     .unwrap_or_else(RType::unknown);
-                let mode = if matches!(template.mode, Mode::Union) {
+                // R rejects a non-vector `FUN.VALUE`.
+                let mode = if template.mode == Mode::Union || template.mode.is_known_non_vector() {
                     Mode::Opaque
                 } else {
                     template.mode
@@ -541,7 +543,7 @@ impl Checker {
                 };
                 if let Some(f) = function {
                     let rt = self.read_return_slot(f.return_slot);
-                    if !matches!(rt.mode, Mode::Opaque) {
+                    if !rt.mode.is_unknown() {
                         return Some(rt);
                     }
                     return None;

@@ -351,6 +351,11 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "while",
 ];
 
+/// Base calls that always return an environment.
+///
+/// Checked by R oracle: `is.environment()` holds for each zero-argument call.
+pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
+
 /// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
 /// its evaluated arguments: it takes no callback, quoted expression, or
 /// environment, and never dispatches to project code (fact creation refuses
@@ -418,6 +423,12 @@ pub fn registry() -> Vec<SemanticList> {
             items: SCALAR_FACT_SAFE_CALLS,
             check: CheckKind::TypeshedAgreement,
             claim: "base calls that read their arguments without callbacks, environments, or project dispatch",
+        },
+        SemanticList {
+            name: "ENVIRONMENT_CONSTRUCTORS",
+            items: ENVIRONMENT_CONSTRUCTORS,
+            check: CheckKind::ROracle,
+            claim: "base calls that return an environment",
         },
         SemanticList {
             name: "PLAIN_NEW_CLASSES",

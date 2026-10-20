@@ -37,7 +37,9 @@ impl Checker {
         let may_replace_bindings = !scope.uncertainty.dynamic_bindings && !keeps_bindings;
         let blocks_later_facts =
             may_replace_bindings && !self.call_allowed_before_assertion(func, args, scope);
+        let kind = self.base_value_kind(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        let result = kind.unwrap_or(result);
         scope.uncertainty.unseen_rebinds |= !keeps_bindings;
         if blocks_later_facts {
             scope.invalidate_scalar_assertions();
@@ -96,13 +98,14 @@ impl Checker {
         };
         // Nested calls classify themselves. A closure, or a name that may
         // hold one, could run later; only a value of known non-function
-        // mode is safe to pass.
+        // mode is safe to pass. An environment may hold closures and a
+        // language object may be evaluated, so neither is safe.
         callee
             && args.iter().all(|arg| match &arg.value {
                 Expr::Function { .. } => false,
                 Expr::Ident { name, .. } => {
                     scope.get(name).is_some_and(|ty| {
-                        !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
+                        !ty.mode.may_be_function() && !ty.mode.is_known_non_vector()
                     }) && !self.fn_table.functions.binds(name)
                 }
                 _ => true,
@@ -1985,7 +1988,7 @@ impl Checker {
         if let Some(result) = self.callable_function_union(t, args, arg_types) {
             return Some(result);
         }
-        if !matches!(t.mode, Mode::Opaque) {
+        if !t.mode.is_unknown() {
             // R's function/value namespace separation: when a name is
             // CALLED, R searches the environment chain for a *function*
             // named `name` and skips non-function bindings. So a local

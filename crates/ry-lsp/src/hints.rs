@@ -11,7 +11,7 @@ use crate::positions::byte_offset_to_position;
 pub(super) fn collect_inlay_hints(types: &[(Span, RType)], text: &str) -> Vec<InlayHint> {
     types
         .iter()
-        .filter(|(_, ty)| !matches!(ty.mode, ry_core::types::Mode::Opaque))
+        .filter(|(_, ty)| !ty.mode.is_unknown())
         .map(|(span, ty)| {
             let label = compact_hint(ty);
             let details = expanded_type(ty);

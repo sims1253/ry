@@ -29,6 +29,7 @@ pub(crate) mod supply;
 mod switch;
 mod types;
 pub(crate) mod vacuous;
+mod value_kinds;
 
 /// Join an entire collection of types into one: the lattice join of every
 /// element, with `unknown` for an empty collection (no branch contributes
@@ -437,7 +438,8 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
     match t.mode {
         Mode::Logical => None,
         Mode::Integer | Mode::Double => Some(ConditionDiagnostic::Numeric),
-        Mode::Opaque => None,
+        // `if (e)` and `if (quote(a))` error in R; not modeled yet.
+        Mode::Opaque | Mode::Environment | Mode::Language => None,
         Mode::Union => {
             let members = t.members.as_ref()?;
             let mut numeric = false;
@@ -479,7 +481,9 @@ pub(crate) fn condition_diagnostic(t: &RType) -> Option<ConditionDiagnostic> {
                     // preserve the existing silence for logical|numeric
                     // unions. An opaque branch is unknown for the same
                     // reason.
-                    None if matches!(member.mode, Mode::Logical | Mode::Opaque) => {
+                    None if member.mode == Mode::Logical
+                        || member.mode.is_unknown_or_non_vector() =>
+                    {
                         quiet_member = true;
                     }
                     // A coercible scalar branch is not itself invalid, but
@@ -526,7 +530,7 @@ pub(crate) fn switch_expr_length_rejected(t: &RType) -> bool {
             .members
             .as_ref()
             .is_some_and(|members| members.iter().any(switch_expr_length_rejected)),
-        Mode::Opaque => false,
+        mode if mode.is_unknown_or_non_vector() => false,
         _ => matches!(t.length, Length::Zero) || matches!(t.length, Length::Known(n) if n > 1),
     }
 }
@@ -545,6 +549,20 @@ fn carries_zero_length_leaf(t: &RType) -> bool {
             .is_some_and(|members| members.iter().any(carries_zero_length_leaf)),
         _ => matches!(t.length, Length::Zero),
     }
+}
+
+/// Whether a language value occurs anywhere in the type: the value itself, a
+/// union member, or a record field.
+fn contains_language(ty: &RType) -> bool {
+    ty.mode == Mode::Language
+        || ty
+            .members
+            .as_ref()
+            .is_some_and(|members| members.iter().any(contains_language))
+        || ty
+            .columns
+            .as_ref()
+            .is_some_and(|schema| schema.columns.iter().any(|(_, ty)| contains_language(ty)))
 }
 
 /// Whether every possible mode of the value is a list — a plain list or a
@@ -903,8 +921,7 @@ impl Checker {
                 // loop-carried widening below. Its exact old identity is
                 // gone, but an uncertain/function value can shadow a flat
                 // same-spelled function table entry at a call site.
-                let may_be_function =
-                    matches!(element.mode, Mode::Function | Mode::Opaque | Mode::Union);
+                let may_be_function = element.mode.may_be_function();
                 inner.insert(name.clone(), element);
                 if may_be_function {
                     inner.mark_lexical_callable(name.clone());
@@ -2098,7 +2115,7 @@ impl Checker {
             return None;
         }
         let joined = join_all(returns.into_iter());
-        (!matches!(joined.mode, Mode::Opaque)).then_some(joined)
+        (!joined.mode.is_unknown()).then_some(joined)
     }
 
     /// Extract the implicit return type of a function body's trailing
@@ -2346,6 +2363,25 @@ impl Checker {
             scope.invalidate_literal_values();
             scope.invalidate_ops_environment();
         }
+        // A replacement call may attach a class to a language value nested
+        // in a union member or a record field, where the precise forms below
+        // cannot follow it. Its root loses every classless-language proof.
+        if let Expr::Call { args, .. } = target
+            && let Some(receiver) = args.first().map(|arg| &arg.value)
+        {
+            let mut root = receiver;
+            while let Expr::Index { base, .. } = root {
+                root = base;
+            }
+            if let Expr::Ident { name, .. } = root
+                && scope.get(name).is_some_and(|ty| {
+                    !(std::ptr::eq(root, receiver) && ty.mode == Mode::Language)
+                        && contains_language(ty)
+                })
+            {
+                scope.insert(name.clone(), RType::unknown());
+            }
+        }
 
         if self.assign_class_attribute(target, class_write, scope)
             || self.assign_replacement_target(target, scope)
@@ -2430,6 +2466,16 @@ impl Checker {
             Expr::Call { args, .. } => {
                 for argument in args {
                     self.infer(&argument.value, scope);
+                }
+                // An unmodeled replacement (`oldClass<-`, `attributes<-`, a
+                // project `f<-`) may attach a class, so a known environment
+                // or language binding cannot keep its classless proof.
+                if let Some(Expr::Ident { name, .. }) = args.first().map(|arg| &arg.value)
+                    && scope
+                        .get(name)
+                        .is_some_and(|ty| ty.mode.is_known_non_vector())
+                {
+                    scope.insert(name.clone(), RType::unknown());
                 }
             }
             _ => {
@@ -2590,7 +2636,7 @@ impl Checker {
                 .columns
                 .as_ref()
                 .and_then(|schema| schema.get(field))
-                .filter(|ty| matches!(ty.mode, Mode::List | Mode::Opaque))
+                .filter(|ty| ty.mode == Mode::List || ty.mode.is_unknown_or_non_vector())
                 .unwrap_or_else(|| {
                     RType::new(Mode::List, Length::Unknown).with_columns(Arc::new(ColumnSchema {
                         columns: Vec::new(),
@@ -2796,16 +2842,7 @@ impl Checker {
             }
             return false;
         };
-        if matches!(
-            base_t.mode,
-            Mode::Integer
-                | Mode::Double
-                | Mode::Character
-                | Mode::Logical
-                | Mode::Complex
-                | Mode::Raw
-        ) && base_t.columns.is_none()
-        {
+        if base_t.mode.is_atomic() && base_t.columns.is_none() {
             self.emit(
                 Severity::Error,
                 span,
@@ -3372,6 +3409,9 @@ impl Checker {
                                     format!("cannot apply unary `-` to `{}`", t.mode),
                                 );
                             }
+                            RType::unknown()
+                        } else if t.mode.is_unknown_or_non_vector() {
+                            // `-quote(a)` errors in R; not modeled yet.
                             RType::unknown()
                         } else {
                             let mode = match t.mode {

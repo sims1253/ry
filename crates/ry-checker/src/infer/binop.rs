@@ -80,7 +80,7 @@ impl Checker {
                         span,
                         known_null_is_actionable,
                     );
-                    if op.is_arithmetic() && result.mode != Mode::Opaque {
+                    if op.is_arithmetic() && !result.mode.is_unknown() {
                         result.class = result_class;
                     }
                     return result;
@@ -156,15 +156,9 @@ impl Checker {
                 // non-character one. R coerces the numeric operand to
                 // character, then compares lexicographically, which is
                 // rarely the programmer's intent.
-                if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
-                    && !matches!(lt_mode, Mode::Opaque)
-                    && !matches!(rt_mode, Mode::Opaque)
-                    && !matches!(lt_mode, Mode::Null)
-                    && !matches!(rt_mode, Mode::Null)
-                    && !matches!(lt_mode, Mode::List | Mode::Function)
-                    && !matches!(rt_mode, Mode::List | Mode::Function)
-                    && !matches!(lt_mode, Mode::Union)
-                    && !matches!(rt_mode, Mode::Union)
+                if lt_mode.is_atomic()
+                    && rt_mode.is_atomic()
+                    && (lt_mode == Mode::Character) != (rt_mode == Mode::Character)
                     && !compares_factor
                 {
                     self.emit(
@@ -290,7 +284,7 @@ impl Checker {
         operands: &[&RType],
         operand: &RType,
     ) -> Option<RType> {
-        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+        if operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union {
             return Some(RType::unknown());
         }
         let guarded = operands.iter().any(|operand| operand.class.guarded);
@@ -319,7 +313,7 @@ impl Checker {
                         let result = self.apply_sig(&sig, &arg_types, &[]);
                         // A specific stub, or a group stub declaring a
                         // usable shape, is this operator's method.
-                        if generic == symbol || !matches!(result.mode, Mode::Opaque) {
+                        if generic == symbol || !result.mode.is_unknown() {
                             return Some(dispatch_result(guarded, result));
                         }
                         // Only embedded base group methods have storage-mode
@@ -369,7 +363,7 @@ impl Checker {
         let symbol = op_symbol(op);
         if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, plain_vectors, scope) {
             match &result {
-                ops_chooser::Dispatch::Value(value) if value.mode != Mode::Opaque => {}
+                ops_chooser::Dispatch::Value(value) if !value.mode.is_unknown() => {}
                 _ => scope.invalidate_ops_environment(),
             }
             return Some(result);
@@ -382,7 +376,7 @@ impl Checker {
         // type. Include opaque group stubs in this identity check even though
         // their return shapes use the storage-mode fallback below.
         if [lhs, rhs].iter().any(|operand| {
-            operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union)
+            operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union
         }) {
             return Some(ops_chooser::Dispatch::Value(RType::unknown()));
         }

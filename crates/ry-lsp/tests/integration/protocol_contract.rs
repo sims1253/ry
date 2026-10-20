@@ -1459,18 +1459,20 @@ async fn cli_lsp_discovery_set_equality() {
         "textDocument": {"uri": normal_uri, "languageId": "r", "version": 1, "text": normal_text}
     })).await.unwrap();
 
-    // Collect ALL publishDiagnostics notifications within a bounded
-    // message count to determine the LSP's discovered file set.
+    // Record every published path. Publications can arrive in any order, so
+    // the wait for normal.R records the others it passes.
     let mut lsp_uris: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // First, consume the normal.R publication.
-    let _ = client
-        .receive_until(
-            |m| {
-                m.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && m.pointer("/params/uri") == Some(&json!(normal_uri))
-            },
-            128,
-        )
+    let mut record = |message: &Value| -> Option<String> {
+        if message.get("method") != Some(&json!("textDocument/publishDiagnostics")) {
+            return None;
+        }
+        let uri = message.pointer("/params/uri").and_then(Value::as_str)?;
+        let path = uri.strip_prefix("file://").unwrap_or(uri);
+        lsp_uris.insert(normalize_path(Path::new(path), root));
+        Some(uri.to_string())
+    };
+    client
+        .receive_until(|m| record(m).as_deref() == Some(normal_uri.as_str()), 128)
         .await
         .unwrap();
 
@@ -1478,13 +1480,7 @@ async fn cli_lsp_discovery_set_equality() {
     for _ in 0..128 {
         match tokio::time::timeout(std::time::Duration::from_millis(500), client.receive()).await {
             Ok(Ok(message)) => {
-                if message.get("method") == Some(&json!("textDocument/publishDiagnostics"))
-                    && let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str)
-                {
-                    let path = uri.strip_prefix("file://").unwrap_or(uri);
-                    let rel = normalize_path(Path::new(path), root);
-                    lsp_uris.insert(rel);
-                }
+                record(&message);
             }
             Ok(Err(e)) => panic!("transport error during drain: {e}"),
             Err(_) => break, // timeout: server has quiesced
@@ -1503,9 +1499,6 @@ async fn cli_lsp_discovery_set_equality() {
         .unwrap()
         .unwrap();
     assert_eq!(code, std::process::ExitCode::SUCCESS);
-
-    // The opened file's publication was consumed above; add it back.
-    lsp_uris.insert("normal.R".to_string());
 
     // Convert LSP URIs to normalized paths and compare with CLI.
     assert_eq!(

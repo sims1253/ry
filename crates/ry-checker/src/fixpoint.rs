@@ -134,6 +134,17 @@ impl Checker {
         if scope.is_some_and(|s| s.is_empty()) {
             return;
         }
+        if self.fn_table.functions.s4().defines_method(|_| true) {
+            let typeshed = &self.typeshed;
+            Arc::make_mut(&mut self.fn_table)
+                .functions
+                .seed_s4_parameters(|name| {
+                    typeshed
+                        .functions
+                        .get(name)
+                        .map(|sig| sig.params.as_slice())
+                });
+        }
         let prev_discarding = self.discarding;
         self.discarding = true;
         let mut names: Vec<_> = self.fn_table.functions.names().cloned().collect();

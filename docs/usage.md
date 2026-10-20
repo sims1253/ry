@@ -419,8 +419,10 @@ this sequence inside `function() { ... }` also leaves selection unknown because
 the function can run after its environment changes.
 
 S4 modeling covers in-package `setClass` / `setGeneric` /
-`setMethod` and `@` slot access but not full method resolution order;
-R6 modeling covers `self` / `private` / `super` in method bodies, not
+`setMethod` and `@` slot access. S4 dispatch selects a project method only
+when the call provably reaches it: an exact full-signature match, or a
+single-dispatch generic with an exact receiver class; otherwise the result
+is unknown. Class inheritance is not modeled. R6 modeling covers `self` / `private` / `super` in method bodies, not
 field types. No expansion of dynamic `exportPattern()` directives and no
 NA tracking yet. Cross-package names without stubs resolve to opaque
 values when static package metadata proves that they exist.

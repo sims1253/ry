@@ -1147,7 +1147,6 @@ pub(crate) struct FnTable {
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: FxMap<(String, String), usize>,
-    pub(crate) s4_methods: FxMap<(String, String), usize>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -1261,12 +1260,6 @@ impl FnTable {
         self.s3_methods.extend(
             collected
                 .s3_methods
-                .iter()
-                .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
-        );
-        self.s4_methods.extend(
-            collected
-                .s4_methods
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );

@@ -75,6 +75,7 @@ mod deferred_calls;
 
 mod missing_args;
 mod printf_provenance;
+mod s4_dispatch;
 mod switch_selection;
 
 mod integer_range;

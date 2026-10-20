@@ -301,15 +301,15 @@ impl Checker {
     /// Whether any project function is named like a method of a typeshed or
     /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
     fn project_defines_methods(&self) -> bool {
-        self.fn_table.functions.names().any(|name| {
-            let name = semantic_argument_name(name);
-            name.starts_with("__s4__")
-                || name.match_indices('.').any(|(end, _)| {
+        self.fn_table.functions.s4().defines_method(|_| true)
+            || self.fn_table.functions.names().any(|name| {
+                let name = semantic_argument_name(name);
+                name.match_indices('.').any(|(end, _)| {
                     end > 0
                         && (crate::semantic_lists::is_group_generic(&name[..end])
                             || self.resolve_typeshed_sig(&name[..end]).is_some())
                 })
-        })
+            })
     }
 
     /// The definition whose adopted contract a call checks: the exact

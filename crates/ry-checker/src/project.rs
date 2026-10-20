@@ -147,6 +147,9 @@ pub struct Project {
     prev_unproven_top_level: bool,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
+    /// Generic metadata changes which method a call selects without
+    /// changing any refinement name (`signature = c("y", "x")`).
+    prev_s4_inventory: crate::definitions::S4Inventory,
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
     prev_escaped_slot_names: bool,
@@ -509,6 +512,7 @@ impl Project {
         self.prev_capture_rebounds.clear();
         self.prev_unproven_top_level = false;
         self.prev_callable_vars.clear();
+        self.prev_s4_inventory = Default::default();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
         self.invalidated_fns.clear();
@@ -664,6 +668,7 @@ impl Project {
         // alias; no observed dependency exists for that earlier lookup miss.
         if self.callable_names_changed()
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
         {
@@ -892,8 +897,8 @@ impl Project {
             self.fn_table
                 .s3_methods
                 .values()
-                .chain(self.fn_table.s4_methods.values())
                 .copied()
+                .chain(self.fn_table.functions.s4_method_slots())
                 .collect()
         };
 
@@ -904,6 +909,7 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
         let capture_rebounds_changed = self.prev_capture_rebounds
@@ -1113,6 +1119,7 @@ impl Project {
         self.prev_capture_rebounds = self.fn_table.rebound_after_capture.clone();
         self.prev_unproven_top_level = self.fn_table.unproven_top_level;
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
+        self.prev_s4_inventory = self.fn_table.functions.s4().clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
         // Save refined return types keyed by function name for the next
@@ -1193,6 +1200,39 @@ mod tests {
                 .unwrap()
                 .1;
             assert_eq!(a.iter().any(|d| d.code == "RY040"), flagged, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn reordering_a_generic_signature_reselects_methods_in_other_files() {
+        let generic = |order: &str| {
+            let source = format!(
+                "setGeneric(\"g\", function(x, y) standardGeneric(\"g\"), signature = c({order}))\n"
+            );
+            parse_file("generic.R", &source)
+        };
+        let mut project = Project::new();
+        project.add_file("generic.R".into(), generic("\"x\", \"y\""));
+        project.add_file(
+            "method.R".into(),
+            parse_file(
+                "method.R",
+                "setClass(\"A\", representation(v = \"numeric\"))\n\
+                 setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) \"chr\")\n\
+                 setMethod(\"g\", signature(\"A\", \"numeric\"), function(x, y) 1L)\n\
+                 g(new(\"A\"), \"t\") + 1L\n",
+            ),
+        );
+        let flagged = |diagnostics: &[(String, Vec<Diagnostic>)]| {
+            diagnostics
+                .iter()
+                .any(|(path, found)| path == "method.R" && found.iter().any(|d| d.code == "RY040"))
+        };
+        assert!(flagged(&project.check()));
+        // The positional entries now mean `(y = A, x = character)`.
+        for (order, expected) in [("\"y\", \"x\"", false), ("\"x\", \"y\"", true)] {
+            project.update_file("generic.R".into(), generic(order).into());
+            assert_eq!(flagged(&assert_matches_cold(&mut project)), expected);
         }
     }
 

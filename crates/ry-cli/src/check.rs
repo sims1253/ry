@@ -1305,7 +1305,6 @@ fn run_check_once(
         min_confidence: ctx.min_confidence,
         repo_root: ctx.repo_root,
     };
-    post.demote_non_source_paths(&mut all_diagnostics);
     post.post_demotion(&mut all_diagnostics);
 
     sort_and_deduplicate_diagnostics(&mut all_diagnostics);

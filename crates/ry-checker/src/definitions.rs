@@ -2,8 +2,8 @@
 //!
 //! A definition's identity is its source path and literal span, independent of
 //! the names that bind it. Each raw binding spelling names its last definition
-//! (later bindings win, as R's top-level rebinding does); a literal a later
-//! binding replaced stays addressable by identity for declaration checks.
+//! (later bindings win, as R's top-level rebinding does). A literal that a
+//! later binding replaced stays addressable by identity for declaration checks.
 
 use crate::infer::semantic_argument_name;
 use crate::{FxMap, FxSet, UserFn};
@@ -93,7 +93,7 @@ pub(crate) struct Definitions {
 impl Definitions {
     /// The definition a call head or callback with this spelling selects. A
     /// qualified spelling selects only a definition from that package's R
-    /// sources; unknown provenance cannot establish namespace membership. An
+    /// sources. Unknown provenance cannot establish namespace membership. An
     /// exact raw binding wins, else any quoted binding of the same name.
     pub(crate) fn select(&self, callee: Callee<'_>) -> Option<&UserFn> {
         let member = callee.member();
@@ -217,7 +217,7 @@ impl Definitions {
         Some(previous.return_slot)
     }
 
-    /// Merge a later file's definitions; its bindings replace same-spelled
+    /// Merge a later file's definitions. Its bindings replace same-spelled
     /// earlier ones. `slot_offset` shifts its return slots into this table's.
     pub(crate) fn append(&mut self, later: &Definitions, slot_offset: usize) {
         let shifted = |function: &UserFn| {

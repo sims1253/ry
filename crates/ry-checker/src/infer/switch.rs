@@ -51,7 +51,7 @@ impl Checker {
             if scope.is_parameter(semantic) {
                 return unknown(scope);
             }
-            if self.fn_table.fns.contains_key(semantic)
+            if self.fn_table.functions.binds(semantic)
                 || scope.get(semantic).is_some_and(|ty| ty.fn_sig.is_some())
             {
                 return None;

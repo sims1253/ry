@@ -836,7 +836,7 @@ impl Checker {
                     // Refinement starts from formals, without the module's
                     // lexical imports. It can borrow a base signature for a
                     // replaced name, so retain formals with an unknown return.
-                    nested.fn_table.fns.get(&name).map(|function| {
+                    nested.fn_table.functions.live_named(&name).map(|function| {
                         BoxCallable::Function(Arc::new(BoxFunction {
                             params: function.params.clone(),
                             return_type: if load.imports {
@@ -1087,7 +1087,8 @@ impl Checker {
             .map(|param| param.name.as_str())
             .collect();
         let matches = infer::match_arguments(&names, args);
-        self.check_call_arity(name, &function.params, args, &matches, true, span);
+        // Box members carry no call-site binding evidence.
+        self.check_call_arity(name, &function.params, None, args, &matches, true, span);
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index]
                 .or(matches.dots)

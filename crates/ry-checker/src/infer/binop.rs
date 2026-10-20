@@ -908,7 +908,7 @@ impl Checker {
     /// safe calls that may run before its use. A project or imported S3/S4
     /// method for any of them could lie about the length or run arbitrary
     /// code, so such a project gets no scalar facts at all.
-    fn project_defines_scalar_proof_method(&self) -> bool {
+    pub(super) fn project_defines_scalar_proof_method(&self) -> bool {
         self.method_screens().scalar_proof
     }
 
@@ -934,10 +934,7 @@ impl Checker {
     }
 
     fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
-        self.fn_table
-            .s4_methods
-            .keys()
-            .any(|(name, _)| generic(name))
+        self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }
 
@@ -956,7 +953,7 @@ impl Checker {
                 .external_s3_methods
                 .iter()
                 .any(|(name, _)| generic(name))
-            || self.fn_table.fns.keys().any(|name| named(name))
+            || self.fn_table.functions.names().any(|name| named(name))
             || self.imported_from.keys().any(|name| named(name))
             || self.external_bindings.iter().any(|name| named(name))
     }
@@ -1091,6 +1088,7 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
         scope.invalidate_literal_values();
     }
     scope.uncertainty.effects |= evaluated.uncertainty.effects;
+    scope.uncertainty.unseen_rebinds |= evaluated.uncertainty.unseen_rebinds;
     if evaluated.uncertainty.dynamic_bindings && !scope.uncertainty.dynamic_bindings {
         scope.invalidate_scalar_assertions();
     }

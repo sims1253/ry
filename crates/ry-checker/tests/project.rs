@@ -2083,3 +2083,39 @@ fn check_mode_transitions_match_fresh_projects() {
         }
     }
 }
+
+/// #646: a `load()` anywhere in the project may install any global binding,
+/// so call contracts switch off project-wide; removing it switches them back
+/// on, and the warm check must agree with a cold one both ways.
+#[test]
+fn binding_installer_toggle_matches_cold() {
+    let files = |loader: &str| {
+        let mut project = Project::new();
+        project.add_file("f.R".to_string(), parse("f.R", "f <- function(x) x + 1L\n"));
+        project.add_file(
+            "caller.R".to_string(),
+            parse("caller.R", "g <- function() f('a')\n"),
+        );
+        project.add_file("loader.R".to_string(), parse("loader.R", loader));
+        project
+    };
+    let contract_errors = |diagnostics: &[(String, Vec<ry_checker::Diagnostic>)]| {
+        diagnostics
+            .iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .filter(|diagnostic| diagnostic.code == "RY092")
+            .count()
+    };
+    let mut warm = files("x <- 1L\n");
+    assert_eq!(contract_errors(&warm.check_incremental()), 1);
+    for loader in ["load('p.RData')\n", "x <- 1L\n"] {
+        warm.update_file("loader.R".to_string(), Arc::new(parse("loader.R", loader)));
+        let incremental = warm.check_incremental();
+        assert_eq!(incremental, files(loader).check(), "{loader}");
+        assert_eq!(
+            contract_errors(&incremental),
+            usize::from(!loader.starts_with("load")),
+            "{loader}"
+        );
+    }
+}

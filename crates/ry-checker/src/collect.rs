@@ -1,6 +1,7 @@
 use super::*;
+use crate::definitions::GenericDecl;
 use crate::infer::*;
-use crate::semantic_lists::{FRAME_REFLECTION, bare_name, strip_package};
+use crate::semantic_lists::{BINDING_INSTALLERS, FRAME_REFLECTION, bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
@@ -202,7 +203,7 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
         "assign" | "delayedAssign" => target("x"),
         "makeActiveBinding" => target("sym"),
         "rm" | "remove" => collect_rm_targets(args, writes),
-        "eval" => {
+        "eval" | "eval.parent" | "eval_bare" | "rlang::eval_bare" => {
             // Bare `quote` can be masked to return an unrelated mutating
             // expression, so only a base-qualified quote is inspected.
             if let Some(Expr::Call {
@@ -222,6 +223,17 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
             Some(expression) => collect_quoted_global_writes(&expression.value, writes),
             None => writes.opaque = true,
         },
+        // Code these run may target a captured frame (an explicit `envir`,
+        // or an environment as data); its plain writes are recorded by name.
+        // `local(expr)` alone evaluates in a fresh environment.
+        "local" if args.len() < 2 => {}
+        "local" | "with" | "within" | "with_env" | "rlang::with_env" => {
+            for argument in args {
+                collect_quoted_global_writes(&argument.value, writes);
+            }
+        }
+        // A runtime-chosen function, object list, or file may write any name.
+        "do.call" | "list2env" | "load" | "source" | "sys.source" => writes.opaque = true,
         _ => match strip_package(name, "methods").unwrap_or(name) {
             // Installing a generic can replace an ordinary binding in the
             // current/global environment. The method table can also change
@@ -290,6 +302,46 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
     writes
 }
 
+/// Whether `name` (bare or `base::`) is a binding installer.
+fn installs_bindings(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    BINDING_INSTALLERS.contains(&strip_package(name, "base").unwrap_or(name))
+}
+
+/// Whether a call to `name` may bind anything in the frame it runs in: an
+/// installer, or any frame-reflective function.
+fn reflects_frame(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    installs_bindings(name)
+        || FRAME_REFLECTION.contains(&strip_package(name, "base").unwrap_or(name))
+}
+
+/// Names the frame of `function(params) body` may bind while it runs:
+/// assignments and recognized installers in its body and defaults. Any
+/// frame-reflective call (`list2env(..., envir = environment())`,
+/// `source(local = TRUE)`) or `load` (which binds into its caller's frame
+/// by default) may bind anything.
+pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
+    let mut writes = WriteSet::default();
+    let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
+        if let Some((name, _)) = frame_binding(node) {
+            writes.insert_name(name);
+        }
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+            collect_callable_binding_write(func, args, &mut writes);
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                writes.opaque |= reflects_frame(name);
+            }
+        }
+        ControlFlow::Continue(Descend::Into)
+    };
+    for default in params.iter().filter_map(|param| param.default.as_ref()) {
+        let _ = walk_expr(default, FRAME_WALK, &mut visit);
+    }
+    let _ = walk_stmts(body, FRAME_WALK, &mut visit);
+    writes
+}
+
 /// Names that forcing a default may bind in the function's own frame.
 /// None is an unconditional effect at definition time.
 pub(crate) fn default_local_writes(params: &[Param]) -> WriteSet {
@@ -348,6 +400,9 @@ impl Checker {
             },
         );
         self.collect_capture_writes(stmts);
+        if function_outward_writes(&[], stmts).opaque {
+            Arc::make_mut(&mut self.fn_table).unproven_top_level = true;
+        }
     }
 
     /// Inventory syntactically visible writes separately from the narrower
@@ -415,7 +470,12 @@ impl Checker {
         for (name, spans) in literal_names {
             for span in spans {
                 let key = (self.path.clone(), span.start, span.end);
-                if global_literals.contains(&span) && table.definition(&self.path, span).is_some() {
+                if global_literals.contains(&span)
+                    && table
+                        .functions
+                        .get(&FunctionId::new(&self.path, span))
+                        .is_some()
+                {
                     table
                         .capture_literal_bindings
                         .entry(name.clone())
@@ -429,8 +489,12 @@ impl Checker {
                 .into_iter()
                 .map(|span| (self.path.clone(), span.start, span.end)),
         );
-        table.unstable_callees.extend(global_values);
-        table.unstable_callees.extend(outward.names.iter().cloned());
+        for name in global_values
+            .into_iter()
+            .chain(outward.names.iter().cloned())
+        {
+            table.functions.mark_unstable(name);
+        }
         table.capture_writes.extend(global_writes);
         table.capture_writes.extend(outward);
     }
@@ -517,15 +581,49 @@ impl Checker {
             s,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                // A binding installer, called, passed, or named to `do.call`,
+                // may replace a binding in any frame, including the global
+                // one call contracts rely on.
+                // So may `assign`/`delayedAssign`/`makeActiveBinding`/`rm`
+                // with a computed name.
+                let installer = match node {
+                    AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        let mut writes = WriteSet::default();
+                        collect_callable_binding_write(func, args, &mut writes);
+                        writes.opaque
+                            || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
+                                && args.first().is_some_and(|first| {
+                                    matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
+                                })
+                    }
+                    _ => false,
+                };
+                if installer && !self.fn_table.may_install_bindings {
+                    Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
+                }
+                if masks_s4_registration(node) {
+                    Arc::make_mut(&mut self.fn_table)
+                        .functions
+                        .s4_mut()
+                        .mark_all_incomplete();
+                }
                 if let AstNode::Expr(Expr::Call { func, args, .. }) = node
                     && let Expr::Ident { name, .. } = func.as_ref()
                 {
                     let bare = bare_name(name);
+                    let package = match Callee::parse(name) {
+                        Callee::Qualified { package, .. } => Some(package.to_string()),
+                        Callee::Bare(_) => None,
+                    };
                     Arc::make_mut(&mut self.fn_table)
                         .call_sites
                         .entry(bare.to_string())
                         .or_default()
-                        .push(args.iter().map(|argument| argument.name.clone()).collect());
+                        .push(CallSite {
+                            package,
+                            arguments: args.iter().map(|argument| argument.name.clone()).collect(),
+                        });
                     if bare == "globalVariables" {
                         if let Some(first) = args.first() {
                             for declared in string_literals(&first.value) {
@@ -559,44 +657,79 @@ impl Checker {
     }
 
     fn collect_s4_call(&mut self, name: &str, args: &[Arg]) {
-        match name {
-            "setGeneric" => {
-                if let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) {
-                    let table = Arc::make_mut(&mut self.fn_table);
-                    table.note_bound_name(generic);
-                    table.known_vars.insert(generic.to_string());
-                }
-            }
-            "setMethod" => {
-                let Some(generic) = args.first().and_then(|arg| string_literal(&arg.value)) else {
-                    return;
-                };
-                let Some(class) = args.get(1).and_then(|arg| s4_signature_class(&arg.value)) else {
-                    return;
-                };
-                let Some(Expr::Function { params, body, span }) = args
+        let formals: &[&str] = match name {
+            "setGeneric" => &[
+                "name",
+                "def",
+                "group",
+                "valueClass",
+                "where",
+                "package",
+                "signature",
+                "useAsDefault",
+                "genericFunction",
+                "simpleInheritanceOnly",
+            ],
+            "setMethod" => &[
+                "f",
+                "signature",
+                "definition",
+                "where",
+                "valueClass",
+                "sealed",
+            ],
+            _ => return,
+        };
+        let matched = match_arguments(formals, args);
+        let formal = |name: &str| {
+            let index = formals.iter().position(|formal| *formal == name)?;
+            matched
+                .arg_for_param(index)
+                .map(|actual| &args[actual].value)
+        };
+        let table = Arc::make_mut(&mut self.fn_table);
+        let Some(generic) = formal(formals[0]).and_then(string_literal) else {
+            table.functions.s4_mut().mark_computed_name();
+            return;
+        };
+        if name == "setGeneric" {
+            table.note_bound_name(generic);
+            table.known_vars.insert(generic.to_string());
+            let decl = match formal("def") {
+                None if ["group", "signature", "genericFunction"]
                     .iter()
-                    .skip(2)
-                    .find(|arg| matches!(arg.value, Expr::Function { .. }))
-                    .map(|arg| &arg.value)
-                else {
-                    return;
-                };
-                let method_name = format!("__s4__{generic}__{class}");
-                let slot = self.record_fn(method_name.clone(), params, body.clone(), *span);
-                if let Some(first) = Arc::make_mut(&mut self.fn_table)
-                    .fns
-                    .get_mut(&method_name)
-                    .and_then(|function| function.params.first_mut())
+                    .all(|name| formal(name).is_none()) =>
                 {
-                    first.type_ = RType::unknown().with_class(ClassVector::single(&class));
+                    GenericDecl::Absent
                 }
-                Arc::make_mut(&mut self.fn_table)
-                    .s4_methods
-                    .insert((generic.to_string(), class), slot);
-            }
-            _ => {}
+                Some(def) if formal("group").is_none() && formal("genericFunction").is_none() => {
+                    literal_generic(generic, def, formal("signature"))
+                }
+                _ => GenericDecl::Opaque,
+            };
+            table.functions.s4_mut().declare_generic(generic, decl);
+            return;
         }
+        let entries = formal("signature").and_then(s4_signature_entries);
+        let function = match (formal("definition"), &entries) {
+            (Some(Expr::Function { params, body, span }), Some(entries)) => {
+                let spelled: Vec<String> = entries
+                    .iter()
+                    .map(|(formal, class)| match formal {
+                        Some(formal) => format!("{formal}={class}"),
+                        None => class.clone(),
+                    })
+                    .collect();
+                let method_name = format!("__s4__{generic}__{}", spelled.join(","));
+                self.record_fn(method_name.clone(), params, body.clone(), *span);
+                Some(method_name)
+            }
+            _ => None,
+        };
+        Arc::make_mut(&mut self.fn_table)
+            .functions
+            .s4_mut()
+            .register_method(generic, entries, function);
     }
 
     fn collect_forwarded_calls(&mut self, caller: &str, params: &[Param], body: &[Stmt]) {
@@ -675,6 +808,7 @@ impl Checker {
         // A forced default may assign a sibling formal, which a later read
         // then sees instead of the missing argument.
         let default_writes = default_local_writes(params);
+        let contract = CallContract::derive(params, &body, span);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -719,9 +853,10 @@ impl Checker {
             definition_span: span,
             body,
             outward_writes,
+            contract,
             return_slot: slot,
         };
-        if let Some(prev_slot) = fn_table.insert_fn(name.clone(), function) {
+        if let Some(prev_slot) = fn_table.functions.bind(name.clone(), function) {
             fn_table.forwarded_calls.retain(|call| call.caller != name);
             tracing::debug!(fn_name = %name, prev_slot, "shadowed earlier def");
         }
@@ -733,7 +868,7 @@ impl Checker {
     // the trailing expression of the body, then joined. `None` means no
     // path produced a value.
     pub(crate) fn refine_fn_return(&mut self, name: &str) -> Option<RType> {
-        let function = self.fn_table.fns.get(name)?.clone();
+        let function = self.fn_table.functions.live_named(name)?.clone();
         self.infer_definition_return(name, &function)
     }
 
@@ -1451,16 +1586,102 @@ fn string_literal(expr: &Expr) -> Option<&str> {
     }
 }
 
-fn s4_signature_class(expr: &Expr) -> Option<String> {
+/// Whether `node` binds a name S4 registration collection reads by
+/// spelling (`signature <- function(...) ...`), so a registering call may
+/// not reach the methods function it is read as.
+fn masks_s4_registration(node: AstNode<'_>) -> bool {
+    let masks = |name: &str| {
+        matches!(
+            semantic_argument_name(name),
+            "setMethod" | "setGeneric" | "signature" | "standardGeneric" | "c"
+        )
+    };
+    fn root(target: &Expr) -> Option<&str> {
+        match target {
+            Expr::String(name, _) => Some(name),
+            _ => crate::infer::vacuous::assignment_root_name(target),
+        }
+    }
+    match node {
+        AstNode::Stmt(Stmt::Assign { target, .. }) => root(target).is_some_and(masks),
+        AstNode::Stmt(Stmt::For { name, .. }) => masks(name),
+        AstNode::Expr(Expr::BinOp {
+            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            lhs,
+            ..
+        }) => root(lhs).is_some_and(masks),
+        AstNode::Expr(Expr::Function { params, .. }) => {
+            params.iter().any(|param| masks(&param.name))
+        }
+        AstNode::Expr(Expr::Call { func, args, .. }) => {
+            matches!(func.as_ref(), Expr::Ident { name, .. }
+                if matches!(bare_name(name), "assign" | "delayedAssign" | "makeActiveBinding"))
+                && args
+                    .first()
+                    .and_then(|argument| string_literal(&argument.value))
+                    .is_some_and(masks)
+        }
+        _ => false,
+    }
+}
+
+/// A `setMethod` signature: a class string, or `signature()` of class
+/// strings, all positional or all named by formal.
+fn s4_signature_entries(expr: &Expr) -> Option<Vec<(Option<String>, String)>> {
     match expr {
-        Expr::String(class, _) => Some(class.clone()),
-        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if name == "signature") => {
-            args.first()
-                .and_then(|argument| string_literal(&argument.value))
-                .map(str::to_string)
+        Expr::String(class, _) => Some(vec![(None, class.clone())]),
+        Expr::Call { func, args, .. } if matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "signature") => {
+            args.iter()
+                .map(|argument| {
+                    let class = string_literal(&argument.value)?;
+                    let formal = argument.name.as_deref().map(semantic_argument_name);
+                    Some((formal.map(str::to_string), class.to_string()))
+                })
+                .collect()
         }
         _ => None,
     }
+}
+
+/// A `setGeneric` definition that only forwards to its methods, with its
+/// formals and declared dispatch signature. A body that computes anything
+/// else is not the selected method's result.
+fn literal_generic(generic: &str, def: &Expr, signature: Option<&Expr>) -> GenericDecl {
+    let Expr::Function { params, body, .. } = def else {
+        return GenericDecl::Opaque;
+    };
+    let forwards = matches!(
+        body.as_slice(),
+        [Stmt::Expr(Expr::Call { func, args, .. })]
+            if matches!(func.as_ref(), Expr::Ident { name, .. }
+                if name == "standardGeneric" || name == "methods::standardGeneric")
+                && matches!(args.as_slice(), [only] if only.name.is_none()
+                    && string_literal(&only.value) == Some(generic))
+    );
+    let formals: Vec<String> = params.iter().map(|param| param.name.clone()).collect();
+    let signature = match signature {
+        None => formals.iter().filter(|f| *f != "...").cloned().collect(),
+        Some(Expr::String(only, _)) => vec![only.clone()],
+        Some(Expr::Call { func, args, .. }) if is_c_call_head(func) => {
+            match args
+                .iter()
+                .map(|argument| string_literal(&argument.value).map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(entries) => entries,
+                None => return GenericDecl::Opaque,
+            }
+        }
+        Some(_) => return GenericDecl::Opaque,
+    };
+    if !forwards
+        || signature
+            .iter()
+            .any(|entry| entry == "..." || !formals.contains(entry))
+    {
+        return GenericDecl::Opaque;
+    }
+    GenericDecl::Literal { formals, signature }
 }
 
 /// Return whether evaluating a block must force `name`, whether control
@@ -1710,28 +1931,24 @@ mod collect_walker_tests {
 
     #[test]
     fn identity_lookup_shares_live_entries_and_keeps_replaced_literals() {
-        let checker = collect(
-            "setMethod(\"show\", \"Person\", function(object) object)\n\
-             f <- function(x) 1L\n\
-             f <- function(y) 2L\n",
-        );
-        let table = &checker.fn_table;
-        let method = &table.fns["__s4__show__Person"];
-        let by_identity = table
-            .definition(&method.source_path, method.definition_span)
-            .unwrap();
-        assert_eq!(by_identity.params, method.params);
-        let [replaced] = table.replaced_fns.values().collect::<Vec<_>>()[..] else {
-            panic!("expected one replaced literal");
+        let src = "setMethod(\"show\", \"Person\", function(object) object)\n\
+                   f <- function(x) 1L\n\
+                   f <- function(y) 2L\n";
+        let checker = collect(src);
+        let functions = &checker.fn_table.functions;
+        let method = &functions["__s4__show__Person"];
+        assert_eq!(functions.get(&method.id()).unwrap().params, method.params);
+        let Stmt::Assign {
+            value: Expr::Function { span, .. },
+            ..
+        } = &parse_stmts(src)[1]
+        else {
+            panic!("expected a function assignment");
         };
-        assert_eq!(replaced.params[0].name, "x");
-        assert!(!table.is_live_definition(&replaced.source_path, replaced.definition_span));
-        assert!(
-            table
-                .definition(&replaced.source_path, replaced.definition_span)
-                .is_some_and(|function| function.params[0].name == "x")
-        );
-        assert_eq!(table.fns["f"].params[0].name, "y");
+        let replaced = FunctionId::new("collect_walker_test.R", *span);
+        assert!(!functions.is_live(&replaced));
+        assert_eq!(functions.get(&replaced).unwrap().params[0].name, "x");
+        assert_eq!(functions["f"].params[0].name, "y");
     }
 
     #[test]
@@ -1739,7 +1956,7 @@ mod collect_walker_tests {
         let statements = parse_stmts("f <- function() { g <<- 1L }");
         let mut checker = Checker::new("lazy-effect.R");
         checker.collect_fns(&statements);
-        let function = &checker.fn_table.fns["f"];
+        let function = &checker.fn_table.functions["f"];
         assert!(function.outward_writes.get().is_none());
         assert!(function.outward_writes().names.contains("g"));
         assert!(function.outward_writes.get().is_some());
@@ -1763,7 +1980,7 @@ mod collect_walker_tests {
             "delayedAssign(x='held', value=p, ...)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
-            let param = &checker.fn_table.fns["f"].params[0];
+            let param = &checker.fn_table.functions["f"].params[0];
             assert!(param.quoting && param.defused, "{call}: {param:?}");
             assert_eq!(
                 parameter_uses(call, "p"),
@@ -1797,7 +2014,7 @@ mod collect_walker_tests {
             "base::substitute(env=p, expr=p)",
         ] {
             let checker = collect(&format!("f <- function(p) {call}"));
-            let param = &checker.fn_table.fns["f"].params[0];
+            let param = &checker.fn_table.functions["f"].params[0];
             assert!(!param.quoting && !param.defused, "{call}: {param:?}");
             assert!(parameter_uses(call, "p").normal, "{call}");
             assert_eq!(
@@ -2051,23 +2268,23 @@ mod collect_walker_tests {
     #[test]
     fn fn_definitions_collected_from_branch_and_loop_bodies() {
         let checker = collect("if (c) { taken <- function() 1 } else { skipped <- function() 2 }");
-        assert!(checker.fn_table.fns.contains_key("taken"));
-        assert!(checker.fn_table.fns.contains_key("skipped"));
+        assert!(checker.fn_table.functions.binds("taken"));
+        assert!(checker.fn_table.functions.binds("skipped"));
         let checker = collect("for (i in xs) { loop_fn <- function() 1 }");
-        assert!(checker.fn_table.fns.contains_key("loop_fn"));
+        assert!(checker.fn_table.functions.binds("loop_fn"));
         let checker = collect("while (c) { while_fn <- function() 1 }");
-        assert!(checker.fn_table.fns.contains_key("while_fn"));
+        assert!(checker.fn_table.functions.binds("while_fn"));
         let checker = collect("function() 1");
-        assert!(checker.fn_table.fns.is_empty());
+        assert!(checker.fn_table.functions.names().next().is_none());
         let checker = collect("out <- lapply(xs, function() 1)");
-        assert!(!checker.fn_table.fns.contains_key("out"));
+        assert!(!checker.fn_table.functions.binds("out"));
         // The callback skips Expr nodes, so a block-valued condition's
         // statements are never visited and contribute no definitions.
         // (`control_tests: false` only spares the walker those visits;
         // the callback's skip is the load-bearing rule, and this pin
         // fails if it is relaxed.)
         let checker = collect("if ({ fn_in_cond <- function() 1 }) 1");
-        assert!(!checker.fn_table.fns.contains_key("fn_in_cond"));
+        assert!(!checker.fn_table.functions.binds("fn_in_cond"));
     }
 
     /// Nested definitions record under the mangled `<outer>$<inner>`
@@ -2082,13 +2299,13 @@ mod collect_walker_tests {
   3
 }",
         );
-        assert!(checker.fn_table.fns.contains_key("outer"));
-        assert!(checker.fn_table.fns.contains_key("outer$inner"));
-        assert!(checker.fn_table.fns.contains_key("outer$inner$deepest"));
+        assert!(checker.fn_table.functions.binds("outer"));
+        assert!(checker.fn_table.functions.binds("outer$inner"));
+        assert!(checker.fn_table.functions.binds("outer$inner$deepest"));
         let checker = collect("f <- function() { if (c) { branched <- function() 1 } }");
-        assert!(checker.fn_table.fns.contains_key("f$branched"));
+        assert!(checker.fn_table.functions.binds("f$branched"));
         let checker = collect("f <- function() lapply(xs, function(q) q)");
-        assert_eq!(checker.fn_table.fns.len(), 1);
-        assert!(checker.fn_table.fns.contains_key("f"));
+        assert_eq!(checker.fn_table.functions.len(), 1);
+        assert!(checker.fn_table.functions.binds("f"));
     }
 }

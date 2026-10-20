@@ -461,6 +461,7 @@ impl Checker {
         self.check_call_arity(
             function_name,
             &signature.params,
+            None,
             args,
             &bindings,
             supports_unknown_argument_check,
@@ -665,6 +666,7 @@ impl Checker {
         &mut self,
         function_name: &str,
         function: &UserFn,
+        origin: Option<&UserFn>,
         args: &[Arg],
         call_span: Span,
     ) {
@@ -677,6 +679,7 @@ impl Checker {
         self.check_call_arity(
             function_name,
             &function.params,
+            origin,
             args,
             &bindings,
             true,
@@ -687,11 +690,15 @@ impl Checker {
     /// Shared arity reporting over one argument match: RY090 for named
     /// actuals no formal matched, RY091 for required formals without a
     /// supplied value. The typeshed and user-function checks differ only in their
-    /// formals source and unknown-argument gating.
+    /// formals source and unknown-argument gating. `origin` is the definition
+    /// the call provably reaches (`CallHead::bound_definition`); only then do
+    /// findings point at its formals.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_call_arity<P: CallFormal>(
         &mut self,
         function_name: &str,
         params: &[P],
+        origin: Option<&UserFn>,
         args: &[Arg],
         bindings: &ArgumentMatch,
         report_unknown: bool,
@@ -699,8 +706,25 @@ impl Checker {
     ) {
         let names: Vec<&str> = params.iter().map(|param| param.name()).collect();
         let required: Vec<bool> = params.iter().map(|param| param.required()).collect();
-        self.emit_unknown_arguments(function_name, &names, args, bindings, report_unknown);
-        self.emit_missing_required(function_name, &names, &required, args, bindings, call_span);
+        let formal =
+            |index: usize, message: String| declared_formal(origin, &names, index, message);
+        self.emit_unknown_arguments(
+            function_name,
+            &names,
+            args,
+            bindings,
+            report_unknown,
+            &formal,
+        );
+        self.emit_missing_required(
+            function_name,
+            &names,
+            &required,
+            args,
+            bindings,
+            call_span,
+            &formal,
+        );
     }
 
     fn emit_unknown_arguments(
@@ -710,6 +734,7 @@ impl Checker {
         args: &[Arg],
         bindings: &ArgumentMatch,
         enabled: bool,
+        formal: &dyn Fn(usize, String) -> Vec<crate::Related>,
     ) {
         if !enabled || bindings.dots.is_some() {
             return;
@@ -735,10 +760,15 @@ impl Checker {
                 .map(|name| format!("; did you mean `{name}`?"))
                 .unwrap_or_default();
             let message = format!("unknown argument `{argument_name}` to `{function_name}`{hint}");
-            self.emit(Severity::Warning, argument.span, "RY090", message);
+            let related = suggestion
+                .and_then(|name| names.iter().position(|formal| *formal == name))
+                .map(|index| formal(index, format!("`{}` is declared here", names[index])))
+                .unwrap_or_default();
+            self.emit_related(Severity::Warning, argument.span, "RY090", message, related);
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_missing_required(
         &mut self,
         function_name: &str,
@@ -747,6 +777,7 @@ impl Checker {
         args: &[Arg],
         bindings: &ArgumentMatch,
         call_span: Span,
+        formal: &dyn Fn(usize, String) -> Vec<crate::Related>,
     ) {
         let forwards_dots = args.iter().any(|argument| self.is_forwarded_dots(argument));
         for (parameter_index, required) in required.iter().enumerate() {
@@ -766,18 +797,47 @@ impl Checker {
                         .is_some_and(|index| matches!(args[index].value, Expr::Missing(_)))
             };
             if *required && missing {
-                self.emit(
+                let name = names[parameter_index];
+                self.emit_related(
                     Severity::Warning,
                     call_span,
                     "RY091",
-                    format!(
-                        "missing required argument `{}` in call to `{function_name}`",
-                        names[parameter_index]
+                    format!("missing required argument `{name}` in call to `{function_name}`"),
+                    formal(
+                        parameter_index,
+                        format!("`{name}` is declared here without a default value"),
                     ),
                 );
             }
         }
     }
+}
+
+/// Where `origin` declares formal `index`, when its source formal is the one
+/// the arity check matched by name.
+fn declared_formal(
+    origin: Option<&UserFn>,
+    names: &[&str],
+    index: usize,
+    message: String,
+) -> Vec<crate::Related> {
+    origin
+        .and_then(|function| {
+            let param = function
+                .source_params
+                .get(index)
+                .filter(|param| param.name == names[index])?;
+            Some(crate::Related {
+                path: function.source_path.clone(),
+                span: Span {
+                    end: param.span.start + param.name.len(),
+                    ..param.span
+                },
+                message,
+            })
+        })
+        .into_iter()
+        .collect()
 }
 
 fn closest_parameter<'a>(argument: &str, parameters: &'a [&str]) -> Option<&'a str> {

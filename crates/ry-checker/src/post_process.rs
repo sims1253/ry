@@ -300,6 +300,7 @@ mod tests {
             code: "RY010",
             message: "same message".to_string(),
             confidence,
+            related: Vec::new(),
         }
     }
 

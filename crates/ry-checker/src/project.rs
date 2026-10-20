@@ -17,6 +17,7 @@
 //! tests rely on this).
 
 use crate::declaration_check::DeclarationSet;
+use crate::definitions::Callee;
 use crate::{
     CallerVisibleSignature, Checker, DeclarationFinding, Diagnostic, FnTable, FxSet, ReturnSlots,
 };
@@ -142,11 +143,17 @@ pub struct Project {
     /// A write-only file edit can change which captured declaration is
     /// provable without changing function names, return slots, or known_vars.
     prev_capture_rebounds: FxSet<(String, usize, usize)>,
+    /// Another file's top-level effects can remove a deferred call's related location.
+    prev_unproven_top_level: bool,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
+    /// Generic metadata changes which method a call selects without
+    /// changing any refinement name (`signature = c("y", "x")`).
+    prev_s4_inventory: crate::definitions::S4Inventory,
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
     prev_escaped_slot_names: bool,
+    prev_may_install_bindings: bool,
     /// When true, pass-3 emitters snapshot each file's lexical scopes.
     /// Off by default; see [`Checker::enable_scope_capture`].
     capture_scopes: bool,
@@ -244,7 +251,7 @@ impl Project {
     pub fn update_file(&mut self, path: String, file: Arc<SourceFile>) {
         if let Some(previous) = self.collected_files.remove(&path) {
             self.invalidated_fns
-                .extend(previous.fn_table.fns.keys().cloned());
+                .extend(previous.fn_table.functions.names().cloned());
         }
         self.file_known_vars.remove(&path);
         self.dirty_paths.insert(path.clone());
@@ -315,7 +322,7 @@ impl Project {
         // collection, which order cannot move.)
         let mut definers: HashMap<&str, usize> = HashMap::new();
         for collected in self.collected_files.values() {
-            for name in collected.fn_table.fns.keys() {
+            for name in collected.fn_table.functions.names() {
                 *definers.entry(name).or_insert(0) += 1;
             }
         }
@@ -329,8 +336,8 @@ impl Project {
         for (path, collected) in &self.collected_files {
             if collected
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| shadowed.contains(name.as_str()))
             {
                 self.dirty_paths.insert(path.clone());
@@ -346,7 +353,7 @@ impl Project {
         self.files.retain(|(existing, _)| existing != path);
         if let Some(previous) = self.collected_files.remove(path) {
             self.invalidated_fns
-                .extend(previous.fn_table.fns.keys().cloned());
+                .extend(previous.fn_table.functions.names().cloned());
         }
         self.file_known_vars.remove(path);
         self.file_read_fns.remove(path);
@@ -504,9 +511,12 @@ impl Project {
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.prev_capture_rebounds.clear();
+        self.prev_unproven_top_level = false;
         self.prev_callable_vars.clear();
+        self.prev_s4_inventory = Default::default();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
+        self.prev_may_install_bindings = false;
         self.invalidated_fns.clear();
         // Merge every entry rather than one cached collection per path: a
         // lossy display path can name two distinct files.
@@ -660,8 +670,10 @@ impl Project {
         // alias; no observed dependency exists for that earlier lookup miss.
         if self.callable_names_changed()
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+            || self.prev_may_install_bindings != self.fn_table.may_install_bindings
         {
             return None;
         }
@@ -674,7 +686,7 @@ impl Project {
         let mut affected = self.invalidated_fns.clone();
         for dirty_path in &self.dirty_paths {
             if let Some(collected) = self.collected_files.get(dirty_path) {
-                affected.extend(collected.fn_table.fns.keys().cloned());
+                affected.extend(collected.fn_table.functions.names().cloned());
             }
         }
         Some(self.with_refinement_callers(affected))
@@ -691,8 +703,12 @@ impl Project {
         // Evaluation metadata is propagated outside the body read recorder.
         // Include these edges even before any quoting/injection is present.
         for call in &self.fn_table.forwarded_calls {
-            if self.fn_table.call_function(&call.stub_callee).is_some()
-                && self.fn_table.fns.contains_key(&call.caller)
+            if self
+                .fn_table
+                .functions
+                .select(Callee::parse(&call.stub_callee))
+                .is_some()
+                && self.fn_table.functions.binds(&call.caller)
             {
                 callers
                     .entry(&call.callee)
@@ -717,11 +733,11 @@ impl Project {
     }
 
     fn callable_names_changed(&self) -> bool {
-        self.fn_table.fns.len() != self.prev_fn_returns.len()
+        self.fn_table.functions.len() != self.prev_fn_returns.len()
             || self
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| !self.prev_fn_returns.contains_key(name))
     }
 
@@ -747,7 +763,7 @@ impl Project {
                 if !self.file_depends_on(path, &affected) {
                     continue;
                 }
-                for caller in collected.fn_table.fns.keys() {
+                for caller in collected.fn_table.functions.names() {
                     changed |= affected.insert(caller.clone());
                 }
             }
@@ -823,7 +839,7 @@ impl Project {
         self.refinement_dependencies
             .extend(refiner.refinement_dependencies.take().unwrap());
         self.refinement_dependencies
-            .retain(|name, _| refiner.fn_table.fns.contains_key(name));
+            .retain(|name, _| refiner.fn_table.functions.binds(name));
         #[cfg(test)]
         {
             self.last_refinement_counts = std::mem::take(&mut refiner.refinement_counts);
@@ -854,8 +870,8 @@ impl Project {
         // slot indices shift when functions are inserted or removed.
         let directly_changed_fns: HashSet<String> = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .filter_map(|(name, function)| {
                 let current_return = self.return_slots.0.get(function.return_slot);
                 let return_changed = self
@@ -884,8 +900,8 @@ impl Project {
             self.fn_table
                 .s3_methods
                 .values()
-                .chain(self.fn_table.s4_methods.values())
                 .copied()
+                .chain(self.fn_table.functions.s4_method_slots())
                 .collect()
         };
 
@@ -896,10 +912,13 @@ impl Project {
         // the incremental dirty set.
         let known_vars_changed = self.prev_known_vars != self.fn_table.known_vars
             || self.prev_callable_vars != self.fn_table.callable_vars
+            || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
-            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
-        let capture_rebounds_changed =
-            self.prev_capture_rebounds != self.fn_table.rebound_after_capture;
+            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+            || self.prev_may_install_bindings != self.fn_table.may_install_bindings;
+        let capture_rebounds_changed = self.prev_capture_rebounds
+            != self.fn_table.rebound_after_capture
+            || self.prev_unproven_top_level != self.fn_table.unproven_top_level;
         let must_emit: HashSet<&str> = if !self.has_prev_emit
             || loaded_changed
             || known_vars_changed
@@ -955,7 +974,7 @@ impl Project {
         let capture_references = self.capture_references;
 
         let mut names_by_slot: HashMap<usize, Vec<&String>> = HashMap::new();
-        for (name, function) in &fn_table.fns {
+        for (name, function) in fn_table.functions.live() {
             names_by_slot
                 .entry(function.return_slot)
                 .or_default()
@@ -1102,21 +1121,24 @@ impl Project {
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_capture_rebounds = self.fn_table.rebound_after_capture.clone();
+        self.prev_unproven_top_level = self.fn_table.unproven_top_level;
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
+        self.prev_s4_inventory = self.fn_table.functions.s4().clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
+        self.prev_may_install_bindings = self.fn_table.may_install_bindings;
         // Save refined return types keyed by function name for the next
         // fixpoint seeding.
         self.prev_fn_returns = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .map(|(name, uf)| (name.clone(), self.return_slots.get(uf.return_slot)))
             .collect();
         self.prev_fn_signatures = self
             .fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .map(|(name, function)| (name.clone(), function.caller_visible_signature()))
             .collect();
         self.dirty_paths.clear();
@@ -1150,6 +1172,73 @@ mod tests {
         assert_eq!(project.prev_fn_signatures, cold.prev_fn_signatures);
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
         actual
+    }
+
+    #[test]
+    fn only_an_own_package_qualified_call_is_default_evidence() {
+        for (package, flagged) in [("mypkg", true), ("xfun", false)] {
+            let mut project = Project::new();
+            project.set_package_facts(
+                ["R/a.R", "R/b.R"]
+                    .map(|path| {
+                        let facts = ry_workspace::PackageFacts {
+                            source_package: Some("mypkg".into()),
+                            ..Default::default()
+                        };
+                        (path.to_string(), facts)
+                    })
+                    .into(),
+            );
+            project.add_file(
+                "R/a.R".into(),
+                parse_file(
+                    "R/a.R",
+                    "normalize_path <- function(path = 'none') path + 1L",
+                ),
+            );
+            let caller = format!("use <- function() {package}::normalize_path()");
+            project.add_file("R/b.R".into(), parse_file("R/b.R", &caller));
+            let diagnostics = project.check();
+            let a = &diagnostics
+                .iter()
+                .find(|(path, _)| path == "R/a.R")
+                .unwrap()
+                .1;
+            assert_eq!(a.iter().any(|d| d.code == "RY040"), flagged, "{a:?}");
+        }
+    }
+
+    #[test]
+    fn reordering_a_generic_signature_reselects_methods_in_other_files() {
+        let generic = |order: &str| {
+            let source = format!(
+                "setGeneric(\"g\", function(x, y) standardGeneric(\"g\"), signature = c({order}))\n"
+            );
+            parse_file("generic.R", &source)
+        };
+        let mut project = Project::new();
+        project.add_file("generic.R".into(), generic("\"x\", \"y\""));
+        project.add_file(
+            "method.R".into(),
+            parse_file(
+                "method.R",
+                "setClass(\"A\", representation(v = \"numeric\"))\n\
+                 setMethod(\"g\", signature(\"A\", \"character\"), function(x, y) \"chr\")\n\
+                 setMethod(\"g\", signature(\"A\", \"numeric\"), function(x, y) 1L)\n\
+                 g(new(\"A\"), \"t\") + 1L\n",
+            ),
+        );
+        let flagged = |diagnostics: &[(String, Vec<Diagnostic>)]| {
+            diagnostics
+                .iter()
+                .any(|(path, found)| path == "method.R" && found.iter().any(|d| d.code == "RY040"))
+        };
+        assert!(flagged(&project.check()));
+        // The positional entries now mean `(y = A, x = character)`.
+        for (order, expected) in [("\"y\", \"x\"", false), ("\"x\", \"y\"", true)] {
+            project.update_file("generic.R".into(), generic(order).into());
+            assert_eq!(flagged(&assert_matches_cold(&mut project)), expected);
+        }
     }
 
     #[test]

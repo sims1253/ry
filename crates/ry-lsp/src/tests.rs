@@ -61,7 +61,7 @@ fn multi_char_range_from_source() {
         "RY040",
         "test",
     );
-    let lsp = diagnostic_to_lsp_with_source(&d, text);
+    let lsp = diagnostic_to_lsp_with_source(&d, text, None);
     assert_eq!(lsp.range.start.line, 0);
     assert_eq!(lsp.range.start.character, 7);
     assert_eq!(lsp.range.end.line, 0);
@@ -89,7 +89,7 @@ fn zero_width_span_extends_by_one_char() {
         "RY040",
         "test",
     );
-    let lsp = diagnostic_to_lsp_with_source(&d, text);
+    let lsp = diagnostic_to_lsp_with_source(&d, text, None);
     assert_eq!(lsp.range.start.line, 0);
     assert_eq!(lsp.range.start.character, 0);
     assert_eq!(lsp.range.end.line, 0);
@@ -111,7 +111,7 @@ fn multi_char_range_on_second_line() {
         "RY001",
         "warning",
     );
-    let lsp = diagnostic_to_lsp_with_source(&d, text);
+    let lsp = diagnostic_to_lsp_with_source(&d, text, None);
     assert_eq!(lsp.range.start.line, 1);
     assert_eq!(lsp.range.start.character, 0);
     assert_eq!(lsp.range.end.line, 1);
@@ -131,7 +131,7 @@ fn multi_char_range_spans_identifier() {
         "RY001",
         "info",
     );
-    let lsp = diagnostic_to_lsp_with_source(&d, text);
+    let lsp = diagnostic_to_lsp_with_source(&d, text, None);
     assert_eq!(lsp.range.start.line, 0);
     assert_eq!(lsp.range.start.character, 0);
     assert_eq!(lsp.range.end.line, 0);

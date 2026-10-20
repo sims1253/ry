@@ -34,6 +34,8 @@ pub(super) struct CallHead {
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
+    contract_applies: bool,
+    bound_definition: Option<FunctionId>,
 }
 
 impl CallHead {
@@ -51,6 +53,22 @@ impl CallHead {
         self.metadata.as_ref()
     }
 
+    /// The selected definition's call contract, under the proof that lets
+    /// RY090/RY091 read its formals plus proof that its body is the one the
+    /// call reaches (definitions that agree on formals may differ in bodies).
+    pub(super) fn contract(&self) -> Option<(&UserFn, CallContract)> {
+        let function = self.user_function().filter(|_| self.contract_applies)?;
+        Some((function, function.contract?))
+    }
+
+    /// The definition this call site provably reaches: the selected project
+    /// function, confirmed by the exact lexical binding visible here with no
+    /// unseen rebinding since. `None` whenever evidence is incomplete; never
+    /// derived from spelling or inventory uniqueness alone.
+    pub(super) fn bound_definition(&self) -> Option<&FunctionId> {
+        self.bound_definition.as_ref()
+    }
+
     pub(super) fn callee(&self) -> ResolvedCallee<'_> {
         match &self.target {
             CallTarget::User(function) => ResolvedCallee::User(function),
@@ -61,31 +79,6 @@ impl CallHead {
             ),
             CallTarget::Lexical | CallTarget::Unknown => ResolvedCallee::Unknown,
         }
-    }
-}
-
-impl FnTable {
-    /// A qualified name can use a collected definition only from that package's
-    /// R sources. Unknown provenance cannot establish namespace membership.
-    /// Bare calls also accept quoted infix binding spellings.
-    pub(crate) fn call_function(&self, name: &str) -> Option<&UserFn> {
-        let (package, member) = if name.starts_with('%') && name.ends_with('%') {
-            (None, name)
-        } else {
-            crate::resolve::split_qualified(name)
-                .map_or((None, name), |(package, member)| (Some(package), member))
-        };
-        self.fns
-            .get(member)
-            .or_else(|| {
-                self.fns
-                    .iter()
-                    .find(|(name, _)| semantic_argument_name(name) == member)
-                    .map(|(_, function)| function)
-            })
-            .filter(|function| {
-                package.is_none_or(|package| function.source_package.as_deref() == Some(package))
-            })
     }
 }
 
@@ -102,11 +95,11 @@ impl Checker {
         // An alias to pkg::f selects that namespace even though its raw head is
         // bare. Lexical binding/evidence below describes the raw call site's
         // environment, and cannot replace a qualified selection.
-        let qualified = !(semantic_name.starts_with('%') && semantic_name.ends_with('%'))
-            && crate::resolve::split_qualified(semantic_name).is_some();
+        let callee = Callee::parse(semantic_name);
+        let qualified = callee.is_qualified();
         let lexical_callable = !qualified && scope.is_lexical_function(lookup_name);
         let function = (!lexical_callable)
-            .then(|| self.fn_table.call_function(semantic_name))
+            .then(|| self.fn_table.functions.select(callee))
             .flatten()
             .cloned();
         let inherited = (!qualified)
@@ -123,12 +116,63 @@ impl Checker {
         // R selects the function before forcing its arguments. A write among
         // the actuals changes later calls, not this call's arity or return.
         let check_project_arguments = !qualified
-            && self.fn_table.has_single_contract(lookup_name)
+            && self.fn_table.functions.has_single_contract(lookup_name)
             && (scope.get(lookup_name).is_none()
                 || function.as_ref().is_some_and(|function| {
                     function.source_path == self.path
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
+        // A contract also needs the body to be the one this call reaches: no
+        // other literal binds the name, an eager top-level call follows the
+        // definition, an enclosing frame binds the name only to this exact
+        // unreplaced literal, no enclosing function's code (body or forced
+        // default, before or after this call) may bind it, and no quoted
+        // local spelling (`` `f` ``) masks it.
+        let semantic = semantic_argument_name(lookup_name);
+        let contract_applies = check_project_arguments
+            && !self.fn_table.may_install_bindings
+            && self.fn_table.functions.has_single_definition(lookup_name)
+            && function.as_ref().is_some_and(|function| {
+                (!self.enclosing_formals.is_empty()
+                    || function.source_path != self.path
+                    || function.definition_span.start < call_span.start)
+                    && scope
+                        .outward_function_definition(lookup_name)
+                        .is_none_or(|outward| {
+                            outward.is_some_and(|span| {
+                                function.source_path == self.path
+                                    && span == function.definition_span
+                                    && !self.fn_table.was_rebound_after_capture(&self.path, span)
+                            })
+                        })
+            })
+            && !self
+                .frame_writes
+                .iter()
+                .any(|writes| writes.may_write(semantic))
+            && {
+                [
+                    semantic.to_string(),
+                    format!("`{semantic}`"),
+                    format!("'{semantic}'"),
+                    format!("\"{semantic}\""),
+                ]
+                .iter()
+                .filter(|spelling| spelling.as_str() != lookup_name)
+                .all(|spelling| {
+                    scope.get(spelling).is_none() && !scope.is_lexical_function(spelling)
+                })
+            };
+        // An alias retains the function it was bound to, not its target
+        // name's current binding, so only an unrewritten head qualifies.
+        let bound_definition = function
+            .as_ref()
+            .filter(|function| {
+                check_project_arguments
+                    && name == semantic_name
+                    && self.call_site_binds(function, lookup_name, scope)
+            })
+            .map(UserFn::id);
         let generic_receiver =
             self.user_generic_receiver(name, lookup_name, function.as_ref(), args, scope);
         let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
@@ -152,7 +196,37 @@ impl Checker {
             function_evidence,
             generic_receiver,
             check_project_arguments,
+            contract_applies,
+            bound_definition,
         }
+    }
+
+    /// Whether `function` is the binding this call site reaches: the exact
+    /// lexical literal of this file, which nothing may have rebound since.
+    /// A binding made in this frame needs no unproven call in between, and
+    /// an enclosing default that is not a scalar literal may be forced at
+    /// any point. A project method for a safe call, operator, or index may
+    /// run arbitrary code, so it removes all evidence. A
+    /// global literal captured by a top-level function's body needs effect-free
+    /// top levels, as the body may run after any of them. Bindings captured
+    /// from an intermediate frame are not proven.
+    fn call_site_binds(&self, function: &UserFn, name: &str, scope: &Scope) -> bool {
+        let span = function.definition_span;
+        let captured = scope
+            .outward_function_definition(name)
+            .is_some_and(|outward| outward == Some(span));
+        !self.discarding
+            && function.source_path == self.path
+            && scope.lexical_definition(name) == Some(span)
+            && !scope.uncertainty.unseen_rebinds
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|frame| frame.literal_defaults_only)
+            && !self.project_defines_scalar_proof_method()
+            && !self.fn_table.was_rebound_after_capture(&self.path, span)
+            && (!captured
+                || (self.enclosing_formals.len() == 1 && !self.fn_table.unproven_top_level))
     }
 
     /// The literal a call head currently names: the exact lexical
@@ -160,7 +234,10 @@ impl Checker {
     /// may have rebound.
     pub(super) fn declaration_helper(&self, name: &str, scope: &Scope) -> Option<&UserFn> {
         if let Some(span) = scope.lexical_definition(name) {
-            return self.fn_table.definition(&self.path, span);
+            return self
+                .fn_table
+                .functions
+                .get(&FunctionId::new(&self.path, span));
         }
         if scope.get(name).is_some() {
             return None;
@@ -175,14 +252,14 @@ impl Checker {
             return None;
         }
         let (path, start, end) = key;
-        self.fn_table.definition(
+        self.fn_table.functions.get(&FunctionId::new(
             path,
             Span {
                 start: *start,
                 end: *end,
                 ..Span::default()
             },
-        )
+        ))
     }
 
     /// Per actual, whether it binds a formal the called definition can never
@@ -230,7 +307,7 @@ impl Checker {
     /// project function may be passed by value or by name, and no call or
     /// operator may dispatch while the project defines methods.
     fn runs_only_stub_code(&self, function: &UserFn) -> bool {
-        let project_function = |name: &str| self.fn_table.fns.contains_key(name);
+        let project_function = |name: &str| self.fn_table.functions.binds(name);
         let mut dispatches = false;
         let mut visit = |node: AstNode<'_>, _| {
             let closed = match node {
@@ -275,15 +352,15 @@ impl Checker {
     /// Whether any project function is named like a method of a typeshed or
     /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
     fn project_defines_methods(&self) -> bool {
-        self.fn_table.fns.keys().any(|name| {
-            let name = semantic_argument_name(name);
-            name.starts_with("__s4__")
-                || name.match_indices('.').any(|(end, _)| {
+        self.fn_table.functions.s4().defines_method(|_| true)
+            || self.fn_table.functions.names().any(|name| {
+                let name = semantic_argument_name(name);
+                name.match_indices('.').any(|(end, _)| {
                     end > 0
                         && (crate::semantic_lists::is_group_generic(&name[..end])
                             || self.resolve_typeshed_sig(&name[..end]).is_some())
                 })
-        })
+            })
     }
 
     /// The definition whose adopted contract a call checks: the exact
@@ -334,7 +411,11 @@ impl Checker {
                         .target(&self.path, *definition)
                         .is_some_and(|decision| decision.signature.is_some())
             })
-            .and_then(|definition| self.fn_table.definition(&self.path, definition));
+            .and_then(|definition| {
+                self.fn_table
+                    .functions
+                    .get(&FunctionId::new(&self.path, definition))
+            });
         if exact.is_some() {
             return exact.cloned();
         }
@@ -384,7 +465,9 @@ impl Checker {
         self.check_constant_shadowed_arguments(lookup_name, head.callee(), args);
         match head.callee() {
             ResolvedCallee::User(user_function) if head.check_project_arguments => {
-                self.check_user_call_arguments(lookup_name, user_function, args, span);
+                let origin = head.bound_definition().map(|_| user_function);
+                self.check_user_call_arguments(lookup_name, user_function, origin, args, span);
+                self.check_contract_demand(lookup_name, head, args, arg_types);
             }
             ResolvedCallee::Stub(signature) => {
                 self.check_typeshed_call_arguments(lookup_name, signature, args, arg_types, span);

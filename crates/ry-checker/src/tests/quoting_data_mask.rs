@@ -1292,7 +1292,7 @@ fn exclusively_defused_dots_are_opaque_at_call_sites() {
     let file = parse_file("test.R", source);
     let mut checker = Checker::new("test.R");
     checker.collect_fns(&file.stmts);
-    assert!(checker.fn_table.fns["f"].params[0].defused);
+    assert!(checker.fn_table.functions["f"].params[0].defused);
 
     let diagnostics = check(source);
     assert!(
@@ -1322,7 +1322,7 @@ fn propagated_quoting_generic_keeps_lazy_default_silent() {
     checker.collect_fns(&file.stmts);
     checker.run_fixpoint();
     assert!(
-        checker.fn_table.fns["g"].params[0].quoting,
+        checker.fn_table.functions["g"].params[0].quoting,
         "S3 propagation must mark the generic's formal quoting"
     );
 
@@ -1355,7 +1355,7 @@ fn embraced_parameters_are_defused_at_call_sites() {
     let file = parse_file("test.R", source);
     let mut checker = Checker::new("test.R");
     checker.collect_fns(&file.stmts);
-    assert!(checker.fn_table.fns["wrapper"].params[1].defused);
+    assert!(checker.fn_table.functions["wrapper"].params[1].defused);
 
     let diagnostics = check(source);
     assert!(

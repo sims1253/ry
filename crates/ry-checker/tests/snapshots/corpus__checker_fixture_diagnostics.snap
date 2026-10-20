@@ -1,6 +1,5 @@
 ---
 source: crates/ry-checker/tests/corpus.rs
-assertion_line: 238
 expression: snapshots
 ---
 - diagnostics:
@@ -1654,6 +1653,16 @@ expression: snapshots
         start: 217
   fixture: err_s3_literal_ops_chooser.R
 - diagnostics:
+    - code: RY040
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+      span:
+        column: 0
+        end: 480
+        line: 7
+        start: 447
+  fixture: err_s4_full_signature_dispatch.R
+- diagnostics:
     - code: RY070
       message: "could not find function `x` (bound here as `integer`)"
       severity: error
@@ -2118,6 +2127,8 @@ expression: snapshots
 - diagnostics: []
   fixture: ok_constant_argument_shadowing_gates.R
 - diagnostics: []
+  fixture: ok_contract_unforced_actual_effect.R
+- diagnostics: []
   fixture: ok_custom_operator_lookup.R
 - diagnostics: []
   fixture: ok_data_frame_constructor.R
@@ -2391,6 +2402,8 @@ expression: snapshots
   fixture: ok_s3_operator_absence_arithmetic.R
 - diagnostics: []
   fixture: ok_s3_same_ops_method.R
+- diagnostics: []
+  fixture: ok_s4_full_signature_controls.R
 - diagnostics: []
   fixture: ok_s4_terra_named_vector.R
 - diagnostics: []

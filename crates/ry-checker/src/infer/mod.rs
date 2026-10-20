@@ -2,6 +2,7 @@ pub(crate) mod ops_chooser;
 use super::*;
 pub(crate) use args::*;
 pub(crate) use callee::ResolvedCallee;
+pub(crate) use contract::CallContract;
 pub(crate) use index::*;
 pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
@@ -14,6 +15,7 @@ mod callee;
 #[cfg(test)]
 mod cloned_scope_reference;
 pub(crate) mod construct;
+mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
 pub(crate) mod ifelse;
@@ -706,7 +708,10 @@ impl Checker {
                     && ops_chooser::base_assignment(self, target, value, scope);
                 let declaration_alias_definition = function_alias.as_ref().and_then(|alias| {
                     let span = scope.lexical_definition(alias)?;
-                    self.fn_table.definition(&self.path, span).map(|_| span)
+                    self.fn_table
+                        .functions
+                        .get(&FunctionId::new(&self.path, span))
+                        .map(|_| span)
                 });
                 let literal_function = ops_chooser::literal_function(self, value, scope);
                 let plain_vector = ops_chooser::plain_vector(self, value, scope);
@@ -1074,6 +1079,9 @@ impl Checker {
         let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
+        // A new frame's own bindings start with nothing run in it. Bindings
+        // captured from enclosing frames keep their own origin rule.
+        fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
@@ -1102,8 +1110,13 @@ impl Checker {
             self.note_vacuous_map_rebind(&parameter.name);
         }
         let assigned = assigned_names_in_body(body);
+        // Active before the defaults run: they execute in this frame too.
+        self.frame_writes
+            .push(crate::collect::frame_writes(params, body));
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
+        // A default is forced lazily, possibly after any body statement.
+        default_scope.uncertainty.unseen_rebinds = true;
         for name in &assigned {
             default_scope.insert(name.clone(), RType::unknown());
         }
@@ -1112,7 +1125,9 @@ impl Checker {
                 Some(e) => {
                     let _ = self.infer(e, &mut default_scope);
                     function_name
-                        .map(|function| self.diagnostic_parameter_type(function, p, params, e))
+                        .map(|function| {
+                            self.diagnostic_parameter_type(function, span, p, params, e)
+                        })
                         .unwrap_or_else(RType::unknown)
                 }
                 None => RType::unknown(),
@@ -1156,6 +1171,7 @@ impl Checker {
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
+        self.frame_writes.pop();
         self.deferred_captures.pop();
         // Restore the enclosing function's RY110 `map` provenance (see
         // the save above): a nested function's verdicts must not leak
@@ -1437,10 +1453,13 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
-        if !scope.uncertainty.dynamic_bindings
-            && (binding_name(target).is_none()
-                || !ops_chooser::base_assignment(self, target, value, scope))
-        {
+        if scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds {
+            return;
+        }
+        let complex = binding_name(target).is_none()
+            || !ops_chooser::base_assignment(self, target, value, scope);
+        scope.uncertainty.unseen_rebinds |= complex;
+        if !scope.uncertainty.dynamic_bindings && complex {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -1466,7 +1485,10 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        if !scope.uncertainty.dynamic_bindings && self.body_may_replace_bindings(body, scope) {
+        let replaces = !(scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds)
+            && self.body_may_replace_bindings(body, scope);
+        scope.uncertainty.unseen_rebinds |= replaces;
+        if !scope.uncertainty.dynamic_bindings && replaces {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -1953,13 +1975,17 @@ impl Checker {
                 if !visited.insert(name.to_string()) {
                     return false;
                 }
-                let diverges = self.fn_table.fns.get(name).is_some_and(|function| {
-                    self.block_diverges_with_visited(
-                        &function.body,
-                        visited,
-                        DivergenceView::ReturnBlind,
-                    )
-                });
+                let diverges = self
+                    .fn_table
+                    .functions
+                    .live_named(name)
+                    .is_some_and(|function| {
+                        self.block_diverges_with_visited(
+                            &function.body,
+                            visited,
+                            DivergenceView::ReturnBlind,
+                        )
+                    });
                 visited.remove(name);
                 diverges
             }
@@ -2199,9 +2225,11 @@ impl Checker {
         );
     }
 
+    /// `function` names the literal at `span` in the current file.
     pub(crate) fn diagnostic_parameter_type(
         &self,
         function: &str,
+        span: Span,
         parameter: &Param,
         parameters: &[Param],
         default: &Expr,
@@ -2214,9 +2242,11 @@ impl Checker {
         }) else {
             return RType::unknown();
         };
-        let Some(call_sites) = self.fn_table.call_sites.get(function) else {
-            return RType::unknown();
-        };
+        let package = self.package_facts.source_package.as_deref();
+        let call_sites: Vec<_> = self
+            .fn_table
+            .project_call_sites(function, package)
+            .collect();
         if call_sites.is_empty() {
             return RType::unknown();
         }
@@ -2229,9 +2259,12 @@ impl Checker {
         });
         if omitted_somewhere {
             infer_literal_default(default)
-        } else if let Some(forwarded) =
-            self.forwarded_default_type(function, &parameter.name, index)
-        {
+        } else if let Some(forwarded) = self.forwarded_default_type(
+            function,
+            &FunctionId::new(&self.path, span),
+            &parameter.name,
+            index,
+        ) {
             forwarded
         } else {
             RType::unknown()
@@ -2241,11 +2274,23 @@ impl Checker {
     pub(crate) fn forwarded_default_type(
         &self,
         function: &str,
+        id: &FunctionId,
         parameter: &str,
         index: usize,
     ) -> Option<RType> {
         self.fn_table.forwarded_calls.iter().find_map(|call| {
-            if semantic_argument_name(&call.callee) != semantic_argument_name(function) {
+            let forwards_here = match Callee::parse(&call.stub_callee) {
+                Callee::Bare(_) => {
+                    semantic_argument_name(&call.callee) == semantic_argument_name(function)
+                }
+                // `pkg::f` reaches this literal only by selecting it.
+                callee => self
+                    .fn_table
+                    .functions
+                    .select(callee)
+                    .is_some_and(|selected| selected.id() == *id),
+            };
+            if !forwards_here {
                 return None;
             }
             let argument = call
@@ -2262,7 +2307,8 @@ impl Checker {
                         .nth(index)
                 })?;
             let source = argument.1.as_deref()?;
-            if let Some(caller_fn) = self.fn_table.fns.get(&call.caller)
+            let caller_fn = self.fn_table.functions.live_named(&call.caller);
+            if let Some(caller_fn) = caller_fn
                 && may_rebind_source_before(&caller_fn.body, source, call.call_start)
             {
                 return None;
@@ -2275,8 +2321,11 @@ impl Checker {
                         semantic_argument_name(&candidate.name) == semantic_argument_name(source)
                     })?;
             let source_default = source_parameter.default.as_ref()?;
-            let caller_sites = self.fn_table.call_sites.get(&call.caller)?;
-            let omitted = caller_sites.iter().any(|arguments| {
+            let caller_package = caller_fn.and_then(|caller| caller.source_package.as_deref());
+            let mut caller_sites = self
+                .fn_table
+                .project_call_sites(&call.caller, caller_package);
+            let omitted = caller_sites.any(|arguments| {
                 let exact = arguments
                     .iter()
                     .flatten()
@@ -2984,7 +3033,7 @@ impl Checker {
                 }
                 // User-defined function in the FnTable used as a
                 // value? Same treatment.
-                if self.fn_table.fns.contains_key(name) {
+                if self.fn_table.functions.binds(name) {
                     return if functions_shadowed_by_mask {
                         RType::unknown()
                     } else {
@@ -3552,7 +3601,7 @@ impl Checker {
             || (!self.discarding
                 && self.declarations.has_contracts()
                 && (scope.lexical_definition(target).is_some()
-                    || self.fn_table.fns.contains_key(target))))
+                    || self.fn_table.functions.binds(target))))
         .then(|| target.to_string())
     }
 

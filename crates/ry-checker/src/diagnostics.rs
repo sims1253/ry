@@ -37,6 +37,36 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub message: String,
     pub confidence: Confidence,
+    /// Secondary locations backing the primary finding, at most
+    /// [`MAX_RELATED`]. Never part of `message`, suppression, or baseline keys.
+    pub related: Vec<Related>,
+}
+
+/// Renderers show at most this many related items per diagnostic.
+pub const MAX_RELATED: usize = 3;
+
+/// A secondary location the checker proved, such as the formal that a
+/// call failed to supply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Related {
+    /// Display path, in the same namespace as [`Diagnostic::path`].
+    pub path: String,
+    pub span: Span,
+    pub message: String,
+}
+
+impl Related {
+    /// The byte range in `source`, or `None` when the span does not fit
+    /// this text (stale, truncated, or another file's). Renderers then omit
+    /// the location; they never guess or clamp one.
+    pub fn range_in(&self, source: &str) -> Option<std::ops::Range<usize>> {
+        let (start, end) = (self.span.start, self.span.end);
+        (start <= end
+            && end <= source.len()
+            && source.is_char_boundary(start)
+            && source.is_char_boundary(end))
+        .then_some(start..end)
+    }
 }
 
 impl ry_core::BaselineDiagnostic for Diagnostic {
@@ -70,7 +100,15 @@ impl Diagnostic {
             } else {
                 default_confidence_for(code)
             },
+            related: Vec::new(),
         }
+    }
+
+    /// Attach related locations, keeping the first [`MAX_RELATED`].
+    pub fn with_related(mut self, mut related: Vec<Related>) -> Self {
+        related.truncate(MAX_RELATED);
+        self.related = related;
+        self
     }
 
     /// Look up the rule metadata for this diagnostic's code, if any.

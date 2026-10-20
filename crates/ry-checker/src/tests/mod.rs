@@ -1,6 +1,7 @@
 use super::*;
 use ry_core::RParser;
 
+mod call_contracts;
 mod call_head_lookup;
 mod constructors;
 mod data_frames_s3;
@@ -12,6 +13,7 @@ mod operator_s3_dispatch;
 mod ops_fallback;
 mod packages_typeshed;
 mod quoting_data_mask;
+mod related_locations;
 mod scalar_flow;
 mod scope_resolution;
 mod superassignment;
@@ -75,6 +77,7 @@ mod deferred_calls;
 
 mod missing_args;
 mod printf_provenance;
+mod s4_dispatch;
 mod switch_selection;
 
 mod integer_range;

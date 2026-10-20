@@ -75,7 +75,7 @@ impl Checker {
                 return SpecialCallProvenance::Unknown;
             }
             // Known custom functions keep the ordinary call path.
-            if self.fn_table.fns.contains_key(semantic_name)
+            if self.fn_table.functions.binds(semantic_name)
                 || scope
                     .get(semantic_name)
                     .is_some_and(|ty| ty.fn_sig.is_some())
@@ -335,8 +335,8 @@ impl Checker {
         let method_prefix = format!("{generic}.");
         let has_method = self
             .fn_table
-            .fns
-            .keys()
+            .functions
+            .names()
             .any(|name| name.starts_with(&method_prefix))
             || self
                 .fn_table
@@ -368,7 +368,7 @@ impl Checker {
     // somewhere). Mirrors [`resolve_typeshed_sig`] plus the FnTable.
     pub(crate) fn has_function_anywhere(&self, name: &str) -> bool {
         self.has_external_function(name)
-            || self.fn_table.fns.contains_key(name)
+            || self.fn_table.functions.binds(name)
             || self.fn_table.callable_vars.contains(name)
     }
 
@@ -443,7 +443,7 @@ impl Checker {
         names.into_iter().any(|name| {
             assigned.contains(name)
                 || scope.get(name).is_some()
-                || self.fn_table.fns.contains_key(name)
+                || self.fn_table.functions.binds(name)
                 || self.fn_table.known_vars.contains(name)
                 || self
                     .imported_from
@@ -516,7 +516,7 @@ impl Checker {
         }
 
         // (c) fn_table shadowing.
-        if self.fn_table.fns.contains_key(name) {
+        if self.fn_table.functions.binds(name) {
             return false;
         }
 
@@ -541,10 +541,13 @@ impl Checker {
     /// Whether `generic` names a project function whose whole body is
     /// `UseMethod("<generic>")`, so it dispatches on its first argument.
     pub(crate) fn is_user_generic(&self, generic: &str) -> bool {
-        self.fn_table.fns.get(generic).is_some_and(|function| {
-            matches!(&*function.body, [Stmt::Expr(Expr::Call { args, .. })] if args.len() == 1)
-                && usemethod_generic_name(&function.body).as_deref() == Some(generic)
-        })
+        self.fn_table
+            .functions
+            .live_named(generic)
+            .is_some_and(|function| {
+                matches!(&*function.body, [Stmt::Expr(Expr::Call { args, .. })] if args.len() == 1)
+                    && usemethod_generic_name(&function.body).as_deref() == Some(generic)
+            })
     }
 
     /// Whether the project binds any `<generic>.<class>` method for a
@@ -553,8 +556,8 @@ impl Checker {
         self.is_user_generic(generic)
             && self
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .chain(&self.fn_table.known_vars)
                 .any(|name| {
                     name.strip_prefix(generic)
@@ -573,8 +576,8 @@ impl Checker {
         {
             if let Some(result) = self
                 .fn_table
-                .fns
-                .get(&format!("{generic}.{class}"))
+                .functions
+                .live_named(&format!("{generic}.{class}"))
                 .map(|function| self.read_return_slot(function.return_slot))
                 .or_else(|| {
                     self.fn_table
@@ -602,6 +605,18 @@ impl Checker {
         code: &'static str,
         msg: impl Into<String>,
     ) {
+        self.emit_related(severity, span, code, msg, Vec::new());
+    }
+
+    /// [`Checker::emit`] with secondary locations the caller has proven.
+    pub(crate) fn emit_related(
+        &mut self,
+        severity: Severity,
+        span: Span,
+        code: &'static str,
+        msg: impl Into<String>,
+        related: Vec<crate::Related>,
+    ) {
         if self.discarding {
             // Pass 2 (fixpoint) and closure-signature building run the
             // single inference engine in "discarding" mode: types are
@@ -610,7 +625,8 @@ impl Checker {
             // against the refined FnTable).
             return;
         }
-        let diagnostic = Diagnostic::new(severity, span, &self.path, code, msg);
+        let diagnostic =
+            Diagnostic::new(severity, span, &self.path, code, msg).with_related(related);
         self.diagnostics.push(diagnostic);
     }
 

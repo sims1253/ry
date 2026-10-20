@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use ry_checker::{Diagnostic as RyDiagnostic, Severity};
 use ry_core::SourceFile;
 use tower_lsp::lsp_types::{
-    CodeAction, CodeActionKind, Diagnostic as LspDiagnostic, DiagnosticSeverity, NumberOrString,
-    Position, Range, TextEdit, Url, WorkspaceEdit,
+    CodeAction, CodeActionKind, Diagnostic as LspDiagnostic, DiagnosticRelatedInformation,
+    DiagnosticSeverity, Location, NumberOrString, Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 
 use crate::positions::{byte_offset_to_position, line_start};
@@ -55,7 +55,16 @@ pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
 /// against the source text. This is the path `publish_diagnostics`
 /// uses, so editors squiggle exactly the offending token. Zero-width
 /// spans are extended by one character so the squiggle is still visible.
-pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> LspDiagnostic {
+///
+/// `related_uri` is the document's own URI when the client supports related
+/// information and the display path names exactly one document. Related
+/// items in this same file whose spans fit `text` then become
+/// `relatedInformation`; others are dropped, never relocated.
+pub(super) fn diagnostic_to_lsp_with_source(
+    d: &RyDiagnostic,
+    text: &str,
+    related_uri: Option<&Url>,
+) -> LspDiagnostic {
     let start = byte_offset_to_position(text, d.span.start);
     let end = byte_offset_to_position(text, d.span.end);
     let end = if start == end {
@@ -77,6 +86,27 @@ pub(super) fn diagnostic_to_lsp_with_source(d: &RyDiagnostic, text: &str) -> Lsp
         code: Some(NumberOrString::String(d.code.to_string())),
         source: Some("ry".to_string()),
         message: d.message.clone(),
+        related_information: related_uri.and_then(|uri| {
+            let related: Vec<_> = d
+                .related
+                .iter()
+                .filter(|related| related.path == d.path)
+                .filter_map(|related| {
+                    let range = related.range_in(text)?;
+                    Some(DiagnosticRelatedInformation {
+                        location: Location {
+                            uri: uri.clone(),
+                            range: Range {
+                                start: byte_offset_to_position(text, range.start),
+                                end: byte_offset_to_position(text, range.end),
+                            },
+                        },
+                        message: related.message.clone(),
+                    })
+                })
+                .collect();
+            (!related.is_empty()).then_some(related)
+        }),
         ..Default::default()
     }
 }

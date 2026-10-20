@@ -11,7 +11,8 @@ impl Scope {
     pub(crate) fn invalidate_literal_values_for_dispatch(&mut self, value: &RType) {
         if value.class.is_unknown()
             || value.class.has_known_class()
-            || matches!(value.mode, Mode::Opaque | Mode::Union)
+            || value.mode.is_unknown_or_non_vector()
+            || value.mode == Mode::Union
         {
             self.invalidate_literal_values();
         }

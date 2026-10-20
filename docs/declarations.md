@@ -144,10 +144,20 @@ checks, and independent return evidence remain available. A typeshed
 signature alone does not establish that a call is effect-free.
 For precision, even an ordinary local data read or subscript can make a later
 contract check inconclusive when the checker cannot prove its binding effects
-absent. A call keeps later contract checks only when it invokes a known user
+absent. Calls go through the same classifier as [scalar facts](scalar-guards.md#scalar-facts-from-stopifnot),
+but a base call that keeps a scalar fact does not keep contract checks: even
+a literal `message("hi")` or `length("a")` can force a caller's promise or
+signal a condition to a caller's calling handler, and that code can replace
+a name this frame resolves outward. A call keeps them only when it invokes a known user
 function with literal arguments whose body reads nothing but its formals and
 runs no call, operator, or subscript; its `<<-` targets are then the only
-bindings it can replace.
+bindings it can replace. That summary trusts syntax a project may mask (a
+masked `if` in the body) and does not see an active binding's setter behind
+`<<-`; both can leave a stale identity, a known false-positive boundary pinned
+in `tests/declarations.rs`. An effect inside the right operand of `&&` or
+`||` reaches the rest of the frame. A direct statement-level read of a formal also forces its
+promise but keeps identities; `typehint_parameter_force_replacement.R` pins
+that known gap.
 
 `Checker::declaration_findings` and `Project::declaration_findings` expose
 structured mismatch, partial, unsupported, conflict, invalid-syntax, and

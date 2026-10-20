@@ -431,13 +431,10 @@ fn vacuous_accept_modes(recorded: Option<&RType>, covered: &[Mode]) -> Vec<Mode>
         Mode::List,
         Mode::Function,
     ];
-    let plausible: Vec<Mode> = match recorded.map(|ty| ty.mode) {
-        None | Some(Mode::Opaque) => pool.to_vec(),
-        Some(Mode::Union) => recorded
-            .and_then(|ty| ty.members.as_ref())
-            .map(|members| members.iter().map(|m| m.mode).collect())
-            .unwrap_or_default(),
-        Some(mode) => vec![mode],
+    let modes = recorded.map(super::types::modes_of);
+    let plausible: Vec<Mode> = match modes {
+        Some(modes) if !modes.iter().any(|mode| mode.is_unknown_or_non_vector()) => modes,
+        _ => pool.to_vec(),
     };
     plausible
         .into_iter()

@@ -552,7 +552,7 @@ fn apply_single_narrowing_branch<'a>(
                 let should_install = incompatible_parameter_default
                     || class_narrowing
                     || match existing.mode {
-                        Mode::Opaque => true,
+                        mode if mode.is_unknown_or_non_vector() => true,
                         // A NULL default in a function signature means "the
                         // caller may provide something else"; a positive type
                         // predicate proves the branch is in that non-default
@@ -591,7 +591,8 @@ fn apply_single_narrowing_branch<'a>(
                 if should_install
                     && (incompatible_parameter_default
                         || class_narrowing
-                        || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union))
+                        || existing.mode.is_unknown_or_non_vector()
+                        || matches!(existing.mode, Mode::Null | Mode::Union))
                 {
                     let narrowed = guarded_type(scope, var, &existing, target);
                     scope.insert_narrowed(var.clone(), narrowed);
@@ -692,7 +693,8 @@ fn install_positive_narrowing(scope: &mut Scope, var: &str, target: &RType) -> b
         scope.is_default_parameter(var) && !types_intersect(&existing, target);
     let should_install = incompatible_parameter_default
         || class_narrowing
-        || matches!(existing.mode, Mode::Opaque | Mode::Null | Mode::Union);
+        || existing.mode.is_unknown_or_non_vector()
+        || matches!(existing.mode, Mode::Null | Mode::Union);
     if should_install {
         let narrowed = guarded_type(scope, var, &existing, target);
         scope.insert_narrowed(var.to_string(), narrowed);

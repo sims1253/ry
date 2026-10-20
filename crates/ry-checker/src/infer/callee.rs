@@ -35,6 +35,7 @@ pub(super) struct CallHead {
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
     contract_applies: bool,
+    bound_definition: Option<FunctionId>,
 }
 
 impl CallHead {
@@ -58,6 +59,14 @@ impl CallHead {
     pub(super) fn contract(&self) -> Option<(&UserFn, CallContract)> {
         let function = self.user_function().filter(|_| self.contract_applies)?;
         Some((function, function.contract?))
+    }
+
+    /// The definition this call site provably reaches: the selected project
+    /// function, confirmed by the exact lexical binding visible here with no
+    /// unseen rebinding since. `None` whenever evidence is incomplete; never
+    /// derived from spelling or inventory uniqueness alone.
+    pub(super) fn bound_definition(&self) -> Option<&FunctionId> {
+        self.bound_definition.as_ref()
     }
 
     pub(super) fn callee(&self) -> ResolvedCallee<'_> {
@@ -154,6 +163,16 @@ impl Checker {
                     scope.get(spelling).is_none() && !scope.is_lexical_function(spelling)
                 })
             };
+        // An alias retains the function it was bound to, not its target
+        // name's current binding, so only an unrewritten head qualifies.
+        let bound_definition = function
+            .as_ref()
+            .filter(|function| {
+                check_project_arguments
+                    && name == semantic_name
+                    && self.call_site_binds(function, lookup_name, scope)
+            })
+            .map(UserFn::id);
         let generic_receiver =
             self.user_generic_receiver(name, lookup_name, function.as_ref(), args, scope);
         let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
@@ -178,7 +197,36 @@ impl Checker {
             generic_receiver,
             check_project_arguments,
             contract_applies,
+            bound_definition,
         }
+    }
+
+    /// Whether `function` is the binding this call site reaches: the exact
+    /// lexical literal of this file, which nothing may have rebound since.
+    /// A binding made in this frame needs no unproven call in between, and
+    /// an enclosing default that is not a scalar literal may be forced at
+    /// any point. A project method for a safe call, operator, or index may
+    /// run arbitrary code, so it removes all evidence. A
+    /// global literal captured by a top-level function's body needs effect-free
+    /// top levels, as the body may run after any of them. Bindings captured
+    /// from an intermediate frame are not proven.
+    fn call_site_binds(&self, function: &UserFn, name: &str, scope: &Scope) -> bool {
+        let span = function.definition_span;
+        let captured = scope
+            .outward_function_definition(name)
+            .is_some_and(|outward| outward == Some(span));
+        !self.discarding
+            && function.source_path == self.path
+            && scope.lexical_definition(name) == Some(span)
+            && !scope.uncertainty.unseen_rebinds
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|frame| frame.literal_defaults_only)
+            && !self.project_defines_scalar_proof_method()
+            && !self.fn_table.was_rebound_after_capture(&self.path, span)
+            && (!captured
+                || (self.enclosing_formals.len() == 1 && !self.fn_table.unproven_top_level))
     }
 
     /// The literal a call head currently names: the exact lexical
@@ -304,15 +352,15 @@ impl Checker {
     /// Whether any project function is named like a method of a typeshed or
     /// group generic (`print.foo`, `Ops.foo`) or registered by `setMethod`.
     fn project_defines_methods(&self) -> bool {
-        self.fn_table.functions.names().any(|name| {
-            let name = semantic_argument_name(name);
-            name.starts_with("__s4__")
-                || name.match_indices('.').any(|(end, _)| {
+        self.fn_table.functions.s4().defines_method(|_| true)
+            || self.fn_table.functions.names().any(|name| {
+                let name = semantic_argument_name(name);
+                name.match_indices('.').any(|(end, _)| {
                     end > 0
                         && (crate::semantic_lists::is_group_generic(&name[..end])
                             || self.resolve_typeshed_sig(&name[..end]).is_some())
                 })
-        })
+            })
     }
 
     /// The definition whose adopted contract a call checks: the exact
@@ -418,7 +466,8 @@ impl Checker {
         self.check_constant_shadowed_arguments(lookup_name, head.callee(), args);
         match head.callee() {
             ResolvedCallee::User(user_function) if head.check_project_arguments => {
-                self.check_user_call_arguments(lookup_name, user_function, args, span);
+                let origin = head.bound_definition().map(|_| user_function);
+                self.check_user_call_arguments(lookup_name, user_function, origin, args, span);
                 self.check_contract_demand(lookup_name, head, args, arg_types);
             }
             ResolvedCallee::Stub(signature) => {

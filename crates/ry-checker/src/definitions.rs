@@ -9,6 +9,9 @@ use crate::infer::semantic_argument_name;
 use crate::{FxMap, FxSet, UserFn};
 use ry_core::Span;
 
+mod s4;
+pub(crate) use s4::{GenericDecl, S4Call, S4Inventory, S4Selection};
+
 /// Source identity of one function literal.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct FunctionId {
@@ -82,6 +85,9 @@ pub(crate) struct Definitions {
     unstable: FxSet<String>,
     /// Names more than one literal binds.
     redefined: FxSet<String>,
+    /// S4 generic and method registrations; methods name their literals
+    /// by raw binding spelling in `live`.
+    s4: S4Inventory,
 }
 
 impl Definitions {
@@ -239,6 +245,7 @@ impl Definitions {
         );
         self.unstable.extend(later.unstable.iter().cloned());
         self.redefined.extend(later.redefined.iter().cloned());
+        self.s4.append(&later.s4);
     }
 }
 

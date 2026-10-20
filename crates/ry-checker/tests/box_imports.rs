@@ -85,6 +85,12 @@ fn box_fixtures() {
         callers += 1;
         let mut checker = Checker::new(&path.to_string_lossy());
         let diagnostics = checker.check(&parse(&path, &source));
+        // Attached and member box calls carry no call-site binding evidence.
+        assert!(
+            diagnostics.iter().all(|d| d.related.is_empty()),
+            "{}: {diagnostics:?}",
+            path.display()
+        );
         let mut found: Vec<String> = diagnostics
             .iter()
             .map(|diagnostic| diagnostic.code.to_string())

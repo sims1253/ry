@@ -742,6 +742,7 @@ impl IndexWriter {
             generation,
             doc_versions,
             supports_diagnostic_data,
+            supports_related_information,
             open_source_paths,
             active_collision_uris,
             eligible_collision_sources,
@@ -769,6 +770,7 @@ impl IndexWriter {
                     })
                     .collect::<Vec<_>>(),
                 state.supports_diagnostic_data,
+                state.supports_related_information,
                 state.open_source_paths.clone(),
                 state.active_collision_uri.clone(),
                 state
@@ -858,6 +860,7 @@ impl IndexWriter {
                         &file,
                         supports_diagnostic_data
                             .then(|| diagnostic_origin(&path, version, generation)),
+                        None,
                     );
                     by_uri.insert(uri, warnings);
                 }
@@ -988,6 +991,12 @@ impl IndexWriter {
                 if ctx.excludes_path(&diagnostic_path) {
                     continue;
                 }
+                let uris = publication_uris(&diagnostic_path);
+                // Related items share the diagnostic's display path, so they
+                // have a location only when that path names one document.
+                let related_uri = uris
+                    .first()
+                    .filter(|_| uris.len() == 1 && supports_related_information);
                 let diagnostics = ctx.publish(
                     diagnostics,
                     &diagnostic_path,
@@ -997,8 +1006,8 @@ impl IndexWriter {
                         .get(&diagnostic_path)
                         .filter(|_| supports_diagnostic_data)
                         .map(|version| diagnostic_origin(&diagnostic_path, *version, generation)),
+                    related_uri,
                 );
-                let uris = publication_uris(&diagnostic_path);
                 if uris.len() == 1 {
                     let uri = uris[0].clone();
                     let non_empty = if diagnostics.is_empty() {

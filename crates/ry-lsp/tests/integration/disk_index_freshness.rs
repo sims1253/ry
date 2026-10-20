@@ -219,76 +219,81 @@ async fn unopened_delete_refreshes_cross_file_diagnostics() {
 
 /// Save-then-close analyzes the saved bytes. `a.R` is the only `f` and
 /// starts as the character variant. The buffer is edited to the integer
-/// variant, saved with the client's save and watched events, and closed:
-/// the closed `a.R` must mean the integer `f`, like a fresh server and
-/// `ry check` on the final files.
+/// variant, written to disk, and closed: the closed `a.R` must mean the
+/// integer `f`, like a fresh server and `ry check` on the final files. The
+/// close alone must pick up the saved bytes, and so must a close after the
+/// client's save and watched events.
 #[tokio::test]
 async fn save_then_close_converges_with_fresh_server() {
-    let fixture = FixtureProject::empty().unwrap();
-    fixture.write_file("a.R", A_CHAR).unwrap();
-    fixture.write_file("use.R", USE).unwrap();
-    let a_uri = file_uri(&fixture.path("a.R"));
-    let use_uri = file_uri(&fixture.path("use.R"));
-    let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
-    sync_barrier(&mut session, &use_uri).await;
+    for notify_save in [false, true] {
+        let fixture = FixtureProject::empty().unwrap();
+        fixture.write_file("a.R", A_CHAR).unwrap();
+        fixture.write_file("use.R", USE).unwrap();
+        let a_uri = file_uri(&fixture.path("a.R"));
+        let use_uri = file_uri(&fixture.path("use.R"));
+        let (mut session, server) = spawn_watching_session(&[fixture.root()]).await;
+        sync_barrier(&mut session, &use_uri).await;
 
-    let mark = session.publication_mark();
-    session.open(&a_uri, 1, A_CHAR).await.unwrap();
-    session.open(&use_uri, 1, USE).await.unwrap();
-    let first = session
-        .published_diagnostics_after(&use_uri, mark)
-        .await
-        .unwrap();
-    assert!(has_ry040(&first), "character f must win while open");
-    drain_publications(&mut session, &use_uri).await;
+        let mark = session.publication_mark();
+        session.open(&a_uri, 1, A_CHAR).await.unwrap();
+        session.open(&use_uri, 1, USE).await.unwrap();
+        let first = session
+            .published_diagnostics_after(&use_uri, mark)
+            .await
+            .unwrap();
+        assert!(has_ry040(&first), "character f must win while open");
+        drain_publications(&mut session, &use_uri).await;
 
-    let edit_mark = session.publication_mark();
-    session
-        .change(&a_uri, 2, json!([{ "text": F_INT }]))
-        .await
-        .unwrap();
-    let edited = session
-        .published_diagnostics_after(&use_uri, edit_mark)
-        .await
-        .unwrap();
-    assert!(
-        !has_ry040(&edited),
-        "the edited integer f must clear RY040 while open"
-    );
+        let edit_mark = session.publication_mark();
+        session
+            .change(&a_uri, 2, json!([{ "text": F_INT }]))
+            .await
+            .unwrap();
+        let edited = session
+            .published_diagnostics_after(&use_uri, edit_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&edited),
+            "the edited integer f must clear RY040 while open"
+        );
 
-    // The watched refresh is a no-op while the buffer shadows the disk,
-    // and it may publish nothing. Drain it so the close mark sees only the
-    // close's publication.
-    fixture.write_file("a.R", F_INT).unwrap();
-    session
-        .notify(
-            "textDocument/didSave",
-            json!({"textDocument": {"uri": a_uri}}),
-        )
-        .await
-        .unwrap();
-    notify_changed(&mut session, &a_uri).await;
-    sync_barrier(&mut session, &use_uri).await;
-    drain_publications(&mut session, &use_uri).await;
+        fixture.write_file("a.R", F_INT).unwrap();
+        if notify_save {
+            // The watched refresh is a no-op while the buffer shadows the
+            // disk, and it may publish nothing. Drain it so the close mark
+            // sees only the close's publication.
+            session
+                .notify(
+                    "textDocument/didSave",
+                    json!({"textDocument": {"uri": a_uri}}),
+                )
+                .await
+                .unwrap();
+            notify_changed(&mut session, &a_uri).await;
+            sync_barrier(&mut session, &use_uri).await;
+            drain_publications(&mut session, &use_uri).await;
+        }
 
-    let close_mark = session.publication_mark();
-    session.close(&a_uri).await.unwrap();
-    let after = session
-        .published_diagnostics_after(&use_uri, close_mark)
-        .await
-        .unwrap();
-    assert!(
-        !has_ry040(&after),
-        "save-then-close must keep the saved integer f for a.R"
-    );
-    assert_converges(
-        &after,
-        &fresh_use_diagnostics(&fixture).await,
-        "save-then-close",
-    );
-    join_session(session, server).await;
-    let cli = cli_diagnostics(fixture.root(), fixture.root(), &[]);
-    assert!(cli.is_empty(), "CLI on the final tree is clean: {cli:?}");
+        let close_mark = session.publication_mark();
+        session.close(&a_uri).await.unwrap();
+        let after = session
+            .published_diagnostics_after(&use_uri, close_mark)
+            .await
+            .unwrap();
+        assert!(
+            !has_ry040(&after),
+            "notify_save={notify_save}: save-then-close must keep the saved integer f"
+        );
+        assert_converges(
+            &after,
+            &fresh_use_diagnostics(&fixture).await,
+            "save-then-close",
+        );
+        join_session(session, server).await;
+        let cli = cli_diagnostics(fixture.root(), fixture.root(), &[]);
+        assert!(cli.is_empty(), "CLI on the final tree is clean: {cli:?}");
+    }
 }
 
 /// Discard-then-close analyzes what the disk holds. `a.R` starts as the

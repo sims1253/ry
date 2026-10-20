@@ -147,6 +147,49 @@ async fn crossing_the_size_cap_ejects_and_readmits_an_open_buffer() {
     join_session(session, server).await;
 }
 
+/// A buffer opened over the cap was never admitted. Raising the cap admits
+/// it on the reload, without reopening it.
+#[tokio::test]
+async fn raising_the_cap_admits_a_buffer_opened_over_it() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "[index]\nmax-file-bytes = 32\n")
+        .unwrap();
+    fixture.write_file("def.R", DEF_CHAR).unwrap();
+    fixture.write_file("use.R", USE).unwrap();
+    let def_uri = file_uri(&fixture.path("def.R"));
+    let use_uri = file_uri(&fixture.path("use.R"));
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    sync_barrier(&mut session, &use_uri).await;
+
+    let mark = session.publication_mark();
+    session.open(&use_uri, 1, USE).await.unwrap();
+    session.open(&def_uri, 1, DEF_CHAR).await.unwrap();
+    let excluded = session
+        .quiesce_diagnostics(&use_uri, mark, DRAIN)
+        .await
+        .unwrap();
+    assert!(!ry040_in(&excluded, &use_uri), "over the cap: {excluded:?}");
+
+    fixture
+        .write_file("ry.toml", "[index]\nmax-file-bytes = 4096\n")
+        .unwrap();
+    let mark = session.publication_mark();
+    session
+        .notify("workspace/didChangeConfiguration", json!({"settings": {}}))
+        .await
+        .unwrap();
+    let readmitted = session
+        .published_diagnostics_after(&use_uri, mark)
+        .await
+        .unwrap();
+    assert!(
+        has_ry040(&readmitted),
+        "after raising the cap: {readmitted}"
+    );
+    join_session(session, server).await;
+}
+
 /// Ineligible open documents keep lightweight editor features: inlay
 /// hints are computed from the single document's own parse and never
 /// enter project-wide state, so they still serve a size-gated buffer

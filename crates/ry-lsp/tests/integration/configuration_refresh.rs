@@ -23,7 +23,7 @@ async fn did_change_configuration_refreshes_cached_filters() {
         .write_file("R/diag.R", "z <- length(xx = 1L)\n")
         .unwrap();
 
-    let (mut session, _server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
 
     let diag_uri = file_uri(&fixture.path("R/diag.R"));
 
@@ -59,10 +59,11 @@ async fn did_change_configuration_refreshes_cached_filters() {
         "RY090 should be suppressed after raising minConfidence; got: {:?}",
         after["params"]["diagnostics"]
     );
+    join_session(session, server).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// PR #79 round 3: the pull-based counterpart. A client advertising
+// The pull-based counterpart. A client advertising
 // `workspace.configuration = true` is answered via `workspace/configuration`
 // requests; the per-folder settings pulled that way must reach each folder
 // context and refresh its cached values.
@@ -76,7 +77,7 @@ async fn did_change_configuration_pull_applies_per_folder_settings() {
         .write_file("R/diag.R", "z <- length(xx = 1L)\n")
         .unwrap();
 
-    let (mut session, _server) = spawn_session(
+    let (mut session, server) = spawn_session(
         &[fixture.root()],
         json!({ "workspace": { "configuration": true } }),
         None,
@@ -137,6 +138,7 @@ async fn did_change_configuration_pull_applies_per_folder_settings() {
         "RY090 should be suppressed after the pull raises minConfidence; got: {:?}",
         after["params"]["diagnostics"]
     );
+    join_session(session, server).await;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

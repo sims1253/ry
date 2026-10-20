@@ -1,6 +1,5 @@
-//! Suppression quick fixes through the protocol, once per client: no
-//! capabilities, and `workspaceEdit.documentChanges` with
-//! `publishDiagnostics.dataSupport` both off and both on.
+//! Suppression quick fixes through the protocol, once per combination of
+//! `workspaceEdit.documentChanges` and `publishDiagnostics.dataSupport`.
 
 use crate::harness;
 
@@ -15,9 +14,10 @@ struct Journey {
     fixture: FixtureProject,
     uri: String,
     version: i32,
-    /// The client accepts versioned `documentChanges` edits and sends
-    /// diagnostic `data` back with code action requests.
-    capable: bool,
+    /// The client accepts versioned `documentChanges` edits.
+    versioned: bool,
+    /// The client sends diagnostic `data` back with code action requests.
+    data: bool,
 }
 
 impl Journey {
@@ -93,7 +93,7 @@ impl Journey {
     /// or plain `changes`.
     fn edit(&self, action: &Value) -> Value {
         let edit = &action["edit"];
-        let edits = if self.capable {
+        let edits = if self.versioned {
             assert!(edit.get("changes").is_none(), "{action}");
             let changes = edit["documentChanges"].as_array().unwrap();
             assert_eq!(changes.len(), 1, "{action}");
@@ -135,16 +135,22 @@ fn find(diagnostics: &[Value], code: &str, line: u64) -> Value {
 
 #[tokio::test]
 async fn suppression_actions_follow_the_document_and_the_client_capabilities() {
-    for enabled in [None, Some(false), Some(true)] {
-        let capabilities = enabled.map_or_else(
-            || json!({}),
-            |enabled| {
-                json!({
-                    "workspace": {"workspaceEdit": {"documentChanges": enabled}},
-                    "textDocument": {"publishDiagnostics": {"dataSupport": enabled}}
-                })
-            },
-        );
+    // (documentChanges, dataSupport). The one-feature rows catch a server
+    // that ties one capability to the other.
+    for (document_changes, data_support) in [
+        (None, None),
+        (Some(false), Some(false)),
+        (Some(true), None),
+        (None, Some(true)),
+        (Some(true), Some(true)),
+    ] {
+        let mut capabilities = json!({});
+        if let Some(enabled) = document_changes {
+            capabilities["workspace"] = json!({"workspaceEdit": {"documentChanges": enabled}});
+        }
+        if let Some(enabled) = data_support {
+            capabilities["textDocument"] = json!({"publishDiagnostics": {"dataSupport": enabled}});
+        }
         let fixture = FixtureProject::empty().unwrap();
         let source = "x <- never_bound_here\n";
         let uri = file_uri(&fixture.write_file("main.R", source).unwrap());
@@ -154,7 +160,8 @@ async fn suppression_actions_follow_the_document_and_the_client_capabilities() {
             fixture,
             uri,
             version: 1,
-            capable: enabled == Some(true),
+            versioned: document_changes == Some(true),
+            data: data_support == Some(true),
         };
         let publish = harness::open_published(&mut journey.session, &journey.uri, 1, source).await;
         let diagnostics = normalize_diagnostics(&publish);
@@ -324,13 +331,14 @@ async fn stale_diagnostics_get_no_actions(journey: &mut Journey) {
     let stale = journey
         .request(&range, std::slice::from_ref(&old), None)
         .await;
-    if !journey.capable {
+    if !journey.data {
         // Legacy clients never promised to preserve diagnostic data.
         assert_eq!(stale.as_array().unwrap().len(), 2, "{stale}");
         assert!(current.get("data").is_none());
         return;
     }
     assert!(stale.is_null(), "{stale}");
+    assert_eq!(current["data"]["ry"]["version"], journey.version);
     for data in [None, Some(json!({"invalid": true}))] {
         let mut malformed = current.clone();
         malformed.as_object_mut().unwrap().remove("data");
@@ -353,6 +361,8 @@ async fn stale_diagnostics_get_no_actions(journey: &mut Journey) {
         .request(&range, std::slice::from_ref(&current), None)
         .await;
     assert!(stale.is_null(), "{stale}");
+    assert_eq!(refreshed["data"]["ry"]["version"], journey.version);
+    assert_ne!(refreshed["data"], current["data"]);
     let fresh = journey.actions(&refreshed).await;
     assert_eq!(fresh.as_array().unwrap().len(), 2, "{fresh}");
 }
@@ -441,4 +451,27 @@ async fn closed_and_disabled_documents_get_no_actions(journey: &mut Journey) {
     assert!(excluded.is_empty(), "{excluded:?}");
     let actions = journey.actions(&diagnostic).await;
     assert!(actions.is_null(), "excluded: {actions}");
+}
+
+/// RY113 configured before startup applies to the first publication: a
+/// used directive publishes nothing, and an unused one reports.
+#[tokio::test]
+async fn unused_ignore_configured_at_startup_applies_to_the_first_open() {
+    let fixture = FixtureProject::empty().unwrap();
+    fixture
+        .write_file("ry.toml", "warn = [\"RY113\"]\n")
+        .unwrap();
+    let used = "1L == NA # ry: ignore[RY034]\n";
+    let uri = file_uri(&fixture.write_file("example.R", used).unwrap());
+    let (mut session, server) = spawn_session(&[fixture.root()], json!({}), None).await;
+    let first = harness::open_published(&mut session, &uri, 1, used).await;
+    assert!(normalize_diagnostics(&first).is_empty(), "{first}");
+    let unused =
+        harness::change_published(&mut session, &uri, 2, "1L == 1L # ry: ignore[RY034]\n").await;
+    let audits: Vec<_> = normalize_diagnostics(&unused)
+        .into_iter()
+        .filter(|d| d["code"] == "RY113")
+        .collect();
+    assert_eq!(audits.len(), 1, "{unused}");
+    join_session(session, server).await;
 }

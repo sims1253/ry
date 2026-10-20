@@ -405,6 +405,8 @@ async fn inlay_hint_does_not_cross_workspace_roots() {
         )
         .await
         .unwrap();
+    // The round trip guarantees root-b's buffer is stored before the probe.
+    sync_barrier(&mut session, &file_uri(&fixture.path("root-b/R/b.R"))).await;
     let hints = session
         .request(
             "textDocument/inlayHint",

@@ -16,56 +16,35 @@ impl LanguageServer for Backend {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
 
-        // Fallback settings: first per-folder entry, else the global ones.
         let fallback_settings = server_settings
             .settings
             .first()
             .cloned()
             .unwrap_or_else(|| server_settings.global_settings.clone());
 
-        let supports_workspace_configuration = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|w| w.configuration)
-            .unwrap_or(false);
-
-        let supports_diagnostic_data = params
+        let workspace = params.capabilities.workspace.as_ref();
+        let publish_diagnostics = params
             .capabilities
             .text_document
             .as_ref()
-            .and_then(|document| document.publish_diagnostics.as_ref())
+            .and_then(|document| document.publish_diagnostics.as_ref());
+        let watched_files = workspace.and_then(|w| w.did_change_watched_files.as_ref());
+        let supports_workspace_configuration =
+            workspace.and_then(|w| w.configuration).unwrap_or(false);
+        let supports_diagnostic_data = publish_diagnostics
             .and_then(|diagnostics| diagnostics.data_support)
             .unwrap_or(false);
-        let supports_related_information = params
-            .capabilities
-            .text_document
-            .as_ref()
-            .and_then(|document| document.publish_diagnostics.as_ref())
+        let supports_related_information = publish_diagnostics
             .and_then(|diagnostics| diagnostics.related_information)
             .unwrap_or(false);
-
-        let supports_document_changes = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|workspace| workspace.workspace_edit.as_ref())
+        let supports_document_changes = workspace
+            .and_then(|w| w.workspace_edit.as_ref())
             .and_then(|edit| edit.document_changes)
             .unwrap_or(false);
-
-        let supports_did_change_watched_files = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|w| w.did_change_watched_files.as_ref())
+        let supports_did_change_watched_files = watched_files
             .and_then(|f| f.dynamic_registration)
             .unwrap_or(false);
-
-        let supports_relative_patterns = params
-            .capabilities
-            .workspace
-            .as_ref()
-            .and_then(|w| w.did_change_watched_files.as_ref())
+        let supports_relative_patterns = watched_files
             .and_then(|f| f.relative_pattern_support)
             .unwrap_or(false);
         let ws_folder_paths: Vec<(usize, PathBuf)> = params
@@ -107,22 +86,17 @@ impl LanguageServer for Backend {
         state.folder_contexts = folder_contexts;
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                // All position conversion in this server is UTF-16. Advertise
-                // it explicitly instead of relying on the protocol default.
+                // Every position conversion here is UTF-16.
                 position_encoding: Some(PositionEncodingKind::UTF16),
+                // Edited ranges also drive incremental tree-sitter reparses.
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    // Incremental sync: the client sends
-                    // only the edited range, which we use to build a
-                    // tree-sitter InputEdit for incremental reparse.
                     TextDocumentSyncKind::INCREMENTAL,
                 )),
                 // Inlay hints are the primary way users see the checker's
                 // inference: R has no annotation syntax to attach types to.
                 inlay_hint_provider: Some(OneOf::Left(true)),
-                // Quick fixes: per-line `# ry: ignore[CODE]` suppressions
-                // plus a file-level `# ry: ignore-file` action.
+                // `# ry: ignore[CODE]` and `# ry: ignore-file` quick fixes.
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
-                // Multi-root workspace folder support.
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -155,34 +129,12 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let uri = params.text_document.uri.clone();
-        let path = uri_to_path(&uri);
-        let text = params.text_document.text.clone();
-        let version = params.text_document.version;
+        let document = params.text_document;
+        let path = uri_to_path(&document.uri);
         let mut state = self.state.lock().await;
-        // Clear any stale tree from a previous session for this path.
-        state.trees.remove(&path);
-        let previous = state
+        state
             .docs
-            .get(&path)
-            .cloned()
-            .zip(state.versions.get(&path).copied());
-        let open = state.open_source_paths.entry(path.clone()).or_default();
-        let collides = !open.is_empty() && (!open.contains_key(&uri) || open.len() > 1);
-        if collides && open.len() == 1 {
-            open.values_mut().next().expect("one open source").shadow = previous;
-        }
-        open.insert(
-            uri.clone(),
-            super::OpenSource {
-                native: uri.to_file_path().ok(),
-                shadow: collides.then(|| (text.clone(), version)),
-            },
-        );
-        if collides {
-            state.active_collision_uri.insert(path.clone(), uri.clone());
-        }
-        state.update_doc(&path, text, version);
+            .open(document.uri, document.text, document.version);
         state.diag_generation = state.diag_generation.wrapping_add(1);
         self.send(Work::Publish(path));
     }
@@ -195,10 +147,9 @@ impl LanguageServer for Backend {
         let paused_transition = crate::test_seam::pause(Seam::ChangeTransition).await;
         {
             let mut state = self.state.lock().await;
-            if state.apply_document_changes(&path, &uri, params.content_changes, version) {
+            if state.docs.change(&uri, params.content_changes, version) {
                 state.diag_generation = state.diag_generation.wrapping_add(1);
                 self.send(Work::Publish(path));
-                // Test seam: signals didChange completion (see `test_seam`).
                 #[cfg(feature = "test-util")]
                 crate::test_seam::signal(Seam::DidChange);
             }
@@ -250,14 +201,8 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         let path = uri_to_path(&uri);
         let mut state = self.state.lock().await;
-        let shared = state.close_open_source(&path, &uri).is_some();
-        if !shared {
-            state.docs.remove(&path);
-            state.versions.remove(&path);
-            state.parsed.remove(&path);
-            state.hints.remove(&path);
-            state.trees.remove(&path);
-        }
+        state.docs.close(&uri);
+        let shared = state.docs.contains(&path);
         state.diag_generation = state.diag_generation.wrapping_add(1);
         self.send(Work::Closed { uri, path, shared });
     }
@@ -286,7 +231,7 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // Filter to the visible range; off-screen hints are dropped.
+        // Keep the hints inside the requested range.
         hints.retain(|h| {
             let within_start = h.position.line > range.start.line
                 || (h.position.line == range.start.line
@@ -326,36 +271,30 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        {
-            let state = self.state.lock().await;
-            if !state.eligibility_for_path(&path) || state.has_collision(&path) {
-                // A display-keyed parse can belong to another native URI.
-                // Even matching document version numbers do not prove that
-                // an edit uses the requesting buffer's source text.
-                return Ok(None);
-            }
-        }
-        let Some((file, _)) = self.parsed_file(&path).await else {
+        let Some((file, _)) = parsed_file(&self.state, &path).await else {
             return Ok(None);
         };
-
         let (versioned_edits, required_origin) = {
             let state = self.state.lock().await;
-            let Some((version, cached)) = state.parsed.get(&path) else {
+            let Some(doc) = state.docs.active(&path) else {
                 return Ok(None);
             };
-            if !Arc::ptr_eq(cached, &file)
-                || state.versions.get(&path) != Some(version)
+            // Another URI at this display path may own the parse, so no
+            // edit can be tied to the requesting buffer.
+            if !doc
+                .parsed
+                .as_ref()
+                .is_some_and(|parsed| Arc::ptr_eq(parsed, &file))
+                || state.docs.at(&path).len() > 1
                 || !state.eligibility_for_path(&path)
-                || state.has_collision(&path)
             {
                 return Ok(None);
             }
             (
-                state.supports_document_changes.then_some(*version),
+                state.supports_document_changes.then_some(doc.version),
                 state
                     .supports_diagnostic_data
-                    .then(|| diagnostic_origin(&path, *version, state.diag_generation)),
+                    .then(|| diagnostic_origin(&path, doc.version, state.diag_generation)),
             )
         };
 
@@ -376,8 +315,8 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
-        // One quick-fix per diagnostic visible at the cursor; helpers skip
-        // lines that already carry a suppression.
+        // One quick fix per diagnostic. Lines that already suppress it get
+        // none.
         let mut actions: CodeActionResponse = Vec::new();
         for diag in diagnostics {
             if let Some(action) = make_ignore_action(&uri, diag, &file) {

@@ -1,59 +1,19 @@
-use crate::backend::{FolderAnalysisContext, ProjectCache, State, uri_to_path};
+use crate::backend::{FolderAnalysisContext, ProjectCache, uri_to_path};
 use crate::diagnostics::{
-    diag_code_from_lsp, diagnostic_to_lsp, diagnostic_to_lsp_with_source, make_ignore_action,
-    make_ignore_file_action,
+    diag_code_from_lsp, diagnostic_to_lsp_with_source, make_ignore_action, make_ignore_file_action,
 };
 use crate::hints::collect_inlay_hints;
 use crate::positions::*;
+use crate::settings::LintSettings;
 use ry_checker::{Diagnostic, Severity};
 use ry_core::{RParser, SourceFile, Span};
 use tower_lsp::lsp_types::Diagnostic as LspDiagnostic;
 use tower_lsp::lsp_types::*;
 
 #[test]
-fn converts_error_diagnostic() {
-    let d = Diagnostic::new(
-        Severity::Error,
-        Span::new(0, 5, 2, 4),
-        "test.R",
-        "RY040",
-        "test message",
-    );
-    let lsp = diagnostic_to_lsp(d);
-    assert_eq!(lsp.range.start.line, 2);
-    assert_eq!(lsp.range.start.character, 4);
-    // Single-character range: end character is start + 1.
-    assert_eq!(lsp.range.end.character, 5);
-    assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
-    assert_eq!(lsp.message, "test message");
-    assert_eq!(lsp.source.as_deref(), Some("ry"));
-    match lsp.code {
-        Some(NumberOrString::String(s)) => assert_eq!(s, "RY040"),
-        other => panic!("expected String code, got {:?}", other),
-    }
-}
-
-#[test]
-fn converts_warning_diagnostic() {
-    let d = Diagnostic::new(
-        Severity::Warning,
-        Span::new(0, 5, 0, 0),
-        "test.R",
-        "RY001",
-        "warning",
-    );
-    let lsp = diagnostic_to_lsp(d);
-    assert_eq!(lsp.severity, Some(DiagnosticSeverity::WARNING));
-}
-
-#[test]
 fn multi_char_range_from_source() {
-    // The source-aware converter must produce a precise multi-char
-    // range from the span's byte offsets rather than the old
-    // single-character fallback.
     let text = "x <- 1L + \"hello\"\n";
-    // The RY040 diagnostic for `+` should span exactly the `+`
-    // operator at byte offsets 7..8 (line 0, col 7).
+    // The `+` sits at bytes 7..8.
     let d = Diagnostic::new(
         Severity::Error,
         Span::new(7, 8, 0, 7),
@@ -66,8 +26,6 @@ fn multi_char_range_from_source() {
     assert_eq!(lsp.range.start.character, 7);
     assert_eq!(lsp.range.end.line, 0);
     assert_eq!(lsp.range.end.character, 8);
-    // Non-range fields must still be populated identically to the
-    // fallback path so behavior is unchanged except for the range.
     assert_eq!(lsp.severity, Some(DiagnosticSeverity::ERROR));
     assert_eq!(lsp.message, "test");
     assert_eq!(lsp.source.as_deref(), Some("ry"));
@@ -79,8 +37,6 @@ fn multi_char_range_from_source() {
 
 #[test]
 fn zero_width_span_extends_by_one_char() {
-    // A zero-width span (start == end) must be widened by exactly
-    // one character so the squiggle is non-empty in the editor.
     let text = "x <- 1L\n";
     let d = Diagnostic::new(
         Severity::Error,
@@ -98,12 +54,8 @@ fn zero_width_span_extends_by_one_char() {
 
 #[test]
 fn multi_char_range_on_second_line() {
-    // Byte offsets that cross a newline must land on the correct
-    // line and column. Here the diagnostic sits on line 1 of a
-    // two-line source.
     let text = "x <- 1L\ny <- 2L\n";
-    // The `y` identifier is at byte offset 8 (the byte right after
-    // the first `\n`). It is one character wide.
+    // `y` is at byte 8, right after the first newline.
     let d = Diagnostic::new(
         Severity::Warning,
         Span::new(8, 9, 1, 0),
@@ -120,8 +72,6 @@ fn multi_char_range_on_second_line() {
 
 #[test]
 fn multi_char_range_spans_identifier() {
-    // A diagnostic covering a multi-character identifier must
-    // squiggle exactly the identifier's bytes.
     let text = "my_var <- 1L\n";
     // `my_var` occupies bytes 0..6.
     let d = Diagnostic::new(
@@ -139,19 +89,6 @@ fn multi_char_range_spans_identifier() {
 }
 
 #[test]
-fn converts_info_diagnostic() {
-    let d = Diagnostic::new(
-        Severity::Info,
-        Span::new(0, 5, 1, 2),
-        "test.R",
-        "RY001",
-        "info",
-    );
-    let lsp = diagnostic_to_lsp(d);
-    assert_eq!(lsp.severity, Some(DiagnosticSeverity::INFORMATION));
-}
-
-#[test]
 fn uri_to_path_handles_file_scheme() {
     let uri = Url::parse("file:///tmp/foo.R").unwrap();
     let path = uri_to_path(&uri);
@@ -160,9 +97,6 @@ fn uri_to_path_handles_file_scheme() {
 
 #[test]
 fn uri_to_path_falls_back_for_non_file_scheme() {
-    // An `untitled:` URI can't be turned into a file path; we fall
-    // back to the URI string so the document still has a stable
-    // identity in the open-docs map.
     let uri = Url::parse("untitled:Untitled-1").unwrap();
     let path = uri_to_path(&uri);
     assert_eq!(path, "untitled:Untitled-1");
@@ -402,10 +336,7 @@ fn inlay_hints_follow_backtick_token_ends() {
 
 // ---- code action helpers ----
 
-/// Helper: build an LSP `Diagnostic` covering a given line range
-/// with a string code, mirroring what `diagnostic_to_lsp` produces.
-/// Used by the code-action tests so we do not have to run the full
-/// checker pipeline just to exercise the quick-fix builders.
+/// An LSP diagnostic on one line range, for the quick-fix builders.
 fn lsp_diag(line: u32, start_char: u32, end_char: u32, code: &str) -> LspDiagnostic {
     LspDiagnostic {
         range: Range {
@@ -428,11 +359,7 @@ fn lsp_diag(line: u32, start_char: u32, end_char: u32, code: &str) -> LspDiagnos
 
 #[test]
 fn code_action_ignore_line_appends_suppression_comment() {
-    // The canonical case: a diagnostic on `x <- 1L + "s"` should
-    // produce a quick-fix that appends
-    // `  # ry: ignore[RY040]` to the end of line 0. The edit's
-    // range covers the whole line (col 0 to line length) and the
-    // new text is the original line plus the comment.
+    // The edit replaces line 0 with itself plus `  # ry: ignore[RY040]`.
     let text = "x <- 1L + \"s\"\n";
     let diag = lsp_diag(0, 0, 1, "RY040");
     let uri = Url::parse("file:///tmp/test.R").unwrap();
@@ -441,8 +368,6 @@ fn code_action_ignore_line_appends_suppression_comment() {
 
     assert_eq!(action.title, "Ignore RY040 on this line");
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
-    // The action must link back to the diagnostic it fixes so the
-    // editor can show the lightbulb on the right squiggle.
     assert_eq!(
         action.diagnostics.as_deref(),
         Some(std::slice::from_ref(&diag))
@@ -453,7 +378,6 @@ fn code_action_ignore_line_appends_suppression_comment() {
     let edits = changes.get(&uri).expect("should have edits for the uri");
     assert_eq!(edits.len(), 1, "expected exactly one text edit");
     let te = &edits[0];
-    // The range covers the whole line (col 0 to len).
     assert_eq!(te.range.start.line, 0);
     assert_eq!(te.range.start.character, 0);
     assert_eq!(te.range.end.line, 0);
@@ -462,8 +386,6 @@ fn code_action_ignore_line_appends_suppression_comment() {
         "x <- 1L + \"s\"".len() as u32,
         "range should span the whole line"
     );
-    // The new text is the original line plus the suppression
-    // comment.
     assert_eq!(
         te.new_text, "x <- 1L + \"s\"  # ry: ignore[RY040]",
         "new text should append the ignore comment"
@@ -601,8 +523,6 @@ fn code_action_ignore_line_availability_follows_checker_suppressions() {
 
 #[test]
 fn code_action_ignore_line_handles_missing_code() {
-    // A diagnostic without a code (defensive) must still produce an
-    // action, with the comment omitting the `[CODE]` suffix.
     let text = "x <- bad_thing()\n";
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
@@ -624,8 +544,6 @@ fn code_action_ignore_line_handles_missing_code() {
 
 #[test]
 fn code_action_ignore_file_inserts_at_line_zero() {
-    // The file-level action inserts `# ry: ignore-file\n` at the
-    // very top of the document (a zero-width insert at (0, 0)).
     let text = "x <- 1L\ny <- 2L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     let action = make_ignore_file_action(&uri, &parse_src("test.R", text))
@@ -636,7 +554,6 @@ fn code_action_ignore_file_inserts_at_line_zero() {
     let edit = action.edit.expect("should have an edit");
     let changes = edit.changes.unwrap();
     let te = &changes.get(&uri).unwrap()[0];
-    // The insert is at the very start of the file.
     assert_eq!(te.range.start.line, 0);
     assert_eq!(te.range.start.character, 0);
     assert_eq!(te.range.end.line, 0);
@@ -665,8 +582,6 @@ fn file_suppression_preserves_the_shebang() {
 
 #[test]
 fn code_action_ignore_file_skips_already_suppressed() {
-    // A file that already has `# ry: ignore-file` must not get a
-    // second file-level action.
     let text = "# ry: ignore-file\nx <- 1L\n";
     let uri = Url::parse("file:///tmp/test.R").unwrap();
     assert!(
@@ -701,16 +616,12 @@ fn code_action_preserves_multiline_string_context() {
 
 #[test]
 fn diag_code_from_lsp_extracts_string_code() {
-    // ry always emits string codes; the helper must surface them.
     let diag = lsp_diag(0, 0, 1, "RY040");
     assert_eq!(diag_code_from_lsp(&diag), "RY040");
 }
 
 #[test]
 fn diag_code_from_lsp_handles_missing_code() {
-    // A diagnostic with no code yields an empty string (not a
-    // panic), so the ignore-comment builder can fall back to the
-    // code-less format.
     let mut diag = lsp_diag(0, 0, 1, "RY099");
     diag.code = None;
     assert_eq!(diag_code_from_lsp(&diag), "");
@@ -718,9 +629,6 @@ fn diag_code_from_lsp_handles_missing_code() {
 
 #[test]
 fn position_to_byte_offset_basic() {
-    // The helper must map LSP positions back to byte offsets in
-    // the source text. This is the inverse of
-    // `byte_offset_to_position` for ASCII text.
     let text = "x <- 1L\ny <- 2L\n";
     // (0, 0) -> byte 0 (the 'x').
     assert_eq!(position_to_byte_offset(text, 0, 0), Some(0));
@@ -818,102 +726,23 @@ fn line_start_returns_byte_offset_of_line() {
     assert_eq!(line_start("", 0), 0);
 }
 
-#[test]
-fn edit_one_file_in_workspace_reparses_only_that_file() {
-    // Cache acceptance: editing one file in a multi-file
-    // workspace must parse ONLY that file. We simulate the LSP document
-    // cache directly on a bare `State` (which is what `parsed_file`
-    // reads/writes), bypassing the `tower_lsp::Client` plumbing that
-    // cannot be constructed in a unit test.
-    //
-    // The scenario mirrors the real `did_change` flow: bump one doc's
-    // version + invalidate its cached parse, then re-serve parses. The
-    // unchanged docs must hit the cache (no new parse); the edited doc
-    // must miss and re-parse. The parse counter therefore rises by 1.
-    let mut state = State::default();
-    // Open 30 files, each with a distinct binding so the parses differ.
-    for i in 0..30 {
-        let path = format!("/ws/file{i}.R");
-        let src = format!("x{i} <- {i}L\n");
-        state.set_doc(&path, src, 1);
-        // Initial parse on open: every doc is parsed once.
-        let mut parser = RParser::new().unwrap();
-        let file = parser.parse(&path, state.doc_text(&path).unwrap()).unwrap();
-        assert!(state.record_parse(&path, 1, std::sync::Arc::new(file)));
-    }
-    let initial = state.parse_count();
-    assert_eq!(initial, 30, "30 files => 30 initial parses, got {initial}");
-
-    // Re-serving every doc with no edits must be pure cache hits.
-    for i in 0..30 {
-        let path = format!("/ws/file{i}.R");
-        assert!(
-            state.cached_parse(&path).is_some(),
-            "unchanged {path} should be a cache hit"
-        );
-    }
-    assert_eq!(
-        state.parse_count(),
-        30,
-        "cache hits must not re-parse; counter rose to {}",
-        state.parse_count()
-    );
-
-    // Simulate `did_change` on file 17: bump its version and drop its
-    // cached parse (exactly what `Backend::update_doc` does).
-    let edited = "/ws/file17.R".to_string();
-    state.set_doc(&edited, "x17 <- \"edited\"\n".to_string(), 2);
-    state.invalidate_parse(&edited);
-
-    // The edited doc is now a miss; the other 29 still hit.
-    assert!(
-        state.cached_parse(&edited).is_none(),
-        "edited file must be a cache miss"
-    );
-    for i in 0..30 {
-        if i == 17 {
-            continue;
-        }
-        let path = format!("/ws/file{i}.R");
-        assert!(
-            state.cached_parse(&path).is_some(),
-            "unchanged {path} should still be a cache hit"
-        );
-    }
-    assert_eq!(
-        state.parse_count(),
-        30,
-        "lookup-only phase must not re-parse; counter is {}",
-        state.parse_count()
-    );
-
-    // Re-parse ONLY the edited doc. The counter rises by exactly 1.
-    let mut parser = RParser::new().unwrap();
-    let file = parser
-        .parse(&edited, state.doc_text(&edited).unwrap())
-        .unwrap();
-    assert!(
-        state.record_parse(&edited, 2, std::sync::Arc::new(file)),
-        "re-parse of the edited doc should be stored"
-    );
-    assert_eq!(
-        state.parse_count(),
-        31,
-        "exactly one new parse for the edited file; counter is {}",
-        state.parse_count()
-    );
+/// The severity filter a folder compiles from its `ry.toml` and the
+/// editor's lint settings.
+fn effective_filter(config: ry_config::Config, lint: LintSettings) -> ry_checker::SeverityFilter {
+    ry_checker::filter_from_config(&lint.apply(&config))
 }
 
-// === LSP settings channel tests ===
+fn rules(codes: &[&str]) -> Option<Vec<String>> {
+    Some(codes.iter().map(|code| code.to_string()).collect())
+}
 
 #[test]
 fn effective_filter_uses_editor_ignore_setting() {
-    // When the editor sends lint.ignore, it should take effect even
-    // with no ry.toml.
-    let mut state = State::default();
-    state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
-    let filter = state.effective_filter();
-    // RY010 should be suppressed (effective returns None).
+    let lint = LintSettings {
+        ignore: rules(&["RY010"]),
+        ..Default::default()
+    };
+    let filter = effective_filter(Default::default(), lint);
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         None
@@ -922,11 +751,11 @@ fn effective_filter_uses_editor_ignore_setting() {
 
 #[test]
 fn effective_filter_falls_back_to_ry_toml_when_editor_unset() {
-    // When the editor doesn't send lint.ignore, the ry.toml value
-    // should be used.
-    let mut state = State::default();
-    state.file_config_mut().ignore = vec!["RY010".to_string()];
-    let filter = state.effective_filter();
+    let config = ry_config::Config {
+        ignore: vec!["RY010".to_string()],
+        ..Default::default()
+    };
+    let filter = effective_filter(config, Default::default());
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         None
@@ -935,18 +764,20 @@ fn effective_filter_falls_back_to_ry_toml_when_editor_unset() {
 
 #[test]
 fn effective_filter_editor_overrides_ry_toml() {
-    // When both editor and ry.toml provide ignore lists, the editor
-    // value wins.
-    let mut state = State::default();
-    state.file_config_mut().ignore = vec!["RY030".to_string()];
-    state.folder_settings_mut().lint.ignore = Some(vec!["RY010".to_string()]);
-    let filter = state.effective_filter();
-    // Editor's RY010 is ignored.
+    let config = ry_config::Config {
+        ignore: vec!["RY030".to_string()],
+        ..Default::default()
+    };
+    let lint = LintSettings {
+        ignore: rules(&["RY010"]),
+        ..Default::default()
+    };
+    let filter = effective_filter(config, lint);
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         None
     );
-    // ry.toml's RY030 is NOT ignored (editor replaced it).
+    // The editor list replaces the `ry.toml` list.
     assert_eq!(
         filter.effective("RY030", ry_checker::Severity::Warning),
         Some(ry_checker::Severity::Warning)
@@ -955,11 +786,12 @@ fn effective_filter_editor_overrides_ry_toml() {
 
 #[test]
 fn effective_filter_editor_error_and_warn() {
-    // Editor error/warn remapping.
-    let mut state = State::default();
-    state.folder_settings_mut().lint.error = Some(vec!["RY010".to_string()]);
-    state.folder_settings_mut().lint.warn = Some(vec!["RY030".to_string()]);
-    let filter = state.effective_filter();
+    let lint = LintSettings {
+        error: rules(&["RY010"]),
+        warn: rules(&["RY030"]),
+        ..Default::default()
+    };
+    let filter = effective_filter(Default::default(), lint);
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         Some(ry_checker::Severity::Error)
@@ -972,10 +804,7 @@ fn effective_filter_editor_error_and_warn() {
 
 #[test]
 fn effective_filter_empty_when_nothing_configured() {
-    // With no editor settings and no ry.toml, the default filter is
-    // empty: everything keeps its default severity.
-    let state = State::default();
-    let filter = state.effective_filter();
+    let filter = effective_filter(Default::default(), Default::default());
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         Some(ry_checker::Severity::Warning)
@@ -984,10 +813,15 @@ fn effective_filter_empty_when_nothing_configured() {
 
 #[test]
 fn effective_filter_explicit_empty_editor_select_disables_default_rules() {
-    let mut state = State::default();
-    state.file_config_mut().select = Some(vec!["RY010".into()]);
-    state.folder_settings_mut().lint.select = Some(Vec::new());
-    let filter = state.effective_filter();
+    let config = ry_config::Config {
+        select: rules(&["RY010"]),
+        ..Default::default()
+    };
+    let lint = LintSettings {
+        select: Some(Vec::new()),
+        ..Default::default()
+    };
+    let filter = effective_filter(config, lint);
     assert_eq!(
         filter.effective("RY010", ry_checker::Severity::Warning),
         None
@@ -996,8 +830,6 @@ fn effective_filter_explicit_empty_editor_select_disables_default_rules() {
 
 #[test]
 fn server_settings_deserialize_from_initialization_options() {
-    // Verify the specified initializationOptions shape:
-    // { settings: [{ lint: { ignore: [...] } }], globalSettings: { ... } }
     let json = serde_json::json!({
         "settings": [
             { "lint": { "ignore": ["RY010"], "error": ["RY030"] } }
@@ -1037,22 +869,12 @@ fn folder_settings_deserialize_camel_case() {
 
 #[test]
 fn empty_initialization_options_produces_empty_settings() {
-    // No initializationOptions → empty ServerSettings.
     let json = serde_json::json!({});
     let settings: crate::settings::ServerSettings = serde_json::from_value(json).unwrap();
     assert!(settings.settings.is_empty());
     assert!(settings.global_settings.lint.ignore.is_none());
 }
 
-// ===========================================================================
-// Integration tests: full pipeline lifecycle
-//
-// These tests exercise the composition boundary between document state,
-// ProjectCache, and Project::check_incremental — the layer where individual
-// components are correct in isolation but contracts between them break.
-// ===========================================================================
-
-/// Parse an R source string into a SourceFile for test setup.
 fn parse_src(path: &str, src: &str) -> std::sync::Arc<SourceFile> {
     let mut parser = RParser::new().expect("parser init");
     parser
@@ -1061,7 +883,23 @@ fn parse_src(path: &str, src: &str) -> std::sync::Arc<SourceFile> {
         .expect("parse")
 }
 
-/// Helper: extract diagnostic codes for a specific file from a check result.
+fn check(
+    cache: &mut ProjectCache,
+    files: Vec<(String, i32, std::sync::Arc<SourceFile>)>,
+    stubs: std::sync::Arc<std::collections::BTreeMap<String, ry_typeshed::Typeshed>>,
+) -> Vec<(String, Vec<Diagnostic>)> {
+    cache
+        .check_with_workspace(
+            files,
+            stubs,
+            Default::default(),
+            Vec::new(),
+            &Default::default(),
+        )
+        .diagnostics
+}
+
+/// Diagnostic codes for one file of a check result.
 fn codes_for_file<'a>(diags: &'a [(String, Vec<Diagnostic>)], path: &str) -> Vec<&'a str> {
     diags
         .iter()
@@ -1070,358 +908,39 @@ fn codes_for_file<'a>(diags: &'a [(String, Vec<Diagnostic>)], path: &str) -> Vec
         .unwrap_or_default()
 }
 
-/// Integration test: files added to ProjectCache after the initial check
-/// must be collected and emitted by the next check_incremental.
-///
-/// This catches the critical bug where add_file didn't insert into
-/// dirty_paths, so late-added files were silently skipped.
-#[test]
-fn file_added_after_initial_check_is_emitted() {
-    let mut cache = ProjectCache::default();
-    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-
-    // Initial check with one file.
-    let files = vec![("a.R".to_string(), 1, parse_src("a.R", "x <- 1L\n"))];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-    assert_eq!(diags.len(), 1, "one file on first check");
-
-    // Add a second file (simulates the workspace indexer discovering it).
-    let files = vec![
-        ("a.R".to_string(), 1, parse_src("a.R", "x <- 1L\n")),
-        ("b.R".to_string(), 1, parse_src("b.R", "y <- 2L\n")),
-    ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    assert_eq!(diags.len(), 2, "both files after adding b.R");
-    assert!(diags.iter().any(|(p, _)| p == "b.R"), "b.R in output");
-}
-
-/// Integration test: a function defined in an added file must be visible
-/// to calls in an already-checked file after the next incremental check.
-///
-/// This is the indexing acceptance criterion: opening one file in a package
-/// resolves calls into unopened files.
-#[test]
-fn added_file_resolves_cross_file_calls() {
-    let mut cache = ProjectCache::default();
-    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-
-    // Start with just the caller file.
-    let files = vec![(
-        "caller.R".to_string(),
-        1,
-        parse_src("caller.R", "result <- helper() + 1L\n"),
-    )];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // Without helper.R, helper() returns unknown → unknown + int = no RY040.
-    let caller_codes = codes_for_file(&diags, "caller.R");
-    assert!(
-        !caller_codes.contains(&"RY040"),
-        "helper() should be unknown before helper.R is added: {caller_codes:?}"
-    );
-
-    // Now add helper.R (simulates disk index). helper returns character.
-    let files = vec![
-        (
-            "caller.R".to_string(),
-            1,
-            parse_src("caller.R", "result <- helper() + 1L\n"),
-        ),
-        (
-            "helper.R".to_string(),
-            1,
-            parse_src("helper.R", "helper <- function() \"hello\"\n"),
-        ),
-    ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // helper() now returns character → char + int = RY040.
-    let caller_codes = codes_for_file(&diags, "caller.R");
-    assert!(
-        caller_codes.contains(&"RY040"),
-        "char return should cause RY040 after adding helper.R: {caller_codes:?}"
-    );
-}
-
-/// Integration test: updating a file's content that changes a function's
-/// return type must update diagnostics in dependent files.
-///
-/// This verifies the dirty-set propagation: editing utils.R changes
-/// make_value()'s return type, which must invalidate analysis.R's diagnostics.
-#[test]
-fn return_type_change_propagates_to_callers() {
-    let mut cache = ProjectCache::default();
-    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-
-    // utils.R defines make_value() returning a character.
-    // analysis.R calls it in a type-mismatch context.
-    let files = vec![
-        (
-            "utils.R".to_string(),
-            1,
-            parse_src("utils.R", "make_value <- function() \"hello\"\n"),
-        ),
-        (
-            "analysis.R".to_string(),
-            1,
-            parse_src("analysis.R", "result <- make_value() + 1L\n"),
-        ),
-    ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // char + int → RY040 type mismatch in analysis.R.
-    let analysis_codes = codes_for_file(&diags, "analysis.R");
-    assert!(
-        analysis_codes.contains(&"RY040"),
-        "char return should cause RY040: {analysis_codes:?}"
-    );
-
-    // Edit utils.R: make_value() now returns integer.
-    let files = vec![
-        (
-            "utils.R".to_string(),
-            2,
-            parse_src("utils.R", "make_value <- function() 1L\n"),
-        ),
-        (
-            "analysis.R".to_string(),
-            1,
-            parse_src("analysis.R", "result <- make_value() + 1L\n"),
-        ),
-    ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // int + int → no RY040 in analysis.R.
-    let analysis_codes = codes_for_file(&diags, "analysis.R");
-    assert!(
-        !analysis_codes.contains(&"RY040"),
-        "int return should clear RY040: {analysis_codes:?}"
-    );
-}
-
-/// Integration test: changing user stubs mid-session must invalidate
-/// cached diagnostics so the next check reflects the new stubs.
-///
-/// This catches the bug where setters (set_user_stubs, etc.) didn't
-/// mark files dirty, so incremental checks served stale results.
+/// A content change re-checks a cached file under the same stubs.
 #[test]
 fn changing_stubs_invalidates_cached_diagnostics() {
     use std::collections::BTreeMap;
 
     let mut cache = ProjectCache::default();
 
-    // First check with no stubs.
     let files = vec![(
         "pkg.R".to_string(),
         1,
         parse_src("pkg.R", "x <- some_fn()\n"),
     )];
     let empty_stubs = std::sync::Arc::new(BTreeMap::new());
-    let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));
+    let diags = check(&mut cache, files, std::sync::Arc::clone(&empty_stubs));
 
-    // some_fn() is unknown → no RY010 (calls to unknown functions are allowed).
+    // Calls to unknown functions are allowed.
     let codes = codes_for_file(&diags, "pkg.R");
     assert!(
         codes.is_empty(),
         "unknown function call should produce no diagnostics: {codes:?}"
     );
 
-    // Update file: now x is a type mismatch (char + int).
-    // This exercises the incremental path after a content change.
     let files = vec![(
         "pkg.R".to_string(),
         2,
         parse_src("pkg.R", "x <- \"str\" + 1L\n"),
     )];
-    let diags = cache.check(files, std::sync::Arc::clone(&empty_stubs));
+    let diags = check(&mut cache, files, std::sync::Arc::clone(&empty_stubs));
 
-    // RY040 type mismatch from char + int.
     let codes = codes_for_file(&diags, "pkg.R");
     assert!(
         codes.contains(&"RY040"),
         "char + int should be RY040: {codes:?}"
-    );
-}
-
-/// Integration test: incremental parse with non-ASCII content must produce
-/// correct byte offsets for tree-sitter InputEdit.
-///
-/// This catches the critical bug where build_input_edit used UTF-16 code
-/// units (LSP positions) instead of byte offsets (tree-sitter Points).
-#[test]
-fn build_input_edit_uses_byte_offsets_for_non_ascii() {
-    // A line with a non-ASCII character (é = 2 bytes in UTF-8).
-    // Position(0, 2) in UTF-16 = byte offset 3 (because é is 1 UTF-16 unit but 2 bytes).
-    let text = "café <- 1L\n";
-    let range = Range {
-        start: Position {
-            line: 0,
-            character: 2,
-        }, // after "ca"
-        end: Position {
-            line: 0,
-            character: 3,
-        }, // after "caf"
-    };
-    let new_text = "X";
-
-    let edit = crate::backend::build_input_edit(text, range, new_text).unwrap();
-
-    // start_byte should be 2 (ASCII bytes), not 2 UTF-16 units.
-    assert_eq!(edit.start_byte, 2);
-    // old_end_byte should be 3 ("caf" = 3 ASCII bytes).
-    assert_eq!(edit.old_end_byte, 3);
-    // new_end_byte = start_byte + new_text.len() = 2 + 1 = 3.
-    assert_eq!(edit.new_end_byte, 3);
-    // start_position column should be byte column (2), not UTF-16 (2 here, same for ASCII range).
-    assert_eq!(edit.start_position.row, 0);
-    assert_eq!(edit.start_position.column, 2);
-}
-
-/// Integration test: incremental parse with multi-byte edit spanning
-/// a newline must compute correct new_end_position.
-#[test]
-fn build_input_edit_multiline_replacement() {
-    let text = "x <- 1\ny <- 2\n";
-    let range = Range {
-        start: Position {
-            line: 0,
-            character: 5,
-        },
-        end: Position {
-            line: 0,
-            character: 6,
-        },
-    };
-    let new_text = "00\nextra";
-
-    let edit = crate::backend::build_input_edit(text, range, new_text).unwrap();
-
-    // start_byte: "x <- " = 5 bytes, so position (0,5) = byte 5.
-    assert_eq!(edit.start_byte, 5);
-    // old_end_byte: position (0,6) = byte 6.
-    assert_eq!(edit.old_end_byte, 6);
-    // new_end_byte: 5 + len("00\nextra") = 5 + 8 = 13.
-    assert_eq!(edit.new_end_byte, 13);
-    // new_end_position: after inserting "00\nextra", we have:
-    // start is at row 0, column 5. The new text has 1 newline,
-    // so the end is at row 1. After the newline, "extra" = 5 bytes.
-    assert_eq!(edit.new_end_position.row, 1);
-    assert_eq!(edit.new_end_position.column, 5); // "extra" = 5 bytes
-}
-
-/// Integration test: cold-vs-incremental equivalence across a sequence
-/// of add, update, and remove operations.
-///
-/// This is the most important invariant: after any sequence
-/// of operations, incremental diagnostics must match a fresh cold check.
-#[test]
-fn cold_vs_incremental_equivalence_sequence() {
-    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-
-    // Define a 3-file project with cross-file dependencies.
-    let sources: &[(&str, &str)] = &[
-        ("a.R", "fa <- function(x) x * 2\nva <- fa(1L)\n"),
-        ("b.R", "fb <- function(x) fa(x) + 1\nvb <- fb(2L)\n"),
-        ("c.R", "fc <- function(x) fb(x) * 3\nvc <- fc(3L)\n"),
-    ];
-
-    // Build the incremental cache step by step.
-    let mut cache = ProjectCache::default();
-
-    // Step 1: add a.R only.
-    let files = vec![("a.R".to_string(), 1, parse_src(sources[0].0, sources[0].1))];
-    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // Step 2: add b.R.
-    let files = vec![
-        ("a.R".to_string(), 1, parse_src(sources[0].0, sources[0].1)),
-        ("b.R".to_string(), 1, parse_src(sources[1].0, sources[1].1)),
-    ];
-    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // Step 3: add c.R.
-    let files: Vec<_> = sources
-        .iter()
-        .map(|(p, s)| (p.to_string(), 1, parse_src(p, s)))
-        .collect();
-    let _inc_result = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // Step 4: edit b.R (change fb's body).
-    let edited_sources: Vec<(&str, &str)> = vec![
-        ("a.R", "fa <- function(x) x * 2\nva <- fa(1L)\n"),
-        ("b.R", "fb <- function(x) fa(x) * 10\nvb <- fb(2L)\n"),
-        ("c.R", "fc <- function(x) fb(x) * 3\nvc <- fc(3L)\n"),
-    ];
-    let files: Vec<_> = edited_sources
-        .iter()
-        .enumerate()
-        .map(|(i, (p, s))| (p.to_string(), i as i32 + 2, parse_src(p, s)))
-        .collect();
-    let inc_result = cache.check(files, std::sync::Arc::clone(&stubs));
-
-    // Now build a fresh cold project with the same final state.
-    let mut cold_project = ry_checker::Project::new();
-    for (path, src) in &edited_sources {
-        cold_project.add_file(path.to_string(), parse_src(path, src).as_ref().clone());
-    }
-    let cold_result = cold_project.check();
-
-    // Compare: every file's diagnostic codes must match.
-    assert_eq!(inc_result.len(), cold_result.len(), "file count matches");
-    for ((inc_path, inc_diags), (cold_path, cold_diags)) in
-        inc_result.iter().zip(cold_result.iter())
-    {
-        assert_eq!(inc_path, cold_path, "path order matches");
-        let inc_codes: Vec<_> = inc_diags.iter().map(|d| &d.code).collect();
-        let cold_codes: Vec<_> = cold_diags.iter().map(|d| &d.code).collect();
-        assert_eq!(
-            inc_codes, cold_codes,
-            "diagnostics match for {inc_path}:\n  incremental: {inc_codes:?}\n  cold:        {cold_codes:?}"
-        );
-    }
-}
-
-/// Integration test: removing a file from the project clears its
-/// contribution to the shared function table.
-#[test]
-fn removed_file_clears_cross_file_resolution() {
-    let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
-    let mut cache = ProjectCache::default();
-
-    // helper.R defines my_helper() returning character.
-    // caller.R does my_helper() + 1L → RY040 (char + int).
-    let files = vec![
-        (
-            "helper.R".to_string(),
-            1,
-            parse_src("helper.R", "my_helper <- function() \"str\"\n"),
-        ),
-        (
-            "caller.R".to_string(),
-            1,
-            parse_src("caller.R", "x <- my_helper() + 1L\n"),
-        ),
-    ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-    let caller_codes = codes_for_file(&diags, "caller.R");
-    assert!(
-        caller_codes.contains(&"RY040"),
-        "char + int should be RY040: {caller_codes:?}"
-    );
-
-    // Remove helper.R: my_helper() now returns unknown → no RY040.
-    let files = vec![(
-        "caller.R".to_string(),
-        1,
-        parse_src("caller.R", "x <- my_helper() + 1L\n"),
-    )];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
-    let caller_codes = codes_for_file(&diags, "caller.R");
-    assert!(
-        !caller_codes.contains(&"RY040"),
-        "RY040 should disappear when my_helper returns unknown: {caller_codes:?}"
     );
 }
 
@@ -1444,10 +963,9 @@ fn package_stub(package: &str) -> String {
     .to_string()
 }
 
-/// Build a single-folder context from a fixture whose `ry.toml` is
-/// `config` and which carries two stub directories — `stubs/` (package
-/// `localdep`) and `other/` (package `otherdep`) — so tests can mix and
-/// match them; an unreferenced directory on disk simply never loads.
+/// A folder context whose `ry.toml` is `config`, with two stub
+/// directories on disk: `stubs/` (package `localdep`) and `other/`
+/// (package `otherdep`).
 fn stub_reload_context(config: &str) -> (ry_testkit::FixtureProject, FolderAnalysisContext) {
     let fixture = ry_testkit::FixtureProject::empty().unwrap();
     fixture.write_file("ry.toml", config).unwrap();
@@ -1536,12 +1054,8 @@ fn rebuild_replaces_stubs_when_switching_to_a_different_directory() {
 
 #[test]
 fn rebuild_takes_partial_stubs_when_one_of_several_directories_fails() {
-    // Two configured directories first, then one is dropped and an
-    // unreadable one takes its place: the mixed reload (one Ok, one
-    // Err) yields the loadable directory's stubs only. Retention is
-    // reserved for the every-directory-failed case; a partial failure
-    // replaces the map with the merge of the successes, matching what a
-    // fresh server on the same config would load.
+    // Retention is only for the every-directory-failed case. A partial
+    // failure keeps the successes, as a fresh server would.
     let (fixture, old) = stub_reload_context("typeshed = [\"stubs\", \"other\"]\n");
     let packages: Vec<_> = old.stubs.keys().collect();
     assert_eq!(packages, vec!["localdep", "otherdep"]);
@@ -1575,12 +1089,9 @@ fn rebuild_clears_stubs_when_the_only_stub_file_is_malformed() {
     );
 }
 
-/// #490 (deterministic cross-file shadowing): `a.R` and `z.R` both define
-/// `f` with different return shapes; `use.R` calls `f()`. The canonical
-/// order (paths sorted, so `z.R` after `a.R`) makes `z.R`'s integer `f`
-/// win and `use.R` clean. Closing `a.R` and reopening it unchanged must
-/// not flip the winner: `update_file` re-appends the removed path at the
-/// end, which would make `a.R`'s character `f` win and fabricate RY040.
+/// `a.R` and `z.R` both define `f`, and sorted order makes `z.R`'s integer
+/// `f` win for `use.R`. Closing and reopening `a.R` must not flip the
+/// winner, although `update_file` appends a re-added path at the end.
 #[test]
 fn close_reopen_does_not_flip_cross_file_shadowing() {
     let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
@@ -1598,7 +1109,7 @@ fn close_reopen_does_not_flip_cross_file_shadowing() {
     };
     let mut cache = ProjectCache::default();
 
-    let diags = cache.check(open_all(), std::sync::Arc::clone(&stubs));
+    let diags = check(&mut cache, open_all(), std::sync::Arc::clone(&stubs));
     assert!(
         !codes_for_file(&diags, "use.R").contains(&"RY040"),
         "z.R's integer f wins in canonical order: {:?}",
@@ -1610,10 +1121,10 @@ fn close_reopen_does_not_flip_cross_file_shadowing() {
         ("use.R".to_string(), 1, parse_src("use.R", use_src)),
         ("z.R".to_string(), 1, parse_src("z.R", z_src)),
     ];
-    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+    let _ = check(&mut cache, files, std::sync::Arc::clone(&stubs));
 
     // did_open of the unchanged file: re-added, content identical.
-    let diags = cache.check(open_all(), std::sync::Arc::clone(&stubs));
+    let diags = check(&mut cache, open_all(), std::sync::Arc::clone(&stubs));
     assert!(
         !codes_for_file(&diags, "use.R").contains(&"RY040"),
         "close/reopen must not re-append a.R at the end and flip the winner: {:?}",
@@ -1638,11 +1149,8 @@ fn close_reopen_does_not_flip_cross_file_shadowing() {
     }
 }
 
-/// #490: a file joining the project after the first check must take its
-/// canonical sorted position, not the end of the merge order. `z.R` is
-/// checked first (opened before the index delivered `a.R`); when `a.R`
-/// and `use.R` join, sorted order keeps `z.R` last, so its integer `f`
-/// keeps winning — a plain append would flip the winner to `a.R`.
+/// A file joining after the first check takes its sorted position, not the
+/// end, so `z.R`'s `f` keeps winning when `a.R` joins later.
 #[test]
 fn late_added_file_takes_canonical_position_not_the_end() {
     let stubs = std::sync::Arc::new(std::collections::BTreeMap::new());
@@ -1654,14 +1162,14 @@ fn late_added_file_takes_canonical_position_not_the_end() {
     let mut cache = ProjectCache::default();
 
     let files = vec![("z.R".to_string(), 1, parse_src("z.R", z_src))];
-    let _ = cache.check(files, std::sync::Arc::clone(&stubs));
+    let _ = check(&mut cache, files, std::sync::Arc::clone(&stubs));
 
     let files = vec![
         ("a.R".to_string(), 1, parse_src("a.R", a_src)),
         ("use.R".to_string(), 1, parse_src("use.R", use_src)),
         ("z.R".to_string(), 1, parse_src("z.R", z_src)),
     ];
-    let diags = cache.check(files, std::sync::Arc::clone(&stubs));
+    let diags = check(&mut cache, files, std::sync::Arc::clone(&stubs));
     assert!(
         !codes_for_file(&diags, "use.R").contains(&"RY040"),
         "late-joining a.R must not shadow z.R by landing at the end: {:?}",

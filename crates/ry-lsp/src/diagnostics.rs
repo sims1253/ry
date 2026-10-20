@@ -1,10 +1,5 @@
-//! Diagnostic-conversion and code-action helpers.
-//!
-//! These translate ry's own `Diagnostic` type into LSP `Diagnostic`s
-//! (with precise byte-offset-derived ranges) and build the `CodeAction`s
-//! offered by the `code_action` handler (suppress-on-line,
-//! suppress-in-file). They are pure functions over public types, so they
-//! live outside the `Backend` impl.
+//! Conversion of ry diagnostics to LSP diagnostics, and the suppression
+//! code actions.
 
 use std::collections::HashMap;
 
@@ -23,38 +18,8 @@ pub(super) fn diagnostic_origin(path: &str, version: i32, generation: u64) -> se
     serde_json::json!({"ry": {"path": path, "version": version, "generation": generation}})
 }
 
-/// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using the
-/// span's pre-resolved `line` / `col` and a single-character range.
-#[cfg(test)]
-pub(super) fn diagnostic_to_lsp(d: RyDiagnostic) -> LspDiagnostic {
-    let start = Position {
-        line: d.span.line as u32,
-        character: d.span.col as u32,
-    };
-    let end = Position {
-        line: d.span.line as u32,
-        character: (d.span.col as u32) + 1,
-    };
-    let severity = match d.severity {
-        Severity::Error => Some(DiagnosticSeverity::ERROR),
-        Severity::Warning => Some(DiagnosticSeverity::WARNING),
-        Severity::Info => Some(DiagnosticSeverity::INFORMATION),
-    };
-    LspDiagnostic {
-        range: Range { start, end },
-        severity,
-        code: Some(NumberOrString::String(d.code.to_string())),
-        source: Some("ry".to_string()),
-        message: d.message,
-        ..Default::default()
-    }
-}
-
-/// Convert a `ry_checker::Diagnostic` to an LSP `Diagnostic` using a
-/// precise multi-character range derived from the span's byte offsets
-/// against the source text. This is the path `publish_diagnostics`
-/// uses, so editors squiggle exactly the offending token. Zero-width
-/// spans are extended by one character so the squiggle is still visible.
+/// Convert a ry diagnostic, ranging over its span's bytes in `text`. A
+/// zero-width span widens by one character so the squiggle stays visible.
 ///
 /// `related_uri` is the document's own URI when the client supports related
 /// information and the display path names exactly one document. Related
@@ -111,11 +76,8 @@ pub(super) fn diagnostic_to_lsp_with_source(
     }
 }
 
-/// Extract the diagnostic code string from an LSP `Diagnostic`. ry
-/// always emits string codes (`RY040`, `RY001`, ...); the numeric
-/// variant is handled defensively. Returns an empty string when the
-/// diagnostic has no code, in which case the ignore comment omits the
-/// `[CODE]` suffix.
+/// The diagnostic's code, or an empty string without one, in which case
+/// the ignore comment has no `[CODE]` suffix.
 pub(super) fn diag_code_from_lsp(d: &LspDiagnostic) -> String {
     match &d.code {
         Some(NumberOrString::String(s)) => s.clone(),
@@ -202,10 +164,7 @@ pub(super) fn make_ignore_action(
         line: diag.range.start.line,
         character: 0,
     };
-    // `line_text.len()` is a BYTE length but `Position.character` is a
-    // UTF-16 code-unit column, so convert the byte offset of the line's
-    // end to a proper column (a non-ASCII line would otherwise produce
-    // an out-of-range character).
+    // `Position.character` counts UTF-16 units, not bytes.
     let line_start_byte = line_start(text, line);
     let line_end = line_start_byte + line_text.len();
     let end = byte_offset_to_position(text, line_end);

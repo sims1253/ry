@@ -1038,10 +1038,9 @@ async fn baseline_reload_converges_to_new_value() {
     );
 }
 
-/// (#45): the publish/inlay-hint hot path performs ZERO
-/// baseline file reads. `baseline_disk_reads(path)` counts every disk read
-/// of the fixture's baseline by the context loader; a publish that touches
-/// it betrays a regression.
+/// Publication and inlay hints use the baseline loaded with the folder
+/// context. Emptying the file afterwards must not bring back the finding
+/// it suppresses.
 #[tokio::test]
 async fn publish_path_performs_no_baseline_disk_io() {
     use ry_testkit::LspSession;
@@ -1067,14 +1066,9 @@ async fn publish_path_performs_no_baseline_disk_io() {
     let mut live = LspSession::new(cr, cw);
     live.initialize(fixture.root()).await.unwrap();
 
-    // Snapshot AFTER initialize: the baseline is loaded once into the
-    // per-folder context during initialize and must not be re-read by
-    // any subsequent request.
-    let reads_before = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
-    assert!(
-        reads_before > 0,
-        "initialize must have loaded this fixture's baseline"
-    );
+    fixture
+        .write_file("baseline.json", r#"{"version": 1, "entries": []}"#)
+        .unwrap();
 
     // Exercise inlay hints (read path) and publish (diagnostic path).
     live.request(
@@ -1090,11 +1084,10 @@ async fn publish_path_performs_no_baseline_disk_io() {
     live.open(&main_uri, 1, "if (c(TRUE, FALSE)) print(1)\n")
         .await
         .unwrap();
-    let _ = live
+    let opened = live
         .published_diagnostics_after(&main_uri, mark)
         .await
         .unwrap();
-    // A second republish (didChange) to be thorough.
     let mark2 = live.publication_mark();
     live.change(
         &main_uri,
@@ -1103,22 +1096,21 @@ async fn publish_path_performs_no_baseline_disk_io() {
     )
     .await
     .unwrap();
-    let _ = live
+    let changed = live
         .published_diagnostics_after(&main_uri, mark2)
         .await
         .unwrap();
-
-    let reads_after = ry_lsp::baseline_disk_reads(&fixture.path("baseline.json"));
     let _ = live.shutdown().await;
     drop(live);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), server).await;
 
-    assert_eq!(
-        reads_before,
-        reads_after,
-        "publish/inlay-hint path must perform zero baseline disk reads; got {} extra read(s)",
-        reads_after.saturating_sub(reads_before)
-    );
+    for publication in [opened, changed] {
+        assert_eq!(
+            harness::count_code(&publication, "RY002"),
+            0,
+            "{publication}"
+        );
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "c6984253fcc310495242136a8574e2e3163fd7bb89c7e347e0afacc7f720c759",
-  "ry_commit": "566dbc23a08291cb53681fd78cbb404e42c0f824",
+  "source_sha256": "a0585e902519cb2006dbe5602a105f3c6903f84af6b56d83e5bea08628f7137d",
+  "ry_commit": "7ef3e7280c6b4a98a2b3c32ee42a73e0c8d0df64",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -19,7 +19,7 @@
       "repo": "rstudio/shiny",
       "stars": 5673,
       "commit": "ca1800475ac5a1e6037fea1020260a868d8798ee",
-      "diagnostics": 53
+      "diagnostics": 52
     },
     {
       "name": "dplyr",
@@ -54,14 +54,14 @@
       "repo": "tidymodels/broom",
       "stars": 1524,
       "commit": "6230a9014b0d839e4e8ed5b1763de65dde8f2205",
-      "diagnostics": 6
+      "diagnostics": 4
     },
     {
       "name": "plumber",
       "repo": "rstudio/plumber",
       "stars": 1437,
       "commit": "393920505f289f914150d57e06d97347556a55dc",
-      "diagnostics": 2
+      "diagnostics": 1
     },
     {
       "name": "purrr",
@@ -110,7 +110,7 @@
       "repo": "sparklyr/sparklyr",
       "stars": 972,
       "commit": "7f006a6d5c01a4e7a36d203d1ace56c53261900e",
-      "diagnostics": 10
+      "diagnostics": 9
     },
     {
       "name": "testthat",
@@ -138,7 +138,7 @@
       "repo": "rstudio/flexdashboard",
       "stars": 846,
       "commit": "8ae8623f2d9cdadb2316b953908bed0ba7bc3f87",
-      "diagnostics": 3
+      "diagnostics": 2
     },
     {
       "name": "pak",
@@ -187,7 +187,7 @@
       "repo": "r-lib/cli",
       "stars": 719,
       "commit": "86bdefe1eb23399499b40884f7fab84194283bc1",
-      "diagnostics": 9
+      "diagnostics": 8
     },
     {
       "name": "parsnip",
@@ -236,7 +236,7 @@
       "repo": "mlverse/torch",
       "stars": 567,
       "commit": "c67c2fb2909fc77e8fc127ec2867e1a551ee1bf3",
-      "diagnostics": 20
+      "diagnostics": 16
     },
     {
       "name": "bigrquery",
@@ -472,24 +472,6 @@
     },
     {
       "package": "broom",
-      "code": "RY033",
-      "path": "R/deprecated-0-7-0.R",
-      "line": 290,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "broom",
-      "code": "RY033",
-      "path": "R/utilities.R",
-      "line": 108,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "broom",
       "code": "RY032",
       "path": "R/utilities.R",
       "line": 459,
@@ -595,15 +577,6 @@
       "column": 7,
       "label": "false_positive",
       "audit_group": "manual-audit"
-    },
-    {
-      "package": "cli",
-      "code": "RY033",
-      "path": "R/onload.R",
-      "line": 44,
-      "column": 22,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
     },
     {
       "package": "cli",
@@ -1534,15 +1507,6 @@
     },
     {
       "package": "flexdashboard",
-      "code": "RY033",
-      "path": "R/flex_dashboard.R",
-      "line": 173,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "flexdashboard",
       "code": "RY001",
       "path": "R/flex_dashboard.R",
       "line": 401,
@@ -2227,15 +2191,6 @@
     },
     {
       "package": "plumber",
-      "code": "RY033",
-      "path": "R/plumber.R",
-      "line": 474,
-      "column": 82,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "plumber",
       "code": "RY032",
       "path": "R/plumber.R",
       "line": 1360,
@@ -2893,15 +2848,6 @@
     },
     {
       "package": "shiny-r",
-      "code": "RY033",
-      "path": "R/bookmark-state.R",
-      "line": 138,
-      "column": 18,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "shiny-r",
       "code": "RY093",
       "path": "R/bookmark-state.R",
       "line": 138,
@@ -3415,15 +3361,6 @@
     },
     {
       "package": "sparklyr",
-      "code": "RY033",
-      "path": "R/tidiers_utils.R",
-      "line": 74,
-      "column": 11,
-      "label": "false_positive",
-      "audit_group": "type-narrowing"
-    },
-    {
-      "package": "sparklyr",
       "code": "RY103",
       "path": "R/worker_apply.R",
       "line": 522,
@@ -3658,33 +3595,6 @@
     },
     {
       "package": "torch",
-      "code": "RY033",
-      "path": "R/install.R",
-      "line": 699,
-      "column": 4,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "torch",
-      "code": "RY033",
-      "path": "R/package.R",
-      "line": 42,
-      "column": 37,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "torch",
-      "code": "RY033",
-      "path": "R/package.R",
-      "line": 88,
-      "column": 15,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
-    },
-    {
-      "package": "torch",
       "code": "RY061",
       "path": "R/wrapers.R",
       "line": 174,
@@ -3700,15 +3610,6 @@
       "column": 15,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "torch",
-      "code": "RY033",
-      "path": "tests/testthat.R",
-      "line": 4,
-      "column": 5,
-      "label": "true_positive",
-      "audit_group": "upstream-package"
     },
     {
       "package": "torch",
@@ -4054,12 +3955,12 @@
     }
   ],
   "classification": {
-    "false_positive": 306,
-    "true_positive": 95
+    "false_positive": 301,
+    "true_positive": 89
   },
   "audit_group_counts": {
     "reassign-scope": 4,
-    "type-narrowing": 41,
+    "type-narrowing": 36,
     "manual-audit": 138,
     "data-masking-nse": 1,
     "local-closure-forward-ref": 1,
@@ -4067,7 +3968,7 @@
     "s3-method-dispatch": 3,
     "delayed-assign": 1,
     "function-shadowing": 3,
-    "upstream-package": 32,
+    "upstream-package": 26,
     "ifelse-mode": 3,
     "numeric-if-idiom": 3,
     "namespace-on-load": 46,
@@ -4111,6 +4012,7 @@
     "RY032 scalar-flow correction (#351, PR #605): the sole Posit identity removed is purrr@481e829 R/deprec-prepend.R:34:7 (reviewed false_positive, historical manual-audit group). Its earlier base stopifnot rejects vector before values before the later || can run. The exact source and R witnesses justify this one-row removal; all 85 reviewed true positives and every other identity remain. The 62 hermetic Posit root reports were hashed in filename order after removing this line from posit.purrr.root.txt; the matching message-ledger entry is removed.",
     "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): 20 reviewed false positives are removed and no identity is added. The whole delayed-assign RY010 group except renv's RY001 disappears (dplyr R/conditions.R:310 and keras3's 13 lazily bound helpers), base delayedAssign() now binding its target with an unevaluated promise. lubridate R/vctrs.R:64/107/112/117 (manual-audit) read namespace-level delayedAssign() bindings. purrr tests/testthat/test-map.R:82 and test-parallel.R:120 (type-narrowing) are map_chr(NA, ...) calls, which purrr's coerce layer widens to NA_character_. Every true positive remains.",
     "local() deferred captures and package base lookup (#568, PR stacked on #628): 19 reviewed false positives disappear: 18 of the 19 local-closure-forward-ref entries (cli R/defer.R and R/errors.R, pak R/compat-vctrs.R, R/config.R and R/errors.R) and the type-narrowing entry rlang R/import-standalone-defer.R:91:23. pak R/pak-sitrep-data.R:27:20 remains in the group. Each removed closure is defined inside a local() block and reads a helper the block assigns later; local() blocks now give their assignments to nested closures as deferred captures, as function bodies do. Resolving base switch() in import-free package R/ code adds no identity. Every true positive remains.",
-    "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Ten true positives are added. Four are upstream-package bugs in two packages: keras3 R/applications.R:4055:34 and 4085:36 call not_found_errors() without its forced model argument, so users see a missing-argument error instead of the intended message; gt tests/testthat/test-fmt.R:549:41 and 551:52 pass x_right to paste_left(x, x_left), and their expect_error() passes on that unused-argument error, not the length check the test describes. The remaining six are test-fixture calls inside error-expecting tests that R rejects: ggplot2 tests/testthat/test-utilities.R:108:25, infer tests/testthat/test-hypothesize.R:164:53 and 219:59 (no mean formal), lintr tests/testthat/test-methods.R:27:21 (no linter formal) and test-with.R:3:5, and recipes tests/testthat/test-roles.R:254:40. No identity is removed; every true positive remains."
+    "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Ten true positives are added. Four are upstream-package bugs in two packages: keras3 R/applications.R:4055:34 and 4085:36 call not_found_errors() without its forced model argument, so users see a missing-argument error instead of the intended message; gt tests/testthat/test-fmt.R:549:41 and 551:52 pass x_right to paste_left(x, x_left), and their expect_error() passes on that unused-argument error, not the length check the test describes. The remaining six are test-fixture calls inside error-expecting tests that R rejects: ggplot2 tests/testthat/test-utilities.R:108:25, infer tests/testthat/test-hypothesize.R:164:53 and 219:59 (no mean formal), lintr tests/testthat/test-methods.R:27:21 (no linter formal) and test-with.R:3:5, and recipes tests/testthat/test-roles.R:254:40. No identity is removed; every true positive remains.",
+    "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and an integer, logical, or integer-valued double value compare the formatted strings, which gives the intended answer, so RY033 now fires only for `<`, `>`, `<=`, `>=`. 11 RY033 identities disappear and none is added. Five are false positives (type-narrowing): broom R/deprecated-0-7-0.R:290:11, R/utilities.R:108:11 and sparklyr R/tidiers_utils.R:74:11 (`rownames(x) == seq_len(nrow(x))`), cli R/onload.R:44:22 (`Sys.getenv(\"RSTUDIO\") == 1`), flexdashboard R/flex_dashboard.R:173:7 (`resize_reload == 'no'`). Six were labelled true_positive (upstream-package) and are removed as equality comparisons R evaluates as intended: plumber R/plumber.R:474:82 (`endCount == 1` with `endCount <- as.character(...)`), torch R/install.R:699:4 (`toupper(x) == TRUE`), R/package.R:42:37 and 88:15 (`Sys.getenv(..., unset = 2) != 0`), tests/testthat.R:4:5 (`Sys.getenv(\"TORCH_TEST\", unset = 0) == 1`, the shape the cli entry already labels false_positive), and shiny-r R/bookmark-state.R:138:18 (`length(inputVals != 0)`), whose misplaced parenthesis stays reported as the true_positive RY093 at the same span. Every other true positive remains."
   ]
 }

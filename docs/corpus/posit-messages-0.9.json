@@ -73,24 +73,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "broom::RY033::R/deprecated-0-7-0.R:290:11": {
-      "package": "broom",
-      "code": "RY033",
-      "path": "R/deprecated-0-7-0.R",
-      "line": 290,
-      "column": 11,
-      "severity": "warning",
-      "message": "comparing `character` with `integer`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "broom::RY033::R/utilities.R:108:11": {
-      "package": "broom",
-      "code": "RY033",
-      "path": "R/utilities.R",
-      "line": 108,
-      "column": 11,
-      "severity": "warning",
-      "message": "comparing `character` with `integer`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
     "bslib::RY001::R/navs-legacy.R:241:27": {
       "package": "bslib",
       "code": "RY001",
@@ -207,15 +189,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "cli::RY033::R/onload.R:44:22": {
-      "package": "cli",
-      "code": "RY033",
-      "path": "R/onload.R",
-      "line": 44,
-      "column": 22,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
     "cli::RY040::tests/testthat/test-defer.R:4:11": {
       "package": "cli",
@@ -1188,15 +1161,6 @@
       "severity": "warning",
       "message": "variable `bs_theme` is not bound in this scope"
     },
-    "flexdashboard::RY033::R/flex_dashboard.R:173:7": {
-      "package": "flexdashboard",
-      "code": "RY033",
-      "path": "R/flex_dashboard.R",
-      "line": 173,
-      "column": 7,
-      "severity": "warning",
-      "message": "comparing `logical` with `character`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
     "ggplot2::RY010::R/facet-.R:1074:28": {
       "package": "ggplot2",
       "code": "RY010",
@@ -1916,15 +1880,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "plumber::RY033::R/plumber.R:474:82": {
-      "package": "plumber",
-      "code": "RY033",
-      "path": "R/plumber.R",
-      "line": 474,
-      "column": 82,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
     "purrr::RY109::R/progress-bars.R:56:16": {
       "package": "purrr",
@@ -3060,15 +3015,6 @@
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
     },
-    "shiny-r::RY033::R/bookmark-state.R:138:18": {
-      "package": "shiny-r",
-      "code": "RY033",
-      "path": "R/bookmark-state.R",
-      "line": 138,
-      "column": 18,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
     "shiny-r::RY093::R/bookmark-state.R:138:18": {
       "package": "shiny-r",
       "code": "RY093",
@@ -3140,15 +3086,6 @@
       "column": 7,
       "severity": "warning",
       "message": "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
-    },
-    "sparklyr::RY033::R/tidiers_utils.R:74:11": {
-      "package": "sparklyr",
-      "code": "RY033",
-      "path": "R/tidiers_utils.R",
-      "line": 74,
-      "column": 11,
-      "severity": "warning",
-      "message": "comparing `character` with `integer`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
     "sparklyr::RY103::R/worker_apply.R:522:40": {
       "package": "sparklyr",
@@ -3428,42 +3365,6 @@
       "column": 15,
       "severity": "warning",
       "message": "variable `transpose` is not bound in this scope"
-    },
-    "torch::RY033::R/install.R:699:4": {
-      "package": "torch",
-      "code": "RY033",
-      "path": "R/install.R",
-      "line": 699,
-      "column": 4,
-      "severity": "warning",
-      "message": "comparing `character` with `logical`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "torch::RY033::R/package.R:42:37": {
-      "package": "torch",
-      "code": "RY033",
-      "path": "R/package.R",
-      "line": 42,
-      "column": 37,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "torch::RY033::R/package.R:88:15": {
-      "package": "torch",
-      "code": "RY033",
-      "path": "R/package.R",
-      "line": 88,
-      "column": 15,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
-    },
-    "torch::RY033::tests/testthat.R:4:5": {
-      "package": "torch",
-      "code": "RY033",
-      "path": "tests/testthat.R",
-      "line": 4,
-      "column": 5,
-      "severity": "warning",
-      "message": "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
     },
     "torch::RY061::R/wrapers.R:174:39": {
       "package": "torch",

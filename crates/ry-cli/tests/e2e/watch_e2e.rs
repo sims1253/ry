@@ -206,6 +206,7 @@ fn watch_reloads_config_inputs() {
 
     let mut session = WatchSession::spawn(tmp.path());
     wait_for(&session.stderr, "watching 1 file(s)", "initial pass");
+    wait_for(&session.stderr, "checked 1 file(s)", "initial pass summary");
     assert!(
         !session.stdout.lock().unwrap().contains("RY010"),
         "the seeded baseline must accept the finding: {}",
@@ -277,8 +278,14 @@ fn watch_reloads_config_inputs() {
         session.stdout.lock().unwrap()
     );
 
+    let recovered = occurrences(&session.stderr, "parses again");
     std::fs::remove_file(tmp.path().join("ry.toml")).unwrap();
-    wait_for_more(&session.stderr, "parses again", 1, "format recovery note");
+    wait_for_more(
+        &session.stderr,
+        "parses again",
+        recovered,
+        "format recovery note",
+    );
     session.assert_alive("after format recovery");
 }
 
@@ -309,6 +316,7 @@ fn watch_reacts_to_namespace_edits_for_every_input_form() {
             WatchSession::spawn(&tmp.path().join(input))
         };
         wait_for(&session.stderr, "watching 1 file(s)", form);
+        wait_for(&session.stderr, "checked 1 file(s)", form);
         assert!(
             !session.stdout.lock().unwrap().contains("RY010"),
             "{form}: the initial pass must resolve the import: {}",

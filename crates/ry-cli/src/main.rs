@@ -268,7 +268,10 @@ fn main() -> Result<ExitCode> {
         // Only global flags can precede a missing subcommand, and they
         // parse the same after `check`.
         let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
-        args.insert(args.len().min(1), "check".into());
+        if args.is_empty() {
+            args.push("ry".into());
+        }
+        args.insert(1, "check".into());
         matches = Cli::command().get_matches_from(args);
     }
     let cli = Cli::from_arg_matches(&matches).expect("clap derive schema is self-consistent");

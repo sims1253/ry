@@ -127,6 +127,40 @@ expression: snapshots
         start: 83
   fixture: err_compare_mode_mismatch.R
 - diagnostics:
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_real`"
+      severity: warning
+      span:
+        column: 73
+        end: 1654
+        line: 55
+        start: 1643
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_eager`"
+      severity: warning
+      span:
+        column: 86
+        end: 1668
+        line: 55
+        start: 1656
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_vector`"
+      severity: warning
+      span:
+        column: 29
+        end: 1714
+        line: 57
+        start: 1701
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_late`"
+      severity: warning
+      span:
+        column: 44
+        end: 1727
+        line: 57
+        start: 1716
+  fixture: err_compound_missing_guard.R
+- diagnostics:
     - code: RY111
       message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
       severity: warning
@@ -702,6 +736,16 @@ expression: snapshots
         line: 6
         start: 334
   fixture: err_metadata_forces_recursive_default.R
+- diagnostics:
+    - code: RY091
+      message: "missing required argument `tt` in call to `fit_real`"
+      severity: warning
+      span:
+        column: 81
+        end: 1004
+        line: 33
+        start: 993
+  fixture: err_missing_formal_member_and_chain_targets.R
 - diagnostics:
     - code: RY091
       message: "missing required argument `x` in call to `length`"

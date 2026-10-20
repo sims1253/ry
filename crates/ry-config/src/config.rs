@@ -81,7 +81,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     pub scope: ScopedPaths,
 }
@@ -102,7 +104,9 @@ pub struct TypehintConfig {
     pub adopt: bool,
     pub version: Option<String>,
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     scope: ScopedPaths,
 }
@@ -116,7 +120,9 @@ pub struct RuleOverrideConfig {
     pub error: Vec<String>,
     pub warn: Vec<String>,
     pub ignore: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     pub scope: ScopedPaths,
 }

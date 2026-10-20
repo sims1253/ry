@@ -8,7 +8,7 @@ mod discovery;
 mod native;
 pub mod reports;
 pub use discovery::{
-    DiscoveryLimits, DiscoveryResult, TruncationReport, discover_r_files,
+    DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible_with_limits, is_single_file_walk_admitted, is_source_path,
     source_extension_globs,
 };

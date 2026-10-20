@@ -465,6 +465,7 @@ impl Checker {
                 rhs_loop_vector = !rhs_unreachable && self.loop_vector_operand(rhs, &rhs_scope);
                 let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
+                self.merge_condition_identities(scope, &rhs_scope);
                 rt
             }
             _ => {
@@ -890,18 +891,29 @@ impl Checker {
         }
     }
 
-    fn method_screens(&self) -> MethodScreens {
-        *self.method_screens.get_or_init(|| MethodScreens {
+    fn method_screens(&self) -> &MethodScreens {
+        self.method_screens.get_or_init(|| MethodScreens {
             comparison: self.project_defines_method(|generic| {
                 matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
             }),
             scalar_proof: self.scan_scalar_proof_methods(),
             length_s3: self.project_defines_s3_method(|generic| generic == "length"),
+            frame_effect: crate::semantic_lists::FRAME_EFFECT_DISPATCH_GENERICS
+                .iter()
+                .copied()
+                .filter(|wanted| self.project_defines_method(|generic| generic == *wanted))
+                .collect(),
         })
     }
 
-    fn project_defines_comparison_method(&self) -> bool {
+    pub(super) fn project_defines_comparison_method(&self) -> bool {
         self.method_screens().comparison
+    }
+
+    /// Whether the project or its imports define a method for `generic`, one
+    /// of the generics an audited inert call may dispatch (call_effect.rs).
+    pub(super) fn project_defines_frame_effect_method(&self, generic: &str) -> bool {
+        self.method_screens().frame_effect.contains(generic)
     }
 
     /// A scalar fact relies on base `length`, comparisons, indexing, and the
@@ -1015,11 +1027,12 @@ impl Checker {
 
 /// Whether the project or its imports define methods that the scalar
 /// proofs depend on. Computed once per collected table.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct MethodScreens {
     comparison: bool,
     scalar_proof: bool,
     length_s3: bool,
+    frame_effect: FxSet<&'static str>,
 }
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.

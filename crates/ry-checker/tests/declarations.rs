@@ -803,6 +803,8 @@ fn a_known_invoked_helper_invalidates_only_its_outward_writes() {
             "base::assign(\"f\", function(x) x, envir = .GlobalEnv)",
             false,
         ),
+        // Known gap (S5): an ordinary `<<-` can run an active binding's
+        // setter (testdata/oracle/typehint_active_setter_replacement.R).
         ("g <<- function(x) x", true),
         ("local <- function(x) x", true),
     ] {
@@ -2569,4 +2571,193 @@ fn project_annotation_only_record_changes_converge_with_cold_analysis() {
     project.set_declaration_records(Vec::new());
     project.check_incremental();
     assert_eq!(project.emit_count, 0);
+}
+
+/// The frame-effect classifier (infer/call_effect.rs) is shared with scalar
+/// facts. An audited base call keeps scalar facts but not identities: even
+/// a literal call can force a caller's promise or signal a condition to a
+/// caller's calling handler, which can rebind an outward name
+/// (testdata/oracle/typehint_outer_handler_replacement.R). An inert user
+/// helper keeps both, as before.
+#[test]
+fn base_calls_drop_contract_identity_and_inert_helpers_keep_it() {
+    for (between, mismatch) in [
+        ("message(\"hi\")", false),
+        ("is.null(NULL)", false),
+        ("length(\"a\")", false),
+        ("stopifnot(TRUE)", false),
+        ("sum(1:3)", false),
+        ("noop()", true),
+        ("touch()", false),
+        ("1L", true),
+    ] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nnoop <- function() NULL\ntouch <- function() get(\"x\")\n{between}\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("base-calls.R", &source);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+/// Sol review witnesses: a literal `message()` reaching an outer calling
+/// handler, and `base::length()` under a project `::` mask, can both
+/// replace the annotated local. RY114 stays silent, as on main.
+#[test]
+fn outer_handler_and_masked_namespace_operator_drop_identity() {
+    for (setup, between) in [
+        ("", "message(\"hi\")"),
+        (
+            "`::` <- function(pkg, name) function(...) assign(\"cls\", function(x) x, envir = parent.frame())\n",
+            "base::length(\"a\")",
+        ),
+    ] {
+        let source = format!(
+            "{setup}run <- function() {{\n  cls <- function(x) {{\n    #| x integer\n    x\n  }}\n  {between}\n  cls(\"after\")\n}}\nrun()\n"
+        );
+        let (_, checker) = check_adopted("sol-witness.R", &source);
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+/// R evaluates the RHS of `&&` in this frame (testdata/oracle/
+/// typehint_short_circuit_replacement.R), so its effects reach the
+/// continuation even though inference ran it on a cloned scope.
+#[test]
+fn short_circuit_replacement_drops_contract_identity() {
+    for (condition, mismatch) in [
+        ("TRUE && swap()", false),
+        ("FALSE || swap()", false),
+        // Base calls drop identities (see above); a literal RHS keeps them.
+        ("TRUE && is.null(NULL)", false),
+        ("TRUE && TRUE", true),
+    ] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\nswap <- function() {{ f <<- function(x) x; TRUE }}\nif ({condition}) NULL\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("short-circuit.R", &source);
+        assert_eq!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            mismatch,
+            "condition: {condition}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+    // An adopted function from another file has no binding in this file's
+    // scope, so only the adopted-name half of the merge carries the loss.
+    let contracts = parse(
+        "contracts.R",
+        "f <- function(x) {\n  #| x integer\n  x\n}\n",
+    );
+    for (condition, mismatch) in [("TRUE && h()", false), ("TRUE && TRUE", true)] {
+        let calls = parse("calls.R", &format!("if ({condition}) NULL\nf(\"after\")\n"));
+        let mut project = new_project(&[&contracts, &calls], &adopted_records(&contracts));
+        project.check();
+        assert_eq!(
+            project_mismatch_count(&project, &calls.path) > 0,
+            mismatch,
+            "cross-file condition: {condition}"
+        );
+    }
+}
+
+/// Known gap (S13, pre-existing): a helper body without calls still runs
+/// syntax functions that a project may mask
+/// (testdata/oracle/typehint_masked_if_helper.R), but the outward-write
+/// summary trusts it, so a stale identity can report RY114 where R reaches
+/// the replacement. Pinned until helper summaries prove syntax identity.
+#[test]
+fn known_gap_masked_syntax_helper_keeps_identity() {
+    for mask in [
+        "`if` <- function(cond, yes, no) do.call(\"assign\", list(\"f\", function(x) x, envir = globalenv()))",
+        "",
+    ] {
+        let source = format!(
+            "{mask}\nf <- function(x) {{\n  #| x integer\n  x\n}}\npure <- function() if (TRUE) NULL\npure()\nf(\"after\")\n"
+        );
+        let (_, checker) = check_adopted("masked-syntax.R", &source);
+        assert!(
+            kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "mask: {mask}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+}
+
+/// S4: an audited call whose actual reads a formal may force the caller's
+/// promise, which can replace an outward name
+/// (testdata/oracle/typehint_parameter_force_replacement.R).
+#[test]
+fn promise_actual_drops_identity() {
+    let source = |between: &str| {
+        format!(
+            "cls <- function(x) {{\n  #| x integer\n  x\n}}\nrun <- function(y) {{\n  {between}\n  cls(\"after\")\n}}\nrun(1L)\n"
+        )
+    };
+    for between in ["length(y)", "is.null(y)", "length(\"a\")"] {
+        let (_, checker) = check_adopted("promise-actual.R", &source(between));
+        assert!(
+            !kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+            "between: {between}, findings: {:?}",
+            checker.declaration_findings()
+        );
+    }
+    let (_, checker) = check_adopted("promise-none.R", &source("1L"));
+    assert!(
+        kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+        "a literal statement keeps the identity: {:?}",
+        checker.declaration_findings()
+    );
+    // Known gap: a direct statement-level read of the formal forces the
+    // same promise but keeps the identity (`proven_parameter_read`); R
+    // returns "after". Fixing it needs forced-parameter tracking.
+    let (_, checker) = check_adopted("promise-direct-read.R", &source("y"));
+    assert!(
+        kinds(&checker).contains(&DeclarationFindingKind::Mismatch),
+        "known gap: a direct formal read keeps the identity: {:?}",
+        checker.declaration_findings()
+    );
+}
+
+/// Sol review S3: an opaque helper summary still reports its plain `<<-`
+/// targets. With adopted contracts, main replaced those bindings even when
+/// the rest of the body was unknown; keeping `x`'s old character type
+/// would report RY040 where R adds 1L to the new integer.
+#[test]
+fn opaque_helper_still_replaces_its_named_writes() {
+    let source = "f <- function(x) {\n  #| x integer\n  x\n}\nrun <- function() {\n  x <- \"old\"\n  (function() {\n    x <<- 1L\n    invisible(NULL)\n  })()\n  x + 1L\n}\nrun()\n";
+    let (_, mut checker) = check_adopted("opaque-named-writes.R", source);
+    let codes = checker
+        .take_diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert!(!codes.contains(&"RY040"), "{codes:?}");
+}
+
+/// Sol review S4: a project definition whose name spells a qualified head
+/// is what a string head calls, so its write summary applies even though
+/// the name looks like an external or base call (as on main).
+#[test]
+fn project_definitions_named_like_qualified_heads_keep_their_writes() {
+    for (name, head) in [("pkg::poke", "pkg::poke"), ("base::length", "base::length")] {
+        let source = format!(
+            "f <- function(x) {{\n  #| x integer\n  x\n}}\n`{name}` <- function(...) {{\n  x <<- 1L\n  invisible(NULL)\n}}\nx <- \"old\"\n\"{head}\"(\"a\")\nx + 1L\n"
+        );
+        let (_, mut checker) = check_adopted("qualified-name-helper.R", &source);
+        let codes = checker
+            .take_diagnostics()
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+        assert!(!codes.contains(&"RY040"), "{name}: {codes:?}");
+    }
 }

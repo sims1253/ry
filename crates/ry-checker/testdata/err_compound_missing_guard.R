@@ -1,9 +1,10 @@
-# expect: RY091, RY091
+# expect: RY091, RY091, RY091, RY091
 # With `robust` missing, an `||`/`|` condition with a `missing(robust)`
 # disjunct is TRUE and an `&&`/`&` condition with a `!missing(robust)`
-# conjunct is FALSE, so the guard's rebinding branch runs. Only `fit_real`
-# (no missingness test) and `fit_eager` (`|` evaluates `robust` itself)
-# force the omitted argument.
+# conjunct is FALSE, so the guard's rebinding branch runs. `fit_real` has
+# no missingness test, `fit_eager` and `fit_vector` evaluate both sides of
+# `|`, and `fit_late` evaluates `is.null(robust)` first: each forces the
+# omitted argument.
 fit <- function(x, robust) {
   if (missing(robust) || is.null(robust)) robust <- FALSE
   if (robust) x <- x * 2
@@ -41,6 +42,17 @@ fit_eager <- function(x, robust) {
   if (robust) x <- x * 2
   x
 }
+fit_vector <- function(x, robust) {
+  if (missing(robust) | is.null(robust)) robust <- FALSE
+  if (robust) x <- x * 2
+  x
+}
+fit_late <- function(x, robust) {
+  if (is.null(robust) || missing(robust)) robust <- FALSE
+  if (robust) x <- x * 2
+  x
+}
 use <- function() {
   list(fit(1), fit_conj(1), plot_lim(1:3), fit_bound(1:3), fit_plain(1), fit_real(1), fit_eager(1))
 }
+use_order <- function() list(fit_vector(1), fit_late(1))

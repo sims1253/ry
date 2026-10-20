@@ -132,17 +132,33 @@ expression: snapshots
       severity: warning
       span:
         column: 73
-        end: 1328
-        line: 44
-        start: 1317
+        end: 1654
+        line: 55
+        start: 1643
     - code: RY091
       message: "missing required argument `robust` in call to `fit_eager`"
       severity: warning
       span:
         column: 86
-        end: 1342
-        line: 44
-        start: 1330
+        end: 1668
+        line: 55
+        start: 1656
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_vector`"
+      severity: warning
+      span:
+        column: 29
+        end: 1714
+        line: 57
+        start: 1701
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_late`"
+      severity: warning
+      span:
+        column: 44
+        end: 1727
+        line: 57
+        start: 1716
   fixture: err_compound_missing_guard.R
 - diagnostics:
     - code: RY111

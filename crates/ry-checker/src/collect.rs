@@ -1758,10 +1758,13 @@ fn is_dispatch_call(expression: &Expr) -> bool {
 }
 
 /// `Some(true)` for `missing(name)`, `Some(false)` for `!missing(name)`.
-/// With `name` missing, a disjunction is TRUE as soon as one disjunct is
-/// (`missing(x) || is.null(x)`) and a conjunction is FALSE as soon as one
-/// conjunct is (`!missing(x) && ...`). An operand that reads the argument
-/// on that path (`missing(x) | x`) still forces it through the condition.
+/// With `name` missing, a disjunction is TRUE once one disjunct is
+/// (`missing(x) || is.null(x)`) and a conjunction is FALSE once one
+/// conjunct is (`!missing(x) && ...`), provided nothing evaluated alongside
+/// that test can touch the missing argument: `||`/`&&` skip their rhs, but
+/// their lhs and both sides of `|`/`&` always run, and `is.null(x)` there
+/// errors. Such an operand must itself be a missingness test or not
+/// mention `name` (`missing(xlim) | missing(ylim)`).
 fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
     match condition {
         Expr::UnaryOp {
@@ -1775,10 +1778,14 @@ fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
                 BinOpKind::AndAnd | BinOpKind::And => false,
                 _ => return None,
             };
-            [lhs, rhs]
-                .into_iter()
-                .any(|operand| missing_test(operand, name) == Some(decided))
-                .then_some(decided)
+            let short_circuits = matches!(op, BinOpKind::OrOr | BinOpKind::AndAnd);
+            let (left, right) = (missing_test(lhs, name), missing_test(rhs, name));
+            let safe = |test: Option<bool>, operand: &Expr| {
+                test.is_some() || !expr_mentions(operand, name)
+            };
+            ((left == Some(decided) && (short_circuits || safe(right, rhs)))
+                || (right == Some(decided) && safe(left, lhs)))
+            .then_some(decided)
         }
         Expr::Call { func, args, .. } => {
             let [argument] = args.as_slice() else {

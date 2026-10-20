@@ -96,7 +96,7 @@ pub const RULES: &[Rule] = &[
         code: "RY033",
         name: "comparison-mode-mismatch",
         default_severity: Severity::Warning,
-        summary: "Comparing a character value with a numeric value coerces the numeric value to character and compares lexicographically, which is almost always unintended.",
+        summary: "Ordering a character value against a non-character value with `<`, `>`, `<=`, or `>=` coerces the other value to character and compares lexicographically, which is almost always unintended.",
     },
     Rule {
         code: "RY034",

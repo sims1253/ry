@@ -118,7 +118,17 @@ expression: snapshots
   fixture: err_colon_unknown_endpoint.R
 - diagnostics:
     - code: RY033
-      message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
+      severity: warning
+      span:
+        column: 28
+        end: 649
+        line: 16
+        start: 627
+  fixture: err_compare_mode_equality_vs_ordering.R
+- diagnostics:
+    - code: RY033
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
       severity: warning
       span:
         column: 7

@@ -523,6 +523,12 @@ fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'.'
 }
 
+fn diag_code_multiset(diags: &[Diagnostic]) -> Vec<String> {
+    let mut codes: Vec<String> = diags.iter().map(|d| d.code.to_string()).collect();
+    codes.sort();
+    codes
+}
+
 /// Diagnostics compared by code and span-normalised message (the renamed
 /// identifier may appear in messages).
 fn diag_code_set(diags: &[Diagnostic]) -> BTreeSet<String> {
@@ -777,8 +783,8 @@ fn r8_negated_branch_swap_is_diagnostic_neutral() {
                 "f <- function(x) {{\n  if (!{pred}(x)) {{\n    {else_body}}} else {{\n    {then_body}}}\n}}\n",
             );
 
-            let orig_codes = diag_code_set(&check_source(&original));
-            let swap_codes = diag_code_set(&check_source(&swapped));
+            let orig_codes = diag_code_multiset(&check_source(&original));
+            let swap_codes = diag_code_multiset(&check_source(&swapped));
             assert_eq!(
                 orig_codes, swap_codes,
                 "R8: branch swap changed diagnostics\n  original:\n{original}  swapped:\n{swapped}",

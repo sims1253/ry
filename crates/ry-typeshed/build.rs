@@ -1,6 +1,6 @@
-//! Compress registered stubs and generate their lazy-load table.
+//! Compress every vendored stub and generate their lazy-load table.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -23,19 +23,11 @@ fn stub_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=packages.txt");
-    let packages: Vec<_> = include_str!("packages.txt").lines().collect();
-    let registered: HashSet<_> = packages.iter().copied().chain(["base"]).collect();
-    assert_eq!(
-        registered.len(),
-        packages.len() + 1,
-        "duplicate package registration"
-    );
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     let mut paths = Vec::new();
     stub_paths(Path::new("vendor"), &mut paths);
-    paths.sort();
-    let mut stems = HashSet::new();
+    // Sorted by package name, which fixes signature resolution order.
+    let mut stems = BTreeSet::new();
     for path in paths {
         let stem = path
             .file_stem()
@@ -45,13 +37,6 @@ fn main() {
             stems.insert(stem.to_owned()),
             "duplicate vendored stub: {stem}"
         );
-        if !registered.contains(stem) {
-            println!(
-                "cargo:warning=unregistered vendor stub {}; add it to packages.txt",
-                path.display()
-            );
-            continue;
-        }
         let json =
             fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
         let mut encoder = DeflateEncoder::new(Vec::new(), Compression::best());
@@ -62,12 +47,7 @@ fn main() {
         )
         .expect("write compressed stub");
     }
-    for name in &registered {
-        assert!(
-            stems.contains(*name),
-            "missing registered vendor stub: {name}"
-        );
-    }
+    assert!(stems.contains("base"), "missing vendored stub: base");
     // Cargo keeps OUT_DIR between builds, including outputs for removed stubs.
     for entry in fs::read_dir(&out_dir).expect("read OUT_DIR") {
         let path = entry.expect("read OUT_DIR entry").path();
@@ -75,11 +55,12 @@ fn main() {
             .file_name()
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_suffix(".json.deflate"))
-            .is_some_and(|stem| !registered.contains(stem))
+            .is_some_and(|stem| !stems.contains(stem))
         {
             fs::remove_file(path).expect("remove stale compressed stub");
         }
     }
+    let packages: Vec<_> = stems.iter().filter(|name| *name != "base").collect();
     let mut specs = format!(
         "static PACKAGE_SPECS: [PackageSpec; {}] = [\n",
         packages.len()

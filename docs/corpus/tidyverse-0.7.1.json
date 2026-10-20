@@ -72,7 +72,7 @@
     {
       "name": "googledrive",
       "commit": "8de11bfd4349ae6e7d98b51f7a6ebc148fe988fa",
-      "diagnostics": 1
+      "diagnostics": 0
     },
     {
       "name": "rvest",
@@ -944,19 +944,10 @@
       "column": 31,
       "label": "true_positive",
       "audit_group": "ry111-constant-shadowing"
-    },
-    {
-      "package": "googledrive",
-      "code": "RY091",
-      "path": "tests/testthat/test-drive_create.R",
-      "line": 21,
-      "column": 19,
-      "label": "true_positive",
-      "audit_group": "test-fixture"
     }
   ],
   "classification": {
-    "true_positive": 38,
+    "true_positive": 37,
     "false_positive": 36,
     "unowned": 18
   },
@@ -977,7 +968,7 @@
     "seq-defaulted": 1,
     "ry111-constant-shadowing": 11,
     "ry001-null-union": 1,
-    "test-fixture": 2
+    "test-fixture": 1
   },
   "notes": [
     "Ecosystem reports are generated hermetically with RY_NO_INSTALLED_LIBRARIES=1; the source audit used installed R libraries.",
@@ -1002,8 +993,9 @@
     "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): the reviewed identities removed are dplyr R/conditions.R:310:14 (P4b false positive) and lubridate R/vctrs.R:64/107/112/117 (unowned, plan-32-33), which read delayedAssign() bindings, and purrr tests/testthat/test-map.R:82:20 and test-parallel.R:120:20 (P8 false positives), map_chr(NA, ...) calls that purrr widens to NA_character_. No identity is added; every true positive remains.",
     "local() deferred captures and package base lookup (#568, PR stacked on #628): no ledger identity changes. The unowned cli and rlang reports lose their local()-block RY010 false positives (cli R/defer.R and R/errors.R, rlang R/import-standalone-defer.R), whose closures read helpers the enclosing local() block assigns later. Resolving base switch() in import-free package R/ code adds no identity.",
     "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Two true positives are added, both in error-expecting tests, under the new test-fixture group shared with the Posit ledger: ggplot2 tests/testthat/test-utilities.R:108:25 (remove_missing(na.rm = 1:5) omits the forced df) and googledrive tests/testthat/test-drive_create.R:21:19 (drive_create() omits name inside expect_snapshot(error = TRUE)). No identity is removed; every true positive remains.",
-    "Package-aware call-head selection (PR #668) removes exactly 13 unowned identities from both production-only and root reports, with no additions or changes to reviewed findings or labels. At testthat@50a99ec76fed8140a9211ed862289e877e86614d, R/import-standalone-types-check.R:125:7, :295:9, :320:9, :345:9, :370:9, :395:9, :420:9, :445:9, :473:9, :498:9, and :523:9 lose RY031: rlang::is_null returns a scalar logical, not testthat's same-named function-valued expectation factory in R/old-school.R. R/reporter-debug.R:61:7 loses RY001 for the corresponding rlang::is_false predicate versus testthat's is_false factory. The executable predicate-factory oracle verifies the R behavior. At jsonlite@0134cba18366b1c51c6497f4f97273a8423d8d86, R/stop.R:2:27 loses RY111: base::stop selects base's variadic contract rather than the 'call.' formal of jsonlite's own wrapper; this is the deliberate wrapper already explained in the #361 note. All 11 reviewed RY111 true positives in haven and dbplyr remain. The source digest covers the complete 32-package default-manifest regeneration."
+    "Package-aware call-head selection (PR #668) removes exactly 13 unowned identities from both production-only and root reports, with no additions or changes to reviewed findings or labels. At testthat@50a99ec76fed8140a9211ed862289e877e86614d, R/import-standalone-types-check.R:125:7, :295:9, :320:9, :345:9, :370:9, :395:9, :420:9, :445:9, :473:9, :498:9, and :523:9 lose RY031: rlang::is_null returns a scalar logical, not testthat's same-named function-valued expectation factory in R/old-school.R. R/reporter-debug.R:61:7 loses RY001 for the corresponding rlang::is_false predicate versus testthat's is_false factory. The executable predicate-factory oracle verifies the R behavior. At jsonlite@0134cba18366b1c51c6497f4f97273a8423d8d86, R/stop.R:2:27 loses RY111: base::stop selects base's variadic contract rather than the 'call.' formal of jsonlite's own wrapper; this is the deliberate wrapper already explained in the #361 note. All 11 reviewed RY111 true positives in haven and dbplyr remain. The source digest covers the complete 32-package default-manifest regeneration.",
+    "RY091 must-force walk (#685): the only identity removed is googledrive tests/testthat/test-drive_create.R:21:19 (true_positive, test-fixture), drive_create() with `name` omitted. R does error there, but through rlang::check_required(name) inside the `type` guard at R/drive_create.R:82-85, which ry does not model; ry's only evidence that `name` is forced was the member name in `name <- tmp$name` at R/drive_create.R:95, the `$` field-name misread #685 removes (rewriting that line to tmp[[\"name\"]] silences the pre-fix binary too). The finding was right for the wrong reason, so it is dropped rather than kept by restoring the misread. No identity is added; every other reviewed finding and label remains, and the Posit ledger is unchanged."
   ],
-  "ry_commit": "6a1660c83826b668bc5e5eadf4634b7a848da218",
-  "source_sha256": "ddbda9914ca537e464c6e3e7feb354cdc44cb9ed3ac37dd73378af2c08d07832"
+  "ry_commit": "106476711251fdcb299b833fbb725fccbdd9ec8f",
+  "source_sha256": "a05e12d3370103f83a361f381a57178cfde4b7f5288ff8ad9b4968c18729295e"
 }

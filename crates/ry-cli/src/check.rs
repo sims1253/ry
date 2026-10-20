@@ -1245,14 +1245,9 @@ fn run_check_once(
     )?;
 
     // Post-processing runs through the shared pipeline
-    // (`ry_checker::post_process`) so the CLI and the LSP apply one
-    // specified order: inline suppression comments (`# ry: ignore`,
-    // `# noqa`, `# ry: ignore-file`), then the severity filter, then
-    // [demotion seam — `demote_non_source_paths` on the pipeline, run
-    // at the seam below], then baseline subtraction, then the
-    // min-confidence threshold. The lexical (comment-based) suppression
-    // filter keeps a `#` inside a string literal from being mistaken
-    // for a directive.
+    // (`ry_checker::post_process`), so the CLI and the LSP apply one order.
+    // Suppression comments and the severity filter run per file here.
+    // `post_demotion` then runs on the collected result below.
     for group in groups {
         let files: Vec<_> = group
             .source_indices
@@ -1295,10 +1290,6 @@ fn run_check_once(
         all_diagnostics.extend(diagnostics);
     }
 
-    // Demotion seam: path-based confidence demotion sits between the
-    // severity filter and the baseline, its documented position in the
-    // shared order. The stage lives in the shared pipeline, so the LSP
-    // demotes non-source paths exactly like the CLI.
     let post = ry_checker::PostProcess {
         filter: ctx.filter,
         baseline: ctx.baseline,

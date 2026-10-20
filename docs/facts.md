@@ -77,11 +77,6 @@ ry dump-facts R/ --references > facts.json
 `dump-types` keeps its own output format. Reference capture runs alongside
 scope capture in the same project check, without changing diagnostic inference.
 
-The `reference_facts` capability is `"same_file_ordered_prefix"`. Consumers
-that accepted only `"same_file_straight_line"` must opt into this broader
-contract. The schema version remains 2; IDs are still local to one file and
-analysis snapshot, and coverage remains partial.
-
 Schema 2 keeps the scope and binding snapshots below. At the root it replaces
 `snapshot_kind` with `scope_snapshot_kind: "scope_exit"` and adds:
 
@@ -114,7 +109,7 @@ Each reference contains:
 | `definition_id` | An ID in this file's `definitions`, or `null`. |
 | `type_at_reference` | A structured type, or `null` when resolution is not established. |
 | `reason` | The checker's explanation for missing evidence, or `null`. |
-| `blocker` | One primary restriction with `kind`, `cause`, `span`, and `scope_span`, or `null`. Additive in schema 2; it does not change the evidence above. |
+| `blocker` | One primary restriction with `kind`, `cause`, `span`, and `scope_span`, or `null`. See [blocker provenance](#blocker-provenance). |
 
 The checker supports a conservative subset of same-file code: literal
 assignments, copies of established bindings, and a function's own formals and
@@ -160,13 +155,10 @@ arguments, parenthesized/nested expressions, and assignment RHS calls are
 excluded. Shadowing `::`, earlier barriers, and uncertain bindings also prevent
 proof. Comments between the direct call's tokens do not change its shape.
 
-This boundary relies on R's eager primitive evaluation, not the checker's
-argument traversal order: [`length` is registered with evaluation flag 1](https://github.com/wch/r-source/blob/trunk/src/main/names.c),
-and [the builtin evaluator evaluates the argument list before calling the primitive](https://github.com/wch/r-source/blob/trunk/src/main/eval.c).
 The call still ends the prefix, even for a known local, because dispatch can
 change bindings. In `f <- function(p = { x <- "changed"; 1L }) { x <- 1L;
 base::length(p); x }`, `p` may resolve with unknown type; the final `x` remains
-unsupported. A later assignment cannot restore reference evidence.
+unsupported.
 
 Mixed equivalent spellings, writes to formals, and unsupported declaration
 names still exclude the whole lexical scope. Nested function bodies remain
@@ -219,19 +211,15 @@ inventory uses this deterministic precedence:
 tree. `ry dump-facts` rejects files with parse errors before capture and does
 not export this cause.
 
-For an otherwise eligible occurrence, the semantic walk retains its existing
-reason precedence. `after_unsafe_read` gains the first unsafe-read location,
-or `unknown_effect` if unlocated invalidation happened first. A later unsafe
-read cannot replace that first blocker. Conflicting observations discard
-blocker provenance along with definition/type evidence. Newly resolved reads
-have no blocker.
+For `after_unsafe_read`, the blocker is the first unsafe read, or
+`unknown_effect` if an unlocated invalidation came first. A later unsafe read
+cannot replace it. Conflicting observations discard blocker provenance along
+with definition and type evidence. A resolved read has no blocker.
 
-The existing `reason` codes remain unchanged: `unsupported_scope`,
-`not_observed`, `after_unsafe_read`, `unknown_environment`, `deferred_capture`,
-`untracked_binding`, `unbound_name`, `untracked_lookup`, and
-`conflicting_observations`. Reasons without further recorded provenance keep
-`blocker: null`. Neither the schema version nor the reference capability is
-promoted by this addition.
+`reason` is one of `unsupported_scope`, `not_observed`, `after_unsafe_read`,
+`unknown_environment`, `deferred_capture`, `untracked_binding`,
+`unbound_name`, `untracked_lookup`, or `conflicting_observations`. A reason
+with no recorded provenance has `blocker: null`.
 
 See the [blocker regression panel](corpus/reference-blockers.md) for preserved
 legacy facts and the primary-reason breakdown on selected real sources.

@@ -522,23 +522,24 @@ async fn parsed_file(state: &Mutex<State>, path: &str) -> Option<(Arc<SourceFile
         )
         .ok()?;
         parsed.native_path = native;
-        let file = Arc::new(parsed);
         let mut state = state.lock().await;
-        let stored = match state.docs.active_mut(path).filter(|doc| doc.edit == edit) {
-            Some(doc) => {
-                if new_tree.is_some() {
+        // A concurrent parse of the same edit may have landed first. Keep
+        // its AST, because callers compare ASTs by pointer.
+        let stored = state
+            .docs
+            .active_mut(path)
+            .filter(|doc| doc.edit == edit)
+            .map(|doc| {
+                if doc.parsed.is_none() && new_tree.is_some() {
                     doc.tree = new_tree;
                 }
-                doc.parsed = Some(Arc::clone(&file));
-                true
-            }
-            None => false,
-        };
+                Arc::clone(doc.parsed.get_or_insert_with(|| Arc::new(parsed)))
+            });
         #[cfg(feature = "test-util")]
         if paused_parse {
             crate::test_seam::landed(Seam::Parse);
         }
-        if stored {
+        if let Some(file) = stored {
             return Some((file, text));
         }
     }

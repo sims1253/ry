@@ -214,7 +214,7 @@ impl Renderer {
                     self.push(")");
                 }
             }
-            None if matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union) => {
+            None if ty.mode.may_be_function() => {
                 self.push(if self.compact {
                     " (params?, return?)"
                 } else {

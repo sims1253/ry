@@ -143,18 +143,33 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
         "is.na(x)",
         "identical(x, 1L)",
         "g <- function() assign('x', c(1L, 2L), envir = parent.frame())",
+        // A literal message runs no project code without a
+        // conditionMessage method.
+        "message('checked')",
+        "message('checked', appendLF = FALSE)",
+        // A project helper with literal actuals whose body reads only
+        // literals and formals (#647).
+        "g <- function() NULL; g()",
+        "g <- function(a) a; g(1L)",
+        "(function() NULL)()",
+        // Its `<<-` targets drop only their own facts.
+        "g <- function() y <<- 1L; g()",
     ] {
         assert!(!warns_ry032(&asserted_then(between)), "{between}");
     }
     // Every other call may install a binding, even when it is harmless.
     for between in [
         "assign('x', c(1L, 2L))",
-        "message('checked')",
+        "message(x)",
+        // Deliberately misspelled: R matches formals after `...` exactly,
+        // so `appendL` is payload, not the `appendLF` control.
+        "message('checked', appendL = FALSE)",
         "print(x)",
         "as.character(x)",
         "do.call(identity, list(1L))",
         "(base::identity(base::identity))(1L)",
-        "g <- function() NULL; g()",
+        "g <- function(a) NULL; g(x)",
+        "g <- function() get('y'); g()",
         "tryCatch(1L, error = function(e) NULL)",
         "local(NULL)",
         "length <- function(x) 1L; length(x)",
@@ -163,22 +178,22 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
         assert!(warns_ry032(&asserted_then(between)), "{between}");
     }
     let helper = "helper <- function(...) NULL\n";
-    assert!(warns_ry032(&format!(
+    assert!(!warns_ry032(&format!(
         "{helper}{}",
         asserted_then("helper()")
     )));
     assert!(warns_ry032(
         "f <- function(g, x = 1L) { stopifnot(x > 0 && TRUE); g(); if (is.null(x) || x == 1L) TRUE else FALSE }"
     ));
-    // An unsafe call before the assertion keeps it from proving anything,
-    // unless it is base `I()` or a call into another package's namespace.
+    // A call before the assertion that may replace bindings keeps it from
+    // proving anything. Audited base calls (a literal `message`), inert
+    // project helpers, base `I()`, and a call into another package's
+    // namespace leave it free to prove the fact.
     let guard = "stopifnot(x > 0 && TRUE); if (is.null(x) || x == 1L) TRUE else FALSE }";
     for before in [
-        "message('start')",
-        "helper()",
+        "helper(x)",
         "own::helper()",
         "pkg::run(function() NULL)",
-        "base::message('start')",
         // Every package sharing the base stub database counts as base.
         "graphics::plot.new()",
         "grDevices::dev.off()",
@@ -189,6 +204,9 @@ fn only_safe_base_calls_keep_the_scalar_fact() {
     for before in [
         "I('a')",
         "lifecycle::deprecate_warn('1.0.0', 'f()', I('g()'))",
+        "message('start')",
+        "base::message('start')",
+        "helper()",
     ] {
         let source = format!("{helper}f <- function(x = 1L) {{ {before}; {guard}");
         assert!(!warns_ry032(&source), "{before}");
@@ -226,6 +244,39 @@ fn cross_file_helpers_drop_the_scalar_fact() {
         .flat_map(|(_, diagnostics)| diagnostics)
         .any(|d| d.code == "RY032");
     assert!(warned, "a project helper may install a caller binding");
+}
+
+#[test]
+fn warm_helper_body_edit_matches_cold_scalar_facts() {
+    let consumer = "f <- function(x = 1L) { stopifnot(x > 0 && TRUE); noop(); if (is.null(x) || x == 1L) TRUE else FALSE }\n";
+    let warned = |diagnostics: Vec<(String, Vec<Diagnostic>)>| {
+        diagnostics
+            .into_iter()
+            .flat_map(|(_, diagnostics)| diagnostics)
+            .any(|d| d.code == "RY032")
+    };
+    let mut project = Project::new();
+    project.add_file(
+        "helper.R".into(),
+        parse_file("helper.R", "noop <- function() NULL\n"),
+    );
+    project.add_file("consumer.R".into(), parse_file("consumer.R", consumer));
+    assert!(!warned(project.check_incremental()));
+    for (body, expected) in [
+        (
+            "noop <- function() assign('x', 1:2, envir = parent.frame())\n",
+            true,
+        ),
+        ("noop <- function() NULL\n", false),
+    ] {
+        project.update_file("helper.R".into(), Arc::new(parse_file("helper.R", body)));
+        let warm_warned = warned(project.check_incremental());
+        let mut cold = Project::new();
+        cold.add_file("helper.R".into(), parse_file("helper.R", body));
+        cold.add_file("consumer.R".into(), parse_file("consumer.R", consumer));
+        assert_eq!(warm_warned, expected, "{body}");
+        assert_eq!(warned(cold.check()), expected, "{body}");
+    }
 }
 
 #[test]

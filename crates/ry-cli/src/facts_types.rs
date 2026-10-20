@@ -15,6 +15,8 @@ pub(crate) fn export_type(ty: &RType) -> Value {
         Mode::List => "list",
         Mode::Null => "null",
         Mode::Function => "function",
+        Mode::Environment => "environment",
+        Mode::Language => "language",
         Mode::Opaque => "opaque",
         Mode::Union => "union",
     };
@@ -68,7 +70,7 @@ pub(crate) fn export_type(ty: &RType) -> Value {
             "parameters_complete": false,
             "return_type": export_type(&signature.return_type),
         }),
-        None if matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union) => {
+        None if ty.mode.may_be_function() => {
             json!({"kind": "unknown"})
         }
         None => json!({"kind": "not_applicable"}),
@@ -206,10 +208,19 @@ mod tests {
             (Mode::List, "list"),
             (Mode::Null, "null"),
             (Mode::Function, "function"),
+            (Mode::Environment, "environment"),
+            (Mode::Language, "language"),
             (Mode::Opaque, "opaque"),
             (Mode::Union, "union"),
         ] {
             assert_eq!(export_type(&RType::new(mode, Length::Unknown))["mode"], tag);
+        }
+        // Known environment and language values are never callable.
+        for mode in [Mode::Environment, Mode::Language] {
+            assert_eq!(
+                export_type(&RType::new(mode, Length::Unknown))["function"],
+                json!({"kind": "not_applicable"})
+            );
         }
         for (length, value) in [(Length::Zero, 0), (Length::One, 1), (Length::Known(99), 99)] {
             assert_eq!(

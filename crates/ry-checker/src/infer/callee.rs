@@ -379,8 +379,7 @@ impl Checker {
         // identity when one exists, regardless of which same-spelled entry
         // survived in the flat inference table.
         let local_binding = scope.get(lookup_name);
-        let local_is_nonfunction = local_binding
-            .is_some_and(|ty| !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union));
+        let local_is_nonfunction = local_binding.is_some_and(|ty| !ty.mode.may_be_function());
         let outward = scope.outward_function_definition(lookup_name);
         let possible_default_shadow = self.enclosing_formals.iter().any(|frame| {
             frame
@@ -533,7 +532,7 @@ impl Checker {
         }
         if scope
             .get(lookup_name)
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+            .is_some_and(|ty| ty.mode.may_be_function())
             && (generic.source_path != self.path
                 || scope.lexical_definition(lookup_name) != Some(generic.definition_span))
         {

@@ -42,15 +42,15 @@ fn ry_check(path: &Path) -> CliOutput {
 fn user_stub_dirs_resolve_relative_to_config_and_cli_wins() {
     let integer = stub("foo", "bar", "integer");
     let character = stub("foo", "bar", "character");
-    // (files besides use.R, extra args, expected stderr fragment)
-    let cases: [(Files, &[&str], &str); 3] = [
+    // (files besides use.R, extra args, stub warning naming a file)
+    let cases: [(Files, &[&str], Option<&str>); 3] = [
         (
             &[
                 ("ry.toml", b"typeshed = [\"stubs\"]\n"),
                 ("stubs/foo.json", integer.as_bytes()),
             ],
             &[],
-            "",
+            None,
         ),
         (
             &[
@@ -59,7 +59,7 @@ fn user_stub_dirs_resolve_relative_to_config_and_cli_wins() {
                 ("cli-stubs/foo.json", integer.as_bytes()),
             ],
             &["--typeshed", "cli-stubs"],
-            "",
+            None,
         ),
         (
             &[
@@ -68,7 +68,7 @@ fn user_stub_dirs_resolve_relative_to_config_and_cli_wins() {
                 ("stubs/foo.json", integer.as_bytes()),
             ],
             &[],
-            "bad.json",
+            Some("bad.json"),
         ),
     ];
     for (files, args, warning) in cases {
@@ -77,7 +77,11 @@ fn user_stub_dirs_resolve_relative_to_config_and_cli_wins() {
         write(tmp.path(), &[("use.R", b"library(foo)\nx <- bar() + 1L\n")]);
         let output = check_in(tmp.path(), &[args, &["use.R"]].concat());
         assert!(output.stdout().is_empty(), "{args:?}: {output:?}");
-        assert!(output.stderr().contains(warning), "{args:?}: {output:?}");
+        let warned = output.stderr().contains("ry: warning:");
+        assert_eq!(warned, warning.is_some(), "{args:?}: {output:?}");
+        if let Some(file) = warning {
+            assert!(output.stderr().contains(file), "{args:?}: {output:?}");
+        }
     }
 }
 
@@ -1288,6 +1292,8 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
         assert_notice(&human.stderr());
         assert!(!human.stdout().contains("degraded"), "{human:?}");
         let facts = ry!().cwd(pkg).args(["dump-facts", "R"]).run().json();
+        // Every file shares the one package context.
+        assert_eq!(facts["contexts"].as_array().unwrap().len(), 1, "{facts}");
         let scopes = &facts["contexts"][0]["inputs"]["degraded_scopes"];
         match degraded {
             Some((_, reason)) => {

@@ -29,8 +29,7 @@ impl Checker {
         let known_project_binding = names
             .iter()
             .any(|name| self.fn_table.known_vars.contains(*name));
-        let local_may_call = local
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+        let local_may_call = local.is_some_and(|ty| ty.mode.may_be_function())
             || names.iter().any(|name| scope.is_parameter(name));
         // Concrete data is skipped in call position. A flat project definition
         // behind that data may instead be a stale same-frame definition: do not

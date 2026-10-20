@@ -308,7 +308,7 @@ Each type is an object with `kind: "r_type"` and the following fields:
 
 | Field | Shape |
 | --- | --- |
-| `mode` | `logical`, `integer`, `double`, `complex`, `character`, `raw`, `list`, `null`, `function`, `opaque`, or `union`. |
+| `mode` | `logical`, `integer`, `double`, `complex`, `character`, `raw`, `list`, `null`, `function`, `environment`, `language`, `opaque`, or `union`. |
 | `length` | `{"kind":"known","value":N}`, `{"kind":"unknown"}`, or `{"kind":"nonempty"}` (exact count unknown, provably at least one). |
 | `class` | `kind` (`known` or `unknown`), ordered `names`, `capacity: 4`, and `may_be_truncated`. |
 | `columns` | `{"kind":"unknown"}` or an object with `kind` (`complete` or `partial`), `entries`, and `locally_constructed`. |
@@ -316,7 +316,10 @@ Each type is an object with `kind: "r_type"` and the following fields:
 | `function` | `{"kind":"not_applicable"}`, `{"kind":"unknown"}`, or the partial signature below. |
 
 `opaque` means the storage mode is unknown; other fields may still carry
-information. A known empty class list means no explicit class. The checker
+information. `environment` is a known environment; its class is never
+established, because environment attributes are shared by reference.
+`language` is a known symbol or call (`is.language()`), including formulas.
+Both export `function` as `not_applicable`. A known empty class list means no explicit class. The checker
 stores at most four class names. At capacity, `may_be_truncated` is true
 because it cannot establish whether the original vector was longer.
 

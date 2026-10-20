@@ -66,9 +66,8 @@ message or severity drift. A full non-check run updates all entries.
 ## Reconciliation
 
 `ecosystem/run.sh` reconciles the hermetic root reports it generates
-(`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. Every ledger has
-`"reconciliation": "hermetic"`: the ledger is the CI baseline, and any missing
-or unowned identity fails the build. A disappeared `true_positive` gets its
+(`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. The ledger is the CI
+baseline, and any missing or unowned identity fails the build. A disappeared `true_positive` gets its
 own error line.
 
 > Reproducing reports outside `run.sh` requires the same variable: without

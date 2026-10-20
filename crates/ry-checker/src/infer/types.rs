@@ -48,7 +48,7 @@ pub(crate) fn is_registered_ffi_wrapper(name: &str) -> bool {
 /// conversions depend on values; opaque and union modes remain uncertain.
 /// NULL's incompatibility is established separately by its zero length.
 pub(crate) fn modes_compatible(mode: &Mode, target: &Mode) -> bool {
-    if matches!(mode, Mode::Opaque | Mode::Union | Mode::Null) {
+    if mode.is_unknown_or_non_vector() || matches!(mode, Mode::Union | Mode::Null) {
         return true;
     }
     match target {
@@ -86,7 +86,8 @@ pub(super) fn modes_of(ty: &RType) -> Vec<Mode> {
 /// never as evidence of a mismatch.
 fn mode_set(ty: &RType) -> Option<Vec<Mode>> {
     let modes = modes_of(ty);
-    (!modes.is_empty() && !modes.contains(&Mode::Opaque)).then_some(modes)
+    (!modes.is_empty() && !modes.iter().any(|mode| mode.is_unknown_or_non_vector()))
+        .then_some(modes)
 }
 
 /// Return the R source symbol for a binary operator, for use in
@@ -260,8 +261,8 @@ pub(crate) fn standalone_check_provably_rejects(actual: &RType, expected: &RType
     }
 
     fn shapes_overlap(actual: &RType, expected: &RType) -> bool {
-        let modes_overlap = actual.mode == Mode::Opaque
-            || expected.mode == Mode::Opaque
+        let modes_overlap = actual.mode.is_unknown_or_non_vector()
+            || expected.mode.is_unknown_or_non_vector()
             || actual.mode == expected.mode;
         modes_overlap
             && lengths_overlap(actual.length, expected.length)
@@ -305,7 +306,7 @@ pub(crate) fn expected_type_label(expected: &RType) -> String {
 /// Non-literal callees return `None` so the caller stays silent.
 pub(crate) fn literal_callee_mode(e: &Expr) -> Option<Mode> {
     let t = infer_literal_default(e);
-    (!matches!(t.mode, Mode::Opaque)).then_some(t.mode)
+    (!t.mode.is_unknown()).then_some(t.mode)
 }
 
 /// Compute the longest known length among a slice of argument types.
@@ -446,11 +447,11 @@ pub(crate) fn json_length_to_length(spec: Option<JsonLength>) -> Length {
 
 pub(crate) fn json_rtype_scalar(jt: &JsonRType) -> RType {
     let length = json_length_to_length(JsonLength::parse(&jt.length));
-    let scalar = |mode| {
+    let scalar = |mode: Mode| {
         let class = if !jt.class.is_empty() {
             let refs: Vec<_> = jt.class.iter().map(String::as_str).collect();
             ClassVector::from_slice(&refs)
-        } else if mode == Mode::Opaque {
+        } else if mode.is_unknown() {
             ClassVector::unknown()
         } else {
             ClassVector::empty()

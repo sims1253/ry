@@ -80,7 +80,7 @@ impl Checker {
                         span,
                         known_null_is_actionable,
                     );
-                    if op.is_arithmetic() && result.mode != Mode::Opaque {
+                    if op.is_arithmetic() && !result.mode.is_unknown() {
                         result.class = result_class;
                     }
                     return result;
@@ -156,15 +156,9 @@ impl Checker {
                 // non-character one. R coerces the numeric operand to
                 // character, then compares lexicographically, which is
                 // rarely the programmer's intent.
-                if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
-                    && !matches!(lt_mode, Mode::Opaque)
-                    && !matches!(rt_mode, Mode::Opaque)
-                    && !matches!(lt_mode, Mode::Null)
-                    && !matches!(rt_mode, Mode::Null)
-                    && !matches!(lt_mode, Mode::List | Mode::Function)
-                    && !matches!(rt_mode, Mode::List | Mode::Function)
-                    && !matches!(lt_mode, Mode::Union)
-                    && !matches!(rt_mode, Mode::Union)
+                if lt_mode.is_atomic()
+                    && rt_mode.is_atomic()
+                    && (lt_mode == Mode::Character) != (rt_mode == Mode::Character)
                     && !compares_factor
                 {
                     self.emit(
@@ -290,7 +284,7 @@ impl Checker {
         operands: &[&RType],
         operand: &RType,
     ) -> Option<RType> {
-        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+        if operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union {
             return Some(RType::unknown());
         }
         let guarded = operands.iter().any(|operand| operand.class.guarded);
@@ -319,7 +313,7 @@ impl Checker {
                         let result = self.apply_sig(&sig, &arg_types, &[]);
                         // A specific stub, or a group stub declaring a
                         // usable shape, is this operator's method.
-                        if generic == symbol || !matches!(result.mode, Mode::Opaque) {
+                        if generic == symbol || !result.mode.is_unknown() {
                             return Some(dispatch_result(guarded, result));
                         }
                         // Only embedded base group methods have storage-mode
@@ -369,7 +363,7 @@ impl Checker {
         let symbol = op_symbol(op);
         if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, plain_vectors, scope) {
             match &result {
-                ops_chooser::Dispatch::Value(value) if value.mode != Mode::Opaque => {}
+                ops_chooser::Dispatch::Value(value) if !value.mode.is_unknown() => {}
                 _ => scope.invalidate_ops_environment(),
             }
             return Some(result);
@@ -382,7 +376,7 @@ impl Checker {
         // type. Include opaque group stubs in this identity check even though
         // their return shapes use the storage-mode fallback below.
         if [lhs, rhs].iter().any(|operand| {
-            operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union)
+            operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union
         }) {
             return Some(ops_chooser::Dispatch::Value(RType::unknown()));
         }
@@ -471,6 +465,7 @@ impl Checker {
                 rhs_loop_vector = !rhs_unreachable && self.loop_vector_operand(rhs, &rhs_scope);
                 let rt = self.infer_boolean_operand(rhs, &mut rhs_scope);
                 merge_condition_assignments(scope, &rhs_scope, rhs);
+                self.merge_condition_identities(scope, &rhs_scope);
                 rt
             }
             _ => {
@@ -896,18 +891,29 @@ impl Checker {
         }
     }
 
-    fn method_screens(&self) -> MethodScreens {
-        *self.method_screens.get_or_init(|| MethodScreens {
+    fn method_screens(&self) -> &MethodScreens {
+        self.method_screens.get_or_init(|| MethodScreens {
             comparison: self.project_defines_method(|generic| {
                 matches!(generic, "Ops" | "<" | "<=" | ">" | ">=" | "==" | "!=")
             }),
             scalar_proof: self.scan_scalar_proof_methods(),
             length_s3: self.project_defines_s3_method(|generic| generic == "length"),
+            frame_effect: crate::semantic_lists::FRAME_EFFECT_DISPATCH_GENERICS
+                .iter()
+                .copied()
+                .filter(|wanted| self.project_defines_method(|generic| generic == *wanted))
+                .collect(),
         })
     }
 
-    fn project_defines_comparison_method(&self) -> bool {
+    pub(super) fn project_defines_comparison_method(&self) -> bool {
         self.method_screens().comparison
+    }
+
+    /// Whether the project or its imports define a method for `generic`, one
+    /// of the generics an audited inert call may dispatch (call_effect.rs).
+    pub(super) fn project_defines_frame_effect_method(&self, generic: &str) -> bool {
+        self.method_screens().frame_effect.contains(generic)
     }
 
     /// A scalar fact relies on base `length`, comparisons, indexing, and the
@@ -1021,11 +1027,12 @@ impl Checker {
 
 /// Whether the project or its imports define methods that the scalar
 /// proofs depend on. Computed once per collected table.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct MethodScreens {
     comparison: bool,
     scalar_proof: bool,
     length_s3: bool,
+    frame_effect: FxSet<&'static str>,
 }
 
 /// Model the base `Ops.data.frame` method without losing the table's schema.

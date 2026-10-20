@@ -20,6 +20,7 @@ mod superassignment;
 mod table_index_masks;
 mod type_inference;
 mod typed_maps;
+mod value_kinds;
 
 // Shared fixtures used across topic modules.
 

@@ -21,7 +21,7 @@ them were local-only and no longer exist; `upstream-ggplot2` and
 
 | Ledger | `ry` | Packages | Diagnostics | TP / FP / Unc | Reconciliation |
 | :-- | :-- | :-- | ---: | :-- | :-- |
-| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 92 | 38 / 36 / 0 (+18 unowned) | hermetic (strict CI gate) |
+| [`tidyverse-0.7.1.json`](tidyverse-0.7.1.json) | 0.9 dev | 24 | 91 | 37 / 36 / 0 (+18 unowned) | hermetic (strict CI gate) |
 | [`posit-0.9.0.json`](posit-0.9.0.json) | 0.9 dev | 62 | 401 | 95 / 306 / 0 | hermetic (strict CI gate) |
 
 The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its

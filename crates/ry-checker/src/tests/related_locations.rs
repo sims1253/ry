@@ -134,6 +134,11 @@ fn unproven_origins_keep_the_finding_without_a_location() {
         &format!(
             "{helper}flag <- TRUE\nok <- flag && do.call(\"<-\", list(\"helper\", function(x) x))\nhelper(1)\n"
         ),
+        // A project helper may rebind the global through `do.call` before
+        // an outside caller runs `use()`.
+        &format!(
+            "{helper}swap <- function() do.call(\"<<-\", list(\"helper\", function(x) x))\nuse <- function() helper(1)\n"
+        ),
         // Captured from an intermediate frame.
         &format!("{helper}f <- function() {{\n  g <- function() helper(1)\n  g\n}}\n"),
         // Expected absence: `local()` runs code in the global frame's flow.

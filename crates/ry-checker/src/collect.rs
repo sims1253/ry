@@ -223,6 +223,9 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
             Some(expression) => collect_quoted_global_writes(&expression.value, writes),
             None => writes.opaque = true,
         },
+        // The called function and its arguments are runtime values, so the
+        // call may run any binder (`do.call("<<-", ...)`).
+        "do.call" => writes.opaque = true,
         _ => match strip_package(name, "methods").unwrap_or(name) {
             // Installing a generic can replace an ordinary binding in the
             // current/global environment. The method table can also change

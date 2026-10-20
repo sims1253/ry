@@ -775,7 +775,9 @@ pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
     // The embedded JSON always parses. A failure is a build-time data bug,
     // so panicking on first access is acceptable.
-    Ok(CACHE.get_or_init(|| load_base().expect("embedded base typeshed must parse")))
+    Ok(CACHE.get_or_init(|| {
+        load_base().unwrap_or_else(|error| panic!("embedded base typeshed must parse: {error}"))
+    }))
 }
 
 /// Load a non-base package's typeshed. Returns `None` for an unknown

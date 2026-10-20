@@ -26,7 +26,7 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     let mut paths = Vec::new();
     stub_paths(Path::new("vendor"), &mut paths);
-    // Sorted by package name, which fixes signature resolution order.
+    // Byte order of package names sets signature resolution order.
     let mut stems = BTreeSet::new();
     for path in paths {
         let stem = path

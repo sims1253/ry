@@ -661,9 +661,7 @@ pub fn resolve_workspace_context<'a>(
                     // supply arbitrary exports. This is intentionally a
                     // file-local open search path, never a project-wide
                     // promotion.
-                    if !user_stubs.contains_key(package)
-                        && ry_typeshed::load_package(package).is_none()
-                    {
+                    if ry_typeshed::package_stub(user_stubs, package).is_none() {
                         file_bindings.insert(SERIALIZED_BINDINGS_UNENUMERABLE.to_string());
                     }
                 }
@@ -690,10 +688,7 @@ pub fn resolve_workspace_context<'a>(
                 installed_package_exports(package, &library_roots, preferred_version.as_deref())
             });
             file_bindings.extend(exports.iter().cloned());
-            if let Some(typeshed) = user_stubs
-                .get(package)
-                .or_else(|| ry_typeshed::load_package(package))
-            {
+            if let Some(typeshed) = ry_typeshed::package_stub(user_stubs, package) {
                 file_bindings.extend(typeshed.functions.keys().cloned());
                 file_bindings.extend(typeshed.datasets.keys().cloned());
                 file_bindings.extend(typeshed.globals.ambient_functions.iter().cloned());
@@ -1133,15 +1128,11 @@ fn loaded_serialized_bindings(
                 };
                 let signature = if let Some((package, function)) = name.rsplit_once("::") {
                     let package = package.trim_end_matches(':');
-                    user_stubs
-                        .get(package)
-                        .or_else(|| ry_typeshed::load_package(package))
+                    ry_typeshed::package_stub(user_stubs, package)
                         .and_then(|typeshed| typeshed.functions.get(function))
                 } else {
                     attached_packages.iter().find_map(|package| {
-                        user_stubs
-                            .get(package)
-                            .or_else(|| ry_typeshed::load_package(package))
+                        ry_typeshed::package_stub(user_stubs, package)
                             .and_then(|typeshed| typeshed.functions.get(name))
                             .filter(|signature| signature.source_relative_path_arg.is_some())
                     })

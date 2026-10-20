@@ -151,9 +151,7 @@ pub fn attaching<'a>(
     package: &'a str,
     user_stubs: &'a BTreeMap<String, Typeshed>,
 ) -> impl Iterator<Item = &'a str> {
-    let attaches = user_stubs
-        .get(package)
-        .or_else(|| ry_typeshed::load_package(package))
+    let attaches = ry_typeshed::package_stub(user_stubs, package)
         .map_or(&[][..], |stub| stub.attaches.as_slice());
     std::iter::once(package).chain(attaches.iter().map(String::as_str))
 }

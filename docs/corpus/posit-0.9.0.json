@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "a0585e902519cb2006dbe5602a105f3c6903f84af6b56d83e5bea08628f7137d",
-  "ry_commit": "PENDING",
+  "source_sha256": "16a94182701eb75dbe5bd09768c262f1f21ecac76c5b778e80f5eb53f48da3a4",
+  "ry_commit": "9acf3bcbad2f7ed5b7bfae4407ca9948e1fb6085",
   "reconciliation": "hermetic",
   "packages": [
     {

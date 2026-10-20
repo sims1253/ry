@@ -971,6 +971,6 @@
     "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and a non-character value compare the formatted strings, so RY033 now fires only for `<`, `>`, `<=`, `>=`. One reviewed false positive disappears: duckplyr R/fallback.R:75:21 (P8, `Sys.getenv(\"DUCKPLYR_FALLBACK_INFO\") == TRUE`). No identity is added; every true positive remains.",
     "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both P7a false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains, and the P7a group stays at zero."
   ],
-  "ry_commit": "PENDING",
-  "source_sha256": "be4d82f2de6c5d6d36d9fb923ab26ca8a9418d767be0c609584be947d3402839"
+  "ry_commit": "9acf3bcbad2f7ed5b7bfae4407ca9948e1fb6085",
+  "source_sha256": "57aacf93c2fbcbaf4cfaf678cc1e5cf825b328c644ddb8ad6864c4a069cdbd6d"
 }

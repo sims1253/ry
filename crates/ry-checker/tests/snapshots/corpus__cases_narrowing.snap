@@ -2,6 +2,18 @@
 source: crates/ry-checker/tests/corpus.rs
 expression: rows
 ---
+- case: a not-null guard on a NULL binding keeps the branch well typed
+  diagnostics: []
+- case: rlang is_null guard narrows a NULL default parameter
+  diagnostics: []
+- case: a stop guard makes a NULL default function callable
+  diagnostics: []
+- case: a stop guard lets a NULL default use $
+  diagnostics: []
+- case: a negated is.character stop guard narrows the mode
+  diagnostics: []
+- case: a return guard narrows like a stop guard
+  diagnostics: []
 - case: a guard block ending in stop diverges
   diagnostics:
     - code: RY092
@@ -14,6 +26,8 @@ expression: rows
       line: 64
       message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
       severity: warning
+- case: a stop guard inside a function defined in a loop narrows
+  diagnostics: []
 - case: a warning guard does not narrow the continuation
   diagnostics:
     - code: RY070
@@ -26,6 +40,10 @@ expression: rows
       line: 91
       message: "could not find function `fun` (bound here as `NULL`)"
       severity: error
+- case: a diverging compound length guard makes the continuation scalar
+  diagnostics: []
+- case: a reversed length guard in a long or chain makes the continuation scalar
+  diagnostics: []
 - case: a warning compound length guard does not narrow the continuation
   diagnostics:
     - code: RY001
@@ -44,12 +62,26 @@ expression: rows
       line: 135
       message: "could not find function `fun` (bound here as `NULL`)"
       severity: error
+- case: a helper that always stops narrows the continuation
+  diagnostics: []
+- case: a break guard narrows the rest of the loop body
+  diagnostics: []
+- case: a stop in the else branch promotes the then refinement
+  diagnostics: []
+- case: is.function narrows the then branch of an if expression
+  diagnostics: []
 - case: is.list replaces an incompatible default only in the then branch
   diagnostics:
     - code: RY061
       line: 172
       message: "$ operator is invalid for atomic vectors of mode `logical`"
       severity: error
+- case: is.function replaces an incompatible default
+  diagnostics: []
+- case: an assignment in a call argument of an if condition binds after short circuit
+  diagnostics: []
+- case: an assignment in a call argument of a while condition binds after short circuit
+  diagnostics: []
 - case: is.numeric narrowing stays inside the branch
   diagnostics:
     - code: RY010
@@ -84,6 +116,12 @@ expression: rows
       line: 227
       message: "variable `missing_in_function` is not bound in this scope"
       severity: warning
+- case: check_string with allow_null accepts NULL
+  diagnostics: []
+- case: check_string with allow_na accepts a logical NA candidate
+  diagnostics: []
+- case: check_string on a union with a string member may succeed
+  diagnostics: []
 - case: check_string on NULL always fails
   diagnostics:
     - code: RY092
@@ -102,6 +140,10 @@ expression: rows
       line: 257
       message: "argument `value` to `check_string` is `union[integer<len=1>, list<len=0>{}]`, expected character"
       severity: error
+- case: standalone checks do not reject incompatible parameter defaults
+  diagnostics: []
+- case: narrowing after an abort guard keeps the default uncertain
+  diagnostics: []
 - case: a reassigned parameter can make check_string impossible
   diagnostics:
     - code: RY092
@@ -118,6 +160,12 @@ expression: rows
       line: 286
       message: "variable `missing_after_call` is not bound in this scope"
       severity: warning
+- case: check_data_frame accepts a data frame with several columns
+  diagnostics: []
+- case: "a mode predicate's false branch drops the default's mode"
+  diagnostics: []
+- case: an is.numeric false branch drops a numeric default
+  diagnostics: []
 - case: a local literal keeps its else branch diagnostic
   diagnostics:
     - code: RY061
@@ -130,6 +178,8 @@ expression: rows
       line: 329
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
+- case: a NULL default else branch stays silent
+  diagnostics: []
 - case: "an inherits false branch keeps the default's diagnostic"
   diagnostics:
     - code: RY061
@@ -142,6 +192,8 @@ expression: rows
       line: 353
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
+- case: an opaque classless stub return does not fail check_data_frame
+  diagnostics: []
 - case: concrete atomic values still fail check_data_frame
   diagnostics:
     - code: RY092
@@ -174,12 +226,26 @@ expression: rows
       line: 400
       message: "argument `value` to `check_string` is `character<len=2>`, expected character"
       severity: error
+- case: a user function named check_string is not an impossible guard
+  diagnostics: []
 - case: a user check_string with the rlang signature narrows
   diagnostics:
     - code: RY092
       line: 414
       message: "argument `choice` to `check_string` is `character<len=2>`, expected character"
       severity: error
+- case: "rlang::check_string accepts a union that may be a string"
+  diagnostics: []
+- case: a binding made in both if branches is visible afterwards
+  diagnostics: []
+- case: a !length(x) return guard narrows a NULL default
+  diagnostics: []
+- case: a length(x) == 0 return guard narrows a NULL default
+  diagnostics: []
+- case: both branches replacing NULL with a function make it callable
+  diagnostics: []
+- case: nested branches that all install a function make it callable
+  diagnostics: []
 - case: an if without else keeps the NULL path for the call
   diagnostics:
     - code: RY070
@@ -204,6 +270,22 @@ expression: rows
       line: 460
       message: "could not find function `g` (bound here as `union`)"
       severity: error
+- case: a return in the then branch does not bring back NULL
+  diagnostics: []
+- case: a return in the else branch does not bring back NULL
+  diagnostics: []
+- case: is.character or is.null rejects a character default in the else branch
+  diagnostics: []
+- case: a negated and of the predicates rejects the default in the then branch
+  diagnostics: []
+- case: is.null or is.character in either order rejects the default
+  diagnostics: []
+- case: base-qualified predicates reject the default
+  diagnostics: []
+- case: a negated or of the predicates rejects the default
+  diagnostics: []
+- case: a three-way or of predicates rejects the default
+  diagnostics: []
 - case: an or guard does not narrow its true branch
   diagnostics:
     - code: RY061
@@ -246,18 +328,44 @@ expression: rows
       line: 527
       message: "$ operator is invalid for atomic vectors of mode `character`"
       severity: error
+- case: stopifnot with a negated conjunction narrows the default
+  diagnostics: []
+- case: is.list and not is.null narrows the then branch
+  diagnostics: []
+- case: an early-return NULL guard narrows a find-or-NULL union
+  diagnostics: []
+- case: a replacement NULL guard narrows a find-or-NULL union
+  diagnostics: []
+- case: a mirrored else-return guard narrows a find-or-NULL union
+  diagnostics: []
+- case: a stop NULL guard narrows a find-or-NULL union
+  diagnostics: []
+- case: a short-circuit NULL guard inside the condition narrows the union
+  diagnostics: []
+- case: an if else NULL check narrows the else arm
+  diagnostics: []
 - case: a NULL return guard on a NULL default may still leave a zero-length value
   diagnostics:
     - code: RY001
       line: 659
       message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: a NULL return guard followed by is.character stays silent
+  diagnostics: []
 - case: a same-type rebind in a NULL guard keeps the NULL member
   diagnostics:
     - code: RY001
       line: 691
       message: "`if` condition is `union[logical<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: a replacement guard on a NULL default removes the stale NULL
+  diagnostics: []
+- case: a replacement guard on a local NULL removes the stale NULL
+  diagnostics: []
+- case: a mirrored replacement guard on a NULL default removes the stale NULL
+  diagnostics: []
+- case: a mirrored replacement guard on a local NULL removes the stale NULL
+  diagnostics: []
 - case: a NULL return guard without replacement may leave a zero-length default
   diagnostics:
     - code: RY001

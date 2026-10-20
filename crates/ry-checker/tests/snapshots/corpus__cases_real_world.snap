@@ -2,4 +2,19 @@
 source: crates/ry-checker/tests/corpus.rs
 expression: rows
 ---
-[]
+- case: user mean with a default argument is clean
+  diagnostics: []
+- case: the mtcars dataset is a known value
+  diagnostics: []
+- case: subset() resolves a column name inside the data frame
+  diagnostics: []
+- case: print dispatches to a user S3 method
+  diagnostics: []
+- case: NA in a double vector keeps arithmetic and mean() well typed
+  diagnostics: []
+- case: c() coercion and an if expression join are clean
+  diagnostics: []
+- case: a for loop accumulator is clean
+  diagnostics: []
+- case: vectorized arithmetic and which() are clean
+  diagnostics: []

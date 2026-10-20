@@ -14,6 +14,10 @@ expression: rows
       line: 9
       message: "variable `undefined_thing` is not bound in this scope"
       severity: warning
+- case: formals replacement binds the names a placeholder closure reads
+  diagnostics: []
+- case: body replacement makes a placeholder closure opaque
+  diagnostics: []
 - case: formals replacement does not silence a same-named closure elsewhere
   diagnostics:
     - code: RY010
@@ -32,12 +36,16 @@ expression: rows
       line: 58
       message: "variable `undefined_name` is not bound in this scope"
       severity: warning
+- case: body replacement drops nested closure findings
+  diagnostics: []
 - case: formals replacement keeps a typed map error in the body
   diagnostics:
     - code: RY080
       line: 78
       message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
       severity: error
+- case: body replacement drops a typed map error in the body
+  diagnostics: []
 - case: a rebind after formals replacement is a fresh closure
   diagnostics:
     - code: RY010
@@ -62,6 +70,20 @@ expression: rows
       line: 120
       message: "variable `undefined_name` is not bound in this scope"
       severity: warning
+- case: formals replacement inside local applies to the local closure
+  diagnostics: []
+- case: body replacement wins when formals replacement comes first
+  diagnostics: []
+- case: body replacement wins when formals replacement comes after
+  diagnostics: []
+- case: valid utf8 source has no encoding error
+  diagnostics: []
+- case: a byte order mark inside a string is an ordinary character
+  diagnostics: []
+- case: a byte order mark inside a comment is an ordinary character
+  diagnostics: []
+- case: an empty source is clean
+  diagnostics: []
 - case: a comparison directly inside length is flagged
   diagnostics:
     - code: RY093
@@ -200,6 +222,10 @@ expression: rows
       line: 200
       message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `all(x > 1)`"
       severity: warning
+- case: comparisons that keep the any or all value are allowed
+  diagnostics: []
+- case: element level comparisons inside any and all are allowed
+  diagnostics: []
 - case: a local any is not assumed to return one logical
   diagnostics:
     - code: RY002
@@ -260,6 +286,8 @@ expression: rows
       line: 244
       message: "comparison is inside `length()`; compare `length(x)` instead"
       severity: warning
+- case: negation before a comparison negates the comparison
+  diagnostics: []
 - case: hasArg needs a formal of the enclosing function unless it has dots
   diagnostics:
     - code: RY096

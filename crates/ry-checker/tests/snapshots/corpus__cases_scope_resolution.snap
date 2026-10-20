@@ -2,6 +2,10 @@
 source: crates/ry-checker/tests/corpus.rs
 expression: rows
 ---
+- case: slot extraction on an integer vector is silent
+  diagnostics: []
+- case: slot extraction on a factor is silent
+  diagnostics: []
 - case: dollar on an integer vector is an atomic-vector error
   diagnostics:
     - code: RY061
@@ -18,6 +22,8 @@ expression: rows
       line: 18
       message: "variable `dataset` is not bound in this scope"
       severity: warning
+- case: require of an unstubbed package opens the search path
+  diagnostics: []
 - case: library of an unknown package opens the search path for later reads
   diagnostics:
     - code: RY010
@@ -36,6 +42,16 @@ expression: rows
       line: 54
       message: "variable `genuinely_missing` is not bound in this scope"
       severity: warning
+- case: positional local TRUE sources into the function frame
+  diagnostics: []
+- case: source exprs with local TRUE binds in the function frame
+  diagnostics: []
+- case: named local before file sources into the function frame
+  diagnostics: []
+- case: partial name lo matches local
+  diagnostics: []
+- case: unknown local environment opens the function scope
+  diagnostics: []
 - case: positional local FALSE leaves function reads unbound
   diagnostics:
     - code: RY010
@@ -64,24 +80,60 @@ expression: rows
       line: 122
       message: "variable `still_missing` is not bound in this scope"
       severity: warning
+- case: shiny testServer injects session input and output
+  diagnostics: []
+- case: shiny reactive code arguments are quoted
+  diagnostics: []
+- case: local function shadows a typed package constant
+  diagnostics: []
+- case: unresolved destructuring operator quotes its operands
+  diagnostics: []
+- case: embrace resolves a bound formal outside a data mask
+  diagnostics: []
+- case: "embrace resolves the formal in function scope, not the data mask"
+  diagnostics: []
 - case: embrace of an unbound symbol reports typo
   diagnostics:
     - code: RY010
       line: 176
       message: "variable `typo` is not bound in this scope"
       severity: warning
+- case: data pronoun resolves a known column
+  diagnostics: []
+- case: data pronoun double bracket resolves a known column
+  diagnostics: []
 - case: data pronoun with a missing column is an undefined column
   diagnostics:
     - code: RY060
       line: 191
       message: "column `missing` not found in data frame schema; available columns: known"
       severity: error
+- case: data pronoun on an opaque mask is silent
+  diagnostics: []
+- case: env pronoun resolves an enclosing binding
+  diagnostics: []
+- case: env pronoun double bracket resolves an enclosing binding
+  diagnostics: []
 - case: env pronoun reports the unbound name
   diagnostics:
     - code: RY010
       line: 212
       message: "variable `unbound` is not bound in this scope"
       severity: warning
+- case: bare data pronoun inside a mask is silent
+  diagnostics: []
+- case: scalar index of a length union drops the source lengths
+  diagnostics: []
+- case: variable index of a length union drops the source lengths
+  diagnostics: []
+- case: multi-argument index of a length union drops the source lengths
+  diagnostics: []
+- case: scalar index of an opaque-length vector drops the source length
+  diagnostics: []
+- case: variable index of an opaque-length vector drops the source length
+  diagnostics: []
+- case: multi-argument index of an opaque-length vector drops the source length
+  diagnostics: []
 - case: unbound index on an opaque-length vector reports undefined_index
   diagnostics:
     - code: RY010
@@ -94,18 +146,64 @@ expression: rows
       line: 276
       message: "`if` condition is `union[logical<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
       severity: warning
+- case: list and logical condition union stays possibly valid
+  diagnostics: []
+- case: s4 method on a signature call dispatches
+  diagnostics: []
+- case: s4 method on a named signature dispatches
+  diagnostics: []
+- case: s4 slot access and assignment are silent for any slot
+  diagnostics: []
+- case: named vector columns survive transposed data frame constructors
+  diagnostics: []
+- case: unknown vector names do not invent a data frame schema
+  diagnostics: []
 - case: function reading its own binding before assignment reports it
   diagnostics:
     - code: RY010
       line: 325
       message: "variable `h` is not bound in this scope"
       severity: warning
+- case: top-level use before assignment stays silent
+  diagnostics: []
+- case: namespace-qualified value is not unbound
+  diagnostics: []
+- case: namespace-qualified statement is not unbound
+  diagnostics: []
+- case: namespace-qualified backtick operator is not unbound
+  diagnostics: []
+- case: triple-colon value is not unbound
+  diagnostics: []
+- case: namespace-qualified call to an unstubbed package is silent
+  diagnostics: []
+- case: backtick percent operator is not unbound
+  diagnostics: []
+- case: backtick builtin operator is not unbound
+  diagnostics: []
+- case: backtick pipe operator is not unbound
+  diagnostics: []
+- case: nested local function shadows a project function signature
+  diagnostics: []
+- case: local function shadows the base inherits signature
+  diagnostics: []
+- case: local function shadows base eval
+  diagnostics: []
 - case: plain unbound reference is reported
   diagnostics:
     - code: RY010
       line: 409
       message: "variable `genuinely_unbound_name` is not bound in this scope"
       severity: warning
+- case: library of an unknown package hides later unbound reads
+  diagnostics: []
+- case: dynamic character.only library hides later unbound reads
+  diagnostics: []
+- case: data and load hide later unbound reads
+  diagnostics: []
+- case: attach of a list hides later unbound reads
+  diagnostics: []
+- case: sibling testthat blocks do not share bindings
+  diagnostics: []
 - case: same-block shadowing keeps the call error
   diagnostics:
     - code: RY070
@@ -124,6 +222,8 @@ expression: rows
       line: 469
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
+- case: describe and it blocks isolate sibling bindings
+  diagnostics: []
 - case: test_that wrapper argument is ordinary caller code
   diagnostics:
     - code: RY040
@@ -134,12 +234,24 @@ expression: rows
       line: 492
       message: "cannot apply arithmetic op to `integer` and `character`"
       severity: error
+- case: named testthat block arguments isolate the body
+  diagnostics: []
 - case: delayedAssign does not read the promise expression
   diagnostics:
     - code: RY010
       line: 512
       message: "variable `not_bound` is not bound in this scope"
       severity: warning
+- case: delayedAssign with named reordered arguments binds x
+  diagnostics: []
+- case: delayedAssign with named x and positional value binds x
+  diagnostics: []
+- case: qualified delayedAssign binds x
+  diagnostics: []
+- case: delayedAssign with partial val binds x
+  diagnostics: []
+- case: delayedAssign with eval.env binds x
+  diagnostics: []
 - case: delayedAssign does not bind the value string
   diagnostics:
     - code: RY010
@@ -168,3 +280,5 @@ expression: rows
       line: 578
       message: "variable `not_bound` is not bound in this scope"
       severity: warning
+- case: local block in the caller frame lets closures read later helpers
+  diagnostics: []

@@ -10,7 +10,7 @@
 //! `testdata/cases/<topic>.R` holds many small cases per file. Each case is
 //! a `## case: <name>` line, a marker line, and R source, checked alone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use ry_checker::{Checker, Severity};
@@ -336,8 +336,12 @@ fn case_files_match_their_expectations() {
     let mut snapshots = Vec::new();
     for path in &paths {
         let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let cases = load_cases(path);
+        if cases.is_empty() {
+            failures.push(format!("{file}: no `## case:` blocks"));
+        }
         let mut rows = Vec::new();
-        for case in load_cases(path) {
+        for case in cases {
             let diagnostics = run_diagnostics("test.R", &case.src);
             let got = code_counts(diagnostics.iter().map(|d| d.code));
             if !expectation_holds(&case.expected, &got) {
@@ -346,20 +350,18 @@ fn case_files_match_their_expectations() {
                     case.name, case.expected
                 ));
             }
-            if !diagnostics.is_empty() {
-                let diagnostics = diagnostics
-                    .iter()
-                    .map(|d| {
-                        serde_json::json!({
-                            "code": d.code,
-                            "severity": d.severity.as_str(),
-                            "line": case.first_line + d.span.line,
-                            "message": d.message,
-                        })
+            let diagnostics = diagnostics
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "code": d.code,
+                        "severity": d.severity.as_str(),
+                        "line": case.first_line + d.span.line,
+                        "message": d.message,
                     })
-                    .collect::<Vec<_>>();
-                rows.push(serde_json::json!({"case": case.name, "diagnostics": diagnostics}));
-            }
+                })
+                .collect::<Vec<_>>();
+            rows.push(serde_json::json!({"case": case.name, "diagnostics": diagnostics}));
         }
         snapshots.push((file.trim_end_matches(".R").to_string(), rows));
     }
@@ -369,7 +371,25 @@ fn case_files_match_their_expectations() {
         failures.len(),
         failures.join("\n  - ")
     );
+    let topics: BTreeSet<String> = snapshots.iter().map(|(topic, _)| topic.clone()).collect();
     for (topic, rows) in snapshots {
         insta::assert_yaml_snapshot!(format!("cases_{topic}"), rows);
     }
+    // A deleted case file must take its snapshot with it.
+    let snapshot_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let snapshot_topics: BTreeSet<String> = fs::read_dir(&snapshot_dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", snapshot_dir.display()))
+        .filter_map(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            Some(
+                name.strip_prefix("corpus__cases_")?
+                    .strip_suffix(".snap")?
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        snapshot_topics, topics,
+        "corpus__cases_*.snap files must match testdata/cases/*.R"
+    );
 }

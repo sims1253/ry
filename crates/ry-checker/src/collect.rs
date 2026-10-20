@@ -1758,6 +1758,10 @@ fn is_dispatch_call(expression: &Expr) -> bool {
 }
 
 /// `Some(true)` for `missing(name)`, `Some(false)` for `!missing(name)`.
+/// With `name` missing, a disjunction is TRUE as soon as one disjunct is
+/// (`missing(x) || is.null(x)`) and a conjunction is FALSE as soon as one
+/// conjunct is (`!missing(x) && ...`). An operand that reads the argument
+/// on that path (`missing(x) | x`) still forces it through the condition.
 fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
     match condition {
         Expr::UnaryOp {
@@ -1765,6 +1769,17 @@ fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
             expr,
             ..
         } => missing_test(expr, name).map(|missing| !missing),
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            let decided = match op {
+                BinOpKind::OrOr | BinOpKind::Or => true,
+                BinOpKind::AndAnd | BinOpKind::And => false,
+                _ => return None,
+            };
+            [lhs, rhs]
+                .into_iter()
+                .any(|operand| missing_test(operand, name) == Some(decided))
+                .then_some(decided)
+        }
         Expr::Call { func, args, .. } => {
             let [argument] = args.as_slice() else {
                 return None;

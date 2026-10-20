@@ -6,6 +6,8 @@ use std::path::Path;
 use ry_testkit::{CliOutput, ry};
 use serde_json::json;
 
+use crate::support::{Files, write};
+
 /// `ry check - --stdin-filename <logical> --output-format json <extra>`.
 fn stdin(root: &Path, logical: &str, extra: &[&str], input: &[u8]) -> CliOutput {
     ry!()
@@ -25,17 +27,6 @@ fn disk(root: &Path, operands: &[&str]) -> CliOutput {
         .args(operands)
         .args(["--output-format", "json"])
         .run()
-}
-
-/// `(relative path, contents)` pairs to create.
-type Files<'a> = &'a [(&'a str, &'a [u8])];
-
-fn write(root: &Path, files: Files) {
-    for (path, contents) in files {
-        let path = root.join(path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, contents).unwrap();
-    }
 }
 
 #[test]

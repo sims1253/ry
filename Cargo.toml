@@ -57,10 +57,11 @@ flate2 = "1"
 liblzma = { version = "0.4.8", default-features = false, features = ["static"] }
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
 strip = "symbols"
 
-# Profile cargo-dist builds release artifacts with.
+# cargo-dist builds release artifacts with this profile. Fat LTO lives here
+# so CI release builds skip it.
 [profile.dist]
 inherits = "release"
+lto = "fat"
+codegen-units = 1

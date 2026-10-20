@@ -19,6 +19,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       RAYON_NUM_THREADS: '2'
+      # Measure with the [profile.dist] settings that shipped binaries use.
+      CARGO_PROFILE_RELEASE_LTO: fat
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

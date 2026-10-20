@@ -1,40 +1,13 @@
-# OpenCodeReview — LLM review bot for PRs (https://open-codereview.ai).
-#
-# Reviews diffs with an LLM and posts inline review comments. Auto-review is
-# gated to MEMBER/OWNER/COLLABORATOR PR authors on same-repo branches; fork
-# PRs (even from trusted authors — fork runs get no secrets) are only
-# reviewed when a maintainer triggers it via comment — otherwise any fork
-# could burn LLM quota just by opening PRs. Required repo settings
-# (Settings → Secrets and variables → Actions):
-#   secret           OCR_LLM_URL            LLM API endpoint
-#   secret           OCR_LLM_AUTH_TOKEN     LLM auth token
-#   secret/variable  OCR_LLM_MODEL          model name (no default; variable or secret)
-#   variable         OCR_LLM_USE_ANTHROPIC  'true' for Anthropic, else OpenAI-compatible
-#
-# Re-review on demand: comment '/open-code-review' or '@open-code-review'
-# on any PR (maintainers only).
+# OpenCodeReview LLM review bot (https://open-codereview.ai). Trusted
+# same-repo PRs get an automatic review. A maintainer comment starting with
+# /open-code-review or @open-code-review reviews any PR, including forks.
+# Settings: secrets OCR_LLM_URL and OCR_LLM_AUTH_TOKEN, OCR_LLM_MODEL as a
+# variable or secret, and variable OCR_LLM_USE_ANTHROPIC ('true' for Anthropic).
 
 name: OpenCodeReview PR Review
 
-# Conditional concurrency group.
-#
-# GitHub Actions evaluates concurrency BEFORE job-level if-conditions. With a
-# flat group (ocr-<pr_number>), every comment on the PR — even an unrelated
-# conversation reply that will be skipped — enters the same group and, because
-# cancel-in-progress is true, cancels any in-progress review. The result: a
-# single normal comment kills a running review, and you see "two runs, one
-# cancelled" in the Actions tab.
-#
-# Fix: matching events (trusted same-repo PR events + /open-code-review
-# comments) share a per-PR group so a new review cancels any stale one for
-# the same PR. Everything else — non-matching comments, but also PR events
-# from untrusted authors or from forks (fork runs get no secrets, so they
-# can never review) — lands in a unique noop-<run_id> group that can never
-# collide with a real review, so those runs are skipped instantly without
-# disrupting anything. Untrusted PR events must stay out of the per-PR
-# group: although the job if skips them, concurrency is evaluated first, so
-# a shared group would let a fork author cancel a maintainer-triggered
-# review just by pushing.
+# Concurrency is evaluated before the job `if`, so this repeats the job's
+# trust predicate. Other events get a unique group and cannot cancel a review.
 concurrency:
   group: >-
     ${{
@@ -69,12 +42,7 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  # Plain pull_request keeps fork-PR runs structurally cut off from secrets:
-  # GitHub runs them with an empty secrets context, so a fork cannot invoke
-  # the reviewer with OCR_LLM_AUTH_TOKEN even if the job condition ever
-  # regressed. Same-repo branches (the maintainers') get the full context.
-  # Cost: a trusted author PRing from a personal fork gets no auto-review;
-  # the comment trigger below still covers that case.
+  # Plain pull_request gives fork runs no secrets, even if the job `if` regresses.
   pull_request:
     types: [opened, synchronize, reopened]
   issue_comment:
@@ -88,16 +56,8 @@ jobs:
   code-review:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Run on same-repo PR events from trusted authors, or on human-authored
-    # comments starting with trigger keywords. Bot comments are excluded as
-    # a safety net: GITHUB_TOKEN already suppresses events from bot-posted
-    # comments, but a PAT/App token would not. Both paths are gated on
-    # author_association so only MEMBER/OWNER/COLLABORATOR users can spend
-    # LLM quota. The PR path additionally requires the head repo to equal
-    # the base repo: fork runs get an empty secrets context, so without this
-    # a trusted author PRing from a personal fork would start a review job
-    # that can only fail — fork PRs are reviewed only via the comment
-    # trigger below (a maintainer opts them in by commenting a keyword).
+    # Keep in sync with the concurrency group. Bot comments are excluded
+    # because a PAT or App token, unlike GITHUB_TOKEN, would trigger runs.
     if: |
       (
         github.event_name == 'pull_request'
@@ -123,9 +83,6 @@ jobs:
         )
       )
     steps:
-      # Fail fast with a clear message if the model is configured in
-      # neither place — otherwise the review fails deep inside the action
-      # (or silently uses a provider default) and the cause is obscure.
       - name: Check OCR model is configured
         run: |
           if [ -z "${{ vars.OCR_LLM_MODEL || secrets.OCR_LLM_MODEL }}" ]; then
@@ -139,9 +96,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            // For issue_comment events, resolve PR base/head/title so the
-            // action can review the right diff with title context
-            // (issue_comment has no top-level pull_request payload fields).
+            // issue_comment payloads carry no pull_request fields.
             const prNumber = context.issue.number;
             const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -152,91 +107,31 @@ jobs:
             core.setOutput('head_sha', pullRequest.head.sha);
             core.setOutput('title', pullRequest.title);
 
-      # One bounded retry against the runner-side npm bin flake (#540): the
-      # action is a composite that installs the CLI with a global
-      # `npm install` onto the runner, and that bin intermittently breaks
-      # or vanishes between the action's own install/configure steps and
-      # its run step (`ocr: command not found` → exit 127, once
-      # `Cannot find module '/usr/local/bin/ocr'` — notably AFTER a healthy
-      # install printed its version). The flake always dies before any
-      # review output exists. It is not version-specific (a 1.12.4 pin on
-      # #539 failed identically to 1.12.5), so bumping alone does not fix
-      # it; re-running the action reinstalls the CLI and gets a fresh bin.
-      #
-      # Why continue-on-error instead of a plain `if: failure()` retry:
-      # the merge gate watches the JOB status, and a failed step marks the
-      # job red even when a later `if: failure()` step succeeds — such a
-      # retry could never turn the gate green. With continue-on-error the
-      # first attempt's raw result lands in steps.ocr.outcome while the
-      # job stays green, and the retry below (gated on that outcome)
-      # decides the job: retry success = green, retry failure = red.
-      # The retry's success() gate also keeps it from firing when an
-      # earlier step (e.g. the model-config check) failed and skipped the
-      # first attempt.
-      #
-      # Duplicate-review risk: acceptable. The retry fires only when the
-      # first attempt failed, and the known flake dies before any review
-      # is computed or posted (no [ocr] progress, no comments), so the
-      # retry starts from nothing. Posting is the composite's FINAL step
-      # and is success-gated, so a failed first attempt posted nothing
-      # except in the narrow window where the posting step itself died
-      # partway — the residual case. There a retry can re-post overlapping
-      # inline comments (incremental dedup is opt-in and off here);
-      # visible and benign next to a merge gate that blocks every PR, and
-      # the default-on sticky_summary keeps the summary comment updated
-      # in place rather than duplicated.
+      # The action's global npm install of the CLI breaks intermittently
+      # (#540). continue-on-error leaves the job status to the retry below.
       - name: Run OpenCodeReview
         id: ocr
         continue-on-error: true
         uses: alibaba/open-code-review@182898cf522da3d04157b422752d028417974e19 # v1.12.12
-        # NOTE: the retry step below mirrors these inputs (upload_artifacts
-        # aside) — keep the two with-blocks in lockstep when tuning.
+        # Keep in sync with the retry step's inputs.
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          # Model name accepted from either repository variables or secrets.
           llm_model: ${{ vars.OCR_LLM_MODEL || secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
-          # Review tuning: effort high = deeper multi-round review; 'max'
-          # reasoning needs a model with a steerable reasoning_effort field
-          # and only works on the OpenAI-compatible protocol — the action
-          # fails fast if the Anthropic one is selected.
           effort: high
+          # 'max' works only on the OpenAI-compatible protocol.
           llm_reasoning_effort: max
-          # Stream live [ocr] progress to the workflow log instead of
-          # staying silent until the run finishes.
           stream_progress: 'true'
-          # PR title as review context — the upstream docs' highest-leverage
-          # flag, especially with conventional-commit titles. On
-          # issue_comment triggers the title comes from the API lookup.
           background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
-          # For issue_comment triggers, pass the resolved refs; for
-          # pull_request the action resolves them from the event.
+          # Set only for issue_comment. The action reads pull_request events.
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
-          # Pinned for supply-chain hygiene; bump to update the CLI.
+          # Pins the CLI. Dependabot bumps only the action version.
           ocr_version: '1.12.6'
 
-      # The retry proper. Inputs mirror the first attempt's with-block
-      # verbatim except upload_artifacts — Actions has no YAML anchors,
-      # and a second `uses:` of the same pinned action is the whole point
-      # (its install step is what repairs a broken bin). The condition
-      # names success() explicitly so the intended gate (first attempt
-      # failed, everything before it green) is encoded in the expression,
-      # not only in the comment above.
-      #
-      # upload_artifacts: 'false' is load-bearing, not hygiene: the
-      # action's artifact name is run-scoped
-      # (ocr-review-result-<run_id>-<run_attempt>) and its upload step is
-      # always()-gated, so even a flake-failed first attempt uploads and
-      # CLAIMS that name. A retry that uploaded under the same name would
-      # fail on the existing artifact (upload-artifact v4 refuses
-      # duplicates) AFTER its review succeeded — failing the retry,
-      # skipping the posting step (implicitly success-gated), and turning
-      # the rescue back into a red job. The first attempt stays the sole
-      # uploader; its artifact then carries the failure-time stderr (the
-      # exit-127 / module-not-found evidence) that the triage step below
-      # points at.
+      # A second run reinstalls the CLI. success() skips it when an earlier
+      # step failed.
       - name: Run OpenCodeReview (retry)
         id: ocr-retry
         if: success() && steps.ocr.outcome == 'failure'
@@ -244,45 +139,22 @@ jobs:
         with:
           llm_url: ${{ secrets.OCR_LLM_URL }}
           llm_auth_token: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          # Model name accepted from either repository variables or secrets.
           llm_model: ${{ vars.OCR_LLM_MODEL || secrets.OCR_LLM_MODEL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_USE_ANTHROPIC || 'false' }}
-          # Review tuning: effort high = deeper multi-round review; 'max'
-          # reasoning needs a model with a steerable reasoning_effort field
-          # and only works on the OpenAI-compatible protocol — the action
-          # fails fast if the Anthropic one is selected.
           effort: high
+          # 'max' works only on the OpenAI-compatible protocol.
           llm_reasoning_effort: max
-          # Stream live [ocr] progress to the workflow log instead of
-          # staying silent until the run finishes.
           stream_progress: 'true'
-          # PR title as review context — the upstream docs' highest-leverage
-          # flag, especially with conventional-commit titles. On
-          # issue_comment triggers the title comes from the API lookup.
           background: ${{ steps.pr-context.outputs.title || github.event.pull_request.title }}
-          # For issue_comment triggers, pass the resolved refs; for
-          # pull_request the action resolves them from the event.
+          # Set only for issue_comment. The action reads pull_request events.
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
-          # Pinned for supply-chain hygiene; bump to update the CLI.
+          # Pins the CLI. Dependabot bumps only the action version.
           ocr_version: '1.12.6'
-          # Retry never uploads — see the comment above the step; the
-          # quoted literal is required (the action compares strings).
+          # The first attempt already claimed the run-scoped artifact name.
           upload_artifacts: 'false'
 
-      # Cheap post-mortem triage for a still-red job: distinguish the
-      # known infra flake from a genuine review failure so whoever reads
-      # the run knows whether to rerun or to investigate the review error
-      # above. The flake's signature is a broken or absent global `ocr`
-      # bin, probed here with both observed failure modes (exit 127 /
-      # module-not-found). Best-effort: the bin is re-probed now, not
-      # captured at failure time, but the first attempt's uploaded
-      # artifact (always()-gated, survives the flake) holds the
-      # failure-time stderr as the authoritative evidence. Only runs when
-      # the retry itself failed — a rescued run (retry green) stays quiet
-      # and the job goes green; failure() alone would also fire after an
-      # earlier step failed, where this probe would misreport (the CLI
-      # was never installed).
+      # Tell the #540 flake (broken or missing ocr bin) from a review error.
       - name: Triage OCR failure
         if: failure() && steps.ocr-retry.outcome == 'failure'
         shell: bash

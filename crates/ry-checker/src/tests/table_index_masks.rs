@@ -42,7 +42,7 @@ fn table_index_columns_shadow_lexical_values() {
     let masked = check(
         "month <- 6L\n\
          dat <- data.table::as.data.table(data.frame(month = c(1, 6, 12), x = 1:3))\n\
-         june <- dat[month == \"a\"]\n",
+         june <- dat[month < \"a\"]\n",
     );
     assert!(
         masked
@@ -51,7 +51,7 @@ fn table_index_columns_shadow_lexical_values() {
         "a column shadows a same-named lexical value inside [i, j]: {masked:?}"
     );
 
-    let outside = check("month <- 6L\nx <- month == \"a\"\n");
+    let outside = check("month <- 6L\nx <- month < \"a\"\n");
     assert!(
         outside.iter().any(|diagnostic| diagnostic.code == "RY033"),
         "outside a mask the lexical value keeps its typing: {outside:?}"
@@ -59,7 +59,7 @@ fn table_index_columns_shadow_lexical_values() {
 
     // A callback's own formals are bound inside the masked expression,
     // not in the frame the mask captured, so they keep their typing.
-    let callback = check("f <- function(dt) dt[, sapply(c(\"a\"), function(s) s == 1L)]\n");
+    let callback = check("f <- function(dt) dt[, sapply(c(\"a\"), function(s) s < 1L)]\n");
     assert!(
         callback.iter().any(|diagnostic| diagnostic.code == "RY033"),
         "a callback formal is not a column candidate: {callback:?}"

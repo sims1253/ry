@@ -152,22 +152,33 @@ impl Checker {
             let comparable_lt = equality_list_leaf_type(&lt).unwrap_or_else(|| lt.clone());
             let comparable_rt = equality_list_leaf_type(&rt).unwrap_or_else(|| rt.clone());
             if let Some(t) = comparable_lt.compare(comparable_rt) {
-                // RY033: warn about comparing a character value with a
-                // non-character one. R coerces the numeric operand to
-                // character, then compares lexicographically, which is
-                // rarely the programmer's intent.
-                if lt_mode.is_atomic()
+                // RY033: warn about ordering a character value against a
+                // non-character one. R coerces the other operand to
+                // character, then compares lexicographically (`"9" > 14`
+                // is TRUE), which is rarely the programmer's intent.
+                // `==`/`!=` compare the same strings for equality, which
+                // gives the intended answer for integer, logical and
+                // integer-valued double operands (`Sys.getenv("X") == 1`,
+                // `flag == "array"`), so they stay quiet (#699).
+                let is_ordering = !matches!(op, BinOpKind::Eq | BinOpKind::Ne);
+                if is_ordering
+                    && lt_mode.is_atomic()
                     && rt_mode.is_atomic()
                     && (lt_mode == Mode::Character) != (rt_mode == Mode::Character)
                     && !compares_factor
                 {
+                    let coerced_mode = if lt_mode == Mode::Character {
+                        rt_mode
+                    } else {
+                        lt_mode
+                    };
                     self.emit(
                         Severity::Warning,
                         span,
                         "RY033",
                         format!(
-                            "comparing `{}` with `{}`; R coerces the numeric value to character and compares lexicographically, which is rarely intended",
-                            lt_mode, rt_mode
+                            "comparing `{}` with `{}`; R coerces the `{}` value to character and compares lexicographically, which is rarely intended",
+                            lt_mode, rt_mode, coerced_mode
                         ),
                     );
                 }

@@ -60,21 +60,17 @@ fn index_pool() -> Option<&'static rayon::ThreadPool> {
 /// Parse `paths` in parallel. A file that cannot be read or parsed is
 /// skipped, never fatal to the index.
 fn parse_paths(paths: &[PathBuf]) -> HashMap<String, Arc<SourceFile>> {
-    let parse = || {
-        paths
-            .par_iter()
-            .filter_map(|path| match ry_workspace::parse_source_file(path, None) {
-                Ok(file) => Some((file.path.clone(), Arc::new(file))),
-                Err(error) => {
-                    tracing::debug!(path = %path.display(), %error, "index parse failed; skipping file");
-                    None
-                }
-            })
-            .collect()
+    let parse_one = |path: &PathBuf| match ry_workspace::parse_source_file(path, None) {
+        Ok(file) => Some((file.path.clone(), Arc::new(file))),
+        Err(error) => {
+            tracing::debug!(path = %path.display(), %error, "index parse failed; skipping file");
+            None
+        }
     };
     match index_pool() {
-        Some(pool) => pool.install(parse),
-        None => parse(),
+        Some(pool) => pool.install(|| paths.par_iter().filter_map(parse_one).collect()),
+        // Without the bounded pool, parse serially to leave cores for the editor.
+        None => paths.iter().filter_map(parse_one).collect(),
     }
 }
 

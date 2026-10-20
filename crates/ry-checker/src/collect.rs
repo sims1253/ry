@@ -203,7 +203,7 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
         "assign" | "delayedAssign" => target("x"),
         "makeActiveBinding" => target("sym"),
         "rm" | "remove" => collect_rm_targets(args, writes),
-        "eval" => {
+        "eval" | "eval.parent" | "eval_bare" | "rlang::eval_bare" => {
             // Bare `quote` can be masked to return an unrelated mutating
             // expression, so only a base-qualified quote is inspected.
             if let Some(Expr::Call {
@@ -223,9 +223,17 @@ fn collect_callable_binding_write(func: &Expr, args: &[Arg], writes: &mut WriteS
             Some(expression) => collect_quoted_global_writes(&expression.value, writes),
             None => writes.opaque = true,
         },
-        // The called function and its arguments are runtime values, so the
-        // call may run any binder (`do.call("<<-", ...)`).
-        "do.call" => writes.opaque = true,
+        // Code these run may target a captured frame (an explicit `envir`,
+        // or an environment as data); its plain writes are recorded by name.
+        // `local(expr)` alone evaluates in a fresh environment.
+        "local" if args.len() < 2 => {}
+        "local" | "with" | "within" | "with_env" | "rlang::with_env" => {
+            for argument in args {
+                collect_quoted_global_writes(&argument.value, writes);
+            }
+        }
+        // A runtime-chosen function, object list, or file may write any name.
+        "do.call" | "list2env" | "load" | "source" | "sys.source" => writes.opaque = true,
         _ => match strip_package(name, "methods").unwrap_or(name) {
             // Installing a generic can replace an ordinary binding in the
             // current/global environment. The method table can also change

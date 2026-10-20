@@ -139,6 +139,12 @@ fn unproven_origins_keep_the_finding_without_a_location() {
         &format!(
             "{helper}swap <- function() do.call(\"<<-\", list(\"helper\", function(x) x))\nuse <- function() helper(1)\n"
         ),
+        &format!(
+            "{helper}swap <- function() eval.parent(quote(helper <- function(x) x))\nuse <- function() helper(1)\n"
+        ),
+        &format!(
+            "{helper}swap <- function() list2env(list(helper = function(x) x), envir = parent.frame())\nuse <- function() helper(1)\n"
+        ),
         // Captured from an intermediate frame.
         &format!("{helper}f <- function() {{\n  g <- function() helper(1)\n  g\n}}\n"),
         // Expected absence: `local()` runs code in the global frame's flow.
@@ -152,6 +158,20 @@ fn unproven_origins_keep_the_finding_without_a_location() {
             found.iter().all(|(_, related)| related.is_empty()),
             "{tail}: {found:?}"
         );
+    }
+}
+
+#[test]
+fn a_recognized_outward_write_drops_the_finding_like_superassignment() {
+    // As for `helper <<- ...` in `swap`, the project call is no longer checked.
+    for swap in [
+        "helper <<- function(x) x",
+        "local(helper <- function(x) x, envir = parent.frame())",
+    ] {
+        let src = format!(
+            "helper <- function(x, scale) x * scale\nswap <- function() {swap}\nuse <- function() helper(1)\n"
+        );
+        assert_eq!(arity(&check(&src)), [], "{src}");
     }
 }
 

@@ -12,7 +12,7 @@
     {
       "name": "ggplot2",
       "commit": "6870419aa6e106c3580c45c81d5b688cb31758bd",
-      "diagnostics": 16
+      "diagnostics": 15
     },
     {
       "name": "dplyr",
@@ -112,7 +112,7 @@
     {
       "name": "glue",
       "commit": "da9c73f7a3de6a27f3103cb5bb2355820a4c3a6a",
-      "diagnostics": 2
+      "diagnostics": 1
     },
     {
       "name": "modelr",
@@ -668,15 +668,6 @@
     },
     {
       "package": "ggplot2",
-      "code": "RY040",
-      "path": "tests/testthat/test-geom-curve.R",
-      "line": 17,
-      "column": 8,
-      "label": "false_positive",
-      "audit_group": "P7a"
-    },
-    {
-      "package": "ggplot2",
       "code": "RY091",
       "path": "tests/testthat/test-utilities.R",
       "line": 108,
@@ -692,15 +683,6 @@
       "column": 7,
       "label": "true_positive",
       "audit_group": "upstream-glue"
-    },
-    {
-      "package": "glue",
-      "code": "RY040",
-      "path": "tests/testthat/test-glue.R",
-      "line": 595,
-      "column": 20,
-      "label": "false_positive",
-      "audit_group": "P7a"
     },
     {
       "package": "hms",
@@ -957,12 +939,12 @@
   ],
   "classification": {
     "true_positive": 38,
-    "false_positive": 36,
+    "false_positive": 34,
     "unowned": 18
   },
   "audit_group_counts": {
     "upstream-ggplot2": 4,
-    "P7a": 2,
+    "P7a": 0,
     "P4b": 0,
     "P4a": 3,
     "P4c": 1,
@@ -1002,8 +984,9 @@
     "delayedAssign bindings and purrr NA widening (#349, #352, PR #628): the reviewed identities removed are dplyr R/conditions.R:310:14 (P4b false positive) and lubridate R/vctrs.R:64/107/112/117 (unowned, plan-32-33), which read delayedAssign() bindings, and purrr tests/testthat/test-map.R:82:20 and test-parallel.R:120:20 (P8 false positives), map_chr(NA, ...) calls that purrr widens to NA_character_. No identity is added; every true positive remains.",
     "local() deferred captures and package base lookup (#568, PR stacked on #628): no ledger identity changes. The unowned cli and rlang reports lose their local()-block RY010 false positives (cli R/defer.R and R/errors.R, rlang R/import-standalone-defer.R), whose closures read helpers the enclosing local() block assigns later. Resolving base switch() in import-free package R/ code adds no identity.",
     "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Two true positives are added, both in error-expecting tests, under the new test-fixture group shared with the Posit ledger: ggplot2 tests/testthat/test-utilities.R:108:25 (remove_missing(na.rm = 1:5) omits the forced df) and googledrive tests/testthat/test-drive_create.R:21:19 (drive_create() omits name inside expect_snapshot(error = TRUE)). No identity is removed; every true positive remains.",
-    "Package-aware call-head selection (PR #668) removes exactly 13 unowned identities from both production-only and root reports, with no additions or changes to reviewed findings or labels. At testthat@50a99ec76fed8140a9211ed862289e877e86614d, R/import-standalone-types-check.R:125:7, :295:9, :320:9, :345:9, :370:9, :395:9, :420:9, :445:9, :473:9, :498:9, and :523:9 lose RY031: rlang::is_null returns a scalar logical, not testthat's same-named function-valued expectation factory in R/old-school.R. R/reporter-debug.R:61:7 loses RY001 for the corresponding rlang::is_false predicate versus testthat's is_false factory. The executable predicate-factory oracle verifies the R behavior. At jsonlite@0134cba18366b1c51c6497f4f97273a8423d8d86, R/stop.R:2:27 loses RY111: base::stop selects base's variadic contract rather than the 'call.' formal of jsonlite's own wrapper; this is the deliberate wrapper already explained in the #361 note. All 11 reviewed RY111 true positives in haven and dbplyr remain. The source digest covers the complete 32-package default-manifest regeneration."
+    "Package-aware call-head selection (PR #668) removes exactly 13 unowned identities from both production-only and root reports, with no additions or changes to reviewed findings or labels. At testthat@50a99ec76fed8140a9211ed862289e877e86614d, R/import-standalone-types-check.R:125:7, :295:9, :320:9, :345:9, :370:9, :395:9, :420:9, :445:9, :473:9, :498:9, and :523:9 lose RY031: rlang::is_null returns a scalar logical, not testthat's same-named function-valued expectation factory in R/old-school.R. R/reporter-debug.R:61:7 loses RY001 for the corresponding rlang::is_false predicate versus testthat's is_false factory. The executable predicate-factory oracle verifies the R behavior. At jsonlite@0134cba18366b1c51c6497f4f97273a8423d8d86, R/stop.R:2:27 loses RY111: base::stop selects base's variadic contract rather than the 'call.' formal of jsonlite's own wrapper; this is the deliberate wrapper already explained in the #361 note. All 11 reviewed RY111 true positives in haven and dbplyr remain. The source digest covers the complete 32-package default-manifest regeneration.",
+    "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both P7a false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains, and the P7a group stays at zero."
   ],
-  "ry_commit": "6a1660c83826b668bc5e5eadf4634b7a848da218",
-  "source_sha256": "ddbda9914ca537e464c6e3e7feb354cdc44cb9ed3ac37dd73378af2c08d07832"
+  "ry_commit": "01ddb2329193c422d571e6ae160e5f29ce65581e",
+  "source_sha256": "5787275d75f9ea07d8b9455108c14476eedf2d3b04c50d4a457cfceb6dca8901"
 }

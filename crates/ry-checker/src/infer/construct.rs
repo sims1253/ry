@@ -601,7 +601,7 @@ impl Checker {
                 .reduce(ry_core::types::ValueFacts::merge_vector)
                 .unwrap_or_default();
         }
-        if mode == Mode::Opaque {
+        if mode.is_unknown() {
             result.with_class(ClassVector::unknown())
         } else {
             result
@@ -952,8 +952,9 @@ impl Checker {
                 };
                 // The arg-N mode specs copy a param's mode verbatim; if a
                 // caller passes a union there, that mode is `Mode::Union`
-                // and would build a malformed union. Collapse to opaque.
-                let mode = if matches!(mode, Mode::Union) {
+                // and would build a malformed union. Collapse to opaque. An
+                // environment or language mode would lose its class here.
+                let mode = if matches!(mode, Mode::Union) || mode.is_known_non_vector() {
                     Mode::Opaque
                 } else {
                     mode
@@ -993,7 +994,7 @@ impl Checker {
                 )
                 .unwrap_or(length);
                 let mut result = RType::new(mode, length);
-                if c.class.is_empty() && mode == Mode::Opaque {
+                if c.class.is_empty() && mode.is_unknown() {
                     // An opaque return without a class entry knows nothing
                     // about the class; absent metadata must not read as a
                     // proven-empty class vector (see `json_rtype_scalar`).
@@ -1194,7 +1195,9 @@ pub(crate) fn semantic_return_length(
                 // unknown control is not evidence of a scalar result.
                 if matches!(arg_types[index].mode, Mode::Null) {
                     // Fall through to ordinary recycled-value length.
-                } else if !matches!(arg_types[index].mode, Mode::Opaque | Mode::Union) {
+                } else if !arg_types[index].mode.is_unknown_or_non_vector()
+                    && arg_types[index].mode != Mode::Union
+                {
                     return Some(Length::One);
                 } else {
                     return Some(Length::Unknown);

@@ -561,47 +561,43 @@ impl Config {
     }
 
     /// Walk up from `start` looking for a `ry.toml`. Stops at the first
-    /// ancestor directory that contains one.
+    /// ancestor directory that contains one; see [`config_candidates`]
+    /// for the probe order.
     ///
-    /// `start` is resolved to an absolute path first; if `start` is a
-    /// file rather than a directory, discovery begins from its parent.
-    /// Symlinks are not followed during the upward walk (we use plain
-    /// `Path::parent` iteration rather than `canonicalize`, so a
-    /// symlinked `ry.toml` in a real directory is still found but the
-    /// walk itself does not chase symlinks).
-    ///
-    /// Returns `Ok(Some((path, config)))` on the first match,
-    /// `Ok(None)` if the filesystem root is reached without finding a
-    /// `ry.toml`. Permission errors during `load_from_dir` propagate as
-    /// `Err`; transient "does not exist" results from probing each
-    /// ancestor are folded into the walk.
+    /// Returns `Ok(None)` if the filesystem root is reached without
+    /// finding a `ry.toml`. Read and parse errors propagate as `Err`.
     pub fn discover(start: &Path) -> Result<Option<(PathBuf, Self)>, ConfigError> {
-        // Resolve to an absolute path. We avoid `canonicalize` here so
-        // that the walk does not silently resolve symlinked parents;
-        // `std::env::current_dir` gives us the anchor for relative
-        // inputs without dereferencing the path's own components.
-        let abs = if start.is_absolute() {
-            start.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(start)
-        };
-        let mut dir: &Path = if abs.is_file() {
-            abs.parent().unwrap_or(Path::new("."))
-        } else {
-            abs.as_path()
-        };
-        loop {
-            if let Some(cfg) = Self::load_from_dir(dir)? {
-                return Ok(Some((dir.join(CONFIG_FILENAME), cfg)));
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => return Ok(None),
+        for path in config_candidates(start) {
+            if path.exists() {
+                return Self::load_file(&path).map(|cfg| Some((path, cfg)));
             }
         }
+        Ok(None)
     }
+}
+
+/// Every `ry.toml` path [`Config::discover`] probes from `start`, nearest
+/// first. A file `start` begins at its parent. A relative `start` joins
+/// the working directory without `canonicalize` or folding `..`, so the
+/// walk does not resolve symlinks and steps over dotted components as
+/// `Path::parent` yields them.
+pub fn config_candidates(start: &Path) -> Vec<PathBuf> {
+    let abs = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(start)
+    };
+    let first = if abs.is_file() {
+        abs.parent().unwrap_or(Path::new("."))
+    } else {
+        abs.as_path()
+    };
+    first
+        .ancestors()
+        .map(|dir| dir.join(CONFIG_FILENAME))
+        .collect()
 }
 
 /// CLI flag values that override (or extend) a loaded `ry.toml`.

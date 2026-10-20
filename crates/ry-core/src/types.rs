@@ -830,11 +830,15 @@ impl RType {
     /// Atomic (non-union) arithmetic; called per-member by `arith`'s
     /// distributor.
     fn arith_atomic(self, rhs: RType, op: BinOpKind) -> Option<RType> {
-        // A union member reaches here without S3 dispatch. A classed or
-        // unknown-class operand on either side may own an `Ops` method, so
-        // only a pair of classless operands can prove a language error.
-        if (self.mode == Mode::Language || rhs.mode == Mode::Language)
-            && !(self.class.is_classless() && rhs.class.is_classless())
+        // A union member reaches here without S3 dispatch. An environment's
+        // class is never proven empty, and a classed or unknown-class operand
+        // on either side may own an `Ops` method, so only a pair of classless
+        // operands can prove a language error. Both checks precede the raw
+        // rule: `if (p) new.env() else 1L` plus a raw value may dispatch.
+        if self.mode == Mode::Environment
+            || rhs.mode == Mode::Environment
+            || ((self.mode == Mode::Language || rhs.mode == Mode::Language)
+                && !(self.class.is_classless() && rhs.class.is_classless()))
         {
             return Some(RType::unknown());
         }
@@ -2157,6 +2161,10 @@ mod tests {
         let env = RType::new(Mode::Environment, Length::Unknown);
         let result = env.clone().arith(RType::scalar(Mode::Double));
         assert_eq!(result.map(|ty| ty.mode), Some(Mode::Opaque));
+        // Even a classless-looking environment member may dispatch, so the
+        // raw rule never rejects `if (p) new.env() else 1L` plus a raw value.
+        let member = RType::union(Arc::from(vec![env.clone(), RType::scalar(Mode::Integer)]));
+        assert!(member.arith(RType::scalar(Mode::Raw)).is_some());
         let language = RType::scalar(Mode::Language);
         // `quote(a) == "a"` is TRUE in R.
         assert!(language.compare(RType::scalar(Mode::Character)).is_some());

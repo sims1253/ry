@@ -1041,7 +1041,7 @@ async fn baseline_reload_converges_to_new_value() {
 /// context. Emptying the file afterwards must not bring back the finding
 /// it suppresses.
 #[tokio::test]
-async fn publish_path_performs_no_baseline_disk_io() {
+async fn publish_uses_the_baseline_loaded_at_initialize() {
     use ry_testkit::LspSession;
 
     let fixture = FixtureProject::empty().unwrap();

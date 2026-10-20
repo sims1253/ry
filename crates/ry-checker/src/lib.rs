@@ -1362,6 +1362,11 @@ pub struct Checker {
     // walk: pass 2 runs the identical `infer` with `discarding = true`,
     // pass 3 with `false`.
     discarding: bool,
+    // When true, `emit` is a no-op while the walk itself is unchanged:
+    // set while walking the arm a literal `if (TRUE)` / `if (FALSE)`
+    // never takes (issue #703). Unlike `discarding`, it keeps reference
+    // and scope capture, so navigation over dead code is unaffected.
+    in_dead_arm: bool,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1626,6 +1631,7 @@ impl Checker {
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
             discarding: false,
+            in_dead_arm: false,
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             return_slots,

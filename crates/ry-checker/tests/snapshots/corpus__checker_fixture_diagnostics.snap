@@ -653,6 +653,40 @@ expression: snapshots
         start: 270
   fixture: err_lapply_double_bracket.R
 - diagnostics:
+    - code: RY090
+      message: "unknown argument `z` to `f`"
+      severity: warning
+      span:
+        column: 15
+        end: 214
+        line: 5
+        start: 209
+    - code: RY090
+      message: "unknown argument `w` to `f`"
+      severity: warning
+      span:
+        column: 26
+        end: 247
+        line: 6
+        start: 242
+    - code: RY090
+      message: "unknown argument `q` to `f`"
+      severity: warning
+      span:
+        column: 20
+        end: 274
+        line: 7
+        start: 269
+    - code: RY099
+      message: value produced by this conditional expression is discarded; assign it or return it explicitly
+      severity: warning
+      span:
+        column: 12
+        end: 329
+        line: 10
+        start: 315
+  fixture: err_literal_condition_live_arms.R
+- diagnostics:
     - code: RY098
       message: "parameter `x` has a self-referential default that recurses when forced"
       severity: warning
@@ -2260,6 +2294,8 @@ expression: snapshots
   fixture: ok_list_atomic_equality.R
 - diagnostics: []
   fixture: ok_list_named_columns.R
+- diagnostics: []
+  fixture: ok_literal_condition_dead_arms.R
 - diagnostics: []
   fixture: ok_local_standalone_errors.R
 - diagnostics: []

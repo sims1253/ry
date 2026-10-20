@@ -11,6 +11,7 @@ pub(crate) use types::*;
 mod args;
 pub(crate) mod binop;
 pub(crate) mod call;
+mod call_effect;
 mod callee;
 #[cfg(test)]
 mod cloned_scope_reference;
@@ -1485,10 +1486,18 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        let replaces = !(scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds)
-            && self.body_may_replace_bindings(body, scope);
-        scope.uncertainty.unseen_rebinds |= replaces;
-        if !scope.uncertainty.dynamic_bindings && replaces {
+        // The related-location evidence (#672) uses the narrower rule: only
+        // an audited base call proves that no binding was rebound.
+        let unseen = !(scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds)
+            && self.loop_body_may_replace_bindings(body, |func, args| {
+                self.call_proves_no_rebind(func, args, scope)
+            });
+        let taints = !scope.uncertainty.dynamic_bindings
+            && self.loop_body_may_replace_bindings(body, |func, args| {
+                self.call_effect(func, args, scope).keeps_scalar_facts()
+            });
+        scope.uncertainty.unseen_rebinds |= unseen;
+        if taints {
             scope.invalidate_scalar_assertions();
         }
     }

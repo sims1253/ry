@@ -23,42 +23,34 @@ pub struct ScopedRulePolicy {
 impl ScopedRulePolicy {
     /// `protected` contains explicit CLI or editor rule tokens. Their
     /// already-computed global result takes precedence over path tables.
-    /// Config loading validates the globs. A programmatically constructed
-    /// config with a bad glob is skipped rather than crashing a checker.
-    pub fn new(config: &Config, config_root: Option<&Path>, protected: &[String]) -> Self {
+    pub fn new(config: &Config, protected: &[String]) -> Self {
         let protected: Vec<&str> = protected
             .iter()
             .flat_map(|token| SeverityFilter::expand(token))
             .collect();
         let mut tables = Vec::new();
-        if let Some(root) = config_root {
-            for table in &config.rule_overrides {
-                let paths = match ScopedPaths::new(root, &table.paths) {
-                    Ok(paths) => paths,
-                    Err(error) => {
-                        tracing::warn!(%error, "skipping invalid rule-override paths");
-                        continue;
-                    }
-                };
-                let mut choices = Vec::new();
-                // Within one table, ignore wins over error and error over warn.
-                // Repeated codes in this vector are harmless: last insertion
-                // into the filter wins, so put strongest choice last.
-                for (tokens, severity) in [
-                    (&table.warn, Some(Severity::Warning)),
-                    (&table.error, Some(Severity::Error)),
-                    (&table.ignore, None),
-                ] {
-                    for token in tokens {
-                        for code in SeverityFilter::expand(token) {
-                            if !protected.contains(&code) {
-                                choices.push((code, severity));
-                            }
+        for table in &config.rule_overrides {
+            let mut choices = Vec::new();
+            // Within one table, ignore wins over error and error over warn.
+            // Repeated codes in this vector are harmless: last insertion
+            // into the filter wins, so put strongest choice last.
+            for (tokens, severity) in [
+                (&table.warn, Some(Severity::Warning)),
+                (&table.error, Some(Severity::Error)),
+                (&table.ignore, None),
+            ] {
+                for token in tokens {
+                    for code in SeverityFilter::expand(token) {
+                        if !protected.contains(&code) {
+                            choices.push((code, severity));
                         }
                     }
                 }
-                tables.push(Table { paths, choices });
             }
+            tables.push(Table {
+                paths: table.scope.clone(),
+                choices,
+            });
         }
         Self { tables }
     }
@@ -91,9 +83,13 @@ mod tests {
     use super::*;
     use ry_config::RuleOverrideConfig;
 
+    const ROOT: &str = "/tmp/ry-scoped-policy";
+
     fn table(paths: &[&str], error: &[&str], warn: &[&str], ignore: &[&str]) -> RuleOverrideConfig {
+        let paths: Vec<String> = paths.iter().map(ToString::to_string).collect();
         RuleOverrideConfig {
-            paths: paths.iter().map(ToString::to_string).collect(),
+            scope: ScopedPaths::new(Path::new(ROOT), &paths).unwrap(),
+            paths,
             error: error.iter().map(ToString::to_string).collect(),
             warn: warn.iter().map(ToString::to_string).collect(),
             ignore: ignore.iter().map(ToString::to_string).collect(),
@@ -102,7 +98,7 @@ mod tests {
 
     #[test]
     fn ordered_scopes_change_only_mentioned_rules() {
-        let root = Path::new("/tmp/ry-scoped-policy");
+        let root = Path::new(ROOT);
         let config = Config {
             warn: vec!["RY040".into()],
             rule_overrides: vec![
@@ -112,7 +108,7 @@ mod tests {
             ..Config::default()
         };
         let base = crate::filter_from_config(&config);
-        let policy = ScopedRulePolicy::new(&config, Some(root), &[]);
+        let policy = ScopedRulePolicy::new(&config, &[]);
         let severity = |path: &str, code: &str| {
             policy
                 .filter_for(&root.join(path), &base)
@@ -138,7 +134,7 @@ mod tests {
 
     #[test]
     fn global_ignore_and_explicit_cli_win_while_path_can_enable_selected_off_rule() {
-        let root = Path::new("/tmp/ry-scoped-policy");
+        let root = Path::new(ROOT);
         let config = Config {
             ignore: vec!["RY040".into()],
             select: Some(Vec::new()),
@@ -146,7 +142,7 @@ mod tests {
             ..Config::default()
         };
         let base = crate::filter_from_config(&config);
-        let policy = ScopedRulePolicy::new(&config, Some(root), &[]);
+        let policy = ScopedRulePolicy::new(&config, &[]);
         let in_r = policy.filter_for(&root.join("R/main.R"), &base);
         assert_eq!(in_r.effective("RY040", Severity::Warning), None);
         assert_eq!(
@@ -155,14 +151,14 @@ mod tests {
         );
         assert_eq!(base.effective("RY010", Severity::Warning), None);
 
-        let protected = ScopedRulePolicy::new(&config, Some(root), &["RY010".into()]);
+        let protected = ScopedRulePolicy::new(&config, &["RY010".into()]);
         let in_r = protected.filter_for(&root.join("R/main.R"), &base);
         assert_eq!(in_r.effective("RY010", Severity::Warning), None);
     }
 
     #[test]
     fn scoped_audit_opt_in_and_target_eligibility_share_filter() {
-        let root = Path::new("/tmp/ry-scoped-policy");
+        let root = Path::new(ROOT);
         let config = Config {
             rule_overrides: vec![
                 table(&["R/**"], &[], &["RY113"], &[]),
@@ -171,7 +167,7 @@ mod tests {
             ..Config::default()
         };
         let base = crate::filter_from_config(&config);
-        let policy = ScopedRulePolicy::new(&config, Some(root), &[]);
+        let policy = ScopedRulePolicy::new(&config, &[]);
         assert_eq!(base.effective("RY113", Severity::Warning), None);
         let active = policy.filter_for(&root.join("R/main.R"), &base);
         assert_eq!(
@@ -189,7 +185,7 @@ mod tests {
 
     #[test]
     fn scoped_filter_controls_real_unused_ignore_audit_before_publication() {
-        let root = Path::new("/tmp/ry-scoped-policy");
+        let root = Path::new(ROOT);
         let config = Config {
             rule_overrides: vec![
                 table(&["R/**"], &[], &["RY113"], &[]),
@@ -198,7 +194,7 @@ mod tests {
             ..Config::default()
         };
         let base = crate::filter_from_config(&config);
-        let policy = ScopedRulePolicy::new(&config, Some(root), &[]);
+        let policy = ScopedRulePolicy::new(&config, &[]);
         let src = "1L == 1L # ry: ignore[RY034]\n";
         for (name, audit_expected) in [
             ("R/main.R", true),

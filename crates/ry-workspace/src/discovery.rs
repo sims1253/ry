@@ -23,10 +23,6 @@ fn is_file_eligible_with_excludes(
     !excludes.matches(&relative.to_string_lossy().replace('\\', "/"))
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Shared per-file eligibility for bounded discovery and open-buffer admission
-// ─────────────────────────────────────────────────────────────────────────
-
 /// Component depth of `path` relative to `root`: the number of components
 /// below `root` (`root` itself is 0). `None` when `path` is not under `root`.
 fn relative_depth(path: &Path, root: &Path) -> Option<usize> {
@@ -35,42 +31,23 @@ fn relative_depth(path: &Path, root: &Path) -> Option<usize> {
         .map(|relative| relative.components().count())
 }
 
-/// Whether `path` clears the `index.max-depth` gate: its containing
-/// directory sits at most `max_depth` components below `root`.
-///
-/// This is the path-property form of the walker's descent pruning
-/// (`discover_recursive` never descends into a directory deeper than
-/// `max_depth`): a file whose parent is at depth `d` is discovered exactly
-/// when `d <= max_depth`, so an opened buffer must clear the same bound or
-/// its definitions would leak into project state the closed index omitted.
-/// A path outside `root` carries no depth information and passes; callers
-/// only invoke this for rooted paths.
-pub fn is_within_depth(path: &Path, root: &Path, max_depth: usize) -> bool {
+/// Whether `path`'s directory sits at most `max_depth` components below
+/// `root`: the walk's descent bound as a path property. A path outside
+/// `root` passes.
+fn is_within_depth(path: &Path, root: &Path, max_depth: usize) -> bool {
     let parent = path.parent().unwrap_or(path);
     relative_depth(parent, root).is_none_or(|depth| depth <= max_depth)
 }
 
-/// Whether a byte length clears the `index.max-file-bytes` gate: at most
-/// `max_file_bytes` bytes. The boundary is inclusive — discovery omits only
-/// sizes strictly above the cap, and admission matches it.
-pub fn is_within_file_bytes(file_len: u64, max_file_bytes: u64) -> bool {
-    file_len <= max_file_bytes
-}
-
-/// Full per-file eligibility combining `exclude` patterns with the
-/// bounded-discovery caps, sharing one policy between the directory walker
-/// and open-buffer admission.
+/// Per-file eligibility shared by the directory walk and open-buffer
+/// admission: the reports opt-in, `exclude` patterns, depth, and size.
 ///
-/// `depth_root` is the root depth counts from (the walk root for discovery,
-/// the folder root for open documents — walk depth is not a path property,
-/// so the buffer's containing-directory depth is recomputed here);
-/// `exclude_anchor` anchors the exclude patterns (`None` skips them, matching
-/// a missing config). `content_len` is the byte length of the content being
-/// admitted, or `None` to skip the size gate: open-buffer admission passes
-/// the buffer text length — unsaved pasted content can cross the boundary
-/// without touching disk, so `fs::metadata` must not stand in — while indexed
-/// disk files pass `None` because discovery already measured the file on disk
-/// and the in-memory source length is a transcode away from that measurement.
+/// Depth counts from `depth_root`. `exclude_anchor` anchors the exclude
+/// patterns, and `None` skips them. `content_len` is the byte length to
+/// check against `index.max-file-bytes`, or `None` to skip the size gate.
+/// Open buffers pass their text length because unsaved content never
+/// touches disk. Indexed disk files pass `None` because the walk already
+/// measured them.
 pub fn is_file_eligible_with_limits(
     path: &Path,
     depth_root: &Path,
@@ -89,42 +66,22 @@ pub fn is_file_eligible_with_limits(
     if !is_within_depth(path, depth_root, limits.max_depth) {
         return false;
     }
-    content_len.is_none_or(|len| is_within_file_bytes(len, limits.max_file_bytes))
+    content_len.is_none_or(|len| len <= limits.max_file_bytes)
 }
 
-/// Whether one on-disk R file would survive the directory walk's admission
-/// rules for `walk_root`, decided without walking: the verdict
-/// [`discover_recursive`] would reach for this path. Covers every pattern
-/// class the walk applies — `exclude` patterns against the file and every
-/// ancestor directory up to `walk_root` (a bare `exclude = ["vendor"]`
-/// prunes the directory entry in the walk but never matches
-/// `vendor/defs.R` through file-shape matching), the walk's
-/// symlink refusal for the file and every ancestor directory (the walk
-/// never descends through symlinked directories), walk-root containment
-/// (no walk reaches outside its root), the fixed pruned-directory shapes
-/// through the helpers shared with the walk, the testthat runner-code
-/// classification, the
-/// shared per-file policy's exclude and depth thirds (reused, not
-/// duplicated), the regular-file requirement mirroring the walk's
-/// never-lands-a-directory rule (a directory named `pkg.R/` passes the
-/// extension check but is descended, never landed; exotic non-regular
-/// entries are refused too — the one documented, safe-direction
-/// divergence), the on-disk size cap measured the way the walk
-/// measures it, and `.Rbuildignore` with `include_build_ignored`
-/// rescue — anchored
-/// exactly like [`discover_r_files`]: excludes at `exclude_anchor`,
-/// includes at `exclude_anchor.unwrap_or(walk_root)`, buildignore at the
-/// nearest `DESCRIPTION` at or above `walk_root`, with nested packages
-/// swapping pattern sets as the walk descends.
+/// Whether the walk from `walk_root` would land the on-disk file `path`,
+/// decided without walking. It applies the rules of [`discover_recursive`]
+/// to the file and to each ancestor below `walk_root`: symlinks, `exclude`
+/// patterns (a bare `exclude = ["vendor"]` prunes the directory but never
+/// matches `vendor/defs.R` itself), pruned directory shapes, depth,
+/// `.Rbuildignore` with the `include_build_ignored` rescue, test fixtures,
+/// and the size cap. As in [`discover_r_files`], `exclude` anchors at
+/// `exclude_anchor` and the rescue at `exclude_anchor.unwrap_or(walk_root)`.
 ///
-/// What stays out: the `index.max-files` count is not a path property (the
-/// walk enforces it first-come-first-served per root), so callers apply it
-/// at commit time against their own entry accounting.
-///
-/// Point-in-time verdict: the checks above read the filesystem entry by
-/// entry, so concurrent edits can make them disagree with each other and
-/// with the commit. Callers re-validate under the state lock (generation
-/// plus budget), and a rescan converges anything left over.
+/// `index.max-files` is not a path property, so callers enforce it when
+/// they commit. The checks read the filesystem one entry at a time, so a
+/// concurrent edit can change the answer. Callers re-validate under the
+/// state lock, and a rescan fixes anything left over.
 pub fn is_single_file_walk_admitted(
     path: &Path,
     walk_root: &Path,
@@ -141,23 +98,17 @@ pub fn is_single_file_walk_admitted(
     if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink()) {
         return false;
     }
-    // No walk rooted at `walk_root` can reach a path outside it: without
-    // this the ancestor loop below over-climbs past the root and the
-    // depth gate passes non-rooted paths, admitting files no walk would
-    // ever reach. (With no floor — an empty `walk_root` — the file-shape
-    // checks below still apply.)
+    // No walk reaches outside its root. Without this check the ancestor
+    // loop below would climb past the root.
     if !walk_root.as_os_str().is_empty() && path.strip_prefix(walk_root).is_err() {
         return false;
     }
-    // With no floor to climb to (the server-root fallback when no root is
-    // set) no walk ever ran here, so only the file-shape checks below
-    // apply — the ancestor and buildignore sections need a walk to agree
-    // with.
+    // An empty `walk_root` (the server fallback with no root) has no walk
+    // to agree with, so only the file checks below apply.
     if !walk_root.as_os_str().is_empty() {
-        // Outermost package level, exactly like `discover_r_files`: the
-        // nearest DESCRIPTION at or above the walk root (which may sit
-        // above the folder when the config was inherited), with its
-        // `.Rbuildignore`.
+        // The outermost package level, as in `discover_r_files`: the nearest
+        // DESCRIPTION at or above the walk root. It can sit above the folder
+        // when the config was inherited.
         let mut package_root = walk_root
             .ancestors()
             .find(|ancestor| ancestor.join("DESCRIPTION").is_file())
@@ -171,11 +122,9 @@ pub fn is_single_file_walk_admitted(
             include_build_ignored,
         );
         let has_excludes = !excludes.is_empty();
-        // Ancestors top-down, from the walk root's child to the file's
-        // parent: each visit applies the walk's per-entry tests in level
-        // order, folding the buildignore verdict into `inherited` exactly
-        // as the recursive `inherited_buildignore` parameter does (sticky
-        // downward: once an ancestor is ignored, everything below it is).
+        // Visit ancestors top-down, from the walk root's child to the
+        // file's parent. Once an ancestor is build-ignored, everything below
+        // it is, as with the walk's `inherited_buildignore`.
         let mut chain = Vec::new();
         let mut dir = path.parent();
         while let Some(current) = dir {
@@ -187,23 +136,20 @@ pub fn is_single_file_walk_admitted(
         }
         let mut inherited_buildignore = false;
         for dir in chain.into_iter().rev() {
-            // The walk prunes symlinked entries before descending, so a
-            // file reached through a symlinked directory is
-            // undiscoverable: refuse it exactly like the walk does.
+            // The walk never descends into a symlinked directory.
             if std::fs::symlink_metadata(dir).is_ok_and(|metadata| metadata.is_symlink()) {
                 return false;
             }
-            // `ry.toml` excludes match directory entries too: this is the
-            // pruned-directory half of the walk's exclusion.
+            // The walk also prunes directories that match `exclude`.
             if has_excludes
                 && let Some(anchor) = exclude_anchor
                 && !is_file_eligible_with_excludes(dir, anchor, excludes)
             {
                 return false;
             }
-            // The walk's fixed pruned-directory shapes, resolved against the
-            // current package level — not the innermost: above a nested
-            // DESCRIPTION there is no package yet, so `renv/` there is kept.
+            // Pruned shapes use the current package level, not the
+            // innermost. Above a nested DESCRIPTION there is no package yet,
+            // so `renv/` there is kept.
             let pruned = dir
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -214,14 +160,11 @@ pub fn is_single_file_walk_admitted(
             if pruned {
                 return false;
             }
-            // Depth prunes descent: a directory more than `max_depth`
-            // components below the walk root is never entered, so nothing
-            // under it is discoverable.
+            // The walk never enters a directory more than `max_depth`
+            // components below its root.
             if relative_depth(dir, walk_root).is_some_and(|depth| depth > limits.max_depth) {
                 return false;
             }
-            // Buildignore state at this entry under the current pattern set,
-            // folded into the inherited flag for everything below.
             if package_root
                 .as_deref()
                 .is_some_and(|root| is_rbuildignored(root, dir, &buildignore))
@@ -231,18 +174,15 @@ pub fn is_single_file_walk_admitted(
             if inherited_buildignore && includes.is_empty() {
                 return false;
             }
-            // Descending into a nested package swaps the pattern set while
-            // the inherited flag carries the outer verdict across, exactly
-            // like the walk's recursive call.
+            // A nested package swaps the pattern set. The inherited flag
+            // keeps the outer verdict, as in the walk.
             if dir.join("DESCRIPTION").is_file() {
                 package_root = Some(dir.to_path_buf());
                 buildignore = read_rbuildignore(dir);
             }
         }
-        // The file's own buildignore verdict under the innermost pattern
-        // set: ignored by itself or by inheritance, rescued only by an
-        // explicit include — the walk's file-entry rule verbatim, including
-        // the `R/`/`tests/` exemption inside `is_rbuildignored`.
+        // The walk's file rule: build-ignored by itself or by an ancestor,
+        // and rescued only by an explicit include.
         let build_ignored = inherited_buildignore
             || package_root
                 .as_deref()
@@ -254,23 +194,17 @@ pub fn is_single_file_walk_admitted(
     if !check_test_fixtures && is_test_fixture(path) {
         return false;
     }
-    // The shared policy's exclude and depth thirds for the file itself
-    // (content length deliberately `None`: the size gate below measures the
-    // file on disk exactly like the walk does).
+    // `None` skips the length gate. The check below measures the file on
+    // disk, as the walk does.
     if !is_file_eligible_with_limits(path, walk_root, exclude_anchor, excludes, limits, None) {
         return false;
     }
-    // The walk's landing rule skips symlinks and DESCENDS directories
-    // before the extension test, so a directory named like a source
-    // (`pkg.R/`) is never landed — yet it passes the name-based checks
-    // above and, directory entries being small, the size cap too
-    //. Requiring a regular file also refuses exotic non-regular
-    // entries (a FIFO named `x.R`) that the walk's file branch would
-    // nominally land: a deliberate divergence in the safe direction —
-    // no such entry can be read as a source. Unmeasurable entries
-    // still pass, exactly like the size rule (the walk omits only
-    // sizes strictly above the cap): the caller's own read decides a
-    // missing or unreadable file.
+    // The walk descends a directory named like a source (`pkg.R/`) instead
+    // of landing it, and such a directory passes every check above.
+    // Requiring a regular file also refuses a FIFO named `x.R`, which the
+    // walk would land but nothing can read as a source. An entry that
+    // cannot be measured passes, as in the walk. The caller's own read
+    // decides a missing or unreadable file.
     if std::fs::metadata(path)
         .map(|metadata| !metadata.is_file() || metadata.len() > limits.max_file_bytes)
         .unwrap_or(false)
@@ -280,21 +214,15 @@ pub fn is_single_file_walk_admitted(
     true
 }
 
-/// Compile `include_build_ignored` patterns against `anchor` (the walk's
-/// `exclude_root.unwrap_or(walk_root)`), shared by the directory walk and
-/// the single-file verdict so the rescue rule cannot drift between them.
-/// Config loading rejects invalid patterns.
+/// Compile `include_build_ignored` against `anchor`, the walk's
+/// `exclude_root.unwrap_or(walk_root)`. Config loading rejects invalid
+/// patterns.
 fn compile_build_ignored_includes(anchor: &Path, patterns: &[String]) -> ry_config::ScopedPaths {
     ry_config::ScopedPaths::new(anchor, patterns).unwrap_or_default()
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Shared, bounded directory discovery (#48)
-// ─────────────────────────────────────────────────────────────────────────
-
-/// Bounded directory discovery limits derived from `[index]` in `ry.toml`.
-/// Applied identically to CLI directory discovery and LSP background
-/// indexing so the two modes discover exactly the same file set.
+/// Bounded directory discovery limits from `[index]` in `ry.toml`, shared
+/// by CLI discovery and LSP indexing.
 #[derive(Clone, Copy, Debug)]
 pub struct DiscoveryLimits {
     /// Maximum number of R source files discovered per root.
@@ -323,9 +251,7 @@ impl DiscoveryLimits {
     }
 }
 
-/// Structured report when a discovery cap is hit.
-/// A cap hit is never silent: the caller emits a tracing event,
-/// LSP warning, or CLI warning based on this report.
+/// Which discovery caps were hit, for the caller to warn about.
 #[derive(Clone, Debug, Default)]
 pub struct TruncationReport {
     /// `true` when `max-files` stopped discovery before exhausting the tree.
@@ -400,26 +326,16 @@ pub struct DiscoveryResult {
     /// Structured cap report. Empty when no limit was reached.
     pub truncated: TruncationReport,
     pub skipped: SkippedPaths,
-    /// Directories the walk could not read (path, error). Kept apart
-    /// from an empty `files` so a caller can distinguish "this tree has
-    /// no eligible R source" from "this tree could not be walked at
-    /// all" — the latter must never look like a clean, empty check
-    ///. A nonexistent root lands here too: `read_dir` on it
-    /// fails, which is the discovery-level record of the miss.
+    /// Directories the walk could not read, with the error, including a
+    /// nonexistent root. A tree that could not be walked must not look
+    /// like a clean, empty check.
     pub read_errors: Vec<(PathBuf, String)>,
 }
 
-/// Discover all eligible R source files under `walk_root`, applying the
-/// same eligibility, extension, hidden-directory, symlink, exclude, and
-/// test-fixture rules to both CLI and LSP (#48).
-///
-/// `exclude_root` anchors the compiled `exclude` patterns from `config`.
-/// It should be the directory containing the originating `ry.toml`. When
-/// `None`, exclude patterns are not applied (matching a missing config).
-///
-/// Caps (`index.max-files`, `index.max-file-bytes`, `index.max-depth`)
-/// bound discovery. A cap hit populates [`TruncationReport`] so the
-/// caller can surface a visible warning.
+/// Discover the eligible R sources under `walk_root` with the rules the CLI
+/// and the LSP share. `exclude_root` anchors the `exclude` patterns and is
+/// the directory holding `ry.toml`. `None` skips them. A cap hit fills
+/// [`TruncationReport`].
 pub fn discover_r_files(
     walk_root: &Path,
     exclude_root: Option<&Path>,
@@ -486,14 +402,6 @@ pub fn discover_r_files(
         skipped,
         read_errors,
     }
-}
-
-/// Whether `path` is test data under a package's `tests/` tree rather than
-/// code the package test runner executes. Public so single-file index
-/// refreshes (watched-file events, close-time re-reads) apply the same
-/// runner-code classification as the directory walk without walking.
-pub fn is_test_fixture_path(path: &Path) -> bool {
-    is_test_fixture(path)
 }
 
 /// Whether `path` is test data under a package's `tests/` tree rather than
@@ -638,14 +546,8 @@ fn discover_recursive(
                 skipped.record(&path, true, "package support directory", limits.max_files);
                 continue;
             }
-            // depth cap prunes further descent. This is the reference
-            // implementation of the depth half of
-            // [`is_file_eligible_with_limits`]: `depth` counts descent
-            // levels from `walk_root`, and a file whose parent sits deeper
-            // than `max_depth` never becomes discoverable here, so
-            // open-buffer admission must apply the same bound as a path
-            // property (`is_within_depth`) or the admitted buffer would leak
-            // into project state the closed index omitted.
+            // Open-buffer admission applies the same bound through
+            // `is_within_depth`.
             if depth >= limits.max_depth {
                 truncated.depth_pruned_dirs.push(path);
                 continue;
@@ -682,15 +584,12 @@ fn discover_recursive(
                 skipped.record(&path, false, "test fixture", limits.max_files);
                 continue;
             }
-            // max-files cap.
             if out.len() >= limits.max_files {
                 truncated.max_files_hit = true;
                 break;
             }
-            // max-file-bytes cap. This is the reference implementation of
-            // the size half of [`is_file_eligible_with_limits`]: discovery
-            // omits only sizes strictly above the cap, and passes the
-            // measured size so admission of the same bytes agrees.
+            // Only sizes strictly above the cap are omitted, as in
+            // `is_file_eligible_with_limits`.
             if let Ok(metadata) = std::fs::metadata(&path) {
                 let size = metadata.len();
                 if size > limits.max_file_bytes {
@@ -717,11 +616,9 @@ fn read_rbuildignore(root: &Path) -> Vec<glob::Pattern> {
         .collect()
 }
 
-/// Translate the conservative regex subset used by conventional
-/// `.Rbuildignore` files to the already-depended-on glob matcher.
-/// Unsupported PCRE constructs are ignored, as required for patterns
-/// our engine cannot compile.
-pub fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
+/// Translate the regex subset conventional `.Rbuildignore` files use to a
+/// glob. A pattern with unsupported regex constructs is skipped.
+fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
     if regex.contains(['(', ')', '|', '{', '}', '+']) {
         return None;
     }
@@ -760,10 +657,8 @@ pub fn rbuildignore_pattern(regex: &str) -> Option<glob::Pattern> {
     glob::Pattern::new(&glob_str).ok()
 }
 
-/// Whether a directory entry is pruned by the walk's fixed shapes: hidden
-/// or generated directory names (`renv` only inside a package), shared by
-/// [`discover_recursive`] and the single-file verdict so the shapes exist
-/// once and cannot drift.
+/// Whether the walk prunes a directory by name: hidden or generated
+/// directories, and `renv` only inside a package.
 fn is_pruned_directory_name(name: &str, in_package: bool) -> bool {
     name.starts_with('.')
         || name == "target"
@@ -938,12 +833,13 @@ mod shared_tests {
             parser.parse(&path, &source).unwrap()
         })
         .collect();
-        let environment = ResolutionEnvironment {
-            files: files.iter().collect(),
-            user_stubs: &std::collections::BTreeMap::new(),
-        };
-        let context =
-            resolve_workspace_context(root, &ry_config::Config::default(), environment).unwrap();
+        let context = resolve_workspace_context(
+            root,
+            &ry_config::Config::default(),
+            files.iter().collect(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
 
         let attached_for = |relative: &str| {
             let path = root.join(relative);

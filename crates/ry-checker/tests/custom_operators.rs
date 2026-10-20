@@ -253,10 +253,8 @@ fn s3_registration_does_not_hide_primitive_diagnostics_or_real_custom_bindings()
         let context = ry_workspace::resolve_workspace_context(
             dir.path(),
             &ry_config::Config::default(),
-            ry_workspace::ResolutionEnvironment {
-                files: vec![&file],
-                user_stubs: &Default::default(),
-            },
+            vec![&file],
+            &Default::default(),
         )
         .unwrap();
         let mut project = ry_checker::Project::new();

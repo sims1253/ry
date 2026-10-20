@@ -183,11 +183,7 @@ impl FolderAnalysisContext {
             .flatten()
             .cloned()
             .collect();
-        self.scoped_policy = ry_checker::ScopedRulePolicy::new(
-            &self.config,
-            self.config_root.as_deref(),
-            &protected,
-        );
+        self.scoped_policy = ry_checker::ScopedRulePolicy::new(&self.config, &protected);
         self.min_confidence = self.folder_settings.min_confidence;
         self.excludes = ry_config::Excludes::from_config(&self.config);
     }

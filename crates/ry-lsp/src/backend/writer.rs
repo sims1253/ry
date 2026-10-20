@@ -438,9 +438,9 @@ impl IndexWriter {
                     .collect();
                 let mut folder_contexts = HashMap::new();
                 for group in ry_workspace::resolve_grouped(&files, config, stubs, root) {
-                    match group.context {
-                        Ok(context) => {
-                            folder_contexts.insert(group.key, context);
+                    match group {
+                        Ok(group) => {
+                            folder_contexts.insert(group.key, group.context);
                         }
                         Err(error) => tracing::warn!(%error, "workspace resolution degraded"),
                     }
@@ -646,7 +646,7 @@ impl IndexWriter {
                 .flatten()
                 .map(|&index| candidates[index].1.as_ref())
                 .collect();
-            ry_workspace::resolve_group(key.as_deref(), files, &config, &stubs, &root).1
+            ry_workspace::resolve_group(key.as_deref(), files, &config, &stubs, &root)
         })
         .await;
         let context = match resolved {

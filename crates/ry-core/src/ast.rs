@@ -28,7 +28,7 @@ pub struct SourceFile {
     pub input_issues: Vec<InputIssue>,
     /// Maximal byte spans of invalid UTF-8 sequences found while decoding
     /// this file from disk, located in `source` (which for such files is
-    /// a Latin-1 transcoding; see `ry_workspace::read_r_source`). Empty
+    /// a Latin-1 transcoding; see `ry_workspace::read_r_source_decoded`). Empty
     /// for valid UTF-8 and for client-supplied editor buffers, which
     /// arrive as Unicode. R's parser rejects such files with "invalid
     /// multibyte character in parser" unless every invalid byte sits

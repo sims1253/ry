@@ -108,7 +108,9 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
     let files: Vec<_> = paths
         .iter()
         .map(|path| {
-            let source = ry_workspace::read_r_source(path).expect("read vendored R source");
+            let source = ry_workspace::read_r_source_decoded(path)
+                .expect("read vendored R source")
+                .text;
             parser
                 .parse(&path.to_string_lossy(), &source)
                 .expect("parse vendored R source")
@@ -117,10 +119,8 @@ fn check_vendor(vendor_subdir: &str) -> Vec<String> {
     let workspace = ry_workspace::resolve_workspace_context(
         vendor_root.parent().unwrap(),
         &ry_config::Config::default(),
-        ry_workspace::ResolutionEnvironment {
-            files: files.iter().collect(),
-            user_stubs: &Default::default(),
-        },
+        files.iter().collect(),
+        &Default::default(),
     )
     .expect("resolve vendored package");
     let mut project = Project::new();

@@ -568,15 +568,9 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
         let config = ry_config::Config::default();
         let files = [file];
         let stubs = std::collections::BTreeMap::new();
-        let context = crate::resolve_workspace_context(
-            root,
-            &config,
-            crate::ResolutionEnvironment {
-                files: files.iter().collect(),
-                user_stubs: &stubs,
-            },
-        )
-        .unwrap();
+        let context =
+            crate::resolve_workspace_context(root, &config, files.iter().collect(), &stubs)
+                .unwrap();
         assert!(
             context.external_bindings[&path].contains("entry"),
             "{:?}",

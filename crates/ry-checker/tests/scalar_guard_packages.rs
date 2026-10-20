@@ -27,10 +27,8 @@ fn check_package(namespace: &str, source: &str) -> Vec<String> {
     let context = ry_workspace::resolve_workspace_context(
         dir.path(),
         &Config::default(),
-        ry_workspace::ResolutionEnvironment {
-            files: vec![&file],
-            user_stubs: &Default::default(),
-        },
+        vec![&file],
+        &Default::default(),
     )
     .unwrap();
     let mut project = Project::new();

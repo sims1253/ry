@@ -35,68 +35,83 @@ fn rscript_on_path() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+/// What ry reports for one file.
+enum Expect {
+    /// One RY000 error whose message contains the fragment.
+    Flag(&'static str),
+    /// No RY000. Other diagnostics may appear.
+    NoRy000,
+    /// No diagnostics at all.
+    Clean,
+}
+
 #[test]
 fn encoding_errors_follow_rs_parser() {
-    // (file, bytes, RY000 message fragment if ry flags, R's parse error if
-    // R rejects). The fixtures hold raw bytes an editor would rewrite.
-    type Case<'a> = (&'a str, &'a [u8], Option<&'a str>, Option<&'a str>);
+    // (file, bytes, ry's report, R's parse error if R rejects). The
+    // fixtures hold raw bytes an editor would rewrite.
+    type Case<'a> = (&'a str, &'a [u8], Expect, Option<&'a str>);
     let cases: [Case; 8] = [
         // CP1252 bytes in a string token.
         (
             "cp1252_string.R",
             include_bytes!("fixtures/encoding/cp1252_string.R"),
-            Some("not valid UTF-8"),
+            Expect::Flag("not valid UTF-8"),
             Some("invalid multibyte character in parser"),
         ),
         // R's lexer tolerates invalid bytes inside comments.
         (
             "latin1_comment.R",
             include_bytes!("fixtures/encoding/latin1_comment.R"),
-            None,
+            Expect::NoRy000,
             None,
         ),
         (
             "utf8.R",
             "title <- \"café au lait\"\n# Köln: „kölsch“ commentary\ny <- 2\n".as_bytes(),
-            None,
+            Expect::Clean,
             None,
         ),
         // R scans `%...%` operator tokens as raw bytes (gram.y `SpecialValue`).
         (
             "special_operator.R",
             include_bytes!("fixtures/encoding/special_operator.R"),
-            None,
+            Expect::NoRy000,
             None,
         ),
         // Known gap: R drops a lone undecodable byte and parses an empty
         // `expression()`. The same byte anywhere else is an R error, so ry
         // keeps flagging it.
-        ("lone_byte.R", b"\xfc\n", Some("not valid UTF-8"), None),
+        (
+            "lone_byte.R",
+            b"\xfc\n",
+            Expect::Flag("not valid UTF-8"),
+            None,
+        ),
         // A leading BOM is "unexpected input" at 1:1 unless
         // `parse(keep.source = TRUE)` strips it.
         (
             "bom.R",
             include_bytes!("fixtures/encoding/bom.R"),
-            Some("byte order mark"),
+            Expect::Flag("byte order mark"),
             Some("unexpected input"),
         ),
         // Unlike invalid bytes, a BOM is rejected even before a comment.
         (
             "bom_comment_only.R",
             b"\xef\xbb\xbf# just a comment\n",
-            Some("byte order mark"),
+            Expect::Flag("byte order mark"),
             Some("unexpected input"),
         ),
         // U+FEFF after the first byte is an ordinary character.
         (
             "bom_midfile.R",
             "s <- \"\u{feff}\"\nx <- 1 # \u{feff} comment\n".as_bytes(),
-            None,
+            Expect::NoRy000,
             None,
         ),
     ];
     let temp = tempfile::tempdir().unwrap();
-    for (name, bytes, flag, r_error) in cases {
+    for (name, bytes, expect, r_error) in cases {
         let path = temp.path().join(name);
         fs::write(&path, bytes).unwrap();
         let output = check().args(["--output-format", "json"]).arg(&path).run();
@@ -108,8 +123,8 @@ fn encoding_errors_follow_rs_parser() {
             .iter()
             .filter(|d| d["code"] == "RY000")
             .collect();
-        match flag {
-            Some(fragment) => {
+        match expect {
+            Expect::Flag(fragment) => {
                 assert_eq!(encoding.len(), 1, "{name}: {output:?}");
                 assert_eq!(encoding[0]["severity"], "error", "{name}");
                 assert!(
@@ -117,7 +132,8 @@ fn encoding_errors_follow_rs_parser() {
                     "{name}: {output:?}"
                 );
             }
-            None => assert!(encoding.is_empty(), "{name}: {output:?}"),
+            Expect::NoRy000 => assert!(encoding.is_empty(), "{name}: {output:?}"),
+            Expect::Clean => assert!(diagnostics.is_empty(), "{name}: {output:?}"),
         }
         if let Some((rejected, stderr)) = r_rejects(&path) {
             assert_eq!(rejected, r_error.is_some(), "{name}: R said {stderr}");

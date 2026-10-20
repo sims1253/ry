@@ -283,20 +283,22 @@ fn watch_reloads_config_inputs() {
 }
 
 /// Dropping a NAMESPACE import re-checks without an R-file edit, whichever
-/// form names the input, and restoring it converges back to quiet.
+/// form names the input, and restoring it converges back to quiet. The
+/// package-root case deletes NAMESPACE, the others empty it.
 #[test]
 fn watch_reacts_to_namespace_edits_for_every_input_form() {
     // (form, package dir under the temp root, check input, relative to the
-    // temp root as the working directory)
+    // temp root as the working directory, delete NAMESPACE instead of
+    // emptying it)
     let forms = [
-        ("package root", "", "", false),
-        ("nested package", "pkg", "", false),
-        ("package subdirectory", "pkg", "pkg/R", false),
-        ("explicit file", "pkg", "pkg/R/use.R", false),
-        ("relative file", "pkg", "pkg/R/use.R", true),
+        ("package root", "", "", false, true),
+        ("nested package", "pkg", "", false, false),
+        ("package subdirectory", "pkg", "pkg/R", false, false),
+        ("explicit file", "pkg", "pkg/R/use.R", false, false),
+        ("relative file", "pkg", "pkg/R/use.R", true, false),
     ];
     let finding = "`tags` is not bound";
-    for (form, package, input, relative) in forms {
+    for (form, package, input, relative, delete) in forms {
         let tmp = tempfile::tempdir().unwrap();
         let pkg = tmp.path().join(package);
         write_package_with_import(&pkg, "namespaceedit");
@@ -313,7 +315,11 @@ fn watch_reacts_to_namespace_edits_for_every_input_form() {
             session.stdout.lock().unwrap()
         );
 
-        std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+        if delete {
+            std::fs::remove_file(pkg.join("NAMESPACE")).unwrap();
+        } else {
+            std::fs::write(pkg.join("NAMESPACE"), "").unwrap();
+        }
         wait_for(&session.stdout, finding, form);
 
         let found = occurrences(&session.stdout, finding);

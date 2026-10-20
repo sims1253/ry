@@ -1287,6 +1287,30 @@ paths = ["inst/shiny/**"]
     }
 
     #[test]
+    fn discover_steps_over_dotdot_without_folding_it() {
+        // From `sub/../project`, `Path::parent` visits `sub/..` and then
+        // `sub` itself, which a folded `project` start never visits.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+        fs::create_dir_all(base.join("sub")).unwrap();
+        fs::create_dir_all(base.join("project/R")).unwrap();
+        fs::write(base.join("project/R/use.R"), "x <- 1L\n").unwrap();
+        fs::write(base.join("sub").join(CONFIG_FILENAME), "exit-zero = true\n").unwrap();
+        let expected = base.join("sub").join(CONFIG_FILENAME);
+        for start in [
+            base.join("sub/../project"),
+            base.join("sub/../project/R/use.R"),
+        ] {
+            let (path, _) = Config::discover(&start).unwrap().expect("sub/ry.toml");
+            assert_eq!(path, expected, "{start:?}");
+            let first = config_candidates(&start)
+                .into_iter()
+                .find(|candidate| candidate.is_file());
+            assert_eq!(first, Some(expected.clone()), "{start:?}");
+        }
+    }
+
+    #[test]
     fn discover_handles_file_start() {
         // If `start` is a file (e.g. a single .R path), discovery
         // should begin from its parent directory.

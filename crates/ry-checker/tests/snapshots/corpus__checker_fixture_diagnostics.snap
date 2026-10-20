@@ -51,6 +51,24 @@ expression: snapshots
         start: 21
   fixture: err_argument_type_mismatch.R
 - diagnostics:
+    - code: RY091
+      message: "missing required argument `x` in call to `nchar`"
+      severity: warning
+      span:
+        column: 2
+        end: 762
+        line: 30
+        start: 755
+    - code: RY091
+      message: "missing required argument `x` in call to `nchar`"
+      severity: warning
+      span:
+        column: 6
+        end: 859
+        line: 35
+        start: 852
+  fixture: err_block_frame_closure_shadows_base.R
+- diagnostics:
     - code: RY000
       message: "unexpected input at 1:1: file starts with a UTF-8 byte order mark (R's parser rejects it)"
       severity: error

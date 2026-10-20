@@ -688,9 +688,9 @@ async fn workspace_folder_add_remove_convergence() {
 ///   5. diagnostics equal a fresh parse of N+1.
 ///
 /// The test-only scheduler/barrier seam (`ry_lsp::test_seam`) forces this
-/// ordering without any sleeps. The seam controls scheduling only; cache
-/// policy (version-stamped tree rejection) is production code in
-/// `backend::parsed_file` and `State::store_tree`/`State::tree_for`.
+/// ordering without any sleeps. The seam controls scheduling only. The
+/// rejection is production code: `backend::parsed_file` keeps a parse only
+/// if the document's edit stamp has not changed.
 #[tokio::test]
 async fn version_stamped_tree_cache_rejects_stale_parse() {
     use ry_testkit::LspSession;
@@ -734,10 +734,9 @@ async fn version_stamped_tree_cache_rejects_stale_parse() {
     // update and the stale parse would not be detected.
     ry_lsp::test_seam::wait_landed(Seam::DidChange).await;
 
-    // Release the barrier: the version-1 parse finishes, its tree is
-    // rejected by `store_tree` (version 1 ≠ current version 2) and its
-    // `SourceFile` by `record_parse`, and the retry loop parses
-    // version 2 fresh.
+    // Release the barrier: the version-1 parse finishes, `parsed_file`
+    // discards it because the document's edit stamp moved, and the retry
+    // loop parses version 2 fresh.
     ry_lsp::test_seam::release(Seam::Parse);
 
     // Collect diagnostics for version 2. The didChange triggered

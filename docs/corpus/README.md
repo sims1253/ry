@@ -28,9 +28,8 @@ The default ledger keeps its historical `tidyverse-0.7.1.json` filename; its
 version and source revision describe the current regenerated diagnostics.
 
 Two historical ledgers were removed as generated artifacts: the 0.8.0
-audit transcript (1,142 identities, reconciliation `audit-transcript`) and
-the pre-change baseline (729 identities, hermetic, measured on the
-audited starting tree). Neither gated CI; both are re-derivable from the
+audit transcript (1,142 identities) and the pre-change baseline (729
+identities, hermetic, measured on the audited starting tree). Neither gated CI; both are re-derivable from the
 audit records summarized in [`pre-governance-measurement.md`](pre-governance-measurement.md).
 
 ## Instruction counts
@@ -64,28 +63,18 @@ digest or an ignored `.full.txt` report.
 processed tier against the committed entries and print a unified diff for any
 message or severity drift. A full non-check run updates all entries.
 
-## Reconciliation modes
+## Reconciliation
 
 `ecosystem/run.sh` reconciles the hermetic root reports it generates
-(`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. The ledger's `reconciliation`
-field selects how a delta is treated:
+(`RY_NO_INSTALLED_LIBRARIES=1`) against a ledger. Every ledger has
+`"reconciliation": "hermetic"`: the ledger is the CI baseline, and any missing
+or unowned identity fails the build. A disappeared `true_positive` gets its
+own error line.
 
 > Reproducing reports outside `run.sh` requires the same variable: without
 > `RY_NO_INSTALLED_LIBRARIES=1` the checker consults the machine's installed R
 > packages and produces different findings, so a hand-run diff against the
 > committed reports will show phantom rows.
-
-- **`hermetic`** (default when absent; every committed ledger). The ledger *is*
-  the hermetic CI baseline: any missing or unowned identity fails the build.
-- **`audit-transcript`** (no committed ledger uses it today; previously the
-  removed 0.8.0 posit ledger). A ledger transcribed from an *installed-library*
-  audit run legitimately differs under a hermetic rerun, so the missing/unowned
-  delta is printed for visibility but does not gate the build. The mode is kept
-  and exercised by `ecosystem/test-reconciliation.R` in case a future corpus is
-  transcribed from an audit rather than measured hermetically.
-
-In both modes, findings labeled `true_positive` are checked explicitly so a
-real bug disappearing is always surfaced.
 
 ## The moving 0.9 ledger
 

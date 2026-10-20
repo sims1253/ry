@@ -1,0 +1,170 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: dollar on an integer vector is an atomic-vector error
+  diagnostics:
+    - code: RY061
+      line: 11
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+- case: attach opens the search path for later and nested reads
+  diagnostics:
+    - code: RY010
+      line: 17
+      message: "variable `before_attach` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 18
+      message: "variable `dataset` is not bound in this scope"
+      severity: warning
+- case: library of an unknown package opens the search path for later reads
+  diagnostics:
+    - code: RY010
+      line: 36
+      message: "variable `before_library` is not bound in this scope"
+      severity: warning
+- case: library of a stubbed package keeps unknown names unbound
+  diagnostics:
+    - code: RY010
+      line: 47
+      message: "variable `still_not_a_dplyr_thing` is not bound in this scope"
+      severity: warning
+- case: source without local leaves function reads unbound
+  diagnostics:
+    - code: RY010
+      line: 54
+      message: "variable `genuinely_missing` is not bound in this scope"
+      severity: warning
+- case: positional local FALSE leaves function reads unbound
+  diagnostics:
+    - code: RY010
+      line: 97
+      message: "variable `genuinely_missing` is not bound in this scope"
+      severity: warning
+- case: named local FALSE leaves function reads unbound
+  diagnostics:
+    - code: RY010
+      line: 104
+      message: "variable `genuinely_missing` is not bound in this scope"
+      severity: warning
+- case: sourceCpp opens the search path for later and nested reads
+  diagnostics:
+    - code: RY010
+      line: 110
+      message: "variable `before_source` is not bound in this scope"
+      severity: warning
+- case: local function named attach has no attach scope effect
+  diagnostics:
+    - code: RY010
+      line: 121
+      message: "variable `dataset` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 122
+      message: "variable `still_missing` is not bound in this scope"
+      severity: warning
+- case: embrace of an unbound symbol reports typo
+  diagnostics:
+    - code: RY010
+      line: 176
+      message: "variable `typo` is not bound in this scope"
+      severity: warning
+- case: data pronoun with a missing column is an undefined column
+  diagnostics:
+    - code: RY060
+      line: 191
+      message: "column `missing` not found in data frame schema; available columns: known"
+      severity: error
+- case: env pronoun reports the unbound name
+  diagnostics:
+    - code: RY010
+      line: 212
+      message: "variable `unbound` is not bound in this scope"
+      severity: warning
+- case: unbound index on an opaque-length vector reports undefined_index
+  diagnostics:
+    - code: RY010
+      line: 268
+      message: "variable `undefined_index` is not bound in this scope"
+      severity: warning
+- case: zero-length member of a condition union is a condition error
+  diagnostics:
+    - code: RY001
+      line: 276
+      message: "`if` condition is `union[logical<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: function reading its own binding before assignment reports it
+  diagnostics:
+    - code: RY010
+      line: 325
+      message: "variable `h` is not bound in this scope"
+      severity: warning
+- case: plain unbound reference is reported
+  diagnostics:
+    - code: RY010
+      line: 409
+      message: "variable `genuinely_unbound_name` is not bound in this scope"
+      severity: warning
+- case: same-block shadowing keeps the call error
+  diagnostics:
+    - code: RY070
+      line: 451
+      message: "could not find function `shadowed` (bound here as `double`)"
+      severity: error
+- case: braced argument of an ordinary call writes through
+  diagnostics:
+    - code: RY040
+      line: 459
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: project-local test_that keeps caller argument flow
+  diagnostics:
+    - code: RY040
+      line: 469
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: test_that wrapper argument is ordinary caller code
+  diagnostics:
+    - code: RY040
+      line: 491
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+    - code: RY040
+      line: 492
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: delayedAssign does not read the promise expression
+  diagnostics:
+    - code: RY010
+      line: 512
+      message: "variable `not_bound` is not bound in this scope"
+      severity: warning
+- case: delayedAssign does not bind the value string
+  diagnostics:
+    - code: RY010
+      line: 553
+      message: "variable `wrong` is not bound in this scope"
+      severity: warning
+- case: delayedAssign with a repeated x binds nothing
+  diagnostics:
+    - code: RY010
+      line: 560
+      message: "variable `held` is not bound in this scope"
+      severity: warning
+- case: project delayedAssign is an ordinary call
+  diagnostics:
+    - code: RY003
+      line: 568
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+    - code: RY010
+      line: 569
+      message: "variable `unused` is not bound in this scope"
+      severity: warning
+- case: local block closures read later helpers
+  diagnostics:
+    - code: RY010
+      line: 578
+      message: "variable `not_bound` is not bound in this scope"
+      severity: warning

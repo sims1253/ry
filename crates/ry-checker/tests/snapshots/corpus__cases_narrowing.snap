@@ -1,0 +1,266 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a guard block ending in stop diverges
+  diagnostics:
+    - code: RY092
+      line: 56
+      message: "argument `x` to `log` is `character`, expected numeric"
+      severity: error
+- case: a compound is.null or is.na stop guard narrows the continuation
+  diagnostics:
+    - code: RY032
+      line: 64
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a warning guard does not narrow the continuation
+  diagnostics:
+    - code: RY070
+      line: 82
+      message: "could not find function `fun` (bound here as `NULL`)"
+      severity: error
+- case: a project function named abort does not diverge
+  diagnostics:
+    - code: RY070
+      line: 91
+      message: "could not find function `fun` (bound here as `NULL`)"
+      severity: error
+- case: a warning compound length guard does not narrow the continuation
+  diagnostics:
+    - code: RY001
+      line: 119
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a NULL return guard alone does not prove the value non-empty
+  diagnostics:
+    - code: RY001
+      line: 127
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a missing() guard does not narrow the NULL default
+  diagnostics:
+    - code: RY070
+      line: 135
+      message: "could not find function `fun` (bound here as `NULL`)"
+      severity: error
+- case: is.list replaces an incompatible default only in the then branch
+  diagnostics:
+    - code: RY061
+      line: 172
+      message: "$ operator is invalid for atomic vectors of mode `logical`"
+      severity: error
+- case: is.numeric narrowing stays inside the branch
+  diagnostics:
+    - code: RY010
+      line: 197
+      message: "variable `some_opaque_thing` is not bound in this scope"
+      severity: warning
+- case: check_string on a length-2 local is flagged and narrows later uses
+  diagnostics:
+    - code: RY092
+      line: 207
+      message: "argument `choice` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: check_string on a known incompatible value is flagged
+  diagnostics:
+    - code: RY092
+      line: 214
+      message: "argument `choice` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: check_string that always fails makes the continuation unreachable
+  diagnostics:
+    - code: RY092
+      line: 219
+      message: "argument `choice` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: an impossible guard does not hide diagnostics in later function bodies
+  diagnostics:
+    - code: RY092
+      line: 226
+      message: "argument `value` to `check_string` is `integer<len=1>`, expected character"
+      severity: error
+    - code: RY010
+      line: 227
+      message: "variable `missing_in_function` is not bound in this scope"
+      severity: warning
+- case: check_string on NULL always fails
+  diagnostics:
+    - code: RY092
+      line: 247
+      message: "argument `value` to `check_string` is `NULL<len=0>`, expected character"
+      severity: error
+- case: check_string on a list always fails
+  diagnostics:
+    - code: RY092
+      line: 252
+      message: "argument `value` to `check_string` is `list<len=0>{}`, expected character"
+      severity: error
+- case: check_string on a union with no string member always fails
+  diagnostics:
+    - code: RY092
+      line: 257
+      message: "argument `value` to `check_string` is `union[integer<len=1>, list<len=0>{}]`, expected character"
+      severity: error
+- case: a reassigned parameter can make check_string impossible
+  diagnostics:
+    - code: RY092
+      line: 277
+      message: "argument `value` to `check_string` is `NULL<len=0>`, expected character"
+      severity: error
+- case: a local value named check_string is not a guard
+  diagnostics:
+    - code: RY070
+      line: 285
+      message: "could not find function `check_string` (bound here as `integer`)"
+      severity: error
+    - code: RY010
+      line: 286
+      message: "variable `missing_after_call` is not bound in this scope"
+      severity: warning
+- case: a local literal keeps its else branch diagnostic
+  diagnostics:
+    - code: RY061
+      line: 322
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a reassigned formal keeps its else branch diagnostic
+  diagnostics:
+    - code: RY061
+      line: 329
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: "an inherits false branch keeps the default's diagnostic"
+  diagnostics:
+    - code: RY061
+      line: 343
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: "code after the branch keeps the default's shape diagnostic"
+  diagnostics:
+    - code: RY061
+      line: 353
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: concrete atomic values still fail check_data_frame
+  diagnostics:
+    - code: RY092
+      line: 370
+      message: "argument `v` to `check_data_frame` is `double<len=1>`, expected list"
+      severity: error
+    - code: RY092
+      line: 374
+      message: "argument `s` to `check_data_frame` is `character<len=1>`, expected list"
+      severity: error
+- case: a plain list from as.list still fails check_data_frame
+  diagnostics:
+    - code: RY092
+      line: 382
+      message: "argument `w` to `check_data_frame` is `list<len=1>`, expected list"
+      severity: error
+- case: impossible guards in every if arm make the continuation unreachable
+  diagnostics:
+    - code: RY092
+      line: 389
+      message: "argument `left` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+    - code: RY092
+      line: 392
+      message: "argument `right` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: an impossible guard in repeat makes the continuation unreachable
+  diagnostics:
+    - code: RY092
+      line: 400
+      message: "argument `value` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: a user check_string with the rlang signature narrows
+  diagnostics:
+    - code: RY092
+      line: 414
+      message: "argument `choice` to `check_string` is `character<len=2>`, expected character"
+      severity: error
+- case: an if without else keeps the NULL path for the call
+  diagnostics:
+    - code: RY070
+      line: 448
+      message: "could not find function `g` (bound here as `union`)"
+      severity: error
+- case: an else branch that keeps NULL still reports the call
+  diagnostics:
+    - code: RY070
+      line: 452
+      message: "could not find function `g` (bound here as `union`)"
+      severity: error
+- case: an else branch that installs an integer still reports the call
+  diagnostics:
+    - code: RY070
+      line: 456
+      message: "could not find function `g` (bound here as `union`)"
+      severity: error
+- case: a nested if without else keeps the NULL path for the call
+  diagnostics:
+    - code: RY070
+      line: 460
+      message: "could not find function `g` (bound here as `union`)"
+      severity: error
+- case: an or guard does not narrow its true branch
+  diagnostics:
+    - code: RY061
+      line: 502
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: an and guard that cannot hold does not narrow its else branch
+  diagnostics:
+    - code: RY061
+      line: 506
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a rebound local keeps its type through an or guard
+  diagnostics:
+    - code: RY061
+      line: 510
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: is.data.frame or is.null does not reject a character default
+  diagnostics:
+    - code: RY061
+      line: 514
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a local is.character mask keeps the atomic error
+  diagnostics:
+    - code: RY061
+      line: 518
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: an assignment inside the guard keeps the atomic error
+  diagnostics:
+    - code: RY061
+      line: 522
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a top-level is.character alias keeps the atomic error
+  diagnostics:
+    - code: RY061
+      line: 527
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: a NULL return guard on a NULL default may still leave a zero-length value
+  diagnostics:
+    - code: RY001
+      line: 659
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a same-type rebind in a NULL guard keeps the NULL member
+  diagnostics:
+    - code: RY001
+      line: 691
+      message: "`if` condition is `union[logical<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a NULL return guard without replacement may leave a zero-length default
+  diagnostics:
+    - code: RY001
+      line: 750
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning

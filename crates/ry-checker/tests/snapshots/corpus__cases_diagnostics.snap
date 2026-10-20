@@ -1,0 +1,286 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: a parse error hides semantic findings on the recovered tree
+  diagnostics:
+    - code: RY000
+      line: 5
+      message: "syntax error: unparseable region (recovered tree may be unreliable)"
+      severity: error
+- case: a file without parse errors keeps its semantic findings
+  diagnostics:
+    - code: RY010
+      line: 9
+      message: "variable `undefined_thing` is not bound in this scope"
+      severity: warning
+- case: formals replacement does not silence a same-named closure elsewhere
+  diagnostics:
+    - code: RY010
+      line: 43
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+- case: environment replacement keeps unbound names reportable
+  diagnostics:
+    - code: RY010
+      line: 49
+      message: "variable `still_unbound` is not bound in this scope"
+      severity: warning
+- case: formals replacement keeps nested closure findings
+  diagnostics:
+    - code: RY010
+      line: 58
+      message: "variable `undefined_name` is not bound in this scope"
+      severity: warning
+- case: formals replacement keeps a typed map error in the body
+  diagnostics:
+    - code: RY080
+      line: 78
+      message: "`map_dbl` requires a scalar `double` callback result, but the callback returns `character<len=1>`; R rejects this result"
+      severity: error
+- case: a rebind after formals replacement is a fresh closure
+  diagnostics:
+    - code: RY010
+      line: 96
+      message: "variable `other_unbound` is not bound in this scope"
+      severity: warning
+- case: formals replacement before the closure exists marks nothing
+  diagnostics:
+    - code: RY010
+      line: 102
+      message: "variable `later_unbound` is not bound in this scope"
+      severity: warning
+- case: a closure in a sibling branch keeps its finding
+  diagnostics:
+    - code: RY010
+      line: 111
+      message: "variable `else_unbound` is not bound in this scope"
+      severity: warning
+- case: formals replacement inside local does not reach the outer closure
+  diagnostics:
+    - code: RY010
+      line: 120
+      message: "variable `undefined_name` is not bound in this scope"
+      severity: warning
+- case: a comparison directly inside length is flagged
+  diagnostics:
+    - code: RY093
+      line: 167
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+    - code: RY010
+      line: 167
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 167
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 168
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 168
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+- case: comparisons inside length nchar and abs are flagged but not inside sum
+  diagnostics:
+    - code: RY093
+      line: 172
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+    - code: RY010
+      line: 172
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY093
+      line: 173
+      message: "comparison is inside `nchar()`; compare `nchar(x)` instead"
+      severity: warning
+    - code: RY010
+      line: 173
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 173
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY100
+      line: 174
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 174
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 174
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 175
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 176
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+- case: a comparison directly inside numeric math is flagged
+  diagnostics:
+    - code: RY100
+      line: 180
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 180
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 180
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 181
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 181
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY100
+      line: 182
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 182
+      message: "variable `a` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 182
+      message: "variable `b` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 183
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 184
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 185
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 185
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY100
+      line: 186
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 186
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 186
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+- case: any compared to zero negates the result
+  diagnostics:
+    - code: RY107
+      line: 194
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(lengths == 0)`"
+      severity: warning
+- case: all compared above one is constant
+  diagnostics:
+    - code: RY107
+      line: 200
+      message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `all(x > 1)`"
+      severity: warning
+- case: a local any is not assumed to return one logical
+  diagnostics:
+    - code: RY002
+      line: 223
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: any comparisons already flagged by a call rule are not reported twice
+  diagnostics:
+    - code: RY093
+      line: 228
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+    - code: RY010
+      line: 228
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY100
+      line: 229
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 229
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY105
+      line: 230
+      message: "`any()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: sign of a comparison is an indicator idiom
+  diagnostics:
+    - code: RY010
+      line: 234
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 234
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+    - code: RY100
+      line: 235
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 235
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 235
+      message: "variable `y` is not bound in this scope"
+      severity: warning
+- case: comparisons inside calls are flagged in both short circuit operands
+  diagnostics:
+    - code: RY093
+      line: 243
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+    - code: RY093
+      line: 244
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+- case: hasArg needs a formal of the enclosing function unless it has dots
+  diagnostics:
+    - code: RY096
+      line: 260
+      message: "`hasArg(missing)` names a parameter that is not a formal; it is always FALSE"
+      severity: warning
+    - code: RY096
+      line: 261
+      message: "`hasArg(missing)` names a parameter that is not a formal; it is always FALSE"
+      severity: warning
+- case: a literal printf format with too few arguments is flagged
+  diagnostics:
+    - code: RY094
+      line: 266
+      message: "format string requires 2 value argument(s), but 1 provided"
+      severity: warning
+    - code: RY010
+      line: 268
+      message: "variable `dynamic_format` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 268
+      message: "variable `value` is not bound in this scope"
+      severity: warning

@@ -1,0 +1,336 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: "RY102: string arrow inside list() loses the element name"
+  diagnostics:
+    - code: RY102
+      line: 10
+      message: "`<-` inside `list()` assigns `a` and leaves the element unnamed; write `\"a\" = ...` to name it"
+      severity: warning
+- case: "RY102: string arrow inside list() with a named sibling"
+  diagnostics:
+    - code: RY102
+      line: 14
+      message: "`<-` inside `list()` assigns `nm` and leaves the element unnamed; write `\"nm\" = ...` to name it"
+      severity: warning
+- case: "RY102: string arrow inside c()"
+  diagnostics:
+    - code: RY102
+      line: 18
+      message: "`<-` inside `c()` assigns `nm` and leaves the element unnamed; write `\"nm\" = ...` to name it"
+      severity: warning
+- case: "RY102: string arrow inside data.frame()"
+  diagnostics:
+    - code: RY102
+      line: 22
+      message: "`<-` inside `data.frame()` assigns `nm` and leaves the element unnamed; write `\"nm\" = ...` to name it"
+      severity: warning
+- case: "RY102: string arrow inside structure()"
+  diagnostics:
+    - code: RY102
+      line: 26
+      message: "`<-` inside `structure()` assigns `nm` and leaves the element unnamed; write `\"nm\" = ...` to name it"
+      severity: warning
+- case: "RY102: string arrow inside base::list()"
+  diagnostics:
+    - code: RY102
+      line: 30
+      message: "`<-` inside `list()` assigns `nm` and leaves the element unnamed; write `\"nm\" = ...` to name it"
+      severity: warning
+- case: "RY102: right assignment beside a named sibling"
+  diagnostics:
+    - code: RY102
+      line: 37
+      message: "`<-` inside `list()` assigns `nm` and leaves the element unnamed; write `nm = ...` to name it"
+      severity: warning
+- case: "RY102: assign-and-append inside c() is silent"
+  diagnostics:
+    - code: RY010
+      line: 53
+      message: "variable `out` is not bound in this scope"
+      severity: warning
+- case: "RY103: class() equality in an if condition"
+  diagnostics:
+    - code: RY103
+      line: 90
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits(x, \"data.frame\")`"
+      severity: warning
+- case: "RY103: class() inequality under &&"
+  diagnostics:
+    - code: RY103
+      line: 94
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(x, t)`"
+      severity: warning
+- case: "RY103: class() equality under ||"
+  diagnostics:
+    - code: RY103
+      line: 98
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits(x, \"tbl\")`"
+      severity: warning
+- case: "RY103: class() equality under negation"
+  diagnostics:
+    - code: RY103
+      line: 102
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `inherits(x, \"tbl\")`"
+      severity: warning
+- case: "RY103: class() inequality in a while condition"
+  diagnostics:
+    - code: RY103
+      line: 106
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(x, \"tbl\")`"
+      severity: warning
+- case: "RY103: one report per comparison under &&"
+  diagnostics:
+    - code: RY103
+      line: 110
+      message: "`class()` returns a character vector, so this comparison is not length-1 for a multi-class object and the enclosing condition errors; use `!inherits(x, t)`"
+      severity: warning
+- case: "RY105: length of a scalar reduction compared with zero"
+  diagnostics:
+    - code: RY105
+      line: 139
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: scalar reduction through a local binding"
+  diagnostics:
+    - code: RY105
+      line: 145
+      message: "`n` is a length-1 double, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: classless scalar local compared with zero"
+  diagnostics:
+    - code: RY105
+      line: 201
+      message: "`x` is a length-1 integer, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: file.path() of scalar literals through a binding"
+  diagnostics:
+    - code: RY105
+      line: 231
+      message: "`p` is a length-1 character, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: subset of an empty atomic vector has length one"
+  diagnostics:
+    - code: RY105
+      line: 257
+      message: "`first` is a length-1 character, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: length greater than a negative bound"
+  diagnostics:
+    - code: RY105
+      line: 284
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: length less than a negative bound"
+  diagnostics:
+    - code: RY105
+      line: 288
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always FALSE"
+      severity: warning
+- case: "RY105: length equal to a negative bound"
+  diagnostics:
+    - code: RY105
+      line: 292
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always FALSE"
+      severity: warning
+- case: "RY105: length not equal to a negative bound"
+  diagnostics:
+    - code: RY105
+      line: 296
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: negative integer bound"
+  diagnostics:
+    - code: RY105
+      line: 300
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: negative bound on the left"
+  diagnostics:
+    - code: RY105
+      line: 304
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: negated zero bound"
+  diagnostics:
+    - code: RY105
+      line: 309
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY105: plus-spelled zero bound"
+  diagnostics:
+    - code: RY105
+      line: 326
+      message: "`sum()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning
+- case: "RY107: any() equal to zero negates the result"
+  diagnostics:
+    - code: RY107
+      line: 352
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(x == 0)`"
+      severity: warning
+- case: "RY107: any() not equal to one negates the result"
+  diagnostics:
+    - code: RY107
+      line: 356
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(x != 1)`"
+      severity: warning
+- case: "RY107: all() at most zero negates the result"
+  diagnostics:
+    - code: RY107
+      line: 360
+      message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `all(x <= 0)`"
+      severity: warning
+- case: "RY107: all() less than one negates the result"
+  diagnostics:
+    - code: RY107
+      line: 364
+      message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `all(x < 1)`"
+      severity: warning
+- case: "RY107: any() greater than one is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 368
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > 1)`"
+      severity: warning
+- case: "RY107: any() less than zero is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 372
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x < 0)`"
+      severity: warning
+- case: "RY107: all() at least zero is always TRUE"
+  diagnostics:
+    - code: RY107
+      line: 376
+      message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `all(x >= 0)`"
+      severity: warning
+- case: "RY107: any() equal to two is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 380
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x == 2)`"
+      severity: warning
+- case: "RY107: any() greater than a negative bound is always TRUE"
+  diagnostics:
+    - code: RY107
+      line: 386
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -1)`"
+      severity: warning
+- case: "RY107: any() at least a negative bound is always TRUE"
+  diagnostics:
+    - code: RY107
+      line: 390
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x >= -1)`"
+      severity: warning
+- case: "RY107: any() not equal to a negative bound is always TRUE"
+  diagnostics:
+    - code: RY107
+      line: 394
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x != -1)`"
+      severity: warning
+- case: "RY107: any() less than a negative bound is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 398
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x < -1)`"
+      severity: warning
+- case: "RY107: any() at most a negative bound is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 402
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x <= -1)`"
+      severity: warning
+- case: "RY107: any() equal to a negative bound is always FALSE"
+  diagnostics:
+    - code: RY107
+      line: 406
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x == -1)`"
+      severity: warning
+- case: "RY107: all() greater than a negative integer bound"
+  diagnostics:
+    - code: RY107
+      line: 410
+      message: "`all()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `all(x > -1L)`"
+      severity: warning
+- case: "RY107: negative bound on the left of any()"
+  diagnostics:
+    - code: RY107
+      line: 414
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -1)`"
+      severity: warning
+- case: "RY107: any() greater than a negative fraction"
+  diagnostics:
+    - code: RY107
+      line: 418
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always TRUE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > -0.5)`"
+      severity: warning
+- case: "RY107: literal vector argument"
+  diagnostics:
+    - code: RY107
+      line: 458
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(c(TRUE, FALSE) == 0)`"
+      severity: warning
+- case: "RY107: plain local argument"
+  diagnostics:
+    - code: RY107
+      line: 462
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(d == 0)`"
+      severity: warning
+- case: "RY107: argument with a computed class"
+  diagnostics:
+    - code: RY107
+      line: 467
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(d == 0)`"
+      severity: warning
+- case: "RY107: parameter with a classed default"
+  diagnostics:
+    - code: RY107
+      line: 472
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(x == 0)`"
+      severity: warning
+- case: "RY107: plus-spelled literal bound"
+  diagnostics:
+    - code: RY107
+      line: 487
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is always FALSE when the base result is not `NA` (an `NA` result compares as `NA`); the comparison was probably meant for the elements: `any(x > 2)`"
+      severity: warning
+- case: "RY107: locally redefined any() is silent"
+  diagnostics:
+    - code: RY002
+      line: 551
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: "RY107: base::any() keeps the scalar premise"
+  diagnostics:
+    - code: RY107
+      line: 555
+      message: "`any()` returns a length-1 logical unless an `any`/`all` or `Summary`-group method dispatches, so this comparison is TRUE exactly when the call is FALSE (`NA` when it is `NA`); the comparison was probably meant for the elements: `any(v == 0)`"
+      severity: warning
+- case: "RY107: comparison inside length() is left to RY093"
+  diagnostics:
+    - code: RY093
+      line: 563
+      message: "comparison is inside `length()`; compare `length(x)` instead"
+      severity: warning
+    - code: RY010
+      line: 563
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+- case: "RY107: comparison inside abs() is left to RY100"
+  diagnostics:
+    - code: RY100
+      line: 567
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY010
+      line: 567
+      message: "variable `x` is not bound in this scope"
+      severity: warning
+- case: "RY107: wrapped length of any() is left to RY105"
+  diagnostics:
+    - code: RY105
+      line: 571
+      message: "`any()` always returns a single value, so `length(...)` is 1 here and this length guard is always TRUE"
+      severity: warning

@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792475424681,
+  "lastUpdate": 1792478708961,
   "repoUrl": "https://github.com/sims1253/ry",
   "entries": {
     "ry performance": [
@@ -40113,6 +40113,219 @@ window.BENCHMARK_DATA = {
           {
             "name": "server/unrelated-file/p95",
             "value": 182.260505,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "dev.scholz@mailbox.org",
+            "name": "Maximilian Scholz",
+            "username": "sims1253"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3bf43cef8eefcf28e6d9e440daac2071c8f2121f",
+          "message": "Merge pull request #674 from sims1253/refactor/call-contracts\n\nfeat(checker): check calls against simple user-function contracts",
+          "timestamp": "2026-10-20T08:37:09+02:00",
+          "tree_id": "61909522d0cedf7aec6f1522f905fc6f2a0eceb9",
+          "url": "https://github.com/sims1253/ry/commit/3bf43cef8eefcf28e6d9e440daac2071c8f2121f"
+        },
+        "date": 1792478708831,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "core/check_branch_scopes/1024",
+            "value": 13618516.314770669,
+            "range": "13576406.77–13665770.54",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_branch_scopes/128",
+            "value": 1040531.2954750347,
+            "range": "1033980.67–1050022.58",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/1024",
+            "value": 17163163.69975952,
+            "range": "16941945.53–17418677.02",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/one_arm/128",
+            "value": 1140411.8906600894,
+            "range": "1136537.08–1145746.50",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/1024",
+            "value": 21541432.60699006,
+            "range": "21390860.76–21701234.98",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_if_expression_scopes/two_arms/128",
+            "value": 1668270.6107767068,
+            "range": "1665905.33–1671156.25",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_project_glue",
+            "value": 17531873.46119616,
+            "range": "17309294.57–17796228.45",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/1024",
+            "value": 22404673.829690743,
+            "range": "22329068.65–22487541.20",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/and/128",
+            "value": 2535193.4243412386,
+            "range": "2515194.36–2565997.35",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/1024",
+            "value": 18547795.660914764,
+            "range": "18398359.77–18763160.39",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/assert/128",
+            "value": 2125641.052945654,
+            "range": "2121809.18–2131157.01",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/1024",
+            "value": 22292223.414990585,
+            "range": "22200830.29–22389237.78",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_selected_branch_scopes/or/128",
+            "value": 2483423.787419708,
+            "range": "2479529.41–2489202.42",
+            "unit": "ns"
+          },
+          {
+            "name": "core/check_single_synthetic",
+            "value": 115019576.25,
+            "range": "113978644.76–116102324.65",
+            "unit": "ns"
+          },
+          {
+            "name": "core/lsp_edit_sim",
+            "value": 17087830.10041037,
+            "range": "16979214.49–17214611.81",
+            "unit": "ns"
+          },
+          {
+            "name": "core/parse_large",
+            "value": 6537162.858015153,
+            "range": "6521330.52–6550690.69",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_dependent",
+            "value": 17338664.665291518,
+            "range": "17118437.53–17599640.70",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_leaf",
+            "value": 6899258.910796082,
+            "range": "6873403.15–6926708.76",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_library",
+            "value": 19355795.45561393,
+            "range": "19170434.40–19562897.93",
+            "unit": "ns"
+          },
+          {
+            "name": "core/warm_edit_sparse_callers",
+            "value": 4848216.203242099,
+            "range": "4825377.75–4870165.54",
+            "unit": "ns"
+          },
+          {
+            "name": "cli/executable",
+            "value": 10446952,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/javascript",
+            "value": 366343,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/vsix-without-server",
+            "value": 220172,
+            "unit": "bytes"
+          },
+          {
+            "name": "zed/wasm",
+            "value": 397927,
+            "unit": "bytes"
+          },
+          {
+            "name": "vscode/activation",
+            "value": 110.14122200000565,
+            "range": "84.33–140.17",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 84.33068699995056, 101.77149100007955, 110.14122200000565, 119.38178499997593, 140.17498699994758"
+          },
+          {
+            "name": "vscode/activation-to-first-diagnostic",
+            "value": 502.69259700004477,
+            "range": "485.66–588.25",
+            "unit": "ms",
+            "extra": "VS Code 1.90.2; median of 5 fresh hosts; samples: 485.6565079999855, 492.5289430000121, 502.69259700004477, 576.9635850000195, 588.2516009999672"
+          },
+          {
+            "name": "server/startup-median",
+            "value": 197.319012,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/median",
+            "value": 182.092257,
+            "unit": "ms"
+          },
+          {
+            "name": "server/cross-file-caller/p95",
+            "value": 182.19865,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/median",
+            "value": 181.940827,
+            "unit": "ms"
+          },
+          {
+            "name": "server/local-clean/p95",
+            "value": 182.037175,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/median",
+            "value": 182.018133,
+            "unit": "ms"
+          },
+          {
+            "name": "server/unrelated-file/p95",
+            "value": 182.09114,
             "unit": "ms"
           }
         ]

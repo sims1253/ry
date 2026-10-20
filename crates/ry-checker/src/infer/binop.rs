@@ -5,6 +5,7 @@ use std::ops::ControlFlow;
 
 pub(crate) struct OperandEvidence {
     pub known_null: bool,
+    pub dispatchable_null: bool,
     pub plain_vectors: bool,
 }
 
@@ -22,6 +23,7 @@ impl Checker {
         scope.invalidate_literal_values_for_dispatch(&rt);
         let OperandEvidence {
             known_null: known_null_is_actionable,
+            dispatchable_null,
             plain_vectors,
         } = operand_proof;
         if matches!(op, BinOpKind::Colon) {
@@ -79,6 +81,7 @@ impl Checker {
                         rt.with_class(ClassVector::empty()),
                         span,
                         known_null_is_actionable,
+                        dispatchable_null,
                     );
                     if op.is_arithmetic() && !result.mode.is_unknown() {
                         result.class = result_class;
@@ -96,7 +99,14 @@ impl Checker {
         if op.is_arithmetic() && (lt.class.contains("factor") || rt.class.contains("factor")) {
             return self.infer_factor_arithmetic(&lt, Some(&rt), span);
         }
-        self.infer_primitive_binop(op, lt, rt, span, known_null_is_actionable)
+        self.infer_primitive_binop(
+            op,
+            lt,
+            rt,
+            span,
+            known_null_is_actionable,
+            dispatchable_null,
+        )
     }
 
     /// Whether a `:` endpoint is a numeric or logical literal, possibly
@@ -134,6 +144,7 @@ impl Checker {
         rt: RType,
         span: Span,
         known_null_is_actionable: bool,
+        dispatchable_null: bool,
     ) -> RType {
         let is_compare = is_comparison(op);
         let is_logic = matches!(
@@ -250,6 +261,9 @@ impl Checker {
                 );
             }
             return t;
+        }
+        if dispatchable_null {
+            return RType::unknown();
         }
         self.emit(
             Severity::Error,
@@ -489,6 +503,8 @@ impl Checker {
         let before = self.diagnostics.len();
         let known_null = known_null_arithmetic_operand(lhs, &rt, scope)
             || known_null_arithmetic_operand(rhs, &lt, scope);
+        let dispatchable_null =
+            dispatchable_null_operand(lhs, &rt) || dispatchable_null_operand(rhs, &lt);
         let result = self.infer_binop(
             op,
             lt,
@@ -496,6 +512,7 @@ impl Checker {
             span,
             OperandEvidence {
                 known_null,
+                dispatchable_null,
                 plain_vectors: false,
             },
             scope,

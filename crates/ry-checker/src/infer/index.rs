@@ -814,6 +814,12 @@ pub(crate) fn known_null_arithmetic_operand(expr: &Expr, other: &RType, scope: &
         })
 }
 
+/// A literal `NULL` beside an operand not proven classless: an `Ops` method
+/// R finds at runtime may accept it, so a primitive miss proves nothing.
+pub(crate) fn dispatchable_null_operand(expr: &Expr, other: &RType) -> bool {
+    matches!(expr, Expr::Null(_)) && !other.class.is_classless()
+}
+
 /// Extract an integer value from a literal expression. Returns
 /// `Some(n)` for `Expr::Integer(n, _)` and for `Expr::Double(f, _)`
 /// when `f` is a finite whole number (e.g. `2.0`). Returns `None` for

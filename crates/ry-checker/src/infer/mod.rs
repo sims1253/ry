@@ -3332,6 +3332,8 @@ impl Checker {
                 let rt = self.infer(rhs, scope);
                 let known_null = known_null_arithmetic_operand(lhs, &rt, scope)
                     || known_null_arithmetic_operand(rhs, &lt, scope);
+                let dispatchable_null =
+                    dispatchable_null_operand(lhs, &rt) || dispatchable_null_operand(rhs, &lt);
                 self.infer_binop(
                     *op,
                     lt,
@@ -3339,6 +3341,7 @@ impl Checker {
                     *span,
                     binop::OperandEvidence {
                         known_null,
+                        dispatchable_null,
                         plain_vectors: left_plain
                             && right_plain
                             && !scope.uncertainty.ops_environment,

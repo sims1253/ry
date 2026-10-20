@@ -1015,6 +1015,8 @@ pub(crate) struct UserFn {
     /// Writes outside this function's frame. Shared clones compute the
     /// summary only if an opted-in declaration call needs it.
     outward_writes: Arc<OnceLock<collect::WriteSet>>,
+    /// What a call learns from a one-operation body (#646).
+    pub(crate) contract: Option<infer::CallContract>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -1044,6 +1046,7 @@ pub(crate) struct UserParam {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
+    contract: Option<infer::CallContract>,
 }
 
 impl UserFn {
@@ -1066,6 +1069,7 @@ impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
+            contract: self.contract,
         }
     }
 
@@ -1143,6 +1147,10 @@ pub(crate) struct FnTable {
     // project refinement, without broadening other syntax proof guards.
     pub(crate) has_escaped_operator_names: bool,
     pub(crate) has_escaped_slot_names: bool,
+    // Some project code names a binding installer (`load`, `source`,
+    // `list2env`, `eval`, ...), which may replace any binding anywhere:
+    // call contracts (#646) are then off project-wide.
+    pub(crate) may_install_bindings: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
@@ -1247,6 +1255,7 @@ impl FnTable {
         self.unproven_top_level |= collected.unproven_top_level;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
+        self.may_install_bindings |= collected.may_install_bindings;
         self.functions.append(&collected.functions, slot_offset);
         for (name, definitions) in &collected.capture_literal_bindings {
             self.capture_literal_bindings
@@ -1415,6 +1424,9 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
+    // Per enclosing function frame, from before its defaults run: names its
+    // own code (body or defaults) may bind at any time.
+    frame_writes: Vec<collect::WriteSet>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
@@ -1636,6 +1648,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            frame_writes: Vec::new(),
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
             held_cast: None,

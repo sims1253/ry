@@ -153,6 +153,7 @@ pub struct Project {
     /// Escaped operator names gate refinement and emission across the project.
     prev_escaped_operator_names: bool,
     prev_escaped_slot_names: bool,
+    prev_may_install_bindings: bool,
     /// When true, pass-3 emitters snapshot each file's lexical scopes.
     /// Off by default; see [`Checker::enable_scope_capture`].
     capture_scopes: bool,
@@ -515,6 +516,7 @@ impl Project {
         self.prev_s4_inventory = Default::default();
         self.prev_escaped_operator_names = false;
         self.prev_escaped_slot_names = false;
+        self.prev_may_install_bindings = false;
         self.invalidated_fns.clear();
         // Merge every entry rather than one cached collection per path: a
         // lossy display path can name two distinct files.
@@ -671,6 +673,7 @@ impl Project {
             || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+            || self.prev_may_install_bindings != self.fn_table.may_install_bindings
         {
             return None;
         }
@@ -911,7 +914,8 @@ impl Project {
             || self.prev_callable_vars != self.fn_table.callable_vars
             || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
-            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
+            || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names
+            || self.prev_may_install_bindings != self.fn_table.may_install_bindings;
         let capture_rebounds_changed = self.prev_capture_rebounds
             != self.fn_table.rebound_after_capture
             || self.prev_unproven_top_level != self.fn_table.unproven_top_level;
@@ -1122,6 +1126,7 @@ impl Project {
         self.prev_s4_inventory = self.fn_table.functions.s4().clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;
         self.prev_escaped_slot_names = self.fn_table.has_escaped_slot_names;
+        self.prev_may_install_bindings = self.fn_table.may_install_bindings;
         // Save refined return types keyed by function name for the next
         // fixpoint seeding.
         self.prev_fn_returns = self

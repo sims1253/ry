@@ -50,7 +50,7 @@ fn conservative_element_type(bt: &RType) -> RType {
     }
 }
 
-fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
+pub(super) fn dollar_receiver_is_definitely_atomic(receiver: &RType) -> bool {
     match receiver.mode {
         Mode::Union => receiver
             .members
@@ -75,7 +75,7 @@ pub(super) fn dollar_atomic_receiver_may_dispatch(receiver: &RType) -> bool {
 /// A human-readable description of the receiver's mode(s) for the RY061
 /// message. For a single type this is just the mode name; for a union
 /// the member modes are listed so the user can see which types combined.
-fn dollar_receiver_mode_description(receiver: &RType) -> String {
+pub(super) fn dollar_receiver_mode_description(receiver: &RType) -> String {
     if receiver.mode == Mode::Union {
         if let Some(members) = &receiver.members {
             let modes: Vec<String> = members.iter().map(|m| m.mode.to_string()).collect();

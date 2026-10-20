@@ -1,7 +1,7 @@
 use super::*;
 use crate::definitions::GenericDecl;
 use crate::infer::*;
-use crate::semantic_lists::{FRAME_REFLECTION, bare_name, strip_package};
+use crate::semantic_lists::{BINDING_INSTALLERS, FRAME_REFLECTION, bare_name, strip_package};
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr, walk_stmt, walk_stmts};
 use std::ops::ControlFlow;
 
@@ -302,6 +302,46 @@ pub(crate) fn function_outward_writes(params: &[Param], body: &[Stmt]) -> WriteS
     writes
 }
 
+/// Whether `name` (bare or `base::`) is a binding installer.
+fn installs_bindings(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    BINDING_INSTALLERS.contains(&strip_package(name, "base").unwrap_or(name))
+}
+
+/// Whether a call to `name` may bind anything in the frame it runs in: an
+/// installer, or any frame-reflective function.
+fn reflects_frame(name: &str) -> bool {
+    let name = semantic_argument_name(name);
+    installs_bindings(name)
+        || FRAME_REFLECTION.contains(&strip_package(name, "base").unwrap_or(name))
+}
+
+/// Names the frame of `function(params) body` may bind while it runs:
+/// assignments and recognized installers in its body and defaults. Any
+/// frame-reflective call (`list2env(..., envir = environment())`,
+/// `source(local = TRUE)`) or `load` (which binds into its caller's frame
+/// by default) may bind anything.
+pub(crate) fn frame_writes(params: &[Param], body: &[Stmt]) -> WriteSet {
+    let mut writes = WriteSet::default();
+    let mut visit = |node: AstNode<'_>, _| -> ControlFlow<(), Descend> {
+        if let Some((name, _)) = frame_binding(node) {
+            writes.insert_name(name);
+        }
+        if let AstNode::Expr(Expr::Call { func, args, .. }) = node {
+            collect_callable_binding_write(func, args, &mut writes);
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                writes.opaque |= reflects_frame(name);
+            }
+        }
+        ControlFlow::Continue(Descend::Into)
+    };
+    for default in params.iter().filter_map(|param| param.default.as_ref()) {
+        let _ = walk_expr(default, FRAME_WALK, &mut visit);
+    }
+    let _ = walk_stmts(body, FRAME_WALK, &mut visit);
+    writes
+}
+
 /// Names that forcing a default may bind in the function's own frame.
 /// None is an unconditional effect at definition time.
 pub(crate) fn default_local_writes(params: &[Param]) -> WriteSet {
@@ -541,6 +581,27 @@ impl Checker {
             s,
             Walk::ALL,
             |node: AstNode<'_>, _: usize| -> ControlFlow<(), Descend> {
+                // A binding installer, called, passed, or named to `do.call`,
+                // may replace a binding in any frame, including the global
+                // one call contracts rely on.
+                // So may `assign`/`delayedAssign`/`makeActiveBinding`/`rm`
+                // with a computed name.
+                let installer = match node {
+                    AstNode::Expr(Expr::Ident { name, .. }) => installs_bindings(name),
+                    AstNode::Expr(Expr::Call { func, args, .. }) => {
+                        let mut writes = WriteSet::default();
+                        collect_callable_binding_write(func, args, &mut writes);
+                        writes.opaque
+                            || matches!(func.as_ref(), Expr::Ident { name, .. } if bare_name(name) == "do.call")
+                                && args.first().is_some_and(|first| {
+                                    matches!(&first.value, Expr::String(name, _) if installs_bindings(name))
+                                })
+                    }
+                    _ => false,
+                };
+                if installer && !self.fn_table.may_install_bindings {
+                    Arc::make_mut(&mut self.fn_table).may_install_bindings = true;
+                }
                 if masks_s4_registration(node) {
                     Arc::make_mut(&mut self.fn_table)
                         .functions
@@ -747,6 +808,7 @@ impl Checker {
         // A forced default may assign a sibling formal, which a later read
         // then sees instead of the missing argument.
         let default_writes = default_local_writes(params);
+        let contract = CallContract::derive(params, &body, span);
         // We infer param types from defaults alone; params without a
         // default start as UNKNOWN (callers can refine them later).
         let params: Vec<UserParam> = params
@@ -791,6 +853,7 @@ impl Checker {
             definition_span: span,
             body,
             outward_writes,
+            contract,
             return_slot: slot,
         };
         if let Some(prev_slot) = fn_table.functions.bind(name.clone(), function) {

@@ -2,6 +2,7 @@ pub(crate) mod ops_chooser;
 use super::*;
 pub(crate) use args::*;
 pub(crate) use callee::ResolvedCallee;
+pub(crate) use contract::CallContract;
 pub(crate) use index::*;
 pub(crate) use narrow::*;
 pub(crate) use pipe::PipeForm;
@@ -14,6 +15,7 @@ mod callee;
 #[cfg(test)]
 mod cloned_scope_reference;
 pub(crate) mod construct;
+mod contract;
 pub(crate) mod custom_operator;
 pub(crate) mod dynamic_closure;
 pub(crate) mod ifelse;
@@ -1091,6 +1093,9 @@ impl Checker {
             self.note_vacuous_map_rebind(&parameter.name);
         }
         let assigned = assigned_names_in_body(body);
+        // Active before the defaults run: they execute in this frame too.
+        self.frame_writes
+            .push(crate::collect::frame_writes(params, body));
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
         // A default is forced lazily, possibly after any body statement.
@@ -1149,6 +1154,7 @@ impl Checker {
         self.check_declaration_return(span, function_name, declaration.as_ref());
         self.record_scope(function_name, span, params, &fn_scope);
         self.enclosing_formals.pop();
+        self.frame_writes.pop();
         self.deferred_captures.pop();
         // Restore the enclosing function's RY110 `map` provenance (see
         // the save above): a nested function's verdicts must not leak

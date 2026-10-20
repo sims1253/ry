@@ -375,9 +375,38 @@ pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
     "stop",
 ];
 
+/// Base functions that can bind or replace names in an existing frame
+/// other than a fresh one they create (`load()` binds into its caller's
+/// frame by default, `eval.parent(quote(f <- g))` into its caller's caller).
+/// Also the accessors that can return the global frame, which `e$f <- g`
+/// or `assign(name, g, envir = e)` can then rebind. Caller-frame handles
+/// (`environment`, `parent.frame`, `sys.frames`) are deliberately left out
+/// (too common to give up contracts for).
+pub const BINDING_INSTALLERS: &[&str] = &[
+    "load",
+    "source",
+    "sys.source",
+    "eval.parent",
+    "list2env",
+    "eval",
+    "evalq",
+    "globalenv",
+    ".GlobalEnv",
+    "sys.frame",
+    "as.environment",
+    "pos.to.env",
+    "topenv",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "BINDING_INSTALLERS",
+            items: BINDING_INSTALLERS,
+            check: CheckKind::ROracle,
+            claim: "base functions or frames through which code can rebind a name in an existing caller or global frame",
+        },
         SemanticList {
             name: "FRAME_REFLECTION",
             items: FRAME_REFLECTION,

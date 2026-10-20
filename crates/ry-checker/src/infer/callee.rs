@@ -34,6 +34,7 @@ pub(super) struct CallHead {
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
+    contract_applies: bool,
     bound_definition: Option<FunctionId>,
 }
 
@@ -50,6 +51,14 @@ impl CallHead {
     /// ordinary return inference; those use `callee` and `user_function`.
     pub(super) fn signature(&self) -> Option<&FunctionSig> {
         self.metadata.as_ref()
+    }
+
+    /// The selected definition's call contract, under the proof that lets
+    /// RY090/RY091 read its formals plus proof that its body is the one the
+    /// call reaches (definitions that agree on formals may differ in bodies).
+    pub(super) fn contract(&self) -> Option<(&UserFn, CallContract)> {
+        let function = self.user_function().filter(|_| self.contract_applies)?;
+        Some((function, function.contract?))
     }
 
     /// The definition this call site provably reaches: the selected project
@@ -113,6 +122,47 @@ impl Checker {
                     function.source_path == self.path
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
+        // A contract also needs the body to be the one this call reaches: no
+        // other literal binds the name, an eager top-level call follows the
+        // definition, an enclosing frame binds the name only to this exact
+        // unreplaced literal, no enclosing function's code (body or forced
+        // default, before or after this call) may bind it, and no quoted
+        // local spelling (`` `f` ``) masks it.
+        let semantic = semantic_argument_name(lookup_name);
+        let contract_applies = check_project_arguments
+            && !self.fn_table.may_install_bindings
+            && self.fn_table.functions.has_single_definition(lookup_name)
+            && function.as_ref().is_some_and(|function| {
+                (!self.enclosing_formals.is_empty()
+                    || function.source_path != self.path
+                    || function.definition_span.start < call_span.start)
+                    && scope
+                        .outward_function_definition(lookup_name)
+                        .is_none_or(|outward| {
+                            outward.is_some_and(|span| {
+                                function.source_path == self.path
+                                    && span == function.definition_span
+                                    && !self.fn_table.was_rebound_after_capture(&self.path, span)
+                            })
+                        })
+            })
+            && !self
+                .frame_writes
+                .iter()
+                .any(|writes| writes.may_write(semantic))
+            && {
+                [
+                    semantic.to_string(),
+                    format!("`{semantic}`"),
+                    format!("'{semantic}'"),
+                    format!("\"{semantic}\""),
+                ]
+                .iter()
+                .filter(|spelling| spelling.as_str() != lookup_name)
+                .all(|spelling| {
+                    scope.get(spelling).is_none() && !scope.is_lexical_function(spelling)
+                })
+            };
         // An alias retains the function it was bound to, not its target
         // name's current binding, so only an unrewritten head qualifies.
         let bound_definition = function
@@ -146,6 +196,7 @@ impl Checker {
             function_evidence,
             generic_receiver,
             check_project_arguments,
+            contract_applies,
             bound_definition,
         }
     }
@@ -417,6 +468,7 @@ impl Checker {
             ResolvedCallee::User(user_function) if head.check_project_arguments => {
                 let origin = head.bound_definition().map(|_| user_function);
                 self.check_user_call_arguments(lookup_name, user_function, origin, args, span);
+                self.check_contract_demand(lookup_name, head, args, arg_types);
             }
             ResolvedCallee::Stub(signature) => {
                 self.check_typeshed_call_arguments(lookup_name, signature, args, arg_types, span);

@@ -1,6 +1,7 @@
 use super::*;
 use ry_core::RParser;
 
+mod call_contracts;
 mod call_head_lookup;
 mod constructors;
 mod data_frames_s3;

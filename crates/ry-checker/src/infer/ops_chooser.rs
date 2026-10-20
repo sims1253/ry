@@ -129,7 +129,7 @@ pub(crate) fn dispatch(
         scope
             .get(name)
             .or_else(|| scope.get(&format!("`{name}`")))
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque))
+            .is_some_and(|ty| ty.mode == Mode::Function || ty.mode.is_unknown())
     };
     let (Some(left), Some(right)) = (
         scope.literal_functions.get(&left_name),
@@ -216,7 +216,7 @@ pub(crate) fn pure_literal_constructor(
             && scope.get("`structure`").is_none()
             && !checker.fn_table.known_vars.contains("structure")
             && !checker.fn_table.known_vars.contains("`structure`")
-            && !checker.fn_table.fns.contains_key("structure")
+            && !checker.fn_table.functions.binds("structure")
             && checker.bare_loaded.is_empty()
             && !checker.external_bindings.contains("structure")
             && checker

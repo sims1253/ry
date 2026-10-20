@@ -1,5 +1,6 @@
 use super::callee::{CallHead, CallHeadFunctionEvidence};
 use super::*;
+use crate::definitions::{S4Call, S4Selection};
 use crate::higher_order::s3_group_generic;
 use ry_core::walk::{AstNode, Descend, Walk, walk_expr};
 use std::ops::ControlFlow;
@@ -26,7 +27,15 @@ impl Checker {
         // R fixes the call head before promises can mutate its binding, so
         // classify the effect now and apply it after the call is checked.
         let effect = self.call_effect(func, args, scope);
+        // Related-location evidence (#672) survives only an audited base
+        // call, never an inert user helper or `message()`.
+        let keeps_bindings = !(scope.uncertainty.dynamic_bindings
+            && scope.uncertainty.unseen_rebinds)
+            && self.call_proves_no_rebind(func, args, scope);
+        let kind = self.base_value_kind(func, args, scope);
         let result = self.infer_call_inner(func, args, scope, span, environment_known_before_call);
+        let result = kind.unwrap_or(result);
+        scope.uncertainty.unseen_rebinds |= !keeps_bindings;
         self.apply_call_effect(&effect, scope);
         if !pure {
             scope.invalidate_ops_environment();
@@ -55,8 +64,8 @@ impl Checker {
     /// Project function names whose definition has an adopted signature.
     pub(crate) fn adopted_function_names(&self) -> impl Iterator<Item = String> + '_ {
         self.fn_table
-            .fns
-            .iter()
+            .functions
+            .live()
             .filter(|(_, function)| {
                 self.declarations
                     .target(&function.source_path, function.definition_span)
@@ -318,6 +327,12 @@ impl Checker {
             }
         }
 
+        // A contract describes the selected definition, which is also the
+        // lexical binding whenever one exists.
+        if let Some(result) = self.contract_return(&call.head, args, &call.arg_types) {
+            return result;
+        }
+
         // The lexical-callable stage. Must run before the constructor and
         // dispatch stages below so a local binding shadows a same-named
         // builtin (R's lexical scoping).
@@ -353,8 +368,26 @@ impl Checker {
         // Class dispatch must run before the higher-order, FnTable, and
         // typeshed stages below: a method's inferred return type wins over
         // the generic's stub.
-        if let Some(rt) = self.try_s4_dispatch(&lookup_name, &call.arg_types) {
-            return rt;
+        let instances: Vec<bool> = args
+            .iter()
+            .map(|argument| self.is_proven_new_call(&argument.value, scope))
+            .collect();
+        let s4_call = S4Call {
+            head: Callee::parse(&semantic_name),
+            own_package: self.package_facts.source_package.as_deref(),
+            args,
+            arg_types: &call.arg_types,
+            instances: &instances,
+            core_formals: self
+                .typeshed
+                .functions
+                .get(&lookup_name)
+                .map(|signature| signature.params.as_slice()),
+        };
+        match self.fn_table.functions.select_s4(s4_call) {
+            S4Selection::Method(method) => return self.read_return_slot(method.return_slot),
+            S4Selection::Uncertain => return RType::unknown(),
+            S4Selection::NoCandidate => {}
         }
 
         if let Some(rt) = call
@@ -806,8 +839,8 @@ impl Checker {
         let custom_infix_is_known = self.has_function_anywhere(semantic_name)
             || self
                 .fn_table
-                .fns
-                .keys()
+                .functions
+                .names()
                 .any(|name| semantic_argument_name(name) == semantic_name);
         if !custom_infix_is_known {
             let mut quoted_scope = scope.independent_execution_scope();
@@ -1798,10 +1831,14 @@ impl Checker {
         for class in classes.map(|class| &**class).chain(["default"]) {
             let method = format!("{generic}.{class}");
             if scope.get(&method).is_some() {
-                return !self.fn_table.fns.get(&method).is_some_and(|function| {
-                    function.source_path == self.path
-                        && scope.lexical_definition(&method) == Some(function.definition_span)
-                });
+                return !self
+                    .fn_table
+                    .functions
+                    .live_named(&method)
+                    .is_some_and(|function| {
+                        function.source_path == self.path
+                            && scope.lexical_definition(&method) == Some(function.definition_span)
+                    });
             }
             if self.s3_lookup_method(generic, class).is_some() {
                 return false;
@@ -1841,7 +1878,7 @@ impl Checker {
         if let Some(result) = self.callable_function_union(t, args, arg_types) {
             return Some(result);
         }
-        if !matches!(t.mode, Mode::Opaque) {
+        if !t.mode.is_unknown() {
             // R's function/value namespace separation: when a name is
             // CALLED, R searches the environment chain for a *function*
             // named `name` and skips non-function bindings. So a local
@@ -1964,17 +2001,20 @@ impl Checker {
         }
     }
 
-    pub(crate) fn try_s4_dispatch(&self, generic: &str, arg_types: &[RType]) -> Option<RType> {
-        let receiver = &arg_types.first()?.class;
-        let class = receiver.first()?;
-        let slot = self
-            .fn_table
-            .s4_methods
-            .get(&(generic.to_string(), class.to_string()))?;
-        Some(dispatch_result(
-            receiver.guarded,
-            self.read_return_slot(*slot),
-        ))
+    /// Whether `expr` is a `new(...)` call whose head provably is `methods::new`.
+    fn is_proven_new_call(&self, expr: &Expr, scope: &Scope) -> bool {
+        let Expr::Call { func, .. } = expr else {
+            return false;
+        };
+        let Some(name) = callee_name(func) else {
+            return false;
+        };
+        let semantic_name = scope.function_alias(&name).unwrap_or(&name);
+        crate::semantic_lists::bare_name(semantic_name) == "new"
+            && matches!(
+                self.special_call_provenance(&name, func, semantic_name, "new", "methods", scope),
+                crate::resolve::SpecialCallProvenance::Proven
+            )
     }
 
     /// The names declared in the `public` / `private` / `active` lists of an

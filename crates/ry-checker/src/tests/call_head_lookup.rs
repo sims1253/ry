@@ -489,3 +489,35 @@ fn local_nonlocal_writes_invalidate_caller_facts() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn qualified_spellings_give_no_project_default_or_callback_evidence() {
+    // Each foreign-qualified spelling names base's function in R, so it is
+    // no evidence about the same-spelled project definition.
+    for source in [
+        "identity <- function(x) 'project'; r <- sapply(1:3, base::identity); r + 1L",
+        "date <- function(offset = 'none') offset + 1L; date(1L); base::date()",
+        "identity <- function(x = 0L) x + 1L; wrapper <- function(value = 'text') base::identity(value); wrapper()",
+        // Neither side of the forward selects a project definition.
+        "outer <- function() { inner <- function(x = 0L) x + 1L; inner(1L) }\n\
+         wrapper <- function(value = 'text') base::identity(value); wrapper()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    for source in [
+        "identity <- function(x) 'project'; r <- sapply(1:3, identity); r + 1L",
+        "date <- function(offset = 'none') offset + 1L; date(1L); date()",
+        "identity <- function(x = 0L) x + 1L; wrapper <- function(value = 'text') identity(value); wrapper()",
+        "outer <- function(v = 'a') { inner <- function(x = 0L) x + 1L; inner(v) }; outer()",
+    ] {
+        let diagnostics = check(source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == "RY040"),
+            "{source}: {diagnostics:?}"
+        );
+    }
+}

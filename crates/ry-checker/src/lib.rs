@@ -15,6 +15,7 @@
 mod box_imports;
 mod collect;
 mod declaration_check;
+mod definitions;
 pub mod diagnostics;
 mod fixpoint;
 pub mod format;
@@ -45,9 +46,10 @@ pub use project::Project;
 // crate root for back-compat (callers and tests reference
 // `ry_checker::{Severity, Diagnostic, ...}` directly).
 pub use diagnostics::{
-    Confidence, Diagnostic, Severity, SeverityFilter, Suppression, SuppressionKind,
-    SuppressionOrigin, apply_filter_to_diagnostics, filter_suppressed_with_comments,
-    has_file_suppression_from_comments, is_suppressed, parse_suppressions_from_comments,
+    Confidence, Diagnostic, MAX_RELATED, Related, Severity, SeverityFilter, Suppression,
+    SuppressionKind, SuppressionOrigin, apply_filter_to_diagnostics,
+    filter_suppressed_with_comments, has_file_suppression_from_comments, is_suppressed,
+    parse_suppressions_from_comments,
 };
 pub use post_process::PostProcess;
 
@@ -86,6 +88,7 @@ pub fn filter_from_config(cfg: &ry_config::Config) -> SeverityFilter {
     filter
 }
 
+use crate::definitions::{Callee, Definitions, FunctionId};
 use crate::infer::semantic_argument_name;
 use ry_core::Span;
 use ry_core::ast::*;
@@ -394,6 +397,12 @@ pub(crate) struct Uncertainty {
     /// A later read need not return the value an assertion just checked.
     pub(crate) dynamic_bindings: bool,
     pub(crate) literal_values: bool,
+    /// A call no allowlist proves inert ran in this frame, or this walk
+    /// models code that may run after later statements of its frame. Either
+    /// may have rebound a name unseen, so a call site's exact lexical binding
+    /// no longer proves which definition it reaches. Only a function body
+    /// walk starts without it.
+    pub(crate) unseen_rebinds: bool,
     /// Raw escaped slot names were supplied directly to a scope. This records
     /// possible masks, never absence of dynamically created bindings.
     pub(crate) escaped_slot_names: bool,
@@ -417,6 +426,7 @@ impl std::ops::BitOr for Uncertainty {
             effects: self.effects || other.effects,
             dynamic_bindings: self.dynamic_bindings || other.dynamic_bindings,
             literal_values: self.literal_values || other.literal_values,
+            unseen_rebinds: self.unseen_rebinds || other.unseen_rebinds,
             escaped_slot_names: self.escaped_slot_names || other.escaped_slot_names,
         }
     }
@@ -499,6 +509,7 @@ impl Scope {
         // Code here may run after the caller's binding changes, so it gets
         // no scalar facts; it may prove its own.
         scope.uncertainty.dynamic_bindings = false;
+        scope.uncertainty.unseen_rebinds = true;
         scope.scalar_asserted_bindings.clear();
         scope.loop_vector_bindings.clear();
         scope.known_strings.clear();
@@ -518,10 +529,7 @@ impl Scope {
         let possible_functions: FxSet<String> = self
             .bindings
             .iter()
-            .filter(|(name, ty)| {
-                self.is_parameter(name)
-                    || matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
-            })
+            .filter(|(name, ty)| self.is_parameter(name) || ty.mode.may_be_function())
             .map(|(name, _)| infer::semantic_argument_name(name).to_string())
             .collect();
         let definitions = self
@@ -1004,6 +1012,8 @@ pub(crate) struct UserFn {
     /// Writes outside this function's frame. Shared clones compute the
     /// summary only if an opted-in declaration call needs it.
     outward_writes: Arc<OnceLock<collect::WriteSet>>,
+    /// What a call learns from a one-operation body (#646).
+    pub(crate) contract: Option<infer::CallContract>,
     // Currently-inferred return type. Starts as UNKNOWN, refined by
     // each fixpoint iteration. Stored as a slot index so all calls
     // observe the latest refinement without rebuilding the table.
@@ -1033,14 +1043,10 @@ pub(crate) struct UserParam {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CallerVisibleSignature {
     parameters: Vec<UserParam>,
+    contract: Option<infer::CallContract>,
 }
 
 impl UserFn {
-    fn definition_key(&self) -> (String, usize, usize) {
-        let span = self.definition_span;
-        (self.source_path.clone(), span.start, span.end)
-    }
-
     pub(crate) fn outward_writes(&self) -> &collect::WriteSet {
         self.outward_writes
             .get_or_init(|| collect::function_outward_writes(&self.source_params, &self.body))
@@ -1060,6 +1066,7 @@ impl UserFn {
     pub(crate) fn caller_visible_signature(&self) -> CallerVisibleSignature {
         CallerVisibleSignature {
             parameters: self.params.clone(),
+            contract: self.contract,
         }
     }
 
@@ -1102,9 +1109,8 @@ impl ReturnSlots {
     }
 }
 
-/// Map from function name to its recorded definition. A name shadows
-/// earlier entries (later definitions win), mirroring R's own semantics
-/// for top-level rebinding.
+/// Interprocedural facts collected from every project file. `functions`
+/// owns which definition a name denotes (see `definitions`).
 ///
 /// S3 method dispatch is modeled separately: assignments named
 /// `<generic>.<class>` (e.g. `print.foo`) are also recorded in
@@ -1113,21 +1119,11 @@ impl ReturnSlots {
 /// it the same way.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FnTable {
-    pub(crate) fns: FxMap<String, UserFn>,
-    /// Source identity of each live `fns` entry.
-    live_definitions: FxMap<(String, usize, usize), String>,
-    /// Direct literals a later same-name definition replaced in `fns`.
-    /// Declaration checks still address them by source identity.
-    replaced_fns: FxMap<(String, usize, usize), UserFn>,
-    /// Names whose `fns` entry need not be the function a call reaches:
-    /// literals with disagreeing formals (which one wins depends on
-    /// evaluation and collation order), and names a global non-literal or
-    /// outward write may rebind.
-    pub(crate) unstable_callees: FxSet<String>,
+    pub(crate) functions: Definitions,
     /// Global-frame direct literal bindings addressable by declaration
     /// source identity. Kept by binding name for cross-file invalidation;
     /// nested local literals cannot be changed by another file's global
-    /// write. Unlike `fns`, this retains earlier same-name definitions.
+    /// write. Unlike a live binding, this retains earlier same-name definitions.
     pub(crate) capture_literal_bindings: FxMap<String, FxSet<(String, usize, usize)>>,
     /// A closure captures an environment, not a frozen binding value. If a
     /// later assignment in that environment can replace a literal, its
@@ -1137,17 +1133,25 @@ pub(crate) struct FnTable {
     /// (including expressions, control tests, and `for` binders) and
     /// outward writes from any depth. Nested local writes are excluded.
     pub(crate) capture_writes: collect::WriteSet,
+    /// Some file's top-level code may run code whose binding effects are
+    /// unknown (any call, operator, index, or non-literal read). A deferred
+    /// body then cannot prove that a captured global literal is still the
+    /// binding when it runs.
+    pub(crate) unproven_top_level: bool,
     // Collected once so conservative syntax checks do not rescan all functions.
     pub(crate) has_escaped_binding_names: bool,
     // Operator lookup also checks formals/nested names during source-less
     // project refinement, without broadening other syntax proof guards.
     pub(crate) has_escaped_operator_names: bool,
     pub(crate) has_escaped_slot_names: bool,
+    // Some project code names a binding installer (`load`, `source`,
+    // `list2env`, `eval`, ...), which may replace any binding anywhere:
+    // call contracts (#646) are then off project-wide.
+    pub(crate) may_install_bindings: bool,
     // `(generic, class)` -> return slot index. Mirrors the same
     // `return_slots` storage as `fns`; lookups during dispatch consult
     // this map for an S3 method before falling back to the generic.
     pub(crate) s3_methods: FxMap<(String, String), usize>,
-    pub(crate) s4_methods: FxMap<(String, String), usize>,
     // Names of all top-level variable assignments across all files in
     // the project. Used to suppress RY010 for cross-file references:
     // when an identifier is not in the current scope but IS in this
@@ -1160,8 +1164,8 @@ pub(crate) struct FnTable {
     // otherwise opaque.
     pub(crate) callable_vars: std::collections::HashSet<String>,
     // Syntactic call sites used only for conservative internal-helper
-    // default selection. Each argument records its optional exact name.
-    pub(crate) call_sites: FxMap<String, Vec<Vec<Option<String>>>>,
+    // default selection, keyed by the unqualified member name.
+    pub(crate) call_sites: FxMap<String, Vec<CallSite>>,
     // Calls that forward an enclosing formal directly into another
     // function. Used to propagate evidence that a caller's default can reach
     // a callee parameter without treating every callee default as exhaustive.
@@ -1182,55 +1186,20 @@ fn rebind_captured(
 }
 
 impl FnTable {
-    /// Any recorded direct literal, live or replaced, by source identity.
-    pub(crate) fn definition(&self, path: &str, span: Span) -> Option<&UserFn> {
-        let key = (path.to_string(), span.start, span.end);
-        match self.live_definitions.get(&key) {
-            Some(name) => self.fns.get(name),
-            None => self.replaced_fns.get(&key),
-        }
-    }
-
-    /// Whether the literal is still the last definition of some name.
-    pub(crate) fn is_live_definition(&self, path: &str, span: Span) -> bool {
-        self.live_definitions
-            .contains_key(&(path.to_string(), span.start, span.end))
-    }
-
-    /// Bind `name` to `function`, keeping a replaced literal addressable.
-    /// Returns the replaced entry's return slot.
-    fn insert_fn(&mut self, name: String, function: UserFn) -> Option<usize> {
-        let key = function.definition_key();
-        // Quoted spellings (`` `f` ``, `"f"`) bind the same R name as `f`.
-        let semantic = semantic_argument_name(&name).to_string();
-        let disagrees = [
-            semantic.clone(),
-            format!("`{semantic}`"),
-            format!("'{semantic}'"),
-            format!("\"{semantic}\""),
-        ]
-        .iter()
-        .filter_map(|spelling| self.fns.get(spelling))
-        .any(|other| other.definition_key() != key && !other.formals_agree(&function));
-        if disagrees {
-            self.unstable_callees.insert(semantic);
-        }
-        let prev = self.fns.insert(name.clone(), function);
-        if let Some(prev) = &prev {
-            let prev_key = prev.definition_key();
-            // Another name may still bind the same literal (`f <- g <- function() ...`).
-            if prev_key != key && self.live_definitions.get(&prev_key) == Some(&name) {
-                self.live_definitions.remove(&prev_key);
-                self.replaced_fns.insert(prev_key, prev.clone());
-            }
-        }
-        self.live_definitions.insert(key, name);
-        prev.map(|prev| prev.return_slot)
-    }
-
-    /// Whether every binding of `name` is a literal with the same formals.
-    pub(crate) fn has_single_contract(&self, name: &str) -> bool {
-        !self.unstable_callees.contains(semantic_argument_name(name))
+    /// The argument names of each call that can reach a project function
+    /// `name` defined in `package`'s sources: `pkg::name` reaches it only
+    /// when `pkg` is that package.
+    pub(crate) fn project_call_sites<'a>(
+        &'a self,
+        name: &str,
+        package: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a [Option<String>]> {
+        self.call_sites
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(move |site| site.package.is_none() || site.package.as_deref() == package)
+            .map(|site| site.arguments.as_slice())
     }
 
     pub(crate) fn was_rebound_after_capture(&self, path: &str, span: Span) -> bool {
@@ -1271,30 +1240,20 @@ impl FnTable {
         );
 
         let replaced: HashSet<_> = collected
-            .fns
-            .keys()
-            .filter(|name| self.fns.contains_key(*name))
+            .functions
+            .names()
+            .filter(|name| self.functions.binds(name))
             .collect();
         if !replaced.is_empty() {
             self.forwarded_calls
                 .retain(|call| !replaced.contains(&call.caller));
         }
         self.has_escaped_binding_names |= collected.has_escaped_binding_names;
+        self.unproven_top_level |= collected.unproven_top_level;
         self.has_escaped_operator_names |= collected.has_escaped_operator_names;
         self.has_escaped_slot_names |= collected.has_escaped_slot_names;
-        for (name, function) in &collected.fns {
-            let mut function = function.clone();
-            function.return_slot += slot_offset;
-            self.insert_fn(name.clone(), function);
-        }
-        self.unstable_callees
-            .extend(collected.unstable_callees.iter().cloned());
-        self.replaced_fns
-            .extend(collected.replaced_fns.iter().map(|(key, function)| {
-                let mut function = function.clone();
-                function.return_slot += slot_offset;
-                (key.clone(), function)
-            }));
+        self.may_install_bindings |= collected.may_install_bindings;
+        self.functions.append(&collected.functions, slot_offset);
         for (name, definitions) in &collected.capture_literal_bindings {
             self.capture_literal_bindings
                 .entry(name.clone())
@@ -1310,12 +1269,6 @@ impl FnTable {
                 .iter()
                 .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
         );
-        self.s4_methods.extend(
-            collected
-                .s4_methods
-                .iter()
-                .map(|(k, &slot)| (k.clone(), slot + slot_offset)),
-        );
         self.known_vars.extend(collected.known_vars.iter().cloned());
         self.callable_vars
             .extend(collected.callable_vars.iter().cloned());
@@ -1328,6 +1281,14 @@ impl FnTable {
         self.forwarded_calls
             .extend(collected.forwarded_calls.iter().cloned());
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CallSite {
+    /// The syntactic `pkg::` or `pkg:::` qualifier, if any.
+    package: Option<String>,
+    /// Each argument's optional exact name.
+    arguments: Vec<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1460,6 +1421,9 @@ pub struct Checker {
     // A stack is required because nested functions replace, rather than
     // inherit, the set of formals relevant to `hasArg()`.
     enclosing_formals: Vec<EnclosingFormals>,
+    // Per enclosing function frame, from before its defaults run: names its
+    // own code (body or defaults) may bind at any time.
+    frame_writes: Vec<collect::WriteSet>,
     // Values already inferred before a pipe is desugared into a call. This
     // cache is populated only for the duration of that rewritten call, so it
     // never crosses a scope-changing inference boundary.
@@ -1681,6 +1645,7 @@ impl Checker {
             load_bindings: HashMap::new(),
             deferred_captures: Vec::new(),
             enclosing_formals: Vec::new(),
+            frame_writes: Vec::new(),
             loop_frames: Vec::new(),
             journal_delta_cache: scope_journal::BranchChanges::default(),
             held_cast: None,
@@ -1778,7 +1743,7 @@ impl Checker {
         seed: &HashMap<String, ry_core::RType>,
         scope: &HashSet<String>,
     ) {
-        for (name, uf) in &self.fn_table.fns {
+        for (name, uf) in self.fn_table.functions.live() {
             if scope.contains(name) {
                 continue;
             }
@@ -1798,7 +1763,7 @@ impl Checker {
         scope: &HashSet<String>,
     ) {
         let table = Arc::make_mut(&mut self.fn_table);
-        for (name, function) in &mut table.fns {
+        for (name, function) in table.functions.live_iter_mut() {
             if scope.contains(name) {
                 continue;
             }

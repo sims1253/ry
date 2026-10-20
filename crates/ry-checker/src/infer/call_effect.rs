@@ -132,18 +132,29 @@ impl Checker {
         }
     }
 
-    /// Whether any call or replacement assignment in `body` (outside nested
-    /// function bodies) may replace a binding, judged against the loop's
-    /// entry scope.
-    pub(crate) fn loop_body_may_replace_bindings(&self, body: &[Stmt], scope: &Scope) -> bool {
+    /// Whether `call` is an audited base call (G1, not `message`) with no
+    /// project definition behind its head: the narrower rule that keeps
+    /// related-location evidence (#672), which inert user helpers do not.
+    pub(crate) fn call_proves_no_rebind(&self, func: &Expr, args: &[Arg], scope: &Scope) -> bool {
+        callee_name(func).is_some_and(|name| {
+            !LITERAL_MESSAGE_CALLS.contains(&bare_name(&name))
+                && self.call_effect(func, args, scope) == CallEffect::RunsCallerCode
+        })
+    }
+
+    /// Whether any call `inert` rejects, or a replacement assignment, in
+    /// `body` (outside nested function bodies) may replace a binding.
+    pub(crate) fn loop_body_may_replace_bindings(
+        &self,
+        body: &[Stmt],
+        inert: impl Fn(&Expr, &[Arg]) -> bool,
+    ) -> bool {
         let policy = Walk {
             fn_bodies: false,
             ..Walk::ALL
         };
         walk_stmts(body, policy, |node, _| match node {
-            AstNode::Expr(Expr::Call { func, args, .. })
-                if !self.call_effect(func, args, scope).keeps_scalar_facts() =>
-            {
+            AstNode::Expr(Expr::Call { func, args, .. }) if !inert(func, args) => {
                 ControlFlow::Break(())
             }
             AstNode::Stmt(Stmt::Assign { target, .. }) if binding_name(target).is_none() => {
@@ -243,7 +254,7 @@ impl Checker {
         {
             // Only an exported `pkg::fn`; `pkg:::fn` reaches internals.
             !crate::resolve::BASE_DATABASE_PACKAGES.contains(&package)
-                && !self.fn_table.fns.contains_key(member)
+                && !self.fn_table.functions.binds(member)
                 && !self.known_vars.contains(member)
                 && !ops_chooser::operator_rebound(self, "::", scope)
         } else {
@@ -251,14 +262,15 @@ impl Checker {
         };
         // Nested calls classify themselves. A closure, or a name that may
         // hold one, could run later; only a value of known non-function
-        // mode is safe to pass.
+        // mode is safe to pass. An environment may hold closures and a
+        // language object may be evaluated, so neither is safe.
         callee
             && args.iter().all(|arg| match &arg.value {
                 Expr::Function { .. } => false,
                 Expr::Ident { name, .. } => {
                     scope.get(name).is_some_and(|ty| {
-                        !matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union)
-                    }) && !self.fn_table.fns.contains_key(name)
+                        !ty.mode.may_be_function() && !ty.mode.is_known_non_vector()
+                    }) && !self.fn_table.functions.binds(name)
                 }
                 _ => true,
             })
@@ -275,16 +287,7 @@ fn proven_unclassed_atomic(expr: &Expr, scope: &Scope) -> bool {
                 && scope.get(name).is_some_and(|ty| {
                     ty.class.known
                         && ty.class.len == 0
-                        && matches!(
-                            ty.mode,
-                            Mode::Logical
-                                | Mode::Integer
-                                | Mode::Double
-                                | Mode::Complex
-                                | Mode::Character
-                                | Mode::Raw
-                                | Mode::Null
-                        )
+                        && (ty.mode.is_atomic() || ty.mode == Mode::Null)
                 })
         }
         expr => is_scalar_literal(expr),

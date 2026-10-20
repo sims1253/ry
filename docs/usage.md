@@ -57,6 +57,25 @@ Human-readable diagnostics use ANSI color on terminals; select the
 color policy with `--color auto|always|never`. Automatic color respects
 `NO_COLOR`, and machine-readable formats never contain ANSI escapes.
 
+### JSON output and related locations
+
+`--output-format json` prints an array of objects with `code`, `severity`,
+`message`, `path`, `line`, `column`, `confidence`, and an optional `related`
+array. Lines and columns are 1-based; columns count Unicode scalar values.
+`related` is omitted when empty. Each item has a `message` and, when its span
+fits the checked source, the `path`, `line`, and `column` of the location;
+ry never guesses a location. A diagnostic carries at most three items.
+
+Today only RY090 and RY091 on calls to a project function relate the call to
+the formal it names, and only when the call site provably reaches that
+definition: the exact literal bound in the same file, with no unproven call,
+default argument, or alias that could have rebound it. Cross-file calls carry
+no related locations yet. `full` output prints each item as an indented
+`note:` line; `concise`, `github`, `gitlab`, and `junit` show the primary
+location only. Related items never change messages, baselines, suppressions,
+or the exit status. The language server reports them as
+`relatedInformation` to clients that advertise that capability.
+
 ### CI
 
 `--output-format github` emits GitHub Actions annotations. Use `gitlab` for
@@ -181,6 +200,26 @@ bad <- map_dbl(1:4, function(i) as.character(i))
 
 ry reports RY080 because the callback returns character values where `map_dbl`
 requires doubles. `in_parallel()` preserves the callback's inferred type.
+
+Calls to a project function whose whole body is one formal, or one base
+operation on one formal, are checked against that body:
+
+```r
+f <- function(x) x + 1L
+f("oops")      # RY092: `x` is an operand of `+`
+nm <- function(df) df$value * 2
+nm(1:3)        # RY092: `$` is invalid for atomic vectors
+id <- function(x) x
+id("a") + 1    # RY040: `id` returns its argument
+```
+
+Only unbraced, unparenthesized bodies qualify, because `{`, `(` and `return`
+are ordinary bindings in R. The function must be the only literal bound to its
+name, and no project binding or import may replace the operator. Classed and
+`NULL` actuals stay quiet. Any call anywhere in the project that can rebind
+names in an existing frame (`source()`, `load()`, `eval()`, `list2env()`,
+`.GlobalEnv`, and the other entries of `BINDING_INSTALLERS`) switches these
+checks off for the whole project.
 
 ## Box imports
 
@@ -400,8 +439,10 @@ this sequence inside `function() { ... }` also leaves selection unknown because
 the function can run after its environment changes.
 
 S4 modeling covers in-package `setClass` / `setGeneric` /
-`setMethod` and `@` slot access but not full method resolution order;
-R6 modeling covers `self` / `private` / `super` in method bodies, not
+`setMethod` and `@` slot access. S4 dispatch selects a project method only
+when the call provably reaches it: an exact full-signature match, or a
+single-dispatch generic with an exact receiver class; otherwise the result
+is unknown. Class inheritance is not modeled. R6 modeling covers `self` / `private` / `super` in method bodies, not
 field types. No expansion of dynamic `exportPattern()` directives and no
 NA tracking yet. Cross-package names without stubs resolve to opaque
 values when static package metadata proves that they exist.

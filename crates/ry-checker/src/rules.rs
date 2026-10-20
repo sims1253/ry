@@ -174,7 +174,7 @@ pub const RULES: &[Rule] = &[
         code: "RY092",
         name: "argument-type-mismatch",
         default_severity: Severity::Error,
-        summary: "A call argument has a known mode incompatible with the parameter type declared by the resolved signature.",
+        summary: "A call argument has a known mode incompatible with the parameter type declared by the resolved signature, or with the single base operation a project function's body applies to it.",
     },
     Rule {
         code: "RY093",

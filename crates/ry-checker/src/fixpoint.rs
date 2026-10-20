@@ -5,7 +5,7 @@ use super::*;
 /// themselves contain dots.
 pub(crate) fn s3_evaluation_methods(table: &FnTable) -> HashMap<String, Vec<String>> {
     let mut by_generic: HashMap<&str, HashSet<usize>> = HashMap::new();
-    for (name, function) in &table.fns {
+    for (name, function) in table.functions.live() {
         let name = semantic_argument_name(name);
         for (dot, _) in name.match_indices('.') {
             if dot + 1 < name.len() {
@@ -20,13 +20,13 @@ pub(crate) fn s3_evaluation_methods(table: &FnTable) -> HashMap<String, Vec<Stri
         by_generic.entry(generic).or_default().insert(*slot);
     }
     let by_slot: HashMap<_, _> = table
-        .fns
-        .iter()
+        .functions
+        .live()
         .map(|(name, function)| (function.return_slot, name))
         .collect();
     table
-        .fns
-        .iter()
+        .functions
+        .live()
         .filter_map(|(name, function)| {
             let dispatch = usemethod_generic_name(&function.body)?;
             if semantic_argument_name(name) != dispatch {
@@ -134,13 +134,24 @@ impl Checker {
         if scope.is_some_and(|s| s.is_empty()) {
             return;
         }
+        if self.fn_table.functions.s4().defines_method(|_| true) {
+            let typeshed = &self.typeshed;
+            Arc::make_mut(&mut self.fn_table)
+                .functions
+                .seed_s4_parameters(|name| {
+                    typeshed
+                        .functions
+                        .get(name)
+                        .map(|sig| sig.params.as_slice())
+                });
+        }
         let prev_discarding = self.discarding;
         self.discarding = true;
-        let mut names: Vec<_> = self.fn_table.fns.keys().cloned().collect();
+        let mut names: Vec<_> = self.fn_table.functions.names().cloned().collect();
         names.sort_unstable();
         let slots: Vec<_> = names
             .iter()
-            .map(|name| self.fn_table.fns[name].return_slot)
+            .map(|name| self.fn_table.functions[name].return_slot)
             .collect();
         let active: Vec<_> = names
             .iter()
@@ -329,13 +340,13 @@ impl Checker {
     ) -> HashSet<usize> {
         let mut inherited = Vec::new();
         for (name, method_names) in methods {
-            let generic = &self.fn_table.fns[name];
+            let generic = &self.fn_table.functions[name];
             let dots = generic
                 .params
                 .iter()
                 .position(|parameter| parameter.name == "...");
             for method_name in method_names {
-                let method = &self.fn_table.fns[method_name];
+                let method = &self.fn_table.functions[method_name];
                 for parameter in &method.params {
                     if !parameter.quoting && parameter.injection.is_none() {
                         continue;
@@ -369,10 +380,10 @@ impl Checker {
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = HashSet::new();
         for (generic, position, quoting, injection) in inherited {
-            let slot = table.fns[&generic].return_slot;
+            let slot = table.functions[&generic].return_slot;
             if let Some(parameter) = table
-                .fns
-                .get_mut(&generic)
+                .functions
+                .live_mut(&generic)
                 .and_then(|function| function.params.get_mut(position))
             {
                 if quoting && !parameter.quoting {
@@ -398,13 +409,16 @@ impl Checker {
         let mut inherited = Vec::new();
 
         for call in &self.fn_table.forwarded_calls {
-            let Some(caller) = self.fn_table.fns.get(&call.caller) else {
+            let Some(caller) = self.fn_table.functions.live_named(&call.caller) else {
                 continue;
             };
 
             // Forwarding and direct calls use the same package provenance
             // when selecting a collected definition.
-            let user_callee = self.fn_table.call_function(&call.stub_callee);
+            let user_callee = self
+                .fn_table
+                .functions
+                .select(Callee::parse(&call.stub_callee));
             let stub_callee = self.resolve_typeshed_sig(&call.stub_callee);
             if user_callee.is_none() && stub_callee.is_none() {
                 for (_, source) in &call.arguments {
@@ -505,10 +519,10 @@ impl Checker {
         let table = Arc::make_mut(&mut self.fn_table);
         let mut changed = HashSet::new();
         for (caller, parameter, quoting, defused, injection) in inherited {
-            let slot = table.fns[&caller].return_slot;
+            let slot = table.functions[&caller].return_slot;
             if let Some(parameter) = table
-                .fns
-                .get_mut(&caller)
+                .functions
+                .live_mut(&caller)
                 .and_then(|function| function.params.iter_mut().find(|p| p.name == parameter))
             {
                 if quoting && !parameter.quoting {
@@ -546,12 +560,12 @@ mod tests {
     // as returns.
     fn full_sweep(checker: &mut Checker) {
         checker.discarding = true;
-        let mut names: Vec<_> = checker.fn_table.fns.keys().cloned().collect();
+        let mut names: Vec<_> = checker.fn_table.functions.names().cloned().collect();
         names.sort_unstable();
         let methods = s3_evaluation_methods(&checker.fn_table);
         checker.uncomputed_returns = names
             .iter()
-            .map(|name| checker.fn_table.fns[name].return_slot)
+            .map(|name| checker.fn_table.functions[name].return_slot)
             .collect();
         for _ in 0..100 {
             let mut changed = false;
@@ -563,7 +577,8 @@ mod tests {
                     .iter()
                     .any(|slot| checker.uncomputed_returns.contains(slot));
                 if let Some(result) = result.or_else(|| (!bottom).then(RType::unknown)) {
-                    changed |= checker.store_return(checker.fn_table.fns[name].return_slot, result);
+                    changed |=
+                        checker.store_return(checker.fn_table.functions[name].return_slot, result);
                 }
             }
             changed |= !checker.propagate_s3_generic_evaluation(&methods).is_empty();
@@ -586,8 +601,11 @@ mod tests {
         scheduled.run_fixpoint();
         full_sweep(&mut swept);
         assert_eq!(scheduled.return_slots.0, swept.return_slots.0);
-        for (name, function) in &scheduled.fn_table.fns {
-            assert_eq!(function.params, swept.fn_table.fns[name].params, "{name}");
+        for (name, function) in scheduled.fn_table.functions.live() {
+            assert_eq!(
+                function.params, swept.fn_table.functions[name].params,
+                "{name}"
+            );
         }
         (scheduled, swept)
     }
@@ -613,7 +631,7 @@ mod tests {
             "a <- function(x) b(x)\nb <- function(x) cc(x)\ncc <- function(x) substitute(x)\nstable <- function() 1L",
         );
         checker.run_fixpoint_scoped(Some(&HashSet::from(["stable".to_string()])));
-        assert!(checker.fn_table.fns["a"].params[0].quoting);
+        assert!(checker.fn_table.functions["a"].params[0].quoting);
         assert!(!checker.refinement_counts.contains_key("a"));
     }
 
@@ -623,7 +641,7 @@ mod tests {
         let second = "f <- function(x) x";
         let mut same_file = collected(&format!("{first}{second}"));
         same_file.run_fixpoint();
-        assert!(!same_file.fn_table.fns["f"].params[0].quoting);
+        assert!(!same_file.fn_table.functions["f"].params[0].quoting);
 
         let mut combined = collected(first);
         let replacement = collected(second);
@@ -633,7 +651,7 @@ mod tests {
             &replacement.return_slots,
         );
         combined.run_fixpoint();
-        assert!(!combined.fn_table.fns["f"].params[0].quoting);
+        assert!(!combined.fn_table.functions["f"].params[0].quoting);
     }
 
     #[test]
@@ -653,7 +671,7 @@ mod tests {
             }
             source.push_str(&format!("{} <- function() 1L\n", name(20)));
             let (scheduled, _) = compare(&source);
-            let top = &scheduled.fn_table.fns[&name(0)];
+            let top = &scheduled.fn_table.functions[&name(0)];
             assert_eq!(
                 scheduled.return_slots.get(top.return_slot).mode,
                 Mode::Integer
@@ -681,7 +699,7 @@ mod tests {
         let returns = |name: &str| {
             scheduled
                 .return_slots
-                .get(scheduled.fn_table.fns[name].return_slot)
+                .get(scheduled.fn_table.functions[name].return_slot)
         };
         assert_eq!(returns("f").mode, Mode::Character);
         assert_eq!(returns("g").mode, Mode::Integer);
@@ -698,7 +716,7 @@ mod tests {
         // Each round nests the column schema one level deeper.
         let mut checker = collected("grow <- function(x) if (x) list(a = grow(x)) else 1L");
         checker.run_fixpoint();
-        let grow = &checker.fn_table.fns["grow"];
+        let grow = &checker.fn_table.functions["grow"];
         assert_eq!(checker.return_slots.get(grow.return_slot), RType::unknown());
         assert_eq!(checker.refinement_counts["grow"], MAX_FIXPOINT_DEPTH);
     }

@@ -221,7 +221,7 @@ impl Checker {
                 let mut result = RType::new(Mode::List, length);
                 if spec.result.include_callback_schema {
                     if let Some(element_type) = callback_return
-                        && !matches!(element_type.mode, Mode::Opaque)
+                        && !element_type.mode.is_unknown()
                     {
                         let n = match length {
                             Length::Known(n) if n > 0 => n,
@@ -240,7 +240,7 @@ impl Checker {
             }
             HigherOrderResultKind::VectorOf => {
                 let mode = higher_order_mode(spec.result.mode.as_deref());
-                if matches!(mode, Mode::Opaque) {
+                if mode.is_unknown() {
                     return RType::unknown();
                 }
                 let length = spec
@@ -297,7 +297,8 @@ impl Checker {
                 match callback_return {
                     Some(ty)
                         if matches!(ty.length, Length::One)
-                            && !matches!(ty.mode, Mode::List | Mode::Opaque | Mode::Union) =>
+                            && !ty.mode.is_unknown_or_non_vector()
+                            && !matches!(ty.mode, Mode::List | Mode::Union) =>
                     {
                         let length = spec
                             .result
@@ -317,7 +318,8 @@ impl Checker {
                     .and_then(|i| matched_argument_type(arg_types, argument_match, i))
                     .cloned()
                     .unwrap_or_else(RType::unknown);
-                let mode = if matches!(template.mode, Mode::Union) {
+                // R rejects a non-vector `FUN.VALUE`.
+                let mode = if template.mode == Mode::Union || template.mode.is_known_non_vector() {
                     Mode::Opaque
                 } else {
                     template.mode
@@ -503,13 +505,15 @@ impl Checker {
                 self.callback_literal_return(params, body, call_arg_types, scope, 0)
             }
             Expr::Ident { name, .. } => {
-                // Strip any `pkg::` namespace prefix so a qualified
-                // callback name (`base::sqrt` passed to `sapply`)
-                // resolves against the same entries as the bare name.
-                // `bare_name` handles both `::` and `:::`.
-                let lookup_name = crate::semantic_lists::bare_name(name);
+                // A qualified callback (`base::sqrt` passed to `sapply`)
+                // never reads a local binding, and names a project
+                // definition only from that package's sources.
+                let callee = Callee::parse(name);
+                let lookup_name = callee.member();
                 // Bound closure value in scope?
-                if let Some(t) = scope.get(lookup_name) {
+                if !callee.is_qualified()
+                    && let Some(t) = scope.get(lookup_name)
+                {
                     if matches!(t.mode, Mode::Function) {
                         if let Some(sig) = &t.fn_sig {
                             return Some((*sig.return_type).clone());
@@ -532,9 +536,14 @@ impl Checker {
                     }
                 }
                 // User-defined function in the FnTable?
-                if let Some(f) = self.fn_table.fns.get(lookup_name) {
+                let function = if callee.is_qualified() {
+                    self.fn_table.functions.select(callee)
+                } else {
+                    self.fn_table.functions.live_named(lookup_name)
+                };
+                if let Some(f) = function {
                     let rt = self.read_return_slot(f.return_slot);
-                    if !matches!(rt.mode, Mode::Opaque) {
+                    if !rt.mode.is_unknown() {
                         return Some(rt);
                     }
                     return None;
@@ -755,7 +764,7 @@ impl Checker {
         }
         if self.is_user_generic(generic) {
             let method = format!("{generic}.{class}");
-            if let Some(function) = self.fn_table.fns.get(&method) {
+            if let Some(function) = self.fn_table.functions.live_named(&method) {
                 return Some(S3MethodSource::Project(function.return_slot));
             }
             if self.fn_table.known_vars.contains(&method) {

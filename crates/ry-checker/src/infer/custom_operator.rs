@@ -18,9 +18,7 @@ impl Checker {
             self.fn_table.has_escaped_operator_names || self.escaped_operator_bindings
         };
         let local = names.iter().find_map(|name| scope.get(name));
-        let project_function = names
-            .iter()
-            .any(|name| self.fn_table.fns.contains_key(*name));
+        let project_function = names.iter().any(|name| self.fn_table.functions.binds(name));
         let external = names.iter().any(|name| {
             self.imported_from
                 .get(*name)
@@ -31,8 +29,7 @@ impl Checker {
         let known_project_binding = names
             .iter()
             .any(|name| self.fn_table.known_vars.contains(*name));
-        let local_may_call = local
-            .is_some_and(|ty| matches!(ty.mode, Mode::Function | Mode::Opaque | Mode::Union))
+        let local_may_call = local.is_some_and(|ty| ty.mode.may_be_function())
             || names.iter().any(|name| scope.is_parameter(name));
         // Concrete data is skipped in call position. A flat project definition
         // behind that data may instead be a stale same-frame definition: do not

@@ -185,6 +185,7 @@ fn is_suppressed_matches_line_and_code() {
         code: "RY010",
         message: "test".into(),
         confidence: Confidence::Medium,
+        related: Vec::new(),
     };
     let diag_wrong_line = Diagnostic {
         span: Span {
@@ -227,6 +228,7 @@ fn is_suppressed_empty_rules_matches_any_code() {
         code: "RY999",
         message: "test".into(),
         confidence: Confidence::Medium,
+        related: Vec::new(),
     };
     assert!(is_suppressed(&diag, &supps));
 }
@@ -1171,4 +1173,31 @@ fn printf_family_literal_arity_is_checked() {
         1,
         "only a proven literal format shortage should fire: {diags:?}"
     );
+}
+
+#[test]
+fn related_spans_must_fit_the_source() {
+    let related = |start, end| Related {
+        path: "x.R".into(),
+        span: Span::new(start, end, 0, start),
+        message: String::new(),
+    };
+    let src = "a𝑥b";
+    assert_eq!(related(0, 1).range_in(src), Some(0..1));
+    assert_eq!(related(1, 5).range_in(src), Some(1..5));
+    assert_eq!(related(0, 7).range_in(src), None, "past the end");
+    assert_eq!(related(2, 5).range_in(src), None, "inside a scalar");
+    assert_eq!(related(5, 1).range_in(src), None, "reversed");
+}
+
+#[test]
+fn related_items_are_budgeted() {
+    let item = Related {
+        path: "x.R".into(),
+        span: Span::default(),
+        message: String::new(),
+    };
+    let d = Diagnostic::new(Severity::Warning, Span::default(), "x.R", "RY091", "m")
+        .with_related(vec![item; MAX_RELATED + 2]);
+    assert_eq!(d.related.len(), MAX_RELATED);
 }

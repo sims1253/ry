@@ -21,6 +21,7 @@ mod open_document_eligibility;
 mod path_rule_overrides;
 mod protocol;
 mod protocol_contract;
+mod related_information;
 mod report_inputs;
 mod serialized_notice;
 mod session_state_machine;

@@ -7,7 +7,7 @@
 //! - `gitlab`: GitLab Code Quality JSON report.
 //! - `junit`: JUnit XML report for CI test aggregation.
 
-use crate::{Diagnostic, Severity};
+use crate::{Diagnostic, Related, Severity};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +49,24 @@ struct JsonDiagnostic<'a> {
     line: usize,
     column: usize,
     confidence: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    related: Vec<JsonRelated<'a>>,
+}
+
+/// A related item. The location is omitted, never guessed, when its span
+/// does not fit the available source.
+#[derive(Debug, Serialize)]
+struct JsonRelated<'a> {
+    message: &'a str,
+    #[serde(flatten)]
+    location: Option<JsonLocation<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonLocation<'a> {
+    path: &'a str,
+    line: usize,
+    column: usize,
 }
 
 /// Render diagnostics with optional ANSI styling for human-readable formats.
@@ -96,6 +114,17 @@ pub fn render_with_color(
                         styled_underline(&underline, d.severity, color)
                     );
                 }
+                for related in &d.related {
+                    match related_position(related, srcs) {
+                        Some((line, column)) => writeln!(
+                            out,
+                            "  note: {}:{line}:{column}: {}",
+                            related.path, related.message
+                        ),
+                        None => writeln!(out, "  note: {}", related.message),
+                    }
+                    .ok();
+                }
             }
             out
         }
@@ -112,6 +141,20 @@ pub fn render_with_color(
                         line,
                         column: col,
                         confidence: d.confidence.as_str(),
+                        related: d
+                            .related
+                            .iter()
+                            .map(|related| JsonRelated {
+                                message: &related.message,
+                                location: related_position(related, srcs).map(|(line, column)| {
+                                    JsonLocation {
+                                        path: &related.path,
+                                        line,
+                                        column,
+                                    }
+                                }),
+                            })
+                            .collect(),
                     }
                 })
                 .collect();
@@ -285,6 +328,22 @@ fn line_col(d: &Diagnostic, srcs: &std::collections::HashMap<String, String>) ->
     (line, col)
 }
 
+/// The 1-based line and Unicode-scalar column of a related span, when it
+/// fits its file's source text.
+fn related_position(
+    related: &Related,
+    srcs: &std::collections::HashMap<String, String>,
+) -> Option<(usize, usize)> {
+    let src = srcs.get(&related.path)?;
+    let start = related.range_in(src)?.start;
+    let prefix = &src[..start];
+    let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);
+    Some((
+        prefix.matches('\n').count() + 1,
+        prefix[line_start..].chars().count() + 1,
+    ))
+}
+
 /// The char width of a diagnostic's span on its source line (at least
 /// 1). Used to underline the whole span (`^~~~~`) rather than a single
 /// caret. `d.span.end - d.span.start` is the byte width; we clamp to the
@@ -394,6 +453,60 @@ mod tests {
         let out = render(&d, OutputFormat::Full, &srcs);
         assert!(out.contains("x.R:1:1: error: [RY040] msg"));
         assert!(!out.contains("  ^"), "no caret without source: {out}");
+    }
+
+    /// A finding relating to a span of `f <- function(é, 𝑥) 1`; `𝑥` is
+    /// bytes 18..22. The related location is never guessed: past the end,
+    /// inside `𝑥`, reversed, or without source, only the message remains.
+    #[test]
+    fn related_items_render_in_full_and_json_only() {
+        let srcs = [("x.R".to_string(), "f <- function(é, 𝑥) 1\n".to_string())];
+        let srcs: std::collections::HashMap<_, _> = srcs.into_iter().collect();
+        let related = |start, end| {
+            vec![diag("RY091", Severity::Warning).with_related(vec![Related {
+                path: "x.R".into(),
+                span: Span::new(start, end, 0, start),
+                message: "declared here".into(),
+            }])]
+        };
+        let json = |d: &[Diagnostic], srcs| {
+            let out: serde_json::Value =
+                serde_json::from_str(&render(d, OutputFormat::Json, srcs)).unwrap();
+            out[0]["related"].clone()
+        };
+        let d = related(18, 22);
+        let located = serde_json::json!([{"message": "declared here", "path": "x.R", "line": 1, "column": 18}]);
+        assert_eq!(json(&d, &srcs), located);
+        let full = render(&d, OutputFormat::Full, &srcs);
+        assert!(
+            full.ends_with("\n  note: x.R:1:18: declared here\n"),
+            "{full}"
+        );
+        let mut without = d.clone();
+        without[0].related.clear();
+        assert!(!render(&without, OutputFormat::Json, &srcs).contains("related"));
+        for format in [
+            OutputFormat::Concise,
+            OutputFormat::Github,
+            OutputFormat::Gitlab,
+            OutputFormat::Junit,
+        ] {
+            assert_eq!(render(&d, format, &srcs), render(&without, format, &srcs));
+        }
+        let none = std::collections::HashMap::new();
+        for (d, srcs) in [
+            (related(18, 99), &srcs),
+            (related(19, 22), &srcs),
+            (related(22, 18), &srcs),
+            (d, &none),
+        ] {
+            assert_eq!(
+                json(&d, srcs),
+                serde_json::json!([{"message": "declared here"}])
+            );
+            let full = render(&d, OutputFormat::Full, srcs);
+            assert!(full.ends_with("\n  note: declared here\n"), "{full}");
+        }
     }
 
     #[test]

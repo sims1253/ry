@@ -316,6 +316,10 @@ pub const CLASS_ASSIGNMENT_COERCERS: &[&str] = &[
     "expression",
 ];
 
+/// `class()` of a plain double, integer, character, and logical literal, in
+/// that order: the class an S4 dispatch position receives from one.
+pub const LITERAL_CLASSES: &[&str] = &["numeric", "integer", "character", "logical"];
+
 /// Built-in methods classes whose default new() result has no object bit.
 /// Their implicit class must not be turned into an explicit S3 dispatch class.
 pub const PLAIN_NEW_CLASSES: &[&str] = &[
@@ -346,6 +350,11 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "special",
     "while",
 ];
+
+/// Base calls that always return an environment.
+///
+/// Checked by R oracle: `is.environment()` holds for each zero-argument call.
+pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
 
 /// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
 /// its evaluated arguments: it takes no callback, quoted expression, or
@@ -408,9 +417,38 @@ pub fn frame_effect_dispatch_closure(call: &str) -> Option<&'static [&'static st
     }
 }
 
+/// Base functions that can bind or replace names in an existing frame
+/// other than a fresh one they create (`load()` binds into its caller's
+/// frame by default, `eval.parent(quote(f <- g))` into its caller's caller).
+/// Also the accessors that can return the global frame, which `e$f <- g`
+/// or `assign(name, g, envir = e)` can then rebind. Caller-frame handles
+/// (`environment`, `parent.frame`, `sys.frames`) are deliberately left out
+/// (too common to give up contracts for).
+pub const BINDING_INSTALLERS: &[&str] = &[
+    "load",
+    "source",
+    "sys.source",
+    "eval.parent",
+    "list2env",
+    "eval",
+    "evalq",
+    "globalenv",
+    ".GlobalEnv",
+    "sys.frame",
+    "as.environment",
+    "pos.to.env",
+    "topenv",
+];
+
 /// The complete registry. Every hardcoded semantic list must appear here.
 pub fn registry() -> Vec<SemanticList> {
     vec![
+        SemanticList {
+            name: "BINDING_INSTALLERS",
+            items: BINDING_INSTALLERS,
+            check: CheckKind::ROracle,
+            claim: "base functions or frames through which code can rebind a name in an existing caller or global frame",
+        },
         SemanticList {
             name: "FRAME_REFLECTION",
             items: FRAME_REFLECTION,
@@ -436,10 +474,22 @@ pub fn registry() -> Vec<SemanticList> {
             claim: "generics the audited inert base calls dispatch internally",
         },
         SemanticList {
+            name: "ENVIRONMENT_CONSTRUCTORS",
+            items: ENVIRONMENT_CONSTRUCTORS,
+            check: CheckKind::ROracle,
+            claim: "base calls that return an environment",
+        },
+        SemanticList {
             name: "PLAIN_NEW_CLASSES",
             items: PLAIN_NEW_CLASSES,
             check: CheckKind::ROracle,
             claim: "methods::new returns non-object values for these builtin classes",
+        },
+        SemanticList {
+            name: "LITERAL_CLASSES",
+            items: LITERAL_CLASSES,
+            check: CheckKind::ROracle,
+            claim: "class() of plain double, integer, character, and logical literals",
         },
         SemanticList {
             name: "CLASS_ASSIGNMENT_COERCERS",

@@ -37,6 +37,13 @@ impl LanguageServer for Backend {
             .and_then(|document| document.publish_diagnostics.as_ref())
             .and_then(|diagnostics| diagnostics.data_support)
             .unwrap_or(false);
+        let supports_related_information = params
+            .capabilities
+            .text_document
+            .as_ref()
+            .and_then(|document| document.publish_diagnostics.as_ref())
+            .and_then(|diagnostics| diagnostics.related_information)
+            .unwrap_or(false);
 
         let supports_document_changes = params
             .capabilities
@@ -94,6 +101,7 @@ impl LanguageServer for Backend {
         state.supports_workspace_configuration = supports_workspace_configuration;
         state.supports_document_changes = supports_document_changes;
         state.supports_diagnostic_data = supports_diagnostic_data;
+        state.supports_related_information = supports_related_information;
         state.supports_did_change_watched_files = supports_did_change_watched_files;
         state.supports_relative_patterns = supports_relative_patterns;
         state.folder_contexts = folder_contexts;

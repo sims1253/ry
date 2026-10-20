@@ -10,6 +10,7 @@ use ry_core::declarations::{
 };
 use ry_core::types::{ClassVector, Length, MAX_UNION_MEMBERS, Mode, RType};
 
+use crate::definitions::FunctionId;
 use crate::infer::semantic_argument_name;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +366,7 @@ pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
                 Evidence::Incompatible
             }
         }
-        _ if ty.mode == Mode::Opaque => Evidence::Insufficient,
+        _ if ty.mode.is_unknown_or_non_vector() => Evidence::Insufficient,
         TypeExpr::Unknown => Evidence::Insufficient,
         TypeExpr::Union(alternatives) => {
             combine_any(alternatives.iter().map(|part| compare(ty, part)))
@@ -620,7 +621,8 @@ impl crate::Checker {
         else {
             return;
         };
-        let Some(function) = self.fn_table.definition(&self.path, span).cloned() else {
+        let id = FunctionId::new(&self.path, span);
+        let Some(function) = self.fn_table.functions.get(&id).cloned() else {
             self.declaration_findings.push(DeclarationFinding::new(
                 DeclarationFindingKind::Partial,
                 &self.path,
@@ -629,7 +631,7 @@ impl crate::Checker {
             ));
             return;
         };
-        let inferred = if self.fn_table.is_live_definition(&self.path, span) {
+        let inferred = if self.fn_table.functions.is_live(&id) {
             self.return_slots.get(function.return_slot)
         } else {
             // Pass 2 only refines the last function assigned to each name.

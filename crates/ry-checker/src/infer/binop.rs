@@ -80,7 +80,7 @@ impl Checker {
                         span,
                         known_null_is_actionable,
                     );
-                    if op.is_arithmetic() && result.mode != Mode::Opaque {
+                    if op.is_arithmetic() && !result.mode.is_unknown() {
                         result.class = result_class;
                     }
                     return result;
@@ -156,15 +156,9 @@ impl Checker {
                 // non-character one. R coerces the numeric operand to
                 // character, then compares lexicographically, which is
                 // rarely the programmer's intent.
-                if matches!(lt_mode, Mode::Character) != matches!(rt_mode, Mode::Character)
-                    && !matches!(lt_mode, Mode::Opaque)
-                    && !matches!(rt_mode, Mode::Opaque)
-                    && !matches!(lt_mode, Mode::Null)
-                    && !matches!(rt_mode, Mode::Null)
-                    && !matches!(lt_mode, Mode::List | Mode::Function)
-                    && !matches!(rt_mode, Mode::List | Mode::Function)
-                    && !matches!(lt_mode, Mode::Union)
-                    && !matches!(rt_mode, Mode::Union)
+                if lt_mode.is_atomic()
+                    && rt_mode.is_atomic()
+                    && (lt_mode == Mode::Character) != (rt_mode == Mode::Character)
                     && !compares_factor
                 {
                     self.emit(
@@ -290,7 +284,7 @@ impl Checker {
         operands: &[&RType],
         operand: &RType,
     ) -> Option<RType> {
-        if operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union) {
+        if operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union {
             return Some(RType::unknown());
         }
         let guarded = operands.iter().any(|operand| operand.class.guarded);
@@ -319,7 +313,7 @@ impl Checker {
                         let result = self.apply_sig(&sig, &arg_types, &[]);
                         // A specific stub, or a group stub declaring a
                         // usable shape, is this operator's method.
-                        if generic == symbol || !matches!(result.mode, Mode::Opaque) {
+                        if generic == symbol || !result.mode.is_unknown() {
                             return Some(dispatch_result(guarded, result));
                         }
                         // Only embedded base group methods have storage-mode
@@ -369,7 +363,7 @@ impl Checker {
         let symbol = op_symbol(op);
         if let Some(result) = ops_chooser::dispatch(self, symbol, lhs, rhs, plain_vectors, scope) {
             match &result {
-                ops_chooser::Dispatch::Value(value) if value.mode != Mode::Opaque => {}
+                ops_chooser::Dispatch::Value(value) if !value.mode.is_unknown() => {}
                 _ => scope.invalidate_ops_environment(),
             }
             return Some(result);
@@ -382,7 +376,7 @@ impl Checker {
         // type. Include opaque group stubs in this identity check even though
         // their return shapes use the storage-mode fallback below.
         if [lhs, rhs].iter().any(|operand| {
-            operand.class.is_unknown() && !matches!(operand.mode, Mode::Opaque | Mode::Union)
+            operand.class.is_unknown() && !operand.mode.is_unknown() && operand.mode != Mode::Union
         }) {
             return Some(ops_chooser::Dispatch::Value(RType::unknown()));
         }
@@ -926,7 +920,7 @@ impl Checker {
     /// safe calls that may run before its use. A project or imported S3/S4
     /// method for any of them could lie about the length or run arbitrary
     /// code, so such a project gets no scalar facts at all.
-    fn project_defines_scalar_proof_method(&self) -> bool {
+    pub(super) fn project_defines_scalar_proof_method(&self) -> bool {
         self.method_screens().scalar_proof
     }
 
@@ -952,10 +946,7 @@ impl Checker {
     }
 
     fn project_defines_method(&self, generic: impl Fn(&str) -> bool) -> bool {
-        self.fn_table
-            .s4_methods
-            .keys()
-            .any(|(name, _)| generic(name))
+        self.fn_table.functions.s4().defines_method(&generic)
             || self.project_defines_s3_method(generic)
     }
 
@@ -974,7 +965,7 @@ impl Checker {
                 .external_s3_methods
                 .iter()
                 .any(|(name, _)| generic(name))
-            || self.fn_table.fns.keys().any(|name| named(name))
+            || self.fn_table.functions.names().any(|name| named(name))
             || self.imported_from.keys().any(|name| named(name))
             || self.external_bindings.iter().any(|name| named(name))
     }
@@ -1110,6 +1101,7 @@ fn merge_condition_assignments(scope: &mut Scope, evaluated: &Scope, expr: &Expr
         scope.invalidate_literal_values();
     }
     scope.uncertainty.effects |= evaluated.uncertainty.effects;
+    scope.uncertainty.unseen_rebinds |= evaluated.uncertainty.unseen_rebinds;
     if evaluated.uncertainty.dynamic_bindings && !scope.uncertainty.dynamic_bindings {
         scope.invalidate_scalar_assertions();
     }

@@ -322,4 +322,36 @@ mod tests {
             assert_eq!(after.source, text);
         }
     }
+
+    /// Two parses of one edit must agree on one AST: code actions compare
+    /// their parse to the stored one by pointer and give up on a mismatch.
+    #[cfg(feature = "test-util")]
+    #[tokio::test]
+    async fn concurrent_parses_of_one_edit_keep_the_first_stored_ast() {
+        use crate::test_seam::{self, Seam};
+
+        let path = "/ws/main.R";
+        let mut state = State::default();
+        let uri = Url::parse("file:///ws/main.R").unwrap();
+        state.docs.open(uri, "x <- 1L\n".to_string(), 1);
+        let state = tokio::sync::Mutex::new(state);
+
+        test_seam::arm(Seam::Parse);
+        let parked = async { parsed_file(&state, path).await.unwrap().0 };
+        let first = async {
+            test_seam::wait_arrived(Seam::Parse).await;
+            let (first, _) = parsed_file(&state, path).await.unwrap();
+            test_seam::release(Seam::Parse);
+            first
+        };
+        let (late, first) = tokio::join!(parked, first);
+
+        let state = state.lock().await;
+        let stored = state.docs.active(path).unwrap().parsed.clone().unwrap();
+        assert!(
+            Arc::ptr_eq(&stored, &first),
+            "a later parse replaced the stored AST"
+        );
+        assert!(Arc::ptr_eq(&late, &first));
+    }
 }

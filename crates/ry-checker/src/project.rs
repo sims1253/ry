@@ -166,7 +166,6 @@ pub struct Project {
     scope_records: Vec<(String, Vec<crate::ScopeRecord>)>,
     /// Test-visible counter: how many files were actually emitted (not
     /// served from cache) in the most recent `refine_and_emit` call.
-    /// Asserted on in unit tests the same way `parse_count` is in backend.rs.
     #[doc(hidden)]
     pub emit_count: usize,
 }

@@ -143,6 +143,8 @@ pub struct Project {
     /// A write-only file edit can change which captured declaration is
     /// provable without changing function names, return slots, or known_vars.
     prev_capture_rebounds: FxSet<(String, usize, usize)>,
+    /// Another file's top-level effects can remove a deferred call's related location.
+    prev_unproven_top_level: bool,
     /// Callable bindings without return slots also affect call resolution.
     prev_callable_vars: HashSet<String>,
     /// Generic metadata changes which method a call selects without
@@ -508,6 +510,7 @@ impl Project {
         self.prev_fn_signatures.clear();
         self.prev_known_vars.clear();
         self.prev_capture_rebounds.clear();
+        self.prev_unproven_top_level = false;
         self.prev_callable_vars.clear();
         self.prev_s4_inventory = Default::default();
         self.prev_escaped_operator_names = false;
@@ -909,8 +912,9 @@ impl Project {
             || self.prev_s4_inventory != *self.fn_table.functions.s4()
             || self.prev_escaped_operator_names != self.fn_table.has_escaped_operator_names
             || self.prev_escaped_slot_names != self.fn_table.has_escaped_slot_names;
-        let capture_rebounds_changed =
-            self.prev_capture_rebounds != self.fn_table.rebound_after_capture;
+        let capture_rebounds_changed = self.prev_capture_rebounds
+            != self.fn_table.rebound_after_capture
+            || self.prev_unproven_top_level != self.fn_table.unproven_top_level;
         let must_emit: HashSet<&str> = if !self.has_prev_emit
             || loaded_changed
             || known_vars_changed
@@ -1113,6 +1117,7 @@ impl Project {
         self.has_prev_emit = true;
         self.prev_known_vars = self.fn_table.known_vars.clone();
         self.prev_capture_rebounds = self.fn_table.rebound_after_capture.clone();
+        self.prev_unproven_top_level = self.fn_table.unproven_top_level;
         self.prev_callable_vars = self.fn_table.callable_vars.clone();
         self.prev_s4_inventory = self.fn_table.functions.s4().clone();
         self.prev_escaped_operator_names = self.fn_table.has_escaped_operator_names;

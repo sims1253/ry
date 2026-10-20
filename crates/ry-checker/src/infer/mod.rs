@@ -1060,6 +1060,9 @@ impl Checker {
         let saved_vacuous_map = Some(self.vacuous_map_results.clone());
         let mut fn_scope = scope.function_execution_scope();
         fn_scope.invalidate_ops_environment();
+        // A new frame's own bindings start with nothing run in it. Bindings
+        // captured from enclosing frames keep their own origin rule.
+        fn_scope.uncertainty.unseen_rebinds = false;
         self.start_reference_scope(&mut fn_scope, span);
         if let Some(captures) = self.deferred_captures.last() {
             for capture in captures {
@@ -1090,6 +1093,8 @@ impl Checker {
         let assigned = assigned_names_in_body(body);
         self.check_lazy_default_reachability(params, body, &assigned, &fn_scope);
         let mut default_scope = fn_scope.clone();
+        // A default is forced lazily, possibly after any body statement.
+        default_scope.uncertainty.unseen_rebinds = true;
         for name in &assigned {
             default_scope.insert(name.clone(), RType::unknown());
         }
@@ -1425,10 +1430,13 @@ impl Checker {
         value: &Expr,
         scope: &mut Scope,
     ) {
-        if !scope.uncertainty.dynamic_bindings
-            && (binding_name(target).is_none()
-                || !ops_chooser::base_assignment(self, target, value, scope))
-        {
+        if scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds {
+            return;
+        }
+        let complex = binding_name(target).is_none()
+            || !ops_chooser::base_assignment(self, target, value, scope);
+        scope.uncertainty.unseen_rebinds |= complex;
+        if !scope.uncertainty.dynamic_bindings && complex {
             scope.invalidate_scalar_assertions();
         }
     }
@@ -1454,7 +1462,10 @@ impl Checker {
         }
         // A call late in the body runs before an earlier assertion on the
         // next iteration, so such a call taints the whole repeated body.
-        if !scope.uncertainty.dynamic_bindings && self.body_may_replace_bindings(body, scope) {
+        let replaces = !(scope.uncertainty.dynamic_bindings && scope.uncertainty.unseen_rebinds)
+            && self.body_may_replace_bindings(body, scope);
+        scope.uncertainty.unseen_rebinds |= replaces;
+        if !scope.uncertainty.dynamic_bindings && replaces {
             scope.invalidate_scalar_assertions();
         }
     }

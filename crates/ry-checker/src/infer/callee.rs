@@ -34,6 +34,7 @@ pub(super) struct CallHead {
     pub(super) function_evidence: CallHeadFunctionEvidence,
     pub(super) generic_receiver: Option<usize>,
     check_project_arguments: bool,
+    bound_definition: Option<FunctionId>,
 }
 
 impl CallHead {
@@ -49,6 +50,14 @@ impl CallHead {
     /// ordinary return inference; those use `callee` and `user_function`.
     pub(super) fn signature(&self) -> Option<&FunctionSig> {
         self.metadata.as_ref()
+    }
+
+    /// The definition this call site provably reaches: the selected project
+    /// function, confirmed by the exact lexical binding visible here with no
+    /// unseen rebinding since. `None` whenever evidence is incomplete; never
+    /// derived from spelling or inventory uniqueness alone.
+    pub(super) fn bound_definition(&self) -> Option<&FunctionId> {
+        self.bound_definition.as_ref()
     }
 
     pub(super) fn callee(&self) -> ResolvedCallee<'_> {
@@ -104,6 +113,16 @@ impl Checker {
                     function.source_path == self.path
                         && scope.lexical_definition(lookup_name) == Some(function.definition_span)
                 }));
+        // An alias retains the function it was bound to, not its target
+        // name's current binding, so only an unrewritten head qualifies.
+        let bound_definition = function
+            .as_ref()
+            .filter(|function| {
+                check_project_arguments
+                    && name == semantic_name
+                    && self.call_site_binds(function, lookup_name, scope)
+            })
+            .map(UserFn::id);
         let generic_receiver =
             self.user_generic_receiver(name, lookup_name, function.as_ref(), args, scope);
         let unforced_args = self.unforced_arguments(name, semantic_name, args, scope);
@@ -127,7 +146,36 @@ impl Checker {
             function_evidence,
             generic_receiver,
             check_project_arguments,
+            bound_definition,
         }
+    }
+
+    /// Whether `function` is the binding this call site reaches: the exact
+    /// lexical literal of this file, which nothing may have rebound since.
+    /// A binding made in this frame needs no unproven call in between, and
+    /// an enclosing default that is not a scalar literal may be forced at
+    /// any point. A project method for a safe call, operator, or index may
+    /// run arbitrary code, so it removes all evidence. A
+    /// global literal captured by a top-level function's body needs effect-free
+    /// top levels, as the body may run after any of them. Bindings captured
+    /// from an intermediate frame are not proven.
+    fn call_site_binds(&self, function: &UserFn, name: &str, scope: &Scope) -> bool {
+        let span = function.definition_span;
+        let captured = scope
+            .outward_function_definition(name)
+            .is_some_and(|outward| outward == Some(span));
+        !self.discarding
+            && function.source_path == self.path
+            && scope.lexical_definition(name) == Some(span)
+            && !scope.uncertainty.unseen_rebinds
+            && self
+                .enclosing_formals
+                .iter()
+                .all(|frame| frame.literal_defaults_only)
+            && !self.project_defines_scalar_proof_method()
+            && !self.fn_table.was_rebound_after_capture(&self.path, span)
+            && (!captured
+                || (self.enclosing_formals.len() == 1 && !self.fn_table.unproven_top_level))
     }
 
     /// The literal a call head currently names: the exact lexical
@@ -367,7 +415,8 @@ impl Checker {
         self.check_constant_shadowed_arguments(lookup_name, head.callee(), args);
         match head.callee() {
             ResolvedCallee::User(user_function) if head.check_project_arguments => {
-                self.check_user_call_arguments(lookup_name, user_function, args, span);
+                let origin = head.bound_definition().map(|_| user_function);
+                self.check_user_call_arguments(lookup_name, user_function, origin, args, span);
             }
             ResolvedCallee::Stub(signature) => {
                 self.check_typeshed_call_arguments(lookup_name, signature, args, arg_types, span);

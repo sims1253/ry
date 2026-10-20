@@ -10,6 +10,7 @@ mod encoding_e2e;
 mod facts_context;
 mod facts_e2e;
 mod facts_references;
+mod related_locations;
 mod report_inputs;
 mod stdin_e2e;
 mod support;

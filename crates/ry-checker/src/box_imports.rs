@@ -1087,7 +1087,8 @@ impl Checker {
             .map(|param| param.name.as_str())
             .collect();
         let matches = infer::match_arguments(&names, args);
-        self.check_call_arity(name, &function.params, args, &matches, true, span);
+        // Box members carry no call-site binding evidence.
+        self.check_call_arity(name, &function.params, None, args, &matches, true, span);
         for (index, argument) in args.iter().enumerate() {
             let parameter = matches.param_for_arg[index]
                 .or(matches.dots)

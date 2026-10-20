@@ -605,6 +605,18 @@ impl Checker {
         code: &'static str,
         msg: impl Into<String>,
     ) {
+        self.emit_related(severity, span, code, msg, Vec::new());
+    }
+
+    /// [`Checker::emit`] with secondary locations the caller has proven.
+    pub(crate) fn emit_related(
+        &mut self,
+        severity: Severity,
+        span: Span,
+        code: &'static str,
+        msg: impl Into<String>,
+        related: Vec<crate::Related>,
+    ) {
         if self.discarding {
             // Pass 2 (fixpoint) and closure-signature building run the
             // single inference engine in "discarding" mode: types are
@@ -613,7 +625,8 @@ impl Checker {
             // against the refined FnTable).
             return;
         }
-        let diagnostic = Diagnostic::new(severity, span, &self.path, code, msg);
+        let diagnostic =
+            Diagnostic::new(severity, span, &self.path, code, msg).with_related(related);
         self.diagnostics.push(diagnostic);
     }
 

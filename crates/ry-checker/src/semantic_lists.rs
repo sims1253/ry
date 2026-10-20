@@ -351,6 +351,11 @@ pub const PLAIN_NEW_CLASSES: &[&str] = &[
     "while",
 ];
 
+/// Base calls that always return an environment.
+///
+/// Checked by R oracle: `is.environment()` holds for each zero-argument call.
+pub const ENVIRONMENT_CONSTRUCTORS: &[&str] = &["new.env", "globalenv", "emptyenv", "baseenv"];
+
 /// Base calls that keep a `stopifnot()` scalar fact. Each one only reads
 /// its evaluated arguments: it takes no callback, quoted expression, or
 /// environment, and never dispatches to project code (fact creation refuses
@@ -374,6 +379,43 @@ pub const SCALAR_FACT_SAFE_CALLS: &[&str] = &[
     "missing",
     "stop",
 ];
+
+/// Base calls that keep the frame's bindings only when every argument is a
+/// character literal and the controls after `...` are literals: a literal
+/// payload needs no `as.character` dispatch.
+pub const LITERAL_MESSAGE_CALLS: &[&str] = &["message"];
+
+/// Generics that the audited inert calls may dispatch internally, per the R
+/// probe audit in `tests/semantic_lists.rs`. A project or imported method
+/// for one of them runs during the call.
+pub const FRAME_EFFECT_DISPATCH_GENERICS: &[&str] = &[
+    "length",
+    "is.na",
+    "nchar",
+    "is.numeric",
+    "anyNA",
+    "all",
+    "Summary",
+    "conditionMessage",
+];
+
+/// The dispatch closure of an audited inert base call: the members of
+/// [`FRAME_EFFECT_DISPATCH_GENERICS`] it may reach. `None` for any other
+/// call, including a new `SCALAR_FACT_SAFE_CALLS` member until its closure
+/// is audited (`frame_inert_dispatch_closures_match_r` then fails).
+pub fn frame_effect_dispatch_closure(call: &str) -> Option<&'static [&'static str]> {
+    match call {
+        "length" => Some(&["length"]),
+        "is.na" => Some(&["is.na"]),
+        "nchar" => Some(&["nchar"]),
+        "is.numeric" => Some(&["is.numeric"]),
+        "stopifnot" => Some(&["anyNA", "is.na", "all", "Summary"]),
+        "message" => Some(&["conditionMessage"]),
+        "is.null" | "identical" | "is.character" | "is.logical" | "is.integer" | "is.double"
+        | "is.function" | "is.list" | "inherits" | "missing" | "stop" => Some(&[]),
+        _ => None,
+    }
+}
 
 /// Base functions that can bind or replace names in an existing frame
 /// other than a fresh one they create (`load()` binds into its caller's
@@ -418,6 +460,24 @@ pub fn registry() -> Vec<SemanticList> {
             items: SCALAR_FACT_SAFE_CALLS,
             check: CheckKind::TypeshedAgreement,
             claim: "base calls that read their arguments without callbacks, environments, or project dispatch",
+        },
+        SemanticList {
+            name: "LITERAL_MESSAGE_CALLS",
+            items: LITERAL_MESSAGE_CALLS,
+            check: CheckKind::ROracle,
+            claim: "base calls that run no project code for literal arguments unless a conditionMessage method exists",
+        },
+        SemanticList {
+            name: "FRAME_EFFECT_DISPATCH_GENERICS",
+            items: FRAME_EFFECT_DISPATCH_GENERICS,
+            check: CheckKind::ROracle,
+            claim: "generics the audited inert base calls dispatch internally",
+        },
+        SemanticList {
+            name: "ENVIRONMENT_CONSTRUCTORS",
+            items: ENVIRONMENT_CONSTRUCTORS,
+            check: CheckKind::ROracle,
+            claim: "base calls that return an environment",
         },
         SemanticList {
             name: "PLAIN_NEW_CLASSES",

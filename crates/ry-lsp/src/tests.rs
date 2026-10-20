@@ -159,6 +159,21 @@ fn inlay_hints_for_basic_assignments() {
 }
 
 #[test]
+fn inlay_hints_name_known_environment_and_language_values() {
+    let hints = inlay_hints("e <- new.env()\nq <- quote(a + b)\nu <- unknown_call()\n");
+    let labels: Vec<_> = hints
+        .iter()
+        .map(|hint| match &hint.label {
+            InlayHintLabel::String(label) => label.as_str(),
+            other => panic!("expected String label, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(labels.len(), 2, "{labels:?}");
+    assert!(labels[0].contains("environment"), "{labels:?}");
+    assert!(labels[1].contains("language"), "{labels:?}");
+}
+
+#[test]
 fn inlay_hint_summary_and_detail_keep_schema_meanings_separate() {
     let hints = inlay_hints("x <- list(a = 1L, b = 2L, c = 3L, d = 4L)\n");
     assert_eq!(hints.len(), 1);

@@ -60,13 +60,56 @@ still fake the proof for a value of unknown class. The rest
 of an `&&` assertion may use only literals, the subject, other local values,
 and base comparisons.
 
-Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
-`is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, and the
-`is.character`-style type predicates. Any other call, including a generic,
-closure, formal, box call, or callback-taking function, ends it, and so does
-a replacement or subassignment. Such a call before the assertion also keeps
+Scalar facts and adopted declaration identities
+([declarations](declarations.md#shared-checking-boundary)) share one call
+rule. Only a few base calls keep the fact: `stopifnot`, `length`, `is.null`,
+`is.na`, `nchar`, `identical`, `inherits`, `missing`, `stop`, the
+`is.character`-style type predicates, and `message` with only character
+literal arguments. Each must resolve to base, and the project must not
+define or import a method for a generic the call dispatches internally:
+`length`, `is.na`, `nchar`, and `is.numeric` for themselves; `anyNA`,
+`is.na`, `all`, or the `Summary` group for a `stopifnot` predicate that is
+not a plain logical expression (a comparison, `&&`, `||`, `!`, an `is.*`
+call, or a logical literal) or a literal or local value known to carry no
+class attribute; and `conditionMessage` for `message`. For
+`message`, only arguments named exactly `domain` or `appendLF` are controls
+and must be literals; every other argument, named or not, is payload and
+must be a character string, and a forwarded `...` is refused.
+`stopifnot` with `exprs` or `exprObject` evaluates quoted code and keeps
+nothing. A qualified head such as `base::length` counts only while `::`
+itself is not masked. These base calls keep scalar facts only; adopted
+declaration identities do not survive them (see the exclusions below).
+
+A project function keeps the fact when the call head names exactly one
+current definition (or is a function literal), every argument is a scalar
+literal, and its body and defaults read only formals and literals and run no
+call, operator, or subscript. Its plain `<<-` targets then drop only their
+own facts. This summary trusts the body's syntax: a project mask of `if` or
+`{`, an active binding whose setter runs on `<<-`, or a later `body<-`
+replacement can still change the caller's binding. A kept fact only
+suppresses RY032, so these are false negatives, pinned by
+`known_gap_helper_masked_syntax.R`, `known_gap_helper_superassign_setter.R`,
+and `known_gap_replaced_helper_body.R`.
+
+Any other call, including a generic, formal, box call, callback-taking
+function, or user-defined function outside that summary, ends the fact, and
+so does a replacement or subassignment. Such a call before the assertion also keeps
 it from proving anything in that frame, and in a loop it taints the whole
 repeated body. Before the assertion only, base `I()` and a `pkg::fn` call
 into another package are exempt: an external package deliberately
-installing an active binding for its caller's variable is not modelled. A harmless call therefore leaves the RY032 warning ry gave
-before this proof existed.
+installing an active binding for its caller's variable is not modelled. A
+harmless call therefore leaves the RY032 warning ry gave before this proof
+existed.
+
+Code that runs while an allowed call executes, but is established outside
+the current frame, is not modelled: a caller's calling handlers or restarts
+(`message()` signals a condition, `is.na(function() NULL)` warns, and a
+partial argument match warns under `options(warnPartialMatchArgs = TRUE)`),
+hooks, finalizers, external active bindings, and promise code a caller
+supplied for a formal that an allowed call forces. Such code reaches this
+frame's bindings only through frame reflection (`sys.frames()`,
+`sys.frame()`, `parent.frame(n)`), so a kept scalar fact can at worst miss
+an RY032. Such code can also replace a name the frame resolves outward, so
+declaration identities are dropped after every one of these base calls. The oracle fixtures
+`known_gap_outer_calling_handler.R` and `known_gap_promise_reaches_frame.R`
+pin this boundary.

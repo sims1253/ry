@@ -2,9 +2,10 @@
 //!
 //! Models what R's `typeof()` would return, plus a length dimension and a
 //! flag for whether NA can occur. This is intentionally coarser than R's
-//! actual semantics: S4 and RC are stubbed, environments are opaque, and
-//! "unknown" is used whenever inference gives up (e.g. function call whose
-//! signature is not in the typeshed).
+//! actual semantics: S4 and RC are stubbed, environments and language
+//! objects carry no contents model, and "unknown" (`Mode::Opaque`) is used
+//! whenever inference gives up (e.g. function call whose signature is not in
+//! the typeshed).
 
 use std::fmt;
 use std::sync::Arc;
@@ -26,7 +27,15 @@ pub enum Mode {
     Null,
     /// Closure or builtin. Opaque payload for v1.
     Function,
-    /// Environment, S4, external pointer, etc.
+    /// An R environment. Attributes are shared by reference (a callee can
+    /// attach a class), so an environment's class is never proven empty.
+    Environment,
+    /// A symbol or call: `is.language()` minus expression vectors, including
+    /// formulas. One variant on purpose: the parser drops `(` and unary `+`,
+    /// so syntax cannot always tell `typeof()` "symbol" from "language".
+    Language,
+    /// Inference gave up: the value may be any R value. Ask the predicates
+    /// below instead of matching this variant.
     Opaque,
     /// A union of two or more modes (control-flow merge of branches with
     /// incompatible types, e.g. `if (p) 1L else "a"`). The member list
@@ -38,13 +47,53 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// No information: the value may be anything, including a vector.
+    pub const fn is_unknown(self) -> bool {
+        matches!(self, Mode::Opaque)
+    }
+
+    /// One of the six atomic vector types (NULL excluded, as `is.atomic()`
+    /// in R >= 4.4).
+    pub const fn is_atomic(self) -> bool {
+        matches!(
+            self,
+            Mode::Logical
+                | Mode::Integer
+                | Mode::Double
+                | Mode::Complex
+                | Mode::Character
+                | Mode::Raw
+        )
+    }
+
+    /// A known value without vector storage (environment, language).
+    /// Functions keep their own mode.
+    pub const fn is_known_non_vector(self) -> bool {
+        matches!(self, Mode::Environment | Mode::Language)
+    }
+
+    /// The storage lattice models nothing about the contents: unknown, or a
+    /// known non-vector kind. Proof-barrier sites use this so known kinds
+    /// stay as quiet as unknown values.
+    pub const fn is_unknown_or_non_vector(self) -> bool {
+        self.is_unknown() || self.is_known_non_vector()
+    }
+
+    /// The value may be callable (conservative for unions).
+    pub const fn may_be_function(self) -> bool {
+        matches!(self, Mode::Function | Mode::Opaque | Mode::Union)
+    }
+
     /// Resulting mode when values are combined by `c(...)`.
     /// This is distinct from arithmetic coercion: raw values promote to
     /// the other atomic mode, while functions are boxed into a list.
     pub fn combine_result(self, other: Mode) -> Mode {
         use Mode::*;
         match (self, other) {
-            (Opaque | Union, _) | (_, Opaque | Union) => Opaque,
+            // `c()` dispatches internally on classed objects, and a known
+            // environment or language value may carry a class.
+            (Opaque | Union | Environment | Language, _)
+            | (_, Opaque | Union | Environment | Language) => Opaque,
             (List | Function, _) | (_, List | Function) => List,
             (Character, _) | (_, Character) => Character,
             (Complex, _) | (_, Complex) => Complex,
@@ -68,12 +117,17 @@ impl Mode {
             // the other operand's type.
             (Raw, _) | (_, Raw) => None,
             // Opaque means "we don't know", so `opaque + "x"` stays quiet
-            // (the opaque could be numeric).
-            (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // (the opaque could be numeric). An environment may gain a class
+            // through any function it is passed to, so it stays permissive.
+            (Opaque | Environment, _) | (_, Opaque | Environment) => Some(Opaque),
             // Unions are distributed at the RType::arith layer; reaching
             // here with a Union operand is a bug. Treat conservatively as
             // opaque so a stray call doesn't panic.
             (Union, _) | (_, Union) => Some(Opaque),
+            // Primitive arithmetic rejects symbols and calls, even against
+            // NULL. `RType::arith_for` only gets here after ruling out a
+            // classed operand that could dispatch an `Ops` method.
+            (Language, _) | (_, Language) => None,
             // These modes are not arithmetic operands in R.
             (Character, _) | (_, Character) => None,
             (List, _) | (_, List) => None,
@@ -94,7 +148,10 @@ impl Mode {
     pub fn compare_result(self, other: Mode) -> Option<Mode> {
         use Mode::*;
         match (self, other) {
-            (Opaque, _) | (_, Opaque) => Some(Opaque),
+            // `quote(a) == "a"` compares by deparse and is TRUE.
+            (Opaque | Environment | Language, _) | (_, Opaque | Environment | Language) => {
+                Some(Opaque)
+            }
             (Union, _) | (_, Union) => Some(Opaque),
             (List, _) | (_, List) => None,
             (Function, _) | (_, Function) => None,
@@ -115,6 +172,8 @@ impl fmt::Display for Mode {
             Mode::List => "list",
             Mode::Null => "NULL",
             Mode::Function => "function",
+            Mode::Environment => "environment",
+            Mode::Language => "language",
             Mode::Opaque => "opaque",
             Mode::Union => "union",
         };
@@ -267,6 +326,11 @@ impl ClassVector {
     /// True if we could not determine the class at all.
     pub fn is_unknown(&self) -> bool {
         !self.known
+    }
+
+    /// Proven to carry no class attribute (not unknown, not guarded).
+    pub fn is_classless(&self) -> bool {
+        self.known && !self.guarded && self.len == 0
     }
 
     /// True if the value carries a known class vector with at least
@@ -766,6 +830,18 @@ impl RType {
     /// Atomic (non-union) arithmetic; called per-member by `arith`'s
     /// distributor.
     fn arith_atomic(self, rhs: RType, op: BinOpKind) -> Option<RType> {
+        // A union member reaches here without S3 dispatch. An environment's
+        // class is never proven empty, and a classed or unknown-class operand
+        // on either side may own an `Ops` method, so only a pair of classless
+        // operands can prove a language error. Both checks precede the raw
+        // rule: `if (p) new.env() else 1L` plus a raw value may dispatch.
+        if self.mode == Mode::Environment
+            || rhs.mode == Mode::Environment
+            || ((self.mode == Mode::Language || rhs.mode == Mode::Language)
+                && !(self.class.is_classless() && rhs.class.is_classless()))
+        {
+            return Some(RType::unknown());
+        }
         let mut mode = self.mode.arith_result(rhs.mode)?;
         // R returns a zero-length vector when one operand is NULL (e.g.
         // `NULL + 1` -> `numeric(0)`); model the length as Zero in that
@@ -844,6 +920,8 @@ impl RType {
                 }
             }
             Mode::List | Mode::Function => true,
+            // `if (e)` and `if (quote(a))` error in R; not modeled yet.
+            Mode::Environment | Mode::Language => false,
             _ => matches!(self.length, Length::Zero),
         }
     }
@@ -857,12 +935,13 @@ impl RType {
     /// `MAX_UNION_MEMBERS`, collapsing to `RType::unknown()` beyond the
     /// cap).
     ///
-    /// Opaque is absorbing: joining anything with unknown yields unknown.
+    /// Unknown is absorbing: joining anything with unknown yields unknown.
+    /// Known environment and language values join like any other mode.
     ///
     /// The S3 class vector, column schema, and function signature are
     /// preserved only when both sides agree exactly; otherwise dropped.
     pub fn join(self, other: RType) -> RType {
-        if matches!(self.mode, Mode::Opaque) || matches!(other.mode, Mode::Opaque) {
+        if self.mode.is_unknown() || other.mode.is_unknown() {
             return RType::unknown();
         }
         if self == other {
@@ -888,7 +967,7 @@ impl RType {
     pub fn element(&self) -> RType {
         match self.mode {
             Mode::Null => RType::new(Mode::Null, Length::Zero),
-            Mode::Opaque => RType::unknown(),
+            m if m.is_unknown_or_non_vector() => RType::unknown(),
             Mode::List => {
                 // `[[`-style element extraction from a list yields the
                 // UNWRAPPED element, not `list<1>`. For a
@@ -953,16 +1032,22 @@ impl RType {
     /// character fail in every member.
     pub fn seq(self, other: RType, non_factor_endpoint: bool) -> RType {
         // Endpoints R rejects outright (`1:NULL`, `1:list()`,
-        // `1:as.raw(1)`, `1:function() 1`): no result type is worth
-        // propagating into code that never runs. A character endpoint
-        // works only when its text parses as a finite number (`"1":"3"`);
-        // `1:"a"` errors at the `:`, so a numeric result would move that
-        // error onto later uses of the value. Character and maybe-character
-        // endpoints therefore stay unknown, as before #648.
+        // `1:as.raw(1)`, `1:function() 1`, `1:new.env()`, `1:quote(a)`):
+        // no result type is worth propagating into code that never runs. A
+        // character endpoint works only when its text parses as a finite
+        // number (`"1":"3"`); `1:"a"` errors at the `:`, so a numeric result
+        // would move that error onto later uses of the value. Character and
+        // maybe-character endpoints therefore stay unknown, as before #648.
         let rejected = |t: &RType| {
             matches!(
                 t.mode,
-                Mode::List | Mode::Function | Mode::Null | Mode::Raw | Mode::Character
+                Mode::List
+                    | Mode::Function
+                    | Mode::Null
+                    | Mode::Raw
+                    | Mode::Character
+                    | Mode::Environment
+                    | Mode::Language
             ) || (t.mode == Mode::Union
                 && t.members
                     .as_ref()
@@ -1992,5 +2077,131 @@ mod tests {
         let s = format!("{}", t);
         assert!(s.contains("->"), "missing -> in display: {}", s);
         assert!(s.contains("integer"), "missing return type: {}", s);
+    }
+
+    #[test]
+    fn mode_capability_table() {
+        use Mode::*;
+        // (mode, unknown, atomic, known non-vector, may be function)
+        for (mode, unknown, atomic, non_vector, function) in [
+            (Logical, false, true, false, false),
+            (Integer, false, true, false, false),
+            (Double, false, true, false, false),
+            (Complex, false, true, false, false),
+            (Character, false, true, false, false),
+            (Raw, false, true, false, false),
+            (List, false, false, false, false),
+            (Null, false, false, false, false),
+            (Function, false, false, false, true),
+            (Environment, false, false, true, false),
+            (Language, false, false, true, false),
+            (Opaque, true, false, false, true),
+            (Union, false, false, false, true),
+        ] {
+            assert_eq!(mode.is_unknown(), unknown, "{mode}");
+            assert_eq!(mode.is_atomic(), atomic, "{mode}");
+            assert_eq!(mode.is_known_non_vector(), non_vector, "{mode}");
+            assert_eq!(
+                mode.is_unknown_or_non_vector(),
+                unknown || non_vector,
+                "{mode}"
+            );
+            assert_eq!(mode.may_be_function(), function, "{mode}");
+        }
+    }
+
+    #[test]
+    fn language_arithmetic_requires_classless_operands() {
+        let language = RType::new(Mode::Language, Length::Nonempty);
+        let double = RType::scalar(Mode::Double);
+        // R: `quote(a + b) * 2` and `NULL + quote(a)` error.
+        assert!(language.clone().arith(double.clone()).is_none());
+        assert!(
+            RType::new(Mode::Null, Length::Zero)
+                .arith(language.clone())
+                .is_none()
+        );
+        // A class on either operand may select an `Ops` method.
+        for (lhs, rhs) in [
+            (
+                language.clone().with_class(ClassVector::unknown()),
+                double.clone(),
+            ),
+            (
+                language.clone().with_class(ClassVector::single("foo")),
+                double.clone(),
+            ),
+            (
+                language.clone(),
+                double.clone().with_class(ClassVector::single("foo")),
+            ),
+            (
+                language.clone(),
+                double.clone().with_class(ClassVector::guard("foo")),
+            ),
+        ] {
+            assert_eq!(lhs.arith(rhs), Some(RType::unknown()));
+        }
+        // One union member that may dispatch keeps the union quiet.
+        let classed = RType::union(Arc::from(vec![
+            double.clone().with_class(ClassVector::single("foo")),
+            RType::scalar(Mode::Character).with_class(ClassVector::single("bar")),
+        ]));
+        assert!(language.clone().arith(classed).is_some());
+        // Every member of `if (p) quote(a) else "x"` fails.
+        let mixed = RType::union(Arc::from(vec![
+            RType::scalar(Mode::Language),
+            RType::scalar(Mode::Character),
+        ]));
+        assert!(mixed.arith(double).is_none());
+    }
+
+    #[test]
+    fn environment_arithmetic_and_comparison_stay_permissive() {
+        let env = RType::new(Mode::Environment, Length::Unknown);
+        let result = env.clone().arith(RType::scalar(Mode::Double));
+        assert_eq!(result.map(|ty| ty.mode), Some(Mode::Opaque));
+        // Even a classless-looking environment member may dispatch, so the
+        // raw rule never rejects `if (p) new.env() else 1L` plus a raw value.
+        let member = RType::union(Arc::from(vec![env.clone(), RType::scalar(Mode::Integer)]));
+        assert!(member.arith(RType::scalar(Mode::Raw)).is_some());
+        let language = RType::scalar(Mode::Language);
+        // `quote(a) == "a"` is TRUE in R.
+        assert!(language.compare(RType::scalar(Mode::Character)).is_some());
+        assert!(env.compare(RType::scalar(Mode::Double)).is_some());
+    }
+
+    #[test]
+    fn seq_rejects_non_vector_endpoints() {
+        // R: `1:new.env()` "argument of length 0", `1:quote(a)` "NA/NaN argument".
+        for kind in [Mode::Environment, Mode::Language] {
+            let endpoint = RType::scalar(kind);
+            assert_eq!(
+                RType::scalar(Mode::Integer).seq(endpoint.clone(), true),
+                RType::unknown()
+            );
+            assert_eq!(
+                endpoint.seq(RType::scalar(Mode::Integer), true),
+                RType::unknown()
+            );
+        }
+    }
+
+    #[test]
+    fn known_kinds_join_while_unknown_absorbs() {
+        let language = RType::scalar(Mode::Language);
+        let joined = language.clone().join(RType::scalar(Mode::Character));
+        assert_eq!(joined.mode, Mode::Union);
+        assert_eq!(language.clone().join(language.clone()), language);
+        assert_eq!(language.clone().join(RType::unknown()), RType::unknown());
+        // Iterating yields values the lattice cannot describe.
+        assert_eq!(language.element(), RType::unknown());
+        assert_eq!(RType::scalar(Mode::Environment).element(), RType::unknown());
+        assert!(!RType::scalar(Mode::Language).invalid_condition());
+        assert_eq!(
+            Mode::Language.combine_result(Mode::Double),
+            Mode::Opaque,
+            "`c()` dispatches on classed objects"
+        );
     }
 }

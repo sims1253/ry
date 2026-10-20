@@ -1040,7 +1040,7 @@ impl Checker {
             // signatures of the same name do not describe the call.
             Some(BoxObject::Attached(None)) => scope
                 .get(name)
-                .is_some_and(|value| value.mode == Mode::Opaque),
+                .is_some_and(|value| value.mode.is_unknown_or_non_vector()),
             _ => false,
         };
         if opaque {

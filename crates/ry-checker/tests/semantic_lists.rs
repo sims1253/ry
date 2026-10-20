@@ -855,3 +855,141 @@ fn plain_new_classes_do_not_gain_object_dispatch() {
         assert_eq!(output.trim(), "TRUE", "{class}");
     }
 }
+
+/// Every audited inert call (`frame_effect_dispatch_closure`) dispatches
+/// exactly its declared closure for a classed argument: R records which
+/// `.probe` methods run. A literal `message()` reaches only
+/// `conditionMessage` through its default handler.
+#[test]
+fn frame_inert_dispatch_closures_match_r() {
+    if !rscript_available() {
+        return;
+    }
+    let calls = semantic_lists::SCALAR_FACT_SAFE_CALLS
+        .iter()
+        .chain(semantic_lists::LITERAL_MESSAGE_CALLS)
+        .map(|name| {
+            let call = match *name {
+                "identical" => "identical(p, p)".to_string(),
+                "inherits" => "inherits(p, 'x')".to_string(),
+                "missing" => "(function(a) missing(a))(p)".to_string(),
+                "message" | "stop" => format!("{name}('hi')"),
+                _ => format!("{name}(p)"),
+            };
+            format!("'{name}' = quote({call})")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let output = r_eval(&format!(
+        "ran <- character()
+         gens <- c('as.character', 'format', 'print', 'length', 'anyNA', 'is.na', 'all', 'any',
+                   'Summary', 'Ops', 'conditionMessage', 'conditionCall', 'toString', 'paste',
+                   'nchar', 'as.logical', 'as.vector', 'unlist', '[', '[[', '$', 'names', 'dim',
+                   'is.numeric', 'c', 'rep', 'xtfrm', 'levels', 'deparse', 'as.list', 'lapply',
+                   'identical', 'inherits', 'oldClass')
+         for (g in gens) local({{
+           gg <- g
+           assign(paste0(gg, '.probe'), function(x, ...) {{ ran <<- c(ran, gg); NextMethod() }}, envir = globalenv())
+         }})
+         conditionMessage.simpleMessage <- function(c) {{ ran <<- c(ran, 'conditionMessage'); NextMethod() }}
+         p <- structure(TRUE, class = 'probe')
+         calls <- list({calls})
+         for (nm in names(calls)) {{
+           ran <- character()
+           outcome <- tryCatch({{ eval(calls[[nm]]); 'ok' }}, error = function(e) 'error')
+           cat(nm, ':', paste(sort(unique(ran)), collapse = ' '), ':', outcome, '\\n', sep = '')
+         }}"
+    ));
+    let lines: Vec<_> = output.lines().collect();
+    assert_eq!(
+        lines.len(),
+        semantic_lists::SCALAR_FACT_SAFE_CALLS.len() + semantic_lists::LITERAL_MESSAGE_CALLS.len(),
+        "{output}"
+    );
+    for line in lines {
+        let mut fields = line.split(':');
+        let (Some(name), Some(ran), Some(outcome)) = (fields.next(), fields.next(), fields.next())
+        else {
+            panic!("malformed probe line {line:?}");
+        };
+        // A probe call that errors may stop before reaching a generic; only
+        // `stop()` is expected to.
+        assert_eq!(
+            outcome.trim(),
+            if name == "stop" { "error" } else { "ok" },
+            "{name}"
+        );
+        let ran: BTreeSet<&str> = ran.split_whitespace().collect();
+        // `all.probe` takes precedence over the Summary group method.
+        let declared: BTreeSet<&str> = semantic_lists::frame_effect_dispatch_closure(name)
+            .expect("audited call")
+            .iter()
+            .copied()
+            .filter(|generic| *generic != "Summary")
+            .collect();
+        assert_eq!(ran, declared, "{name}");
+    }
+    let group = r_eval(
+        "Summary.probe <- function(..., na.rm = FALSE) { cat('Summary'); TRUE }
+         try(stopifnot(structure(TRUE, class = 'probe')), silent = TRUE)",
+    );
+    assert!(group.contains("Summary"), "{group}");
+    assert!(
+        semantic_lists::frame_effect_dispatch_closure("stopifnot")
+            .is_some_and(|closure| closure.contains(&"Summary"))
+    );
+}
+
+/// The closure bodies of audited inert calls use only reviewed frame
+/// reflection: `stopifnot` evaluates in its caller only on the
+/// `exprs`/`exprObject` path the classifier excludes, and `message` reads
+/// only its call. Primitives have no body.
+#[test]
+fn frame_inert_bodies_use_only_reviewed_reflection() {
+    if !rscript_available() {
+        return;
+    }
+    let names = semantic_lists::SCALAR_FACT_SAFE_CALLS
+        .iter()
+        .chain(semantic_lists::LITERAL_MESSAGE_CALLS)
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let output = r_eval(&format!(
+        "tokens <- c('parent.frame', 'sys.call', 'sys.function', 'sys.frame', 'sys.frames',
+                     'sys.parent', 'eval', 'evalq', 'assign', 'delayedAssign',
+                     'makeActiveBinding', 'environment', 'local', 'get', 'exists', 'rm',
+                     'match.arg', 'do.call', 'on.exit')
+         for (name in c({names})) {{
+           fn <- get(name, baseenv())
+           used <- if (is.primitive(fn)) character() else intersect(tokens, all.names(body(fn)))
+           cat(name, ':', paste(sort(used), collapse = ' '), '\\n', sep = '')
+         }}"
+    ));
+    let reviewed = |name: &str| match name {
+        "stopifnot" => "eval local parent.frame sys.call sys.parent",
+        "message" => "sys.call",
+        _ => "",
+    };
+    let lines: Vec<_> = output.lines().collect();
+    assert_eq!(
+        lines.len(),
+        semantic_lists::SCALAR_FACT_SAFE_CALLS.len() + semantic_lists::LITERAL_MESSAGE_CALLS.len(),
+        "{output}"
+    );
+    for line in lines {
+        let (name, used) = line.split_once(':').expect("name: tokens");
+        assert_eq!(used.trim(), reviewed(name), "{name}");
+    }
+}
+
+#[test]
+fn environment_constructors_match_r_oracle() {
+    if !rscript_available() {
+        return;
+    }
+    for constructor in semantic_lists::ENVIRONMENT_CONSTRUCTORS {
+        let output = r_eval(&format!("cat(is.environment(base::{constructor}()))"));
+        assert_eq!(output.trim(), "TRUE", "{constructor}");
+    }
+}

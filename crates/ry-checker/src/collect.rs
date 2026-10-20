@@ -384,7 +384,25 @@ impl Checker {
                 };
                 self.collect_declared_globals_stmt(statement);
                 if let Stmt::Assign { target, value, .. } = statement {
-                    self.collect_fns_assign(target, value);
+                    // `a <- b <- value` (also `=`, and `->` once lowered)
+                    // binds every target to the innermost value. R binds
+                    // `b` first; record the outer target last so it names
+                    // a literal bound twice, as before.
+                    let mut targets = vec![target];
+                    let mut value = value;
+                    while let Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        rhs,
+                        ..
+                    } = value
+                    {
+                        targets.push(lhs);
+                        value = rhs;
+                    }
+                    for target in targets.into_iter().rev() {
+                        self.collect_fns_assign(target, value);
+                    }
                 }
                 ControlFlow::Continue(match statement {
                     Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,

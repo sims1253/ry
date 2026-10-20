@@ -2584,6 +2584,16 @@ expression: snapshots
   fixture: ry002_if_length.R
 - diagnostics:
     - code: RY010
+      message: "variable `fit.robust` is not bound in this scope"
+      severity: warning
+      span:
+        column: 12
+        end: 500
+        line: 10
+        start: 490
+  fixture: ry010_chained_assignment_targets.R
+- diagnostics:
+    - code: RY010
       message: "variable `undefined_thing` is not bound in this scope"
       severity: warning
       span:

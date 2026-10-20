@@ -738,6 +738,16 @@ expression: snapshots
   fixture: err_metadata_forces_recursive_default.R
 - diagnostics:
     - code: RY091
+      message: "missing required argument `tt` in call to `fit_real`"
+      severity: warning
+      span:
+        column: 81
+        end: 1004
+        line: 33
+        start: 993
+  fixture: err_missing_formal_member_and_chain_targets.R
+- diagnostics:
+    - code: RY091
       message: "missing required argument `x` in call to `length`"
       severity: warning
       span:

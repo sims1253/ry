@@ -476,14 +476,15 @@ impl Checker {
         // A parameter guard relies on lazy short-circuit evaluation, so it
         // keeps its distinct warning below rather than the length-based one.
         let before = self.diagnostics.len();
+        let known_null = known_null_arithmetic_operand(lhs, &rt, scope)
+            || known_null_arithmetic_operand(rhs, &lt, scope);
         let result = self.infer_binop(
             op,
             lt,
             rt,
             span,
             OperandEvidence {
-                known_null: known_null_arithmetic_operand(lhs, scope)
-                    || known_null_arithmetic_operand(rhs, scope),
+                known_null,
                 plain_vectors: false,
             },
             scope,

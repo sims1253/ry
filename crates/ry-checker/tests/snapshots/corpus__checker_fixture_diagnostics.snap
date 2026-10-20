@@ -2620,6 +2620,40 @@ expression: snapshots
   fixture: ry040_arith.R
 - diagnostics:
     - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 21
+        end: 612
+        line: 15
+        start: 604
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 10
+        end: 647
+        line: 17
+        start: 639
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 8
+        end: 667
+        line: 18
+        start: 656
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 2
+        end: 847
+        line: 24
+        start: 837
+  fixture: ry040_null_dispatched_operand.R
+- diagnostics:
+    - code: RY040
       message: "cannot apply arithmetic op to `raw` and `raw`"
       severity: error
       span:

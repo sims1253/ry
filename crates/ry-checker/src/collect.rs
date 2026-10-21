@@ -1895,11 +1895,17 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
             kind: IndexKind::Dollar | IndexKind::Slot,
             ..
         } => expression_must_force(base, name),
-        Expr::Index { base, args, .. } => {
+        // A missing formal passed bare to `[` is the empty subscript
+        // (`x[i, j]` with `i` missing selects every row); `[[` has no
+        // empty subscript and errors instead.
+        Expr::Index {
+            base, args, kind, ..
+        } => {
             expression_must_force(base, name)
-                || args
-                    .iter()
-                    .any(|argument| expression_must_force(&argument.value, name))
+                || args.iter().any(|argument| {
+                    !(*kind == IndexKind::Single && matches!(argument.value, Expr::Ident { .. }))
+                        && expression_must_force(&argument.value, name)
+                })
         }
         Expr::Call { func, .. } => expression_must_force(func, name),
         Expr::Block { body, .. } => block_force_flow(body, name).0,

@@ -380,10 +380,17 @@ pub(crate) fn dispatch_result(guarded_receiver: bool, result: RType) -> RType {
 /// The type a passing guard installs. A guard filters paths without
 /// changing the value, so an exact known class outlives the guard's class
 /// evidence. A default parameter's type describes only the omitted call.
+/// A NULL cannot pass a non-NULL guard, so its zero length says nothing
+/// about the value that does.
 fn guarded_type(scope: &Scope, var: &str, existing: &RType, target: &RType) -> RType {
+    let length = if existing.mode == Mode::Null && target.mode != Mode::Null {
+        Length::Unknown
+    } else {
+        existing.length
+    };
     let mut narrowed = RType {
         mode: target.mode,
-        length: existing.length,
+        length,
         ..target.clone()
     };
     if existing.class.has_known_class()

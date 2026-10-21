@@ -967,7 +967,7 @@ fn dollar_missing_on_plain_list_returns_null() {
 #[test]
 fn arithmetic_with_known_null_reports_ry040() {
     for source in [
-        "function(a) a / NULL\n",
+        "function() 1 / NULL\n",
         "res <- list()\nres$ns <- a\nres$np <- res$ns / res$nv\n",
     ] {
         let diags = check(source);
@@ -983,6 +983,8 @@ fn known_null_arithmetic_ignores_parameter_defaults_and_imported_schemas() {
     for source in [
         "f <- function(weights = NULL) 1 + weights\n",
         "df <- mtcars\nx <- df$not_a_real_column\ny <- x + 1L\n",
+        // A parameter may carry a class whose `/` method accepts NULL.
+        "function(a) a / NULL\n",
     ] {
         let diags = check(source);
         assert!(

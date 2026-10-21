@@ -97,10 +97,6 @@ struct Settled {
 }
 
 impl Settled {
-    fn uri(&self, name: &str) -> String {
-        file_uri(&self.fixture.path(name))
-    }
-
     async fn watched(&mut self, uri: &str) {
         self.session
             .notify(
@@ -264,7 +260,7 @@ async fn event_burst_converges() {
 
 /// Shutdown requested while the writer is busy with a scan and a watched
 /// refresh is queued behind it: the response arrives once the writer
-/// stopped, and no publication follows it.
+/// stopped, no publication follows it, and `exit` still ends the server.
 #[tokio::test]
 async fn shutdown_with_queued_work_publishes_nothing_afterwards() {
     let mut settled = settled("x <- never_bound_here\n").await;
@@ -301,20 +297,10 @@ async fn shutdown_with_queued_work_publishes_nothing_afterwards() {
 
     settled.session.notify("exit", Value::Null).await.unwrap();
     drop(settled.session);
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), settled.server).await;
-}
-
-/// Ending the session right after a burst, with work still queued,
-/// terminates cleanly.
-#[tokio::test]
-async fn teardown_with_queued_work_terminates() {
-    let mut settled = settled("x <- never_bound_here\n").await;
-    settled.fixture.write_file("a.R", "x <- 1L\n").unwrap();
-    for name in ["a.R", "b.R", "c.R", "main.R"] {
-        let uri = settled.uri(name);
-        settled.watched(&uri).await;
-    }
-    join_session(settled.session, settled.server).await;
+    tokio::time::timeout(std::time::Duration::from_secs(3), settled.server)
+        .await
+        .expect("server stops after exit")
+        .expect("server task completes");
 }
 
 /// Two edits to a closed file in its own `DESCRIPTION` package, queued

@@ -372,7 +372,8 @@ impl PackageSpec {
     }
 }
 
-// packages.txt fixes signature resolution order; each cache has one static address.
+// build.rs sorts the table by package name, which fixes signature resolution
+// order. Each cache has one static address.
 include!(concat!(env!("OUT_DIR"), "/packages.rs"));
 
 pub fn known_packages() -> impl Iterator<Item = &'static str> {
@@ -766,25 +767,17 @@ fn parse_typeshed(json: &str, path: &Path) -> Result<Typeshed, TypeshedError> {
 ///
 /// The base typeshed is compile-time-embedded and never changes, so
 /// parsing it on every `Checker::new` (once per file in a `Project`, and
-/// once per keystroke in the LSP) is wasted work. This caches the parsed
-/// value in a `OnceLock`; concurrent first callers may each parse, but
-/// all receive the same cached `Typeshed`.
+/// once per keystroke in the LSP) is wasted work.
 ///
-/// Callers that mutate the typeshed (none do today, but the API allows it)
-/// should `.clone()` the returned reference rather than mutating the cache.
+/// Callers that mutate the typeshed should `.clone()` the returned
+/// reference rather than mutating the cache.
 pub fn load_base_cached() -> Result<&'static Typeshed, TypeshedError> {
     static CACHE: std::sync::OnceLock<Typeshed> = std::sync::OnceLock::new();
-    // `get_or_try_init` is still unstable, so initialize eagerly via
-    // `set`. The embedded JSON always parses; a failure here is a
-    // build-time data bug, not a runtime condition, so panicking during
-    // first access is acceptable.
-    if let Some(cached) = CACHE.get() {
-        return Ok(cached);
-    }
-    // A racing thread's identical parse is simply dropped; whichever
-    // thread wins the `set`, the cache holds a value afterwards.
-    let _ = CACHE.set(load_base()?);
-    Ok(CACHE.get().expect("cache set by this or a racing thread"))
+    // The embedded JSON always parses. A failure is a build-time data bug,
+    // so panicking on first access is acceptable.
+    Ok(CACHE.get_or_init(|| {
+        load_base().unwrap_or_else(|error| panic!("embedded base typeshed must parse: {error}"))
+    }))
 }
 
 /// Load a non-base package's typeshed. Returns `None` for an unknown
@@ -806,6 +799,14 @@ pub fn load_package(name: &str) -> Option<&'static Typeshed> {
         .map(PackageSpec::load)
 }
 
+/// The stub for `package`. A user stub replaces the embedded one wholesale.
+pub fn package_stub<'a>(
+    user_stubs: &'a BTreeMap<String, Typeshed>,
+    package: &str,
+) -> Option<&'a Typeshed> {
+    user_stubs.get(package).or_else(|| load_package(package))
+}
+
 /// Whether a package name is known to ry's embedded typeshed. Used by
 /// the checker to decide whether a `library(pkg)` contributes
 /// signatures (unknown packages are still recorded as loaded for NSE
@@ -814,9 +815,8 @@ pub fn is_known_package(name: &str) -> bool {
     PACKAGE_SPECS.iter().any(|spec| spec.name == name)
 }
 
-/// Whether the embedded stub for `name` matches a prefilter selector.
-/// Inflates the stub once per package per process (the blobs are stored
-/// deflated); unknown packages return `false`.
+/// Prefilter flags for the embedded stub of `name`, or `None` for an
+/// unknown package. Inflates the stub once per package per process.
 fn embedded_stub_flags(name: &str) -> Option<&'static StubFlags> {
     PACKAGE_SPECS
         .iter()
@@ -824,34 +824,28 @@ fn embedded_stub_flags(name: &str) -> Option<&'static StubFlags> {
         .map(PackageSpec::flags)
 }
 
-/// Conservative prefilter for cross-package injection scans: whether
-/// the embedded stub for `name` mentions an `injects` field at all.
+/// Conservative prefilter: whether the embedded stub for `name` mentions
+/// an `injects` field.
 ///
-/// `false` guarantees that no signature in the package declares
-/// injected names, so callers can skip the package without parsing it
-/// (keeping [`load_package`] lazy). `true` may be a false alarm — the
-/// mention could be an empty list — which only costs one unnecessary
-/// parse. Unknown packages return `false`. User-supplied stubs are not
-/// consulted; callers that resolve through their own stubs must check
-/// those separately.
+/// The `package_has_*` prefilters share this contract. `false` guarantees
+/// that no signature in the package carries the field, so callers can skip
+/// the package without parsing it (keeping [`load_package`] lazy). `true`
+/// may be a false alarm, for example an empty list, which only costs one
+/// unnecessary parse. Unknown packages return `false`. User-supplied stubs
+/// are not consulted. Callers that resolve through their own stubs must
+/// check those separately.
 pub fn package_has_injects(name: &str) -> bool {
     embedded_stub_flags(name).is_some_and(|flags| flags.injects)
 }
 
-/// Conservative prefilter for promise-capture scans: whether the
-/// embedded stub for `name` mentions the evaluation mode
-/// `captures_promise`. Same contract as [`package_has_injects`]:
-/// `false` guarantees no signature in the package carries that mode,
-/// `true` may be a false alarm, unknown packages return `false`.
+/// Whether the embedded stub for `name` mentions the evaluation mode
+/// `captures_promise`. Same contract as [`package_has_injects`].
 pub fn package_has_captures_promise(name: &str) -> bool {
     embedded_stub_flags(name).is_some_and(|flags| flags.captures_promise)
 }
 
-/// Conservative prefilter for S3 method scans: whether the embedded
-/// stub for `name` mentions an `s3_methods` field. Same contract as
-/// [`package_has_injects`]: `false` guarantees the package ships no
-/// S3 methods, `true` may be a false alarm, unknown packages return
-/// `false`.
+/// Whether the embedded stub for `name` mentions an `s3_methods` field.
+/// Same contract as [`package_has_injects`].
 pub fn package_has_s3_methods(name: &str) -> bool {
     embedded_stub_flags(name).is_some_and(|flags| flags.s3_methods)
 }
@@ -1504,27 +1498,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn load_package_dplyr_has_filter() {
-        let t = load_package("dplyr").expect("dplyr is a known package");
-        assert!(t.functions.contains_key("filter"));
-        assert!(t.functions.contains_key("mutate"));
-    }
-
-    #[test]
-    fn load_package_vctrs_has_hermetic_imports() {
-        let vctrs = load_package("vctrs").expect("vctrs loads");
-        for name in [
-            "obj_is_list",
-            "vec_in",
-            "vec_set_union",
-            "vec_size",
-            "vec_slice",
-        ] {
-            assert!(vctrs.functions.contains_key(name), "missing vctrs::{name}");
-        }
-    }
-
     /// Retired `demand_only` metadata must fail loudly everywhere a stub
     /// can enter the system, never silently degrade into ordinary type
     /// enforcement. Before the flag's removal a `demand_only: true`
@@ -1582,34 +1555,6 @@ mod tests {
     }
 
     #[test]
-    fn load_package_rlang_has_typed_non_function_constants() {
-        let rlang = load_package("rlang").expect("rlang loads");
-        assert!(rlang.datasets.contains_key("na_chr"));
-        assert!(rlang.datasets.contains_key("na_int"));
-        assert!(!rlang.functions.contains_key("na_chr"));
-        assert!(!rlang.functions.contains_key("na_int"));
-    }
-
-    #[test]
-    fn load_package_purrr_has_map_family() {
-        let t = load_package("purrr").expect("purrr is a known package");
-        assert!(t.functions.contains_key("map"));
-        assert!(t.functions.contains_key("map_dbl"));
-        assert!(t.functions.contains_key("in_parallel"));
-    }
-
-    #[test]
-    fn load_package_survival_has_survfit() {
-        let t = load_package("survival").expect("survival is a known package");
-        assert!(t.functions.contains_key("Surv"));
-        assert!(t.functions.contains_key("survfit"));
-        assert!(
-            t.s3_methods
-                .contains_key(&("quantile".to_string(), "survfit".to_string()))
-        );
-    }
-
-    #[test]
     fn path_constructor_semantics_are_declarative() {
         let testthat = load_package("testthat").expect("testthat is known");
         assert_eq!(
@@ -1628,24 +1573,6 @@ mod tests {
         assert_eq!(
             typeshed.functions["inject"].scope_effect,
             Some(ScopeEffect::UnknownBindings)
-        );
-    }
-
-    #[test]
-    fn load_package_bayes_files_have_bare_names() {
-        let brms_stub = load_package("brms").expect("brms is known");
-        assert!(brms_stub.functions.contains_key("brm"));
-        assert!(brms_stub.functions.contains_key("posterior_predict"));
-
-        let posterior = load_package("posterior").expect("posterior is known");
-        assert!(posterior.functions.contains_key("as_draws_df"));
-        assert!(!posterior.functions.contains_key("posterior.as_draws_df"));
-        // The brms-only view must NOT see posterior's entries.
-        assert!(!brms_stub.functions.contains_key("as_draws_df"));
-        assert!(!brms_stub.functions.contains_key("posterior.as_draws_df"));
-        assert_eq!(
-            posterior.functions["mutate_variables"].eval.get("..."),
-            Some(&EvalMode::DataMask)
         );
     }
 

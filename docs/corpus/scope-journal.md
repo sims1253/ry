@@ -78,10 +78,14 @@ full-tier Posit ledger checks, including readable message identities, pass.
 The earlier [rejected prototypes](scope-journal-experiment.md) used historical
 baselines; their percentages are not current-production comparisons.
 
-To reproduce from the candidate checkout with R, Rust, and Valgrind installed:
+The [profiling harness](https://github.com/sims1253/ry/tree/3a5e584f925dcab12e860fc736d040c1d0a9b1c6/experiments/scope-journal)
+is pinned at `3a5e584f925dcab12e860fc736d040c1d0a9b1c6`. To reproduce with R,
+Rust, and Valgrind installed, check out that commit as the candidate:
 
 ```sh
+git worktree add --detach /tmp/ry-journal-candidate 3a5e584f925dcab12e860fc736d040c1d0a9b1c6
 git worktree add --detach /tmp/ry-journal-baseline f6eefb2dfcb473783f85b7d4b2bd38b7ac4eb698
+cd /tmp/ry-journal-candidate
 python3 experiments/scope-journal/profile.py \
   --baseline-repo /tmp/ry-journal-baseline \
   --out /tmp/ry-journal-profile

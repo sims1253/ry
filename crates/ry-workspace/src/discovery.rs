@@ -263,8 +263,8 @@ pub fn is_single_file_walk_admitted(
     // The walk's landing rule skips symlinks and DESCENDS directories
     // before the extension test, so a directory named like a source
     // (`pkg.R/`) is never landed — yet it passes the name-based checks
-    // above and, directory entries being small, the size cap too
-    //. Requiring a regular file also refuses exotic non-regular
+    // above and, directory entries being small, the size cap too.
+    // Requiring a regular file also refuses exotic non-regular
     // entries (a FIFO named `x.R`) that the walk's file branch would
     // nominally land: a deliberate divergence in the safe direction —
     // no such entry can be read as a source. Unmeasurable entries
@@ -403,8 +403,8 @@ pub struct DiscoveryResult {
     /// Directories the walk could not read (path, error). Kept apart
     /// from an empty `files` so a caller can distinguish "this tree has
     /// no eligible R source" from "this tree could not be walked at
-    /// all" — the latter must never look like a clean, empty check
-    ///. A nonexistent root lands here too: `read_dir` on it
+    /// all" — the latter must never look like a clean, empty check.
+    /// A nonexistent root lands here too: `read_dir` on it
     /// fails, which is the discovery-level record of the miss.
     pub read_errors: Vec<(PathBuf, String)>,
 }
@@ -1049,8 +1049,7 @@ mod shared_tests {
 
     /// Exclude matching reads the workspace entry name, not a
     /// canonicalized symlink target: an explicit exclude for `linked.R`
-    /// excludes that entry regardless of where it points (pins this
-    /// on the shared policy, not the retired excludes-only wrapper).
+    /// excludes that entry regardless of where it points.
     #[cfg(unix)]
     #[test]
     fn shared_policy_matches_a_symlink_entry_name_not_its_target() {

@@ -32,22 +32,18 @@ filename:
 printf '%s\n' '"a" + 1L' | ry check - --stdin-filename R/example.R --output-format json
 ```
 
-ry uses `R/example.R` for config discovery, package context, baselines, and
-diagnostic paths. The buffer replaces a disk file at that path if one exists;
-it also works before the file is saved. Other named files or directories are
-checked normally. An explicit stdin source is checked even if a directory
-walk would exclude that path, just as `ry check R/example.R` checks an
-explicitly named file. `--explain-files` identifies the overlay on stderr.
-The logical filename's parent directory must exist; its final file need not.
+ry treats the buffer as the file at `R/example.R`. It uses that path for
+config discovery, package context, baselines, and diagnostic paths, and checks
+it even if `exclude` would skip it. The buffer replaces a disk file at that
+path. The parent directory must exist, but the file need not. ry never writes
+the buffer to disk. Other operands are checked as usual, and `--explain-files`
+names the buffer on stderr.
 
-`-` requires `--stdin-filename`; the flag without `-`, repeated `-` operands,
-and `--watch` with stdin are errors. Redirecting stdin without `-` does not
-change a normal check. Input uses the same UTF-8/Latin-1 decoding and
-diagnostics as a disk file and is limited by `index.max-file-bytes` before
-parsing. A read failure or oversized buffer is named on stderr and fails the
-check, with an empty report for machine formats; `--exit-zero` still applies.
-`--baseline` and `--write-baseline` use the logical diagnostic path exactly
-as they do for a disk file. The buffer is never written to a source file.
+The buffer decodes like a disk file. A failed read or a buffer over
+`index.max-file-bytes` fails the check with an empty machine-readable report,
+unless `--exit-zero` is set. `-` without `--stdin-filename`,
+`--stdin-filename` without `-`, a repeated `-`, and `-` with `--watch` are
+usage errors.
 
 The exit status is nonzero when an error remains after filtering.
 `--error-on-warning` also fails on warnings; `--exit-zero` lets the check
@@ -66,15 +62,15 @@ array. Lines and columns are 1-based; columns count Unicode scalar values.
 fits the checked source, the `path`, `line`, and `column` of the location;
 ry never guesses a location. A diagnostic carries at most three items.
 
-Today only RY090 and RY091 on calls to a project function relate the call to
-the formal it names, and only when the call site provably reaches that
-definition: the exact literal bound in the same file, with no unproven call,
-default argument, or alias that could have rebound it. Cross-file calls carry
-no related locations yet. `full` output prints each item as an indented
-`note:` line; `concise`, `github`, `gitlab`, and `junit` show the primary
-location only. Related items never change messages, baselines, suppressions,
-or the exit status. The language server reports them as
-`relatedInformation` to clients that advertise that capability.
+RY090 and RY091 relate a call to a project function to the formal it names.
+They do so only when the call provably reaches that definition: the exact
+literal bound in the same file, with no unproven call, default argument, or
+alias that could have rebound it. Cross-file calls carry no related locations.
+`full` output prints each item as an indented `note:` line. `concise`,
+`github`, `gitlab`, and `junit` show only the primary location. Related items
+never change messages, baselines, suppressions, or the exit status. The
+language server reports them as `relatedInformation` to clients that support
+it.
 
 ### CI
 
@@ -180,15 +176,11 @@ under `tests/` are treated as fixture data unless they are runners at
 under `tests/testthat/`; set `check-test-fixtures = true` to check fixture data.
 
 Vignette `.R` files are included unless a discovery rule excludes them.
-Use `ry check . --explain-files` to see those decisions. To check one ignored
-file, pass its path directly. For a persistent CLI and editor setting, add:
-
-```toml
-include-build-ignored = ["vignettes/benchmark.R"]
-```
-
-This setting overrides only `.Rbuildignore`. See
-[configuration](configuration.md) for the other discovery rules.
+`ry check . --explain-files` prints the included files and skipped paths on
+stderr. A skipped directory stands for its whole subtree, and ry does not scan
+it. Diagnostics, including JSON, stay on stdout. To check one ignored file,
+pass its path directly. To always check a file that `.Rbuildignore` excludes,
+list it in [`include-build-ignored`](configuration.md#project-configuration).
 
 Typed purrr maps check the callback's return type. For example, save this as
 `parallel.R` and run `ry check parallel.R`:
@@ -349,11 +341,8 @@ and suppression actions in VS Code, Positron, or Zed.
 
 ### VS Code / Positron
 
-Install the **ry** extension from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=scholzmx.ry-checker)
-or Open VSX (for Positron). The extension bundles the `ry` binary.
-
-See the [extension guide](../editors/code/README.md) for settings, commands,
-and binary selection.
+See the [extension guide](../editors/code/README.md) for installation,
+settings, commands, and binary selection.
 
 ### Zed
 
@@ -402,25 +391,12 @@ This protects recursive analysis on ordinary worker-thread stacks; it is not
 an R language limit. The bound measures syntax-tree depth, not line count or
 file size; wide argument lists remain allowed.
 
-When both operator operands have different S3 methods, ry can follow a
-`chooseOpsMethod` returning literal `TRUE` or `FALSE` when the current scope
-proves both methods and the chooser values in top-level code using ordinary
-`<-` or `=` assignments. This includes aliases and methods with `...`; the
-selected operator method must also return a literal. Other calls, uncertain rebinding, function bodies checked before
-execution, attached packages, and more complex methods keep the result unknown.
-
-For scalar primitive operands, ry reports RY051 when both choosers return
-`FALSE` and different literal method result modes prove that the methods differ.
-This also covers plain vectors built with proven base `structure()` calls whose
-only attribute is a literal class and whose payload is a scalar literal or a
-flat, unnamed `base::c()` call of atomic literals. Ordinary copies retain this
-proof; writes and control-flow merges discard it. Arithmetic keeps the longer
-operand's class (left on ties); comparison and logical results drop class.
-Dimensions, names, other attributes, atomic empty vectors, and unknown lengths
-remain outside the vector proof. Other fallback cases stay unknown.
-See [#193](https://github.com/sims1253/ry/issues/193).
-
-For example, this top-level sequence selects a character result:
+When two operands have different S3 methods, ry follows `chooseOpsMethod()`
+only when both methods and the choosers it consults are top-level `<-` or `=`
+assignments that return literals. Aliases and methods with `...` count. Any other call,
+uncertain rebinding, attached package, or more complex method leaves the result
+unknown ([#193](https://github.com/sims1253/ry/issues/193)). For example, this
+top-level sequence selects a character result:
 
 ```r
 x <- structure(1L, class = "left")
@@ -431,12 +407,19 @@ chooseOpsMethod.left <- function(...) TRUE
 selected <- x + y
 ```
 
-This proof assumes ordinary initial bindings, as reference facts do; it does
-not establish the state of a pre-populated R session. An intervening unknown
-call, such as `change_environment()`, makes subsequent selection unknown even
-if the methods are assigned again: it could install a delayed binding. Putting
-this sequence inside `function() { ... }` also leaves selection unknown because
-the function can run after its environment changes.
+An unknown call such as `change_environment()` between these lines leaves the
+result unknown, even if the methods are assigned again, because the call could
+install a delayed binding. The same code inside `function() { ... }` also
+leaves it unknown. ry assumes ordinary initial bindings, not a pre-populated R
+session.
+
+RY051 reports two operands whose choosers both return `FALSE` and whose methods
+return different literals, because R then warns and uses the primitive
+operator. Both operands must be length-one logical, integer, double, or
+character values. Longer operands count only when a base `structure()` call
+whose only attribute is a literal class builds them from a flat, unnamed
+`base::c()` of atomic literals. Copies keep this proof. Writes and control-flow
+merges drop it.
 
 S4 modeling covers in-package `setClass` / `setGeneric` /
 `setMethod` and `@` slot access. S4 dispatch selects a project method only

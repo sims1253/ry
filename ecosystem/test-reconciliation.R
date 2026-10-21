@@ -3,8 +3,8 @@
 #
 # Tests the SAME reconcile() function that ecosystem/run.sh calls, sourced
 # from ecosystem/reconcile.R. Each test case builds minimal corpus + report
-# fixtures and asserts the exit status for each combination of finding status,
-# reconciliation mode, and delta direction.
+# fixtures and asserts the exit status for each combination of finding status
+# and delta direction.
 
 suppressPackageStartupChars <- function(x) x
 library(jsonlite)
@@ -26,10 +26,9 @@ write_report <- function(package, entries, report_prefix = "") {
   writeLines(lines, path)
 }
 
-make_corpus <- function(findings, reconciliation = NULL) {
+make_corpus <- function(findings) {
   list(
     corpus = "test",
-    reconciliation = reconciliation,
     packages = list(name = "pkg"),
     findings = findings
   )
@@ -51,40 +50,24 @@ cat("Test 1: clean tree (all findings present) -> exit 0\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp))) == 0L)
 cat("  PASS\n")
 
-cat("Test 2: true_positive disappears in hermetic mode -> exit 1\n")
+cat("Test 2: true_positive disappears -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(fp))) == 1L)
 cat("  PASS\n")
 
-cat("Test 3: true_positive disappears in audit-transcript mode -> exit 1\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(fp))) == 1L)
-cat("  PASS\n")
-
-cat("Test 4: false_positive disappears in hermetic mode -> exit 1\n")
+cat("Test 3: false_positive disappears -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp))) == 1L)
 cat("  PASS\n")
 
-cat("Test 5: false_positive disappears in audit-transcript mode -> exit 0\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(tp))) == 0L)
-cat("  PASS\n")
-
-cat("Test 6: unowned finding appears in hermetic mode -> exit 1\n")
+cat("Test 4: unowned finding appears -> exit 1\n")
 extra <- list(package = "pkg", code = "RY040", path = "R/c.R", line = 5, column = 1, label = "false_positive", audit_group = "group-c")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(tp, fp, extra))) == 1L)
-cat("  PASS\n")
-
-cat("Test 7: unowned finding appears in audit-transcript mode -> exit 0\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(tp, fp, extra))) == 0L)
 cat("  PASS\n")
 
 # The exact silent-degradation scenario the gate exists to catch: a
 # true_positive drops from the reports while a false_positive not in the
 # ledger appears, in the same run. The gate must catch both in one pass.
-cat("Test 8: TP disappears AND unowned FP appears simultaneously (hermetic) -> exit 1\n")
+cat("Test 5: TP disappears AND unowned FP appears simultaneously -> exit 1\n")
 stopifnot(run_reconcile(make_corpus(list(tp, fp)), list(pkg = list(fp, extra))) == 1L)
-cat("  PASS\n")
-
-cat("Test 9: TP disappears AND unowned FP appears simultaneously (audit-transcript) -> exit 1\n")
-stopifnot(run_reconcile(make_corpus(list(tp, fp), "audit-transcript"), list(pkg = list(fp, extra))) == 1L)
 cat("  PASS\n")
 
 # The Posit lane reconciles manifest-scoped reports: the shared reconcile()
@@ -97,10 +80,10 @@ prefix_cases <- list(
 )
 for (i in seq_along(prefix_cases)) {
   case <- prefix_cases[[i]]
-  cat(sprintf("Test %d: manifest-scoped report prefix %s -> exit %d\n", 9 + i, case$description, case$expected))
+  cat(sprintf("Test %d: manifest-scoped report prefix %s -> exit %d\n", 5 + i, case$description, case$expected))
   actual <- run_reconcile(make_corpus(list(tp, fp)), list(pkg = case$entries), "posit.")
   if (actual != case$expected) {
-    stop(sprintf("Test %d (%s): expected exit %d, got %d", 9 + i, case$description, case$expected, actual))
+    stop(sprintf("Test %d (%s): expected exit %d, got %d", 5 + i, case$description, case$expected, actual))
   }
   # The production subprocess must propagate the same verdict, including
   # nonzero exits. A working function alone cannot prove the CLI fails CI.
@@ -112,7 +95,7 @@ for (i in seq_along(prefix_cases)) {
   cat("  PASS\n")
 }
 
-cat("Test 13: missing processed-package arguments must not reconcile an empty subset\n")
+cat("Test 9: missing processed-package arguments must not reconcile an empty subset\n")
 cli <- suppressWarnings(system2("Rscript", c(
   shQuote(file.path(repo_root, "ecosystem", "reconcile-reports.R")),
   shQuote(file.path(tmp, "corpus.json")), shQuote(tmp), shQuote("posit.")
@@ -120,7 +103,7 @@ cli <- suppressWarnings(system2("Rscript", c(
 stopifnot(cli != 0L)
 cat("  PASS\n")
 
-cat("Test 14: an empty processed-package argument must fail closed\n")
+cat("Test 10: an empty processed-package argument must fail closed\n")
 cli <- suppressWarnings(system2("Rscript", c(
   shQuote(file.path(repo_root, "ecosystem", "reconcile-reports.R")),
   shQuote(file.path(tmp, "corpus.json")), shQuote(tmp), shQuote("posit."), shQuote("")

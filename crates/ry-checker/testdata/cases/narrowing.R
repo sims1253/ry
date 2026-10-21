@@ -750,3 +750,54 @@ f <- function(detail = NULL) {
   if (detail == 1) 1 else 2
 }
 f()
+
+## case: a positive mode predicate on an omitted NULL default does not keep length 0
+# no-diag
+# is.character(NULL) is FALSE, so the guarded block only runs when the
+# caller passed a value, and nothing is known about that value's length.
+add_columns <- function(.data, .before = NULL) {
+  if (is.character(.before)) {
+    if (!(.before %in% names(.data))) .before <- NULL
+  }
+  .data
+}
+draw <- function(caption = NULL) {
+  if (is.logical(caption)) {
+    if (!caption) caption <- NULL
+  }
+  caption
+}
+add_columns(data.frame(a = 1))
+draw()
+
+## case: class and compound predicates on an omitted NULL default do not keep length 0
+# no-diag
+weigh <- function(weights_attr = NULL) {
+  if (inherits(weights_attr, "character")) {
+    if (weights_attr == "w") 1 else 2
+  }
+}
+both <- function(from = NULL, to = NULL) {
+  if (is.character(from) && is.character(to)) {
+    if (from == to) 1 else 2
+  }
+}
+weigh()
+both()
+
+## case: a value computed in a predicate arm on an omitted NULL default does not inherit length 0
+# no-diag
+parse_method <- function(method = NULL) {
+  if (is.character(method)) method <- tolower(method) else method <- "wald"
+  if (method == "wald") 1 else 2
+}
+parse_method()
+
+## case: a positive mode predicate keeps a known zero length
+# expect: RY001
+f <- function() {
+  x <- character(0)
+  if (is.character(x)) {
+    if (x == "a") 1 else 2
+  }
+}

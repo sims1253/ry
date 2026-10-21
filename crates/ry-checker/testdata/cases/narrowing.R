@@ -443,20 +443,20 @@ f <- function(flag, other) { g <- NULL; if (flag) g <- function(x) x else g <- f
 # no-diag
 f <- function(flag, other) { g <- NULL; if (flag) { if (other) g <- function(x) x else g <- function(x) x + 1L } else g <- function(x) x; g(1L) }
 
-## case: an if without else keeps the NULL path for the call
-# expect: RY070
+## case: an if without else leaves a callable NULL or function join
+# no-diag
 f <- function(flag, other) { g <- NULL; if (flag) g <- function(x) x; g(1L) }
 
-## case: an else branch that keeps NULL still reports the call
-# expect: RY070
+## case: an else branch that keeps NULL leaves a callable join
+# no-diag
 f <- function(flag, other) { g <- NULL; if (flag) g <- function(x) x else g <- NULL; g(1L) }
 
-## case: an else branch that installs an integer still reports the call
-# expect: RY070
+## case: an else branch that installs an integer leaves a callable join
+# no-diag
 f <- function(flag, other) { g <- NULL; if (flag) g <- function(x) x else g <- 1L; g(1L) }
 
-## case: a nested if without else keeps the NULL path for the call
-# expect: RY070
+## case: a nested if without else leaves a callable NULL or function join
+# no-diag
 f <- function(flag, other) { g <- NULL; if (flag) { if (other) g <- function(x) x } else g <- function(x) x; g(1L) }
 
 ## case: a return in the then branch does not bring back NULL

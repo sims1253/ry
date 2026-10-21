@@ -784,9 +784,15 @@ pub(crate) fn span_of(e: &Expr) -> Span {
 /// schemas and transformed/narrowed values can look equally complete, but
 /// their absent fields are not strong enough evidence for an arithmetic
 /// diagnostic.
-pub(crate) fn known_null_arithmetic_operand(expr: &Expr, scope: &Scope) -> bool {
+///
+/// A literal `NULL` is written on purpose (ggplot2 layer chains end in
+/// `+ NULL`), so it proves the primitive result only when `other` is known
+/// to carry no class attribute. An opaque or classed operand may dispatch
+/// to a method that accepts NULL (issue #707). A missing list field is an
+/// accidental NULL and stays actionable whatever it meets.
+pub(crate) fn known_null_arithmetic_operand(expr: &Expr, other: &RType, scope: &Scope) -> bool {
     if matches!(expr, Expr::Null(_)) {
-        return true;
+        return other.mode == Mode::Null || (other.mode.is_atomic() && other.class.is_classless());
     }
     let Expr::Index {
         base, kind, args, ..
@@ -806,6 +812,12 @@ pub(crate) fn known_null_arithmetic_operand(expr: &Expr, scope: &Scope) -> bool 
         .is_some_and(|schema| {
             schema.locally_constructed && schema.complete && schema.get(field).is_none()
         })
+}
+
+/// A literal `NULL` beside an operand not proven classless: an `Ops` method
+/// R finds at runtime may accept it, so a primitive miss proves nothing.
+pub(crate) fn dispatchable_null_operand(expr: &Expr, other: &RType) -> bool {
+    matches!(expr, Expr::Null(_)) && !other.class.is_classless()
 }
 
 /// Extract an integer value from a literal expression. Returns

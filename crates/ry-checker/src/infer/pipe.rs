@@ -325,10 +325,22 @@ impl Checker {
         // Expression arms do not merge bindings. Drop each child before
         // creating its sibling, and avoid a child for an absent else arm.
         // Delay propagating effects until both arms have seen the same base.
+        // The arm a literal condition never takes is inferred silently.
+        let literal_cond = match cond {
+            Expr::Logical(value, _) => Some(*value),
+            _ => None,
+        };
         let mut infer_arm = |expr, branch| {
             let mut child = scope.clone();
             apply_narrowing_branch(&mut child, &narrowing, branch);
+            let dead = match branch {
+                NarrowingBranch::Then => literal_cond == Some(false),
+                NarrowingBranch::Else => literal_cond == Some(true),
+            };
+            let outer = self.in_dead_arm;
+            self.in_dead_arm |= dead;
             let ty = self.infer(expr, &mut child);
+            self.in_dead_arm = outer;
             (
                 ty,
                 child.uncertainty,

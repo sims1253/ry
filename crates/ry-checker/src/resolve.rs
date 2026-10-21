@@ -617,12 +617,13 @@ impl Checker {
         msg: impl Into<String>,
         related: Vec<crate::Related>,
     ) {
-        if self.discarding {
+        if self.discarding || self.in_dead_arm {
             // Pass 2 (fixpoint) and closure-signature building run the
             // single inference engine in "discarding" mode: types are
             // computed but no diagnostics are recorded. This keeps pass 2
             // from double-emitting (diagnostics are produced in pass 3
-            // against the refined FnTable).
+            // against the refined FnTable). A literal `if`'s untaken arm
+            // is walked for its bindings but R never evaluates it.
             return;
         }
         let diagnostic =

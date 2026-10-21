@@ -643,6 +643,52 @@ fn native_pipe_rhs_messages_mirror_r_verbatim() {
     }
 }
 
+/// R's lexer skips a `#` comment byte by byte up to the newline, so a
+/// stray NUL inside a comment is harmless (lava ships one in a roxygen
+/// line, #698). tree-sitter's comment token stops at the NUL, which
+/// used to leave a false ERROR region and lose the rest of the file.
+#[test]
+fn nul_byte_inside_a_comment_is_part_of_the_comment() {
+    for source in [
+        "f <- function() {\n  x <- 1 # comment with a NUL \0 byte\n  x + undefined_a\n}\ng <- function() undefined_b\n",
+        "x <- 1 # a \0 b \0 c\ny <- 3\n",
+        "a <- \"#\" # a \0 b\nz <- 2\n",
+        "#' @param U \0\n#' second \0 line\nf <- function(U) U\nz <- 2\n",
+    ] {
+        let file = parse(source);
+        assert!(
+            file.parse_errors.is_empty(),
+            "{source:?}: expected a clean parse, got {:?}",
+            file.parse_errors
+        );
+        assert_eq!(file.source, source);
+        assert_eq!(file.stmts.len(), 2, "{source:?}: {:?}", file.stmts);
+        for comment in &file.comments {
+            let line = source.lines().nth(comment.line).unwrap();
+            assert_eq!(&line[comment.col + 1..], comment.body, "{source:?}");
+        }
+    }
+}
+
+/// Outside a comment R rejects a NUL: `unexpected end of file` in code,
+/// `embedded nul in string` inside a string literal (also when that
+/// string holds a `#`). Those stay parse errors.
+#[test]
+fn nul_byte_outside_a_comment_stays_a_parse_error() {
+    for source in [
+        "x <- 1 \0 + 2\ny <- 3\n",
+        "x <- 1 \0\ny <- 3\n",
+        "x <- \"a\0b\"\ny <- 3\n",
+        "a <- \"# x \0 y\"\nz <- 2\n",
+    ] {
+        let file = parse(source);
+        assert!(
+            !file.parse_errors.is_empty(),
+            "{source:?}: R rejects this NUL, expected a parse error"
+        );
+    }
+}
+
 /// The placeholder-discipline forms R 4.6 rejects at parse time
 /// (`f(_)`, nested or repeated `_`, `_` in the call's function part)
 /// are deliberately NOT flagged yet: those rules are R 4.2+ semantics

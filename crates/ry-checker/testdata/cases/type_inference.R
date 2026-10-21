@@ -1252,6 +1252,22 @@ f <- function(topic) {
   if (ok) 1
 }
 
+## case: tryCatch(e = NULL, error = h) partially matches e to expr
+# expect: RY001
+# `expr` precedes `...`, so `e =` partially matches it and the result
+# may be NULL: R errors with "argument is of length zero".
+f <- function() {
+  ok <- tryCatch(e = NULL, error = function(e) FALSE)
+  if (ok) 1
+}
+
+## case: the value of finally = function() NULL is discarded
+# no-diag
+f <- function(topic) {
+  ok <- tryCatch(is.character(topic), error = function(e) FALSE, finally = function() NULL)
+  if (ok) 1
+}
+
 ## case: tryCatch(x, error = h, finally = cleanup()) is typed from x and h
 # no-diag
 cleanup <- function() "done"

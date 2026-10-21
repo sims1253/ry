@@ -10,3 +10,10 @@ ok <- tryCatch(error = function(...) FALSE, {
 stopifnot(identical(ok, TRUE))
 m <- tryCatch(error = function(e) 0L, expr = stop("boom"))
 stopifnot(identical(m + 1L, 1L))
+# `expr` precedes `...`, so `e =` partially matches it.
+p <- tryCatch(e = 1L, error = function(e) 0L)
+stopifnot(identical(p + 1L, 2L))
+stopifnot(is.null(tryCatch(e = NULL, error = function(e) FALSE)))
+# The value of `finally` is discarded.
+fin <- tryCatch(TRUE, error = function(e) FALSE, finally = function() NULL)
+stopifnot(identical(fin, TRUE))

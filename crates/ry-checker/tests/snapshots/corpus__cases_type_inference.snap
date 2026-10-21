@@ -842,11 +842,19 @@ expression: rows
   diagnostics: []
 - case: "tryCatch(error = h, expr = x) is typed from expr"
   diagnostics: []
+- case: "tryCatch(e = NULL, error = h) partially matches e to expr"
+  diagnostics:
+    - code: RY001
+      line: 1261
+      message: "`if` condition is `union[NULL<len=0>, logical<len=1>]`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: the value of finally = function() NULL is discarded
+  diagnostics: []
 - case: "tryCatch(x, error = h, finally = cleanup()) is typed from x and h"
   diagnostics: []
 - case: "tryCatch(error = h, \"b\") + 1L is character arithmetic"
   diagnostics:
     - code: RY040
-      line: 1267
+      line: 1283
       message: "cannot apply arithmetic op to `character` and `integer`"
       severity: error

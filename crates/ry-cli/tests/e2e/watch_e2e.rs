@@ -252,8 +252,18 @@ fn watch_reloads_config_inputs() {
     let broken = "keeping the last good configuration";
     wait_for(&session.stderr, broken, "broken-config warning");
     std::thread::sleep(Duration::from_secs(2));
-    assert_eq!(occurrences(&session.stderr, broken), 1);
-    assert_eq!(occurrences(&session.stdout, finding), found);
+    assert_eq!(
+        occurrences(&session.stderr, broken),
+        1,
+        "a broken config warns once, not per poll: {}",
+        session.stderr.lock().unwrap()
+    );
+    assert_eq!(
+        occurrences(&session.stdout, finding),
+        found,
+        "the last good config stays in effect: {}",
+        session.stdout.lock().unwrap()
+    );
     session.assert_alive("while config is broken");
 
     // Fixing it reloads without the ignore.
@@ -267,7 +277,12 @@ fn watch_reloads_config_inputs() {
     let machine = "requires the full or concise output format";
     wait_for(&session.stderr, machine, "format-switch warning");
     std::thread::sleep(Duration::from_secs(2));
-    assert_eq!(occurrences(&session.stderr, machine), 1);
+    assert_eq!(
+        occurrences(&session.stderr, machine),
+        1,
+        "a machine format warns once, not per poll: {}",
+        session.stderr.lock().unwrap()
+    );
     assert!(
         !session
             .stdout

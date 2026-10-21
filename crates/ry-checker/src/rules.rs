@@ -96,7 +96,7 @@ pub const RULES: &[Rule] = &[
         code: "RY033",
         name: "comparison-mode-mismatch",
         default_severity: Severity::Warning,
-        summary: "Comparing a character value with a numeric value coerces the numeric value to character and compares lexicographically, which is almost always unintended.",
+        summary: "Ordering a character value against a non-character value with `<`, `>`, `<=`, or `>=` coerces the other value to character and compares lexicographically, which is almost always unintended.",
     },
     Rule {
         code: "RY034",
@@ -254,7 +254,7 @@ pub const RULES: &[Rule] = &[
         code: "RY107",
         name: "any-all-scalar-comparison",
         default_severity: Severity::Warning,
-        summary: "`any()`/`all()` return a length-1 logical, so comparing that scalar with a numeric literal either negates it or has a constant result; the comparison usually belongs inside (`any(x == 0)`, not `any(x) == 0`). Outcome claims are scoped to the base result domain (`FALSE`, `TRUE`, `NA`): an `NA` result compares as `NA`, and a dispatched method can return something else (an S4 `any`/`all` method, or an S3/S4 `Summary` group method) — so once inference establishes the argument's class (a classed constructor, a `class(x) <-` write, or an `inherits()` narrowing) the rule stays silent, while open-world and provably plain arguments keep the dispatch-qualified warning.",
+        summary: "`any()` or `all()` compared with a numeric literal, as in `any(x) == 0`. The call returns one logical value, so the comparison negates it or has a constant result. Write `any(x == 0)`. Comparisons that keep the call's value (`== 1`, `!= 0`, `> 0`, `>= 1`) are not reported. Silent when the argument has a known class, because an `any`, `all`, or `Summary` method can return any value.",
     },
     Rule {
         code: "RY108",
@@ -266,19 +266,19 @@ pub const RULES: &[Rule] = &[
         code: "RY109",
         name: "self-referential-default",
         default_severity: Severity::Warning,
-        summary: "A formal's default expression references the formal itself (`copy = copy`, `n = n + 1`). The reference can only resolve to the promise, so triggering the default errors in R ('promise already under evaluation'); supplying the argument is unaffected. Warns even without a provable force in the body (RY098 carries the proven-forcing half), because such a default can never evaluate. Defaults referencing a different formal are legal and stay quiet.",
+        summary: "A formal's default refers to the formal itself, as in `copy = copy` or `n = n + 1`. Evaluating that default fails in R with \"promise already under evaluation\". A call that supplies the argument is unaffected. When the body provably forces the formal, RY098 reports it instead. Silent for a default that refers to another formal (`x = y`), a default that quotes the formal (`substitute(x)`), and a body that captures the formal (`enquo(x)`, `{{ x }}`).",
     },
     Rule {
         code: "RY110",
         name: "vacuous-all-guard",
         default_severity: Severity::Warning,
-        summary: "`all(is.na(x))` is vacuously TRUE for zero-length `x`, so a validation guard like `is.numeric(x) || all(is.na(x))` admits empty input failing the predicate, which a downstream stub-declared mode demand then cannot use as numeric (the Math group errors; `mean()` warns and returns `NA`). Guard the emptiness too: `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`.",
+        summary: "A guard such as `is.numeric(x) || all(is.na(x))` accepts zero-length input that fails the type predicate, because `all()` of an empty vector is `TRUE`. Reported only when the same function then passes `x` to a parameter whose mode a stub declares, where the empty value fails. For example, the Math group errors, and `mean()` warns and returns `NA`. Write `is.numeric(x) || (length(x) > 0 && all(is.na(x)))`. Also reported for a single-formal helper in the same file that returns the guard, when the demanding function calls it directly, in `stopifnot()`, or through a `map`-family call reduced with `all()`. Silent when one function validates and another demands, or when the helper is in another file.",
     },
     Rule {
         code: "RY111",
         name: "constant-argument-shadowing",
         default_severity: Severity::Warning,
-        summary: "A call argument passes `TRUE`/`FALSE` for a formal an enclosing function exposes under the identical name (`na.rm = TRUE` inside `function(x, na.rm = FALSE)`), silently hardcoding instead of forwarding the caller's value — haven's `median.labelled` shipped this shape. Fires only when the tag is an exact (not partial) match on both the enclosing formal and a callee formal (typeshed or collected user signature) and the owning function never reads the formal anywhere in its body (a guard, validation, by-name forward, or `missing()` test all stay silent); forwarding the formal, non-literal expressions, renaming idioms, and numeric/string constants stay quiet.",
+        summary: "A call passes literal `TRUE` or `FALSE` to a formal that an enclosing function exposes under the same name, as in `na.rm = TRUE` inside `function(x, na.rm = FALSE)`, and that function never reads the formal. The caller's value is ignored. Forward it with `na.rm = na.rm`. Reported only when the name exactly matches a formal of the resolved callee. Silent for partial names, unknown callees, `T`, `F`, `NA`, and numeric or string constants.",
     },
     Rule {
         code: "RY112",

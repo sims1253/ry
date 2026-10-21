@@ -839,7 +839,7 @@ fn grep_value_results_do_not_claim_numeric_comparisons() {
         let diagnostics = check(&format!("matches <- {call}; matches != 'b'"));
         assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
     }
-    assert!(check("1L != 'b'").iter().any(|d| d.code == "RY033"));
+    assert!(check("1L < 'b'").iter().any(|d| d.code == "RY033"));
 }
 
 #[test]

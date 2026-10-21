@@ -559,12 +559,11 @@ pub fn resolve_workspace_context<'a>(
             file_bindings.extend(native_inventory.iter().cloned());
             if metadata.native_registration {
                 file_bindings.extend(source_bindings.native_symbols.iter().cloned());
-                file_bindings.extend(metadata.native_routines.iter().cloned());
             }
             file_bindings.extend(metadata.imported_bindings.iter().cloned());
             file_imported_from.extend(metadata.imported_from.clone());
-            // Registering an S3 method does not install the generic as a
-            // namespace binding. Real imports/dynamic bindings remain above.
+            // `useDynLib(pkg, foo)` binds `foo` in the namespace whether or
+            // not `.registration` is set.
             file_bindings.extend(metadata.native_routines.iter().cloned());
             file_package_facts.native_routine_prefixes = metadata.native_routine_prefixes.clone();
             file_package_facts.native_registration = metadata.native_registration;

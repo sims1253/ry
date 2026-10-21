@@ -17,16 +17,14 @@ Before starting any release:
    - `cargo test -p ry-checker --test oracle --test semantic_lists -- --include-ignored`
    - `cargo clippy --workspace --all-targets -- -D warnings`
    - `cargo fmt --all -- --check`
-   - `cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096`
+   - `cargo +nightly fuzz run parse fuzz/corpus/parse crates/ry-checker/testdata -- -max_total_time=300 -max_len=4096`
    - `cargo test -p ry-lsp --test integration session_state_machine -- --ignored`
    - `ecosystem/run.sh --check --manifest ecosystem/posit-packages.txt --ledger docs/corpus/posit-0.9.0.json --tier fast`
    - `ecosystem/test-drift-detection.sh`
    - `ecosystem/test-posit-drift-detection.sh`
 
-2. **Tracked-only build validated:** every PR's `ecosystem` CI job builds
-   `--locked` from a fresh checkout, which contains only tracked files; for
-   the exact commit about to be tagged, validate directly with a
-   tracked-only `git archive` build:
+2. **Tracked-only build validated:** build the exact commit you will tag
+   from a `git archive` extraction:
 
    ```bash
    (
@@ -38,33 +36,26 @@ Before starting any release:
    )
    ```
 
-   The subshell fails fast (`set -euo pipefail`), and the trap removes the
-   extraction on any exit, so a failed validation cannot be masked by
-   cleanup.
-
-   The extraction contains exactly the tracked files of `HEAD`. Running
-   `git clean -fdX` in the working tree is not an equivalent substitute:
-   it removes only ignored files, so untracked non-ignored files survive
-   and it can pass while a tracked-only build fails (#50).
+   `git clean -fdX` is not a substitute. It keeps untracked files that are
+   not ignored, so it can pass where a tracked-only build fails.
 
 3. **Ledger reconciled:** `python3 ecosystem/check-ledger.py docs/corpus/posit-0.9.0.json docs/corpus/tidyverse-0.7.1.json`
    reports agreement.
 
 4. **CHANGELOG reviewed:** verify the new version's section is complete and
    dated, including changes since the previous release and any upgrade notes.
-   Check both product changelogs and the comparison links.
+   Check the comparison links. For an extension release, also check
+   `editors/code/CHANGELOG.md`.
 
 5. **Version bumped:** core workspace `Cargo.toml` to the target version
    (e.g. `0.10.0`). Editor extension versions are independent.
 
-6. **Zed binary integrity verified:** confirm the core release includes
-   executable `ry-cli-<target>.bin.sha256` sidecars for all nine targets.
-   Run `cargo test --manifest-path editors/zed/Cargo.toml` and
+6. **Zed binary integrity verified:** run
+   `cargo test --manifest-path editors/zed/Cargo.toml` and
    `python3 -m unittest discover -s scripts/release -p 'test_*.py'` to check
    download verification and sidecar generation. Archive `.sha256` files
-   verify archives; executable sidecars verify extracted binaries. The
-   cargo-dist checksum hook must pass before publication. See the
-   [Zed release steps](#zed-extension-release) for generation and rollout.
+   verify archives. Executable `.bin.sha256` sidecars verify extracted
+   binaries.
 
 ## Binary release
 
@@ -88,8 +79,11 @@ v{version}  (e.g. v0.10.0)
    ```
 
    Record the run's commit SHA. Require all nine platform builds and
-   `custom-binary-checksums` to succeed, with `host` skipped. Inspect the
-   `artifacts-binary-checksums` artifact for nine `.bin.sha256` files.
+   `custom-binary-checksums` to succeed, with `host` skipped, because
+   `dry-run` builds artifacts without creating a release. Inspect the
+   `artifacts-binary-checksums` artifact for nine `.bin.sha256` files. The
+   checksum hook verifies each archive before hashing its executable, and a
+   failed hook blocks publication.
 4. Tag that exact reviewed commit: `git tag v{version} <reviewed-commit-sha>`.
 5. Push tag: `git push origin v{version}`.
 6. Dispatch the release explicitly against the tag:
@@ -161,17 +155,10 @@ The `registry` dispatch input defaults to `both`; select `marketplace` or
    - Packages platform-specific VSIXs
    - Publishes to VS Code Marketplace and Open VSX
 
-3. Post-publish smoke test:
-   - Install the extension from the marketplace in a clean VS Code
-     installation
-   - Open an R file
-   - Verify diagnostics fire
-   - Check the status bar shows the correct version
-   - Verify the bundled binary version matches the release tag
-
-   Set `ry.importStrategy` to `useBundled` and clear any `ry.path` override
-   for this test. The default `fromEnvironment` strategy may select an older
-   binary on `PATH`. Repeat in Positron using its Open VSX installation.
+3. Run the [post-release checks](#post-release-checks) in VS Code, then in
+   Positron with its Open VSX installation. First set `ry.importStrategy` to
+   `useBundled` and clear any `ry.path` override, because the default
+   `fromEnvironment` strategy may select an older binary on `PATH`.
 
 ### Rollback
 
@@ -198,16 +185,10 @@ run after correcting the cause. It reuses the packaged artifacts, and
    crate in `editors/zed/Cargo.toml` has a separate version.
 2. Verify WASM build: `cargo build --manifest-path editors/zed/Cargo.toml --target wasm32-wasip2`.
 3. Verify tests: `cargo test --manifest-path editors/zed/Cargo.toml`.
-4. Confirm the server release includes `ry-cli-<target>.bin.sha256` for all nine
-   targets. The cargo-dist checksum hook verifies each archive before hashing
-   its executable, then uploads the sidecars with the release. A failed hook
-   blocks publication. Reproduce generation with
+4. Confirm the core release includes `ry-cli-<target>.bin.sha256` for all
+   nine targets. Step 3 of the [binary release](#binary-release) checks them
+   in a dry run before publication. To reproduce generation, run
    `python3 scripts/release/binary_checksums.py --artifacts <archive-directory> --output <sidecar-directory>`.
-   Before publishing, run
-   `gh workflow run release.yml --ref <release-branch> -f tag=dry-run`.
-   Confirm `custom-binary-checksums` succeeds and the `artifacts-binary-checksums`
-   artifact contains all nine `.bin.sha256` sidecars. Confirm the `host` publication
-   job is skipped; `dry-run` builds artifacts without creating a release.
 5. Submit to the Zed extension gallery after the server release is available.
    Automatic downloads require executable sidecars, published from 0.9.0 onward.
    The extension verifies existing downloads and rehashes cached binaries on
@@ -246,14 +227,13 @@ Contact Zed to unpublish the extension version.
 
 ## Post-release checks
 
-After all artifacts are published:
+After all artifacts are published, install each extension from its
+marketplace or gallery in a clean environment, not from source. Then:
 
-1. Install from marketplace/gallery in a clean environment (not from source).
-2. Verify diagnostics fire on a known-bad R file.
-3. Verify the bundled binary version matches the release tag:
-   - VS Code: check status bar, or run the `ry: Debug Information` command.
-   - Zed: check the extension's downloaded binary version.
-4. Verify CLI/LSP parity: `ry check` and the LSP produce identical diagnostics.
+1. Run the manual smoke-test recipe below.
+2. Confirm the bundled binary version matches the release tag. In VS Code,
+   check the status bar or run the `ry: Debug Information` command. In Zed,
+   check the version of the downloaded binary.
 
 ### Manual smoke-test recipe
 
@@ -277,16 +257,10 @@ runtime check on platforms that were not exercised automatically.
 
 - Core and editor extension versions are **independent**.
 - Core uses SemVer (e.g. `0.10.0`).
-- Rust crates exposing the public `Scope` collections must start at 0.10.0
-  or newer. The `FxMap`/`FxSet` field types are incompatible with the earlier
-  standard-library collections; do not publish that change as 0.9.x (#432).
-  This release prepares CLI and editor artifacts. Crates.io publication also
-  needs publishable dependency metadata, including the internal workspace
-  crates and the pinned parser dependency.
 - VS Code extension uses its own SemVer (e.g. `0.1.0`).
 - Zed extension uses its own SemVer (e.g. `0.1.0`).
 - Each VS Code extension release records the exact core tag it packages.
 - The Zed extension uses a configured binary, a binary on `PATH`, or a cached
   download. When it needs a download, it selects the latest stable core release.
-- The CHANGELOG records core version changes; extension releases appear
-  in their marketplace listings.
+- `CHANGELOG.md` records core changes. `editors/code/CHANGELOG.md` records
+  VS Code extension changes.

@@ -56,10 +56,8 @@ fn check_package(test_file: &str) -> Vec<(String, Vec<ry_checker::Diagnostic>)> 
     let context = ry_workspace::resolve_workspace_context(
         dir.path(),
         &Config::default(),
-        ry_workspace::ResolutionEnvironment {
-            files: vec![&geom_file, &test_file_parsed],
-            user_stubs: &Default::default(),
-        },
+        vec![&geom_file, &test_file_parsed],
+        &Default::default(),
     )
     .unwrap();
     let mut project = Project::new();

@@ -10,7 +10,6 @@ pub mod reports;
 pub use discovery::{
     DiscoveryLimits, DiscoveryResult, SkippedPaths, TruncationReport, discover_r_files,
     is_file_eligible_with_limits, is_single_file_walk_admitted, is_source_path,
-    is_test_fixture_path, is_within_depth, is_within_file_bytes, rbuildignore_pattern,
     source_extension_globs,
 };
 use discovery::{is_r_source_name, is_testthat_code_name};
@@ -21,11 +20,10 @@ mod serialized;
 pub use serialized::InventoryFailure;
 use serialized::serialized_inventory;
 
-pub use packages::{
-    NamespaceMetadata, PackageFacts, attached_packages, attaching, namespace_metadata,
-};
-pub use ry_core::FFI_PRIMITIVES;
+use packages::NamespaceMetadata;
+pub use packages::{PackageFacts, attaching};
 
+use ry_core::FFI_PRIMITIVES;
 use ry_core::SERIALIZED_BINDINGS_UNENUMERABLE;
 use ry_core::SourceFile;
 use ry_core::Span;
@@ -34,12 +32,6 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-
-/// Inputs which describe the analysis environment without evaluating R code.
-pub struct ResolutionEnvironment<'a> {
-    pub files: Vec<&'a SourceFile>,
-    pub user_stubs: &'a std::collections::BTreeMap<String, ry_typeshed::Typeshed>,
-}
 
 /// Nearest ancestor directory (starting at the path itself for
 /// directories, at the parent for files) holding a `DESCRIPTION` file:
@@ -87,26 +79,19 @@ fn resolution_root_for_group(group: Option<&Path>, fallback: &Path) -> PathBuf {
     }
 }
 
-/// Group path strings by enclosing package root, keeping each group's
-/// input indices in ascending order. Each R package is a separate
-/// library scope: pooling multiple package roots into one project lets
-/// top-level bindings and inferred functions leak between namespaces,
-/// which can both hide real RY010 findings and activate the wrong NSE
-/// model. Non-package scripts share the `None` group so ordinary
-/// multi-file workflows keep their source()-style visibility. Each report
-/// is its own group keyed by its path (see [`analysis_group_key`]).
-///
-/// Inputs are file paths; a directory input is resolved from the
-/// directory itself (like [`enclosing_package_root`]) and keyed by
-/// itself, so sibling directories never share a cache slot.
+/// Group paths by [`analysis_group_key`], keeping each group's input
+/// indices in ascending order. Each R package is a separate library scope:
+/// pooling package roots lets top-level bindings leak between namespaces,
+/// which hides real RY010 findings and activates the wrong NSE model.
+/// Non-package scripts share the `None` group so they keep their
+/// `source()`-style visibility.
 pub fn group_by_package_root<'a, I>(paths: I) -> BTreeMap<Option<PathBuf>, Vec<usize>>
 where
     I: IntoIterator<Item = &'a str>,
 {
     let mut groups: BTreeMap<Option<PathBuf>, Vec<usize>> = BTreeMap::new();
-    // The ancestor DESCRIPTION walk is identical for every file in one
-    // directory, so run it once per distinct directory instead of once
-    // per file.
+    // This is `analysis_group_key` with the DESCRIPTION walk cached per
+    // directory, because every non-report file in one directory shares it.
     let mut root_cache: HashMap<Option<&'a Path>, Option<PathBuf>> = HashMap::new();
     for (index, path) in paths.into_iter().enumerate() {
         let path = Path::new(path);
@@ -135,34 +120,30 @@ pub struct ResolvedGroup {
     /// Indices into the input files, ascending.
     pub indices: Vec<usize>,
     pub resolution_root: PathBuf,
-    pub context: Result<WorkspaceContext, ResolveError>,
+    pub context: WorkspaceContext,
 }
 
-/// Group `files` by package and resolve each group against its own root;
-/// files outside every package resolve against `fallback_root`.
+/// Group `files` by package and resolve each group against its own root.
+/// Files outside every package resolve against `fallback_root`.
 pub fn resolve_grouped(
     files: &[&SourceFile],
     config: &ry_config::Config,
     user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
     fallback_root: &Path,
-) -> Vec<ResolvedGroup> {
+) -> Vec<Result<ResolvedGroup, ResolveError>> {
     group_by_package_root(files.iter().map(|file| file.path.as_str()))
         .into_iter()
         .map(|(key, indices)| {
             let group_files = indices.iter().map(|&index| files[index]).collect();
-            let (resolution_root, context) = resolve_group(
-                key.as_deref(),
-                group_files,
-                config,
-                user_stubs,
-                fallback_root,
-            );
-            ResolvedGroup {
+            let resolution_root = resolution_root_for_group(key.as_deref(), fallback_root);
+            let context =
+                resolve_workspace_context(&resolution_root, config, group_files, user_stubs)?;
+            Ok(ResolvedGroup {
                 key,
                 indices,
                 resolution_root,
                 context,
-            }
+            })
         })
         .collect()
 }
@@ -175,14 +156,9 @@ pub fn resolve_group(
     config: &ry_config::Config,
     user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
     fallback_root: &Path,
-) -> (PathBuf, Result<WorkspaceContext, ResolveError>) {
+) -> Result<WorkspaceContext, ResolveError> {
     let resolution_root = resolution_root_for_group(key, fallback_root);
-    let context = resolve_workspace_context(
-        &resolution_root,
-        config,
-        ResolutionEnvironment { files, user_stubs },
-    );
-    (resolution_root, context)
+    resolve_workspace_context(&resolution_root, config, files, user_stubs)
 }
 
 /// Filesystem-derived state applied to a checker `Project`.
@@ -225,86 +201,50 @@ fn file_stem_binding(path: &Path) -> HashSet<String> {
         .unwrap_or_default()
 }
 
-/// On-disk R source after the shared decoding policy, with the
-/// locations of any invalid UTF-8 that policy had to paper over.
+/// On-disk R source decoded as UTF-8, with a Latin-1 fallback, and the
+/// encoding problems R's parser would reject.
 #[derive(Debug)]
 pub struct DecodedRSource {
-    /// The decoded source. Identical to the file's bytes when they are
-    /// valid UTF-8; otherwise a Latin-1 transcoding (one char per byte)
-    /// so both frontends can still display and analyze legacy files.
+    /// The file's text when it is valid UTF-8, else a Latin-1 transcoding
+    /// (one char per byte).
     pub text: String,
-    /// Maximal byte spans (in `text`) of the invalid UTF-8 sequences the
-    /// file contained, in source order. Empty when the file was valid
-    /// UTF-8. Frontends attach these to the parsed `SourceFile` so the
-    /// checker can flag files R's own parser rejects ("invalid multibyte
-    /// character in parser").
+    /// Maximal spans in `text` of the file's invalid UTF-8 sequences, in
+    /// source order. R's parser rejects these with "invalid multibyte
+    /// character in parser".
     pub invalid_utf8: Vec<Span>,
-    /// Whether the file's bytes start with a UTF-8 BOM (`EF BB BF`). The
-    /// BOM is valid UTF-8 (it decodes to U+FEFF at the start of `text`,
-    /// which is kept: R sees and rejects it), but R's parser errors with
-    /// "unexpected input" at 1:1 in every execution context except
-    /// `parse(keep.source = TRUE)`. Frontends attach this to the
-    /// parsed `SourceFile` alongside `invalid_utf8` so both flag it.
+    /// Whether the file starts with a UTF-8 BOM, which `text` keeps. R's
+    /// parser fails with "unexpected input" at 1:1 on it in every context
+    /// except `parse(keep.source = TRUE)`.
     pub leading_bom: bool,
 }
 
-/// Read R source as UTF-8, falling back to Latin-1 for invalid UTF-8.
-/// Both frontends use this policy for on-disk source; open editor buffers
-/// already arrive as Unicode through LSP.
-pub fn read_r_source(path: &Path) -> std::io::Result<String> {
+/// [`read_r_source_decoded`] without the encoding findings.
+fn read_r_source(path: &Path) -> std::io::Result<String> {
     Ok(decode_r_source(&std::fs::read(path)?).text)
 }
 
-/// Read R source with the same UTF-8/Latin-1 policy as
-/// [`read_r_source`], additionally reporting where the invalid UTF-8
-/// sequences were and whether the file starts with a UTF-8 BOM. Files
-/// that were not valid UTF-8, or that carry a leading BOM, are what this
-/// is for: the text still transcodes lossily (and keeps the BOM), but
-/// callers that surface diagnostics (CLI `ry check`, the LSP's on-disk
-/// index) pass the findings along so the file is flagged instead of
-/// silently checking clean.
+/// Read on-disk R source with the decoding policy both frontends share.
+/// Open editor buffers already arrive as Unicode.
 pub fn read_r_source_decoded(path: &Path) -> std::io::Result<DecodedRSource> {
     Ok(decode_r_source(&std::fs::read(path)?))
 }
 
 impl DecodedRSource {
-    /// Record this boundary's findings on a parsed source file: the
-    /// invalid-UTF-8 spans and the leading-BOM flag the checker turns
-    /// into its encoding `RY000`s. Every consumer of
-    /// [`read_r_source_decoded`] that runs the checker -- the CLI check
-    /// pipeline, the LSP's on-disk index and refreshes, and the test
-    /// harnesses that must exercise the production path -- attaches
-    /// through this one method, so the boundary contract cannot drift
-    /// between production and tests.
-    ///
-    /// Consumes the decoded source: each boundary's findings belong to
-    /// exactly one parsed file (the text was handed to the parser
-    /// already), so the span vector moves instead of cloning.
+    /// Record the encoding findings on `file` for the checker's `RY000`s.
     pub fn attach_boundary_findings(self, file: &mut SourceFile) {
         file.invalid_utf8 = self.invalid_utf8;
         file.leading_bom = self.leading_bom;
     }
 }
 
-/// Decode R source bytes as UTF-8, falling back to Latin-1 for invalid
-/// UTF-8 while recording each invalid sequence's span over the decoded
-/// text. The fallback maps every byte to its Latin-1 char, matching the
-/// display-only policy byte for byte; the spans are the new
-/// part, and they are computed in decoded-text coordinates (a Latin-1
-/// char above 0x7F re-encodes as two UTF-8 bytes).
+/// Decode R source bytes as UTF-8, falling back to Latin-1 and recording
+/// each invalid sequence's span in decoded-text coordinates (a Latin-1 char
+/// above 0x7F re-encodes as two UTF-8 bytes).
 ///
-/// Line/column bookkeeping is incremental: a dense legacy file makes
-/// every non-ASCII byte its own invalid sequence, so recomputing the
-/// position from the accumulated text per span would be O(text x spans)
-/// -- a 1 MiB Latin-1 file took minutes. Each input byte is visited a
-/// constant number of times here instead.
-///
-/// A leading UTF-8 BOM is detected here, not as an invalid sequence: it
-/// is valid UTF-8 (and R rejects the file anyway), so the text
-/// keeps it and only the flag records it. Both the valid-UTF-8 and the
-/// Latin-1 transcode path preserve the BOM's three bytes verbatim in
-/// `text`, so the flag is exactly `bytes.starts_with(BOM)`.
-pub fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
+/// Line and column tracking is incremental. In a dense legacy file every
+/// non-ASCII byte is its own invalid sequence, and recomputing the position
+/// per span would cost O(text x spans).
+fn decode_r_source(bytes: &[u8]) -> DecodedRSource {
     let leading_bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
     if let Ok(text) = std::str::from_utf8(bytes) {
         return DecodedRSource {
@@ -452,16 +392,15 @@ impl LibraryRoot {
     }
 }
 
-pub fn resolve_workspace_context<'a>(
+pub fn resolve_workspace_context(
     root: &Path,
     config: &ry_config::Config,
-    environment: ResolutionEnvironment<'a>,
+    files: Vec<&SourceFile>,
+    user_stubs: &BTreeMap<String, ry_typeshed::Typeshed>,
 ) -> Result<WorkspaceContext, ResolveError> {
     if !root.is_dir() {
         return Err(ResolveError::InvalidRoot(root.to_path_buf()));
     }
-    let files = environment.files;
-    let user_stubs = environment.user_stubs;
     let all_paths: Vec<PathBuf> = files.iter().map(|file| PathBuf::from(&file.path)).collect();
     let configured_packages = &config.packages;
     let configured_globals = &config.globals;
@@ -1757,10 +1696,8 @@ mod s3_binding_provenance_tests {
             let context = resolve_workspace_context(
                 dir.path(),
                 &ry_config::Config::default(),
-                ResolutionEnvironment {
-                    files: vec![&file],
-                    user_stubs: &Default::default(),
-                },
+                vec![&file],
+                &Default::default(),
             )
             .unwrap();
             assert_eq!(

@@ -10,12 +10,13 @@
 //! 2. `ry.toml` config file.
 //! 3. Built-in defaults.
 //!
-//! For list fields (`error`, `warn`, `ignore`) CLI values are APPENDED
-//! to the config file's lists rather than replacing them, matching ty's
-//! `--error` / `--warn` / `--ignore` semantics. Scalar fields are
+//! For list fields (`error`, `warn`, `ignore`, `typeshed`) CLI values are
+//! APPENDED to the config file's lists rather than replacing them, matching
+//! ty's `--error` / `--warn` / `--ignore` semantics. Scalar fields are
 //! overridden only when the CLI explicitly sets them (detected via
 //! clap's `ValueSource`), so a config `error-on-warning = true` still
-//! takes effect when the user runs `ry check` with no flags.
+//! takes effect when the user runs `ry check` with no flags. The `-v` and
+//! `-q` counts add to the config's `verbose` and `quiet`.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -80,7 +81,9 @@ pub struct EnvironmentConfig {
     pub bindings: Vec<String>,
     #[serde(default)]
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     pub scope: ScopedPaths,
 }
@@ -101,7 +104,9 @@ pub struct TypehintConfig {
     pub adopt: bool,
     pub version: Option<String>,
     pub paths: Vec<String>,
-    /// `paths` compiled against the config root when the file is loaded.
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
     #[serde(skip)]
     scope: ScopedPaths,
 }
@@ -115,6 +120,11 @@ pub struct RuleOverrideConfig {
     pub error: Vec<String>,
     pub warn: Vec<String>,
     pub ignore: Vec<String>,
+    /// `paths` compiled against the config root. Only [`Config::load_file`]
+    /// fills it, so a `Config` from `Default` or plain deserialization has
+    /// an empty scope that matches nothing.
+    #[serde(skip)]
+    pub scope: ScopedPaths,
 }
 
 /// A strict, reusable config-root-relative glob scope. Both the config root
@@ -132,12 +142,8 @@ pub struct ScopedPaths {
 }
 
 impl ScopedPaths {
-    pub fn new(root: &Path, patterns: &[String]) -> Result<Self, glob::PatternError> {
-        Self::compile(root, patterns).map_err(|(_, error)| error)
-    }
-
-    /// Like [`ScopedPaths::new`], reporting which pattern failed.
-    fn compile<'a>(
+    /// Compile `patterns` against `root`. The error names the failing pattern.
+    pub fn new<'a>(
         root: &Path,
         patterns: &'a [String],
     ) -> Result<Self, (&'a String, glob::PatternError)> {
@@ -330,18 +336,8 @@ pub struct ReportsConfig {
     pub enabled: bool,
 }
 
-/// Parsed contents of a `ry.toml` project config file.
-///
-/// The schema is intentionally minimal and conservative; we can add
-/// fields later without breaking existing configs. Unknown fields are
-/// rejected (`#[serde(deny_unknown_fields)]`) so typos surface
-/// immediately rather than being silently ignored.
-///
-/// Field names use snake_case in Rust and kebab-case on disk; the
-/// kebab-case aliases (e.g. `error-on-warning`, `output-format`) are
-/// declared per-field via `#[serde(alias = "...")]`. The struct-level
-/// `#[serde(default)]` lets users omit any subset of fields, with each
-/// missing field falling back to its documented default.
+/// Parsed contents of a `ry.toml` project config file. Missing fields take
+/// their value from [`Config::default`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -376,7 +372,7 @@ pub struct Config {
     #[serde(alias = "check-test-fixtures")]
     pub check_test_fixtures: bool,
     /// Output format. Default: "full".
-    #[serde(alias = "output-format", default = "default_output_format")]
+    #[serde(alias = "output-format")]
     pub output_format: String,
     /// Verbosity count (cumulative with -v). Default: 0.
     pub verbose: u8,
@@ -443,15 +439,6 @@ impl Default for Config {
     }
 }
 
-/// serde default for `Config::output_format`. Kept as a free function
-/// because `#[serde(default = "...")]` requires a path, not a closure.
-/// Without this, the struct-level `#[serde(default)]` would fill a
-/// missing `output-format` with the `String` default (empty string)
-/// rather than `"full"`.
-fn default_output_format() -> String {
-    DEFAULT_OUTPUT_FORMAT.to_string()
-}
-
 impl Config {
     /// Try to load a `ry.toml` from the given directory.
     ///
@@ -489,7 +476,7 @@ impl Config {
             }
         })?;
         let scope = |key: String, patterns: &[String]| {
-            ScopedPaths::compile(&root, patterns).map_err(|(pattern, source)| {
+            ScopedPaths::new(&root, patterns).map_err(|(pattern, source)| {
                 ConfigError::InvalidPattern {
                     path: path.to_path_buf(),
                     key,
@@ -504,14 +491,14 @@ impl Config {
                 &profile.paths,
             )?;
         }
-        for (index, table) in cfg.rule_overrides.iter().enumerate() {
+        for (index, table) in cfg.rule_overrides.iter_mut().enumerate() {
             if table.paths.is_empty() {
                 return Err(ConfigError::EmptyRuleOverridePaths {
                     path: path.to_path_buf(),
                     index: index + 1,
                 });
             }
-            scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
+            table.scope = scope(format!("rule-overrides #{} paths", index + 1), &table.paths)?;
         }
         scope("include-build-ignored".into(), &cfg.include_build_ignored)?;
         cfg.annotations.typehint.scope = scope(
@@ -600,12 +587,7 @@ pub fn config_candidates(start: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// CLI flag values that override (or extend) a loaded `ry.toml`.
-///
-/// Every field is empty/unset by default, which means "the CLI did not
-/// touch this; keep the config value". The list fields append to the
-/// config's lists; the scalar fields install only when `Some`; the
-/// verbosity counts add on top of the config's.
+/// CLI flag values merged into a loaded `ry.toml` by [`Config::merge_cli`].
 #[derive(Debug, Default, Clone)]
 pub struct CliOverrides {
     /// Rules to treat as errors (`--error`).
@@ -631,17 +613,8 @@ pub struct CliOverrides {
 }
 
 impl Config {
-    /// Merge CLI overrides into this config.
-    ///
-    /// List fields (`error`, `warn`, `ignore`) have the CLI values
-    /// APPENDED to the config file's values. Scalar boolean / string
-    /// fields are overridden only when the CLI passes `Some(...)`,
-    /// meaning "the user explicitly set this on the command line". A
-    /// `None` means "the CLI did not touch this; keep the config value".
-    ///
-    /// `verbose` and `quiet` are additive: the CLI count is added on
-    /// top of the config count, so `verbose = 1` in `ry.toml` plus a
-    /// single `-v` flag yields a final count of 2.
+    /// Merge CLI overrides into this config, following the precedence in
+    /// the module docs.
     pub fn merge_cli(mut self, cli: CliOverrides) -> Self {
         self.error.extend(cli.error);
         self.warn.extend(cli.warn);
@@ -659,32 +632,22 @@ impl Config {
         if let Some(output_format) = cli.output_format {
             self.output_format = output_format;
         }
-        // Saturating add so a config value of 255 plus a CLI flag stays
-        // within u8 rather than panicking on overflow.
         self.verbose = self.verbose.saturating_add(cli.verbose);
         self.quiet = self.quiet.saturating_add(cli.quiet);
         self
     }
 }
 
-/// A compiled set of `exclude` patterns. Patterns are gitignore-style
-/// globs matched against the path of each candidate file relative to
-/// the directory containing the originating `ry.toml`.
-///
-/// Constructed once from a `Config` and reused across all path checks
-/// so we pay pattern-compilation cost only once per run. The forward
-/// slash is used as the path separator on every platform, matching the
-/// glob crate's expectations and the documented `ry.toml` schema.
+/// Compiled `exclude` globs, matched against paths relative to the
+/// config root with `/` separators on every platform.
 #[derive(Debug, Clone, Default)]
 pub struct Excludes {
     patterns: Vec<glob::Pattern>,
 }
 
 impl Excludes {
-    /// Compile the `exclude` field of a `Config` into a reusable
-    /// matcher. Patterns that fail to compile are skipped with a
-    /// `tracing::warn!`; an invalid pattern in a config file should
-    /// not crash the run, but should be surfaced for the user to fix.
+    /// Compile `cfg.exclude`. An invalid pattern is skipped with a warning
+    /// rather than failing the run.
     pub fn from_config(cfg: &Config) -> Self {
         let mut patterns = Vec::with_capacity(cfg.exclude.len());
         for raw in &cfg.exclude {
@@ -698,15 +661,10 @@ impl Excludes {
         Self { patterns }
     }
 
-    /// Returns true if `relative_path` matches any of the compiled
-    /// exclude patterns. The path must be expressed relative to the
-    /// directory that owns the `ry.toml`, using forward slashes as
-    /// separators.
     pub fn matches(&self, relative_path: &str) -> bool {
         self.patterns.iter().any(|p| p.matches(relative_path))
     }
 
-    /// Returns true if there are no patterns, i.e. nothing can match.
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -938,7 +896,7 @@ paths = ["inst/shiny/**"]
         fs::create_dir_all(root.join("R/sub")).unwrap();
         fs::create_dir_all(root.join("scripts")).unwrap();
         fs::write(root.join("R/a.R"), "x <- 1L\n").unwrap();
-        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        let paths = &config.rule_overrides[0].scope;
         assert!(paths.matches(&root.join("R/a.R")));
         assert!(paths.matches(&root.join("R/sub/../a.R")));
         assert!(paths.matches(&root.join("R/sub/../unsaved.R")));
@@ -1045,7 +1003,7 @@ paths = ["inst/shiny/**"]
         )
         .unwrap();
         let config = Config::load_file(&config_path).unwrap();
-        let paths = ScopedPaths::new(root, &config.rule_overrides[0].paths).unwrap();
+        let paths = &config.rule_overrides[0].scope;
         assert!(paths.matches(&backslash));
         assert!(!paths.matches(&slash));
     }

@@ -145,9 +145,8 @@ fn cached_inventory(path: &Path, cap: u64, file: File) -> SerializedInventory {
 
 fn serialized_inventory_uncached(file: File, cap: u64) -> SerializedInventory {
     let bytes = match read_serialized(file, cap) {
-        Decoded::Bytes(bytes) => bytes,
-        Decoded::OverCap => return unavailable(InventoryFailure::DecodedByteLimit),
-        Decoded::Failed => return unavailable(InventoryFailure::Unreadable),
+        Ok(bytes) => bytes,
+        Err(failure) => return unavailable(failure),
     };
     let payload = bytes
         .strip_prefix(b"RDX2\n")
@@ -199,11 +198,11 @@ fn is_resource_limit(error: &rds2rust::Error) -> bool {
     }
 }
 
-fn read_serialized(reader: impl std::io::Read, cap: u64) -> Decoded {
+fn read_serialized(reader: impl std::io::Read, cap: u64) -> Result<Vec<u8>, InventoryFailure> {
     let mut reader = reader;
     let mut prefix = Vec::with_capacity(6);
     if reader.by_ref().take(6).read_to_end(&mut prefix).is_err() {
-        return Decoded::Failed;
+        return Err(InventoryFailure::Unreadable);
     }
     let reader = prefix.as_slice().chain(reader);
     if prefix.starts_with(b"BZh") {
@@ -217,32 +216,22 @@ fn read_serialized(reader: impl std::io::Read, cap: u64) -> Decoded {
     }
 }
 
-/// Outcome of decoding a compressed serialization under the byte cap.
-enum Decoded {
-    /// Payload decoded and fits within the cap.
-    Bytes(Vec<u8>),
-    /// Payload exceeds the cap.
-    OverCap,
-    /// Stream is unreadable or corrupt.
-    Failed,
-}
-
 /// Decode `decoder` fully, stopping once the payload provably exceeds
 /// `cap`. Reading at most `cap + 1` bytes distinguishes an
 /// exact-cap payload from a larger one without decoding all of it.
-fn decode_capped(decoder: impl std::io::Read, cap: u64) -> Decoded {
+fn decode_capped(decoder: impl std::io::Read, cap: u64) -> Result<Vec<u8>, InventoryFailure> {
     let mut decoded = Vec::new();
     if decoder
         .take(cap.saturating_add(1))
         .read_to_end(&mut decoded)
         .is_err()
     {
-        return Decoded::Failed;
+        return Err(InventoryFailure::Unreadable);
     }
     if decoded.len() as u64 > cap {
-        return Decoded::OverCap;
+        return Err(InventoryFailure::DecodedByteLimit);
     }
-    Decoded::Bytes(decoded)
+    Ok(decoded)
 }
 
 #[cfg(test)]
@@ -283,12 +272,10 @@ mod tests {
                 bytes: &bytes,
                 consumed: 0,
             };
-            assert!(
-                matches!(read_serialized(&mut reader, 256), Decoded::Bytes(result) if result == payload)
-            );
+            assert!(matches!(read_serialized(&mut reader, 256), Ok(result) if result == payload));
             assert!(matches!(
                 read_serialized(bytes.as_slice(), 255),
-                Decoded::OverCap
+                Err(InventoryFailure::DecodedByteLimit)
             ));
         }
         let bytes = vec![b'x'; 65536];
@@ -296,14 +283,20 @@ mod tests {
             bytes: &bytes,
             consumed: 0,
         };
-        assert!(matches!(read_serialized(&mut reader, 16), Decoded::OverCap));
+        assert!(matches!(
+            read_serialized(&mut reader, 16),
+            Err(InventoryFailure::DecodedByteLimit)
+        ));
         assert_eq!(reader.consumed, 17);
         for corrupt in [
             b"BZh".as_slice(),
             &[0x1f, 0x8b],
             &[0xfd, b'7', b'z', b'X', b'Z', 0],
         ] {
-            assert!(matches!(read_serialized(corrupt, 256), Decoded::Failed));
+            assert!(matches!(
+                read_serialized(corrupt, 256),
+                Err(InventoryFailure::Unreadable)
+            ));
         }
     }
 
@@ -487,7 +480,7 @@ mod tests {
         assert!(nested.len() < cap as usize);
         assert!(matches!(
             read_serialized(nested.as_slice(), cap),
-            Decoded::Bytes(bytes) if bytes.len() < cap as usize
+            Ok(bytes) if bytes.len() < cap as usize
         ));
         std::fs::write(&path, nested).unwrap();
         let inventory = serialized_inventory(&path, cap).unwrap();

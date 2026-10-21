@@ -18,6 +18,10 @@ error  = ["RY040"]
 warn   = ["RY070"]
 ignore = ["RY033"]
 
+# Add rules to the default rule set, or replace that set with `select`.
+extend-select = ["RY003"]
+# select      = ["RY010", "RY040"]
+
 # Packages attached outside the checked sources.
 packages = ["dplyr"]
 
@@ -62,17 +66,13 @@ max-depth      = 64      # directory depth (default: 64)
 enabled = false
 ```
 
-`include-build-ignored` contains glob patterns relative to `ry.toml`. It
-lets CLI discovery and editor indexing check selected files excluded by
-`.Rbuildignore`. It does not override `exclude`, fixture settings, symlink
-rules, hidden or generated directories, or resource limits.
-
-Use `vignettes/**` to include source files throughout that directory;
-`vignettes` alone matches only the directory, not its files.
-
-Run `ry check . --explain-files` to see included files and skipped paths on
-stderr. A skipped directory represents its whole subtree; ry does not scan it
-to count the files inside. Diagnostic output, including JSON, stays on stdout.
+`include-build-ignored` holds globs relative to `ry.toml`. CLI discovery and
+editor indexing check matching files even when `.Rbuildignore` excludes them.
+The setting does not override `exclude`, fixture settings, symlink rules,
+hidden or generated directories, or resource limits. Use `vignettes/**` to
+include every file in that directory. `vignettes` alone matches only the
+directory. To see which files a check includes and skips, run
+`ry check . --explain-files` ([usage](usage.md#package-awareness)).
 
 Serialized R data files are inventoried by decoding at most
 `max-serialized-bytes` bytes; one further byte is read to detect overflow. The
@@ -81,16 +81,14 @@ file above the cap falls back to a file-stem binding. The CLI and LSP report
 these files as degraded scopes. Set the cap from 1 byte through 268435456 bytes
 (256 MiB); zero does not mean unlimited.
 
-The parser also limits nested parsing calls to 64 and checks up to 128 MiB of
-materialized element storage per collection, including metadata read in lazy
-mode. These are separate from the decoded-file cap and are not a total memory
-budget. A parser resource-limit failure reports a degraded scope and uses the
-same file-stem fallback as the decoded-byte cap. Malformed, unsupported,
-unreadable, or undecodable serialized input also reports a degraded scope and contributes no
-enumerated bindings. The `data/` convention still contributes the file stem
-when enumeration yields no names. A valid empty workspace reports no degradation. These
-outcomes do not disable diagnostics in other files; the CLI keeps notices on
-stderr, and `dump-facts` includes their paths and reasons in context inputs.
+The parser also limits nested parsing calls to 64 and element storage to
+128 MiB per collection. These limits are separate from `max-serialized-bytes`
+and are not a total memory budget. A file that hits one falls back to a
+file-stem binding, as with the byte cap. Malformed, unsupported, unreadable, or
+undecodable input binds no enumerated names, but a `data/` file still binds its
+file stem. All of these cases report a degraded scope and leave diagnostics in
+other files unchanged. The CLI prints the notices on stderr, and `dump-facts`
+lists their paths and reasons in context inputs.
 
 Use an environment profile for bindings supplied only to selected files:
 
@@ -115,9 +113,9 @@ version = "0.1.0"
 paths = ["R/**"]
 ```
 
-All three settings are required when adoption is enabled. The path globs use
-the same configuration-root-relative matching described above. No comment is
-adopted by default. The [declaration guide](declarations.md) explains the
+All three settings are required when adoption is enabled. `paths` matches like
+environment profile paths. No comment is adopted by default. The
+[declaration guide](declarations.md) explains the
 supported class subset, partial records, and diagnostics. Quarto cell options (`#| key:`),
 ordinary comments, and strings do not create typehint contracts.
 
@@ -146,10 +144,8 @@ warn = ["RY040"]
 
 Here RY040 is an error in `R/`, a warning in `R/scratch/`, and a warning
 elsewhere. Each table requires `paths` and accepts `error`, `warn`, and
-`ignore` lists by code, name, or `"all"`. Globs use forward slashes relative
-to the directory containing `ry.toml`, matched like environment profile
-paths: `*` matches one path component, `**` includes descendants,
-and existing paths are resolved through symlinks first.
+`ignore` lists by code, name, or `"all"`. `paths` matches like environment
+profile paths.
 
 The last matching table to mention a rule wins; within one table, `ignore`
 wins over `error`, which wins over `warn`. Unmentioned rules keep the global
@@ -213,10 +209,9 @@ bare ignores, `noqa`, and file ignores are not audited. An ignore comment
 cannot hide its own RY112 or RY113 finding; disable those rules by
 configuration instead.
 
-Prefer a rule-specific inline suppression or `globals` entry for dynamic
-workspaces. ry intentionally does not suppress diagnostics merely because an
-expression appears inside `expect_error()`: the setup expression is ordinary R
-code and can contain a real defect before the expected error is reached.
+For dynamic workspaces, use a rule-specific inline suppression or a `globals`
+entry. ry still reports findings inside `expect_error()`, because the code
+there can hold a real defect before the expected error.
 
 ## Confidence tiers and baselines
 
@@ -235,9 +230,6 @@ ry check --write-baseline ry-baseline.json .
 ry check --baseline ry-baseline.json .    # or `baseline` in ry.toml
 ```
 
-Baseline entries match on path, rule, and message. They ignore line numbers,
-so moving a finding to another line does not invalidate it. Fixed findings can be
-removed by regenerating the baseline. Regeneration snapshots what the check
-currently reports — the configured `baseline` is not loaded or subtracted
-first — so regenerating on an unchanged project leaves the file as it is
-while findings that no longer occur drop out.
+Baseline entries match on path, rule, and message, not line. A finding that
+moves stays baselined. To drop fixed findings, rerun `--write-baseline`. It
+writes the current findings without subtracting the configured `baseline`.

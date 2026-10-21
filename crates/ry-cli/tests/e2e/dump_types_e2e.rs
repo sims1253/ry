@@ -3,17 +3,11 @@
 //! kinds, type strings, --position filtering, exit-code semantics).
 
 use std::fs;
-use std::process::{Command, Output};
 
-fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ry"))
-        .args(args)
-        .output()
-        .expect("failed to invoke ry")
-}
+use ry_testkit::{CliOutput, ry};
 
-fn stdout_json(output: &Output) -> serde_json::Value {
-    serde_json::from_slice(&output.stdout).expect("stdout is valid JSON")
+fn run(args: &[&str]) -> CliOutput {
+    ry!().args(args).run()
 }
 
 /// A small package exercising every dump shape:
@@ -98,8 +92,8 @@ fn dumps_json_shape_with_param_concrete_and_unknown_types() {
     let output = run(&["dump-types", file.to_str().unwrap()]);
 
     // Diagnostics exist (missing_binding -> RY010) but never fail the dump.
-    assert!(output.status.success(), "{}", output.status);
-    let dump = stdout_json(&output);
+    assert!(output.success(), "{output:?}");
+    let dump = output.json();
 
     let files = dump["files"].as_array().expect("files array");
     assert_eq!(files.len(), 1);
@@ -198,8 +192,8 @@ fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
 
     // Line 9 is inside window's body: only the innermost scope is dumped.
     let output = run(&["dump-types", &file, "--position", "9:5"]);
-    assert!(output.status.success());
-    let dump = stdout_json(&output);
+    assert!(output.success());
+    let dump = output.json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     assert_eq!(scopes.len(), 1, "{scopes:?}");
     assert_eq!(scopes[0]["name"], "window");
@@ -208,7 +202,7 @@ fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
     // R) but before `weighted` is assigned, so that local is not yet in
     // scope there.
     let output = run(&["dump-types", &file, "--position", "4:3"]);
-    let dump = stdout_json(&output);
+    let dump = output.json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     assert_eq!(scopes.len(), 1);
     assert_eq!(scopes[0]["name"], "moving_average");
@@ -224,7 +218,7 @@ fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
 
     // Line 1 is top-level only.
     let output = run(&["dump-types", &file, "--position", "1:1"]);
-    let dump = stdout_json(&output);
+    let dump = output.json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     assert_eq!(scopes.len(), 1);
     assert_eq!(scopes[0]["kind"], "top");
@@ -238,7 +232,7 @@ fn position_flag_selects_innermost_scope_and_filters_late_bindings() {
         "--position",
         "1:1",
     ]);
-    let dump = stdout_json(&output);
+    let dump = output.json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     let selected: Vec<&str> = scopes
         .iter()
@@ -252,8 +246,8 @@ fn directory_input_dumps_every_discovered_file() {
     let temp = fixture_package();
     let root = temp.path().to_str().unwrap();
     let output = run(&["dump-types", root]);
-    assert!(output.status.success());
-    let dump = stdout_json(&output);
+    assert!(output.success());
+    let dump = output.json();
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert!(files[0]["path"].as_str().unwrap().ends_with("R/analysis.R"));
@@ -282,7 +276,7 @@ fn expression_position_assignments_are_locals_with_sites() {
     .unwrap();
     let file = file.to_str().unwrap();
 
-    let dump = stdout_json(&run(&["dump-types", file]));
+    let dump = run(&["dump-types", file]).json();
     let top = &dump["files"][0]["scopes"][0];
     assert_eq!(top["kind"], "top");
     assert_eq!(
@@ -310,7 +304,7 @@ fn expression_position_assignments_are_locals_with_sites() {
     // (line 1) is already assigned, while `inner` (assigned later on the
     // same line) is not yet bound. `outer` starts exactly at the position
     // and counts as visible there.
-    let dump = stdout_json(&run(&["dump-types", file, "--position", "2:1"]));
+    let dump = run(&["dump-types", file, "--position", "2:1"]).json();
     let top = &dump["files"][0]["scopes"][0];
     assert_eq!(top["kind"], "top");
     assert_eq!(binding_entry(top, "side").0, "local");
@@ -350,7 +344,7 @@ fn named_function_inside_loop_body_callback_gets_locals() {
         ),
     )
     .unwrap();
-    let dump = stdout_json(&run(&["dump-types", file.to_str().unwrap()]));
+    let dump = run(&["dump-types", file.to_str().unwrap()]).json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     let names: Vec<&str> = scopes
         .iter()
@@ -400,19 +394,13 @@ fn project_root_overrides_config_root_for_non_package_files() {
     let b = parent.join("two/b.R").to_string_lossy().into_owned();
     let parent_str = parent.to_string_lossy().into_owned();
 
-    let run_from_outer = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ry"))
-            .args(args)
-            .current_dir(outer.path())
-            .output()
-            .expect("failed to invoke ry")
-    };
+    let run_from_outer = |args: &[&str]| ry!().args(args).cwd(outer.path()).run();
 
     // Without the flag, the ry.toml's directory (the shared parent) is
     // the resolution-root fallback and the dump succeeds.
     let output = run_from_outer(&["dump-types", &a, &b]);
-    assert!(output.status.success(), "{}", output.status);
-    let dump = stdout_json(&output);
+    assert!(output.success(), "{output:?}");
+    let dump = output.json();
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 2, "{files:?}");
     assert!(
@@ -425,8 +413,8 @@ fn project_root_overrides_config_root_for_non_package_files() {
 
     // An explicit --project-root at the same parent behaves identically.
     let output = run_from_outer(&["dump-types", &a, &b, "--project-root", &parent_str]);
-    assert!(output.status.success(), "{}", output.status);
-    assert_eq!(stdout_json(&output)["files"].as_array().unwrap().len(), 2);
+    assert!(output.success(), "{output:?}");
+    assert_eq!(output.json()["files"].as_array().unwrap().len(), 2);
 
     // Pointing the flag at a non-directory fails resolution: the flag
     // takes precedence over the (valid) config root.
@@ -437,8 +425,8 @@ fn project_root_overrides_config_root_for_non_package_files() {
         "--project-root",
         &parent.join("one/a.R").to_string_lossy(),
     ]);
-    assert!(!output.status.success(), "{}", output.status);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.success(), "{output:?}");
+    let stderr = output.stderr();
     assert!(
         stderr.contains("workspace root is not a directory"),
         "missing InvalidRoot note: {stderr}"
@@ -464,7 +452,7 @@ fn directory_dump_applies_config_exclude_patterns_like_check() {
     .unwrap();
     let root = temp.path().to_str().unwrap();
 
-    let dump = stdout_json(&run(&["dump-types", root]));
+    let dump = run(&["dump-types", root]).json();
     let dumped: Vec<&str> = dump["files"]
         .as_array()
         .unwrap()
@@ -481,7 +469,7 @@ fn directory_dump_applies_config_exclude_patterns_like_check() {
     // The same directory through `ry check` analyzes exactly one file:
     // the dumped set and the checked set agree.
     let check = run(&["check", root]);
-    let stderr = String::from_utf8_lossy(&check.stderr);
+    let stderr = check.stderr();
     assert!(
         stderr.contains("checked 1 file(s)"),
         "check and dump disagree on the file set: {stderr}"
@@ -498,7 +486,7 @@ fn leading_function_literal_keeps_top_scope_and_its_bindings() {
     fs::write(&file, "function(x) x\na <- 1L\n").unwrap();
     let file = file.to_str().unwrap();
 
-    let dump = stdout_json(&run(&["dump-types", file]));
+    let dump = run(&["dump-types", file]).json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     assert_eq!(scopes.len(), 2, "{scopes:?}");
     assert_eq!(scopes[0]["kind"], "function");
@@ -513,7 +501,7 @@ fn leading_function_literal_keeps_top_scope_and_its_bindings() {
 
     // A position on a later line resolves through the surviving top
     // scope instead of selecting nothing.
-    let dump = stdout_json(&run(&["dump-types", file, "--position", "2:1"]));
+    let dump = run(&["dump-types", file, "--position", "2:1"]).json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     assert_eq!(scopes.len(), 1, "{scopes:?}");
     assert_eq!(scopes[0]["kind"], "top");
@@ -541,7 +529,7 @@ fn named_function_inside_anonymous_callback_is_recorded() {
         ),
     )
     .unwrap();
-    let dump = stdout_json(&run(&["dump-types", file.to_str().unwrap()]));
+    let dump = run(&["dump-types", file.to_str().unwrap()]).json();
     let scopes = dump["files"][0]["scopes"].as_array().unwrap();
     let names: Vec<&str> = scopes
         .iter()
@@ -569,14 +557,14 @@ fn degraded_scopes_are_noted_on_stderr_only() {
     let root = temp.path().to_str().unwrap();
 
     let output = run(&["dump-types", root]);
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.success());
+    let stderr = output.stderr();
     assert!(
         stderr.contains("degraded scope"),
         "missing parity note on stderr: {stderr}"
     );
     // The note never leaks into the machine-facing dump.
-    let dump = stdout_json(&output);
+    let dump = output.json();
     let files = dump["files"].as_array().unwrap();
     assert_eq!(files.len(), 1);
     assert!(files[0]["path"].as_str().unwrap().ends_with("R/x.R"));
@@ -593,20 +581,20 @@ fn exit_code_nonzero_only_for_usage_and_io_failures() {
 
     // Unknown format is a usage failure.
     let output = run(&["dump-types", &file, "--format", "yaml"]);
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("only `json` is supported"));
+    assert!(!output.success());
+    assert!(output.stderr().contains("only `json` is supported"));
 
     // Missing file is an IO failure.
     let output = run(&["dump-types", &temp.path().join("nope.R").to_string_lossy()]);
-    assert!(!output.status.success());
+    assert!(!output.success());
 
     // Malformed position is a usage failure (clap rejects the value).
     let output = run(&["dump-types", &file, "--position", "line:col"]);
-    assert!(!output.status.success());
+    assert!(!output.success());
 
     // Files are required.
     let output = run(&["dump-types"]);
-    assert!(!output.status.success());
+    assert!(!output.success());
 }
 
 /// An unreadable-but-discovered file aborts the dump: exactly one
@@ -633,14 +621,14 @@ fn unreadable_discovered_file_aborts_with_single_stderr_line() {
     }
 
     let output = run(&["dump-types", temp.path().to_str().unwrap()]);
-    assert_eq!(output.status.code(), Some(1), "{}", output.status);
+    assert_eq!(output.code(), Some(1), "{output:?}");
     assert!(
-        output.stdout.is_empty(),
+        output.stdout().is_empty(),
         "aborted dump must not emit JSON: {}",
-        String::from_utf8_lossy(&output.stdout)
+        output.stdout()
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = output.stderr();
     let lines: Vec<&str> = stderr.lines().collect();
     assert_eq!(lines.len(), 1, "exactly one stderr line: {stderr}");
     assert!(

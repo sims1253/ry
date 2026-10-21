@@ -1,0 +1,840 @@
+---
+source: crates/ry-checker/tests/corpus.rs
+expression: rows
+---
+- case: character plus integer is a type error
+  diagnostics:
+    - code: RY040
+      line: 3
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+- case: a rebinding before the call replaces the forwarded caller default
+  diagnostics: []
+- case: "`bins` <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "bins[1L] <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "bins[[1L]] <- 1L drops the forwarded default"
+  diagnostics: []
+- case: length(bins) <- 1L drops the forwarded default
+  diagnostics: []
+- case: "assign('bins', 1L) drops the forwarded default"
+  diagnostics:
+    - code: RY090
+      line: 46
+      message: "unknown argument ``bins`` to `callee`; did you mean `bins`?"
+      severity: warning
+- case: "base::assign(value = 1L, x = 'bins') drops the forwarded default"
+  diagnostics: []
+- case: "delayedAssign('bins', 1L) drops the forwarded default"
+  diagnostics: []
+- case: "for (`bins` in ...) drops the forwarded default"
+  diagnostics: []
+- case: "if ((`bins` <- 1L) > 0) drops the forwarded default"
+  diagnostics: []
+- case: bins <<- (bins <- 1L) drops the forwarded default
+  diagnostics: []
+- case: (bins <- 1L) ->> bins drops the forwarded default
+  diagnostics: []
+- case: bins <- (bins <<- 1L) drops the forwarded default
+  diagnostics: []
+- case: bins <- (1L ->> bins) drops the forwarded default
+  diagnostics: []
+- case: 1L -> bins drops the forwarded default
+  diagnostics: []
+- case: "print({ bins <- 1L; ... }) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: `bins` <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: bins[1L] <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: bins[[1L]] <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: length(bins) <- 1L drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: assign('bins', 1L) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: base::assign(value = 1L, x = 'bins') drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: delayedAssign('bins', 1L) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: for (`bins` in ...) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: if ((`bins` <- 1L) > 0) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: bins <<- (bins <- 1L) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: (bins <- 1L) ->> bins drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: bins <- (bins <<- 1L) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: bins <- (1L ->> bins) drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: 1L -> bins drops the forwarded default"
+  diagnostics: []
+- case: "backticked formal: print({ bins <- 1L; ... }) drops the forwarded default"
+  diagnostics: []
+- case: a conditional rebinding before the call drops the forwarded default
+  diagnostics: []
+- case: a loop variable rebinding drops the forwarded default
+  diagnostics: []
+- case: an assignment in a while condition drops the forwarded default
+  diagnostics: []
+- case: zero-length conditions are errors
+  diagnostics:
+    - code: RY001
+      line: 233
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+    - code: RY001
+      line: 234
+      message: "`if` condition is `logical<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: integer plus double is well typed
+  diagnostics: []
+- case: an integer if condition gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 242
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+- case: an integer-or-double union condition gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 247
+      message: "`if` condition is `union`; R coerces nonzero to TRUE"
+      severity: info
+- case: a union with a list member is an invalid condition
+  diagnostics:
+    - code: RY001
+      line: 253
+      message: "`if` condition is `union[integer<len=1>, list<len=1>{[[1]]:character<len=1>}]`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a NULL if condition is an error
+  diagnostics:
+    - code: RY001
+      line: 257
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: a non-coercible character if condition is an error
+  diagnostics:
+    - code: RY001
+      line: 261
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: an integer while condition gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 266
+      message: "loop condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+- case: a length-2 logical if condition is an error
+  diagnostics:
+    - code: RY002
+      line: 270
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: "character literal \"TRUE\" is a valid condition"
+  diagnostics: []
+- case: "character literal \"T\" is a valid condition"
+  diagnostics: []
+- case: "character literal \"true\" is a valid condition"
+  diagnostics: []
+- case: "character literal \"True\" is a valid condition"
+  diagnostics: []
+- case: "character literal \"F\" is a valid condition"
+  diagnostics: []
+- case: "character literal \"false\" is a valid condition"
+  diagnostics: []
+- case: "hex-escaped literal that decodes to \"TRUE\" is a valid condition"
+  diagnostics: []
+- case: "octal-escaped literal that decodes to \"FALSE\" is a valid condition"
+  diagnostics: []
+- case: "raw string literal \"TRUE\" is a valid condition"
+  diagnostics: []
+- case: parenthesized character literal is a valid condition
+  diagnostics: []
+- case: Sys.getenv() value as if condition stays silent
+  diagnostics: []
+- case: Sys.getenv() binding as if condition stays silent
+  diagnostics: []
+- case: Sys.getenv() value as while condition stays silent
+  diagnostics: []
+- case: raw scalar condition is valid
+  diagnostics: []
+- case: raw zero scalar condition is valid
+  diagnostics: []
+- case: complex scalar binding is a valid condition
+  diagnostics: []
+- case: complex scalar from vector() is a valid condition
+  diagnostics: []
+- case: complex scalar with an imaginary part is a valid condition
+  diagnostics: []
+- case: complex scalar with zero components is a valid condition
+  diagnostics: []
+- case: imaginary literal 2+3i as condition stays silent
+  diagnostics: []
+- case: imaginary literal 0+1i as condition stays silent
+  diagnostics: []
+- case: imaginary literal 0+0i as condition stays silent
+  diagnostics: []
+- case: NA_complex_ condition stays silent
+  diagnostics: []
+- case: length-2 logical if condition is an error
+  diagnostics:
+    - code: RY002
+      line: 379
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: length-2 integer if condition is an error
+  diagnostics:
+    - code: RY001
+      line: 383
+      message: "`if` condition is `integer<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: length-2 double if condition is an error
+  diagnostics:
+    - code: RY001
+      line: 387
+      message: "`if` condition is `double<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: length-2 logical while condition is an error
+  diagnostics:
+    - code: RY001
+      line: 391
+      message: "loop condition is `logical<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: length-2 integer while condition is an error
+  diagnostics:
+    - code: RY001
+      line: 395
+      message: "loop condition is `integer<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: length-2 double while condition is an error
+  diagnostics:
+    - code: RY001
+      line: 399
+      message: "loop condition is `double<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: non-coercible character literal condition is an error
+  diagnostics:
+    - code: RY001
+      line: 405
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "mixed-case \"tRue\" condition is an error"
+  diagnostics:
+    - code: RY001
+      line: 409
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "numeric-looking \"1\" condition is an error"
+  diagnostics:
+    - code: RY001
+      line: 413
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: empty string condition is an error
+  diagnostics:
+    - code: RY001
+      line: 417
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: "\"NA\" string condition is an error"
+  diagnostics:
+    - code: RY001
+      line: 421
+      message: "`if` condition is `character<len=1>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: two-element character condition is an error
+  diagnostics:
+    - code: RY001
+      line: 425
+      message: "`if` condition is `character<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: zero-length character condition is an error
+  diagnostics:
+    - code: RY001
+      line: 429
+      message: "`if` condition is `character<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: zero-length complex condition is an error
+  diagnostics:
+    - code: RY001
+      line: 433
+      message: "`if` condition is `complex<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: two-element complex condition is an error
+  diagnostics:
+    - code: RY001
+      line: 437
+      message: "`if` condition is `complex<len=2>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: list condition is an error
+  diagnostics:
+    - code: RY001
+      line: 441
+      message: "`if` condition is `list<len=1>{[[1]]:logical<len=1>}`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: NULL condition is an error
+  diagnostics:
+    - code: RY001
+      line: 445
+      message: "`if` condition is `NULL<len=0>`, expected length-1 logical (or a value R coerces to logical)"
+      severity: warning
+- case: an unbound variable is reported
+  diagnostics:
+    - code: RY010
+      line: 449
+      message: "variable `undefined_thing` is not bound in this scope"
+      severity: warning
+- case: a local length() gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 455
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+- case: base length() as condition skips the coercion nudge
+  diagnostics: []
+- case: sum() over a local is.* function gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 465
+      message: "`if` condition is `double`; R coerces nonzero to TRUE"
+      severity: info
+- case: sum() over an alias of is.na skips the coercion nudge
+  diagnostics: []
+- case: sum() over is.na skips the coercion nudge
+  diagnostics: []
+- case: a local sum() over is.na gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 482
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+- case: base sum() over is.na skips the coercion nudge
+  diagnostics: []
+- case: match() as condition gets the coercion nudge
+  diagnostics:
+    - code: RY003
+      line: 492
+      message: "`if` condition is `integer`; R coerces nonzero to TRUE"
+      severity: info
+- case: length() as condition skips the coercion nudge
+  diagnostics: []
+- case: nrow() as condition skips the coercion nudge
+  diagnostics: []
+- case: ncol() as condition skips the coercion nudge
+  diagnostics: []
+- case: NROW() as condition skips the coercion nudge
+  diagnostics: []
+- case: NCOL() as condition skips the coercion nudge
+  diagnostics: []
+- case: nobs() as condition skips the coercion nudge
+  diagnostics: []
+- case: "vctrs::vec_size() as condition skips the coercion nudge"
+  diagnostics: []
+- case: a loop-carried binding read before its assignment in a for body is bound
+  diagnostics: []
+- case: a for loop accumulator initialized before the loop is bound
+  diagnostics: []
+- case: a for loop accumulator first assigned in the loop is bound
+  diagnostics: []
+- case: a loop-carried binding read before its assignment in a while body is bound
+  diagnostics: []
+- case: a loop-carried binding read before its assignment in a repeat body is bound
+  diagnostics: []
+- case: a for loop read in the opposite branch arm is prebound
+  diagnostics:
+    - code: RY010
+      line: 571
+      message: "variable `tab.comp` is not bound in this scope"
+      severity: warning
+- case: a while loop read in the opposite branch arm is prebound
+  diagnostics:
+    - code: RY010
+      line: 580
+      message: "variable `keep_going` is not bound in this scope"
+      severity: warning
+    - code: RY010
+      line: 581
+      message: "variable `flag` is not bound in this scope"
+      severity: warning
+- case: a for loop read in the else arm of an iteration-dependent condition is prebound
+  diagnostics: []
+- case: a while loop read in the else arm of a flag condition is prebound
+  diagnostics:
+    - code: RY010
+      line: 600
+      message: "variable `keep_going` is not bound in this scope"
+      severity: warning
+- case: an assignment in a nested branch binds the name for the whole loop
+  diagnostics:
+    - code: RY010
+      line: 611
+      message: "variable `groups` is not bound in this scope"
+      severity: warning
+    - code: RY030
+      line: 612
+      message: "cannot compare `function` with `integer`"
+      severity: error
+    - code: RY010
+      line: 613
+      message: "variable `conditional.x` is not bound in this scope"
+      severity: warning
+- case: a read before assignment outside a loop is unbound
+  diagnostics:
+    - code: RY010
+      line: 628
+      message: "variable `n` is not bound in this scope"
+      severity: warning
+- case: "&& on a length-2 logical warns"
+  diagnostics:
+    - code: RY032
+      line: 635
+      message: "`&&` applied to a length-2 operand; R requires a single logical value and raises an error"
+      severity: warning
+- case: "& on a length-2 logical is fine"
+  diagnostics: []
+- case: "&& on scalars is fine"
+  diagnostics: []
+- case: character < numeric warns
+  diagnostics:
+    - code: RY033
+      line: 650
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
+      severity: warning
+- case: numeric < numeric is fine
+  diagnostics: []
+- case: character < character is fine
+  diagnostics: []
+- case: character == numeric compares formatted strings and does not warn
+  diagnostics: []
+- case: character != integer does not warn
+  diagnostics: []
+- case: logical == character does not warn
+  diagnostics: []
+- case: a length-1 %in% result is a valid scalar condition
+  diagnostics: []
+- case: a parameter default types the parameter in the body
+  diagnostics: []
+- case: a user function returning character is a character operand
+  diagnostics:
+    - code: RY040
+      line: 687
+      message: "cannot apply arithmetic op to `character` and `integer`"
+      severity: error
+- case: an explicit return() types the user function result
+  diagnostics:
+    - code: RY040
+      line: 692
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+- case: a loop over a character vector makes the loop variable character
+  diagnostics:
+    - code: RY040
+      line: 696
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+- case: a magrittr pipe into a call desugars to a well-typed call
+  diagnostics: []
+- case: a two-step magrittr chain is well typed
+  diagnostics: []
+- case: the native pipe desugars to a well-typed call
+  diagnostics: []
+- case: a magrittr pipe into a bare function name is well typed
+  diagnostics: []
+- case: a magrittr pipe with a dot placeholder is well typed
+  diagnostics: []
+- case: the %T>% tee pipe returns its left side
+  diagnostics: []
+- case: a 60-branch else-if chain is checked
+  diagnostics: []
+- case: the magrittr dot resolves inside a subscript of the dot
+  diagnostics: []
+- case: the magrittr dot is unbound in a native pipe
+  diagnostics:
+    - code: RY000
+      line: 798
+      message: "syntax error: function '$' not supported in RHS call of a pipe"
+      severity: error
+    - code: RY010
+      line: 798
+      message: "variable `.` is not bound in this scope"
+      severity: warning
+- case: the native underscore is unbound in a magrittr pipe
+  diagnostics:
+    - code: RY010
+      line: 802
+      message: "variable `_` is not bound in this scope"
+      severity: warning
+- case: an unknown column through the magrittr dot is reported
+  diagnostics:
+    - code: RY060
+      line: 807
+      message: "column `nonexistent` not found in data frame schema; available columns: am, carb, cyl, disp, drat, ..."
+      severity: error
+- case: a column extracted through the magrittr dot is double
+  diagnostics: []
+- case: two integer if branches join to integer
+  diagnostics:
+    - code: RY040
+      line: 818
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: arithmetic on a list-or-function if result is an error
+  diagnostics:
+    - code: RY040
+      line: 824
+      message: "cannot apply arithmetic op to `union` and `double`"
+      severity: error
+- case: an if without else joins its value with NULL
+  diagnostics: []
+- case: nested integer if expressions join to integer
+  diagnostics:
+    - code: RY040
+      line: 834
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: unary minus on character is an error
+  diagnostics:
+    - code: RY020
+      line: 838
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "-c(\"col\") in j on a possible data.table is a column drop"
+  diagnostics: []
+- case: "-c(\"col\") in j on a data.table-classed value is a column drop"
+  diagnostics: []
+- case: "!\"key\" in i on a possible data.table is a not-join"
+  diagnostics: []
+- case: "!list() in i on a possible data.table is a not-join"
+  diagnostics: []
+- case: "!c(\"col\") in j on a possible data.table is a column drop"
+  diagnostics: []
+- case: "-c(\"x\") on a base vector is an error"
+  diagnostics:
+    - code: RY020
+      line: 866
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "!\"x\" on a base vector is an error"
+  diagnostics:
+    - code: RY021
+      line: 871
+      message: "cannot apply `!` to `character`"
+      severity: error
+- case: "-c(\"a\") in j on a base data.frame is an error"
+  diagnostics:
+    - code: RY020
+      line: 876
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "!list() on a base list is an error"
+  diagnostics:
+    - code: RY021
+      line: 881
+      message: "cannot apply `!` to `list`"
+      severity: error
+- case: "-c(\"a\") in the i slot is an error"
+  diagnostics:
+    - code: RY020
+      line: 886
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "-c(\"a\") in [[ is an error"
+  diagnostics:
+    - code: RY020
+      line: 890
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "a named j = -c(\"a\") argument is a column drop"
+  diagnostics: []
+- case: "-c(\"a\") passed to the unused drop argument is an error"
+  diagnostics:
+    - code: RY020
+      line: 900
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: ".SDcols = !c(\"a\") is a selection inversion"
+  diagnostics: []
+- case: ".SDcols = -c(\"a\") is a selection inversion"
+  diagnostics: []
+- case: "-c(\"a\") in the by slot is an error"
+  diagnostics:
+    - code: RY020
+      line: 914
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "!c(\"a\") in the by slot is an error"
+  diagnostics:
+    - code: RY021
+      line: 918
+      message: "cannot apply `!` to `character`"
+      severity: error
+- case: unary minus in a callback inside j is an error
+  diagnostics:
+    - code: RY020
+      line: 923
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: unary minus in a foreach body inside j is an error
+  diagnostics:
+    - code: RY020
+      line: 928
+      message: "cannot apply unary `-` to `character`"
+      severity: error
+- case: "1:10 plus character is an error"
+  diagnostics:
+    - code: RY040
+      line: 933
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: rep() result plus character is an error
+  diagnostics:
+    - code: RY040
+      line: 938
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+- case: seq() result plus character is an error
+  diagnostics:
+    - code: RY040
+      line: 943
+      message: "cannot apply arithmetic op to `double` and `character`"
+      severity: error
+- case: "a 1:10 function result plus character is an error"
+  diagnostics:
+    - code: RY040
+      line: 949
+      message: "cannot apply arithmetic op to `integer` and `character`"
+      severity: error
+- case: calling a double value is an error
+  diagnostics:
+    - code: RY070
+      line: 954
+      message: "could not find function `x` (bound here as `double`)"
+      severity: error
+- case: calling a character value is an error
+  diagnostics:
+    - code: RY070
+      line: 959
+      message: "could not find function `x` (bound here as `character`)"
+      severity: error
+- case: calling a function is fine
+  diagnostics: []
+- case: calling an unknown value stays silent
+  diagnostics: []
+- case: calling a numeric literal is an error
+  diagnostics:
+    - code: RY070
+      line: 972
+      message: "cannot call a value of mode `double`"
+      severity: error
+- case: calling NULL is an error
+  diagnostics:
+    - code: RY070
+      line: 976
+      message: "cannot call a value of mode `NULL`"
+      severity: error
+- case: calling an index expression stays silent
+  diagnostics: []
+- case: $ on an integer vector is an error
+  diagnostics:
+    - code: RY061
+      line: 987
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+- case: $ on a character vector is an error
+  diagnostics:
+    - code: RY061
+      line: 992
+      message: "$ operator is invalid for atomic vectors of mode `character`"
+      severity: error
+- case: $ on a list is fine
+  diagnostics: []
+- case: a $ method on a classed atomic value may write to the caller
+  diagnostics: []
+- case: a $ method on a classed union may write to the caller
+  diagnostics: []
+- case: a $<- method on a classed integer may write to the caller
+  diagnostics: []
+- case: a $<- method on a classed union may write to the caller
+  diagnostics: []
+- case: $<- on a plain integer is an error
+  diagnostics:
+    - code: RY061
+      line: 1017
+      message: "$ operator is invalid for atomic vectors of mode `integer`"
+      severity: error
+- case: $ on a data.frame is fine
+  diagnostics: []
+- case: $ on an unknown value stays silent
+  diagnostics:
+    - code: RY010
+      line: 1025
+      message: "variable `some_unknown_thing` is not bound in this scope"
+      severity: warning
+- case: $ on an all-atomic union is an error
+  diagnostics:
+    - code: RY061
+      line: 1031
+      message: "$ operator is invalid for atomic vectors of mode `integer` or `character`"
+      severity: error
+- case: $ on a union with a list member is fine
+  diagnostics: []
+- case: an early return joins the trailing if type
+  diagnostics: []
+- case: $ on an all-atomic joined return is an error
+  diagnostics:
+    - code: RY061
+      line: 1052
+      message: "$ operator is invalid for atomic vectors of mode `logical` or `double`"
+      severity: error
+- case: is.null(x) || is.na(x) on a parameter warns
+  diagnostics:
+    - code: RY032
+      line: 1056
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: length(x) && x == 1L on a parameter warns
+  diagnostics:
+    - code: RY032
+      line: 1060
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: is.na() on a reassigned scalar parameter is fine
+  diagnostics: []
+- case: "is.null(x) || 'value' %in% x is a scalar test"
+  diagnostics: []
+- case: "is.null(x) || !('value' %in% x) is a scalar test"
+  diagnostics: []
+- case: length(x) == 1L proves x scalar for is.na()
+  diagnostics: []
+- case: 1 == length(x) proves x scalar
+  diagnostics: []
+- case: "base::length(x) == 1 proves x scalar"
+  diagnostics: []
+- case: "x %in% 'value' after is.null() warns"
+  diagnostics:
+    - code: RY032
+      line: 1088
+      message: "`||` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: length(x) > 0 does not prove x scalar
+  diagnostics:
+    - code: RY032
+      line: 1092
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: length(x) == 2L does not prove x scalar
+  diagnostics:
+    - code: RY032
+      line: 1096
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a local length() does not prove x scalar
+  diagnostics:
+    - code: RY032
+      line: 1100
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a length parameter does not prove x scalar
+  diagnostics:
+    - code: RY032
+      line: 1104
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: "other::length() does not prove x scalar"
+  diagnostics:
+    - code: RY032
+      line: 1108
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a project length method breaks the length(x) == 1L guard
+  diagnostics:
+    - code: RY032
+      line: 1115
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a project length method breaks the guard for is.na()
+  diagnostics:
+    - code: RY032
+      line: 1120
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: a classed parameter default breaks the length guard
+  diagnostics:
+    - code: RY032
+      line: 1126
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: an unclassed parameter default does not save the length guard
+  diagnostics:
+    - code: RY032
+      line: 1132
+      message: "`&&` operand depends on a parameter whose length is not known to be 1; R errors at runtime for vector operands"
+      severity: warning
+- case: reassignment inside the guarded operand breaks the length guard
+  diagnostics:
+    - code: RY032
+      line: 1136
+      message: "`&&` applied to a length-2 operand; R requires a single logical value and raises an error"
+      severity: warning
+- case: length(x) == 1L proves x scalar without a length method
+  diagnostics: []
+- case: length(x) == 1L proves x scalar with a scalar default
+  diagnostics: []
+- case: a loop-carried value does not keep its initial empty length
+  diagnostics: []
+- case: bindings at a while break reach the loop exit
+  diagnostics: []
+- case: bindings at a repeat break reach the loop exit
+  diagnostics: []
+- case: bindings at a for break reach the loop exit
+  diagnostics: []
+- case: a masked + operator may rebind a variable before the loop exit
+  diagnostics: []
+- case: "`n1` <- 42 binds n1 for a later function"
+  diagnostics: []
+- case: "`g` <- function binds g for a later function"
+  diagnostics: []
+- case: "a later `g` <- 42 replaces the function value"
+  diagnostics: []
+- case: "n1 <- 2 replaces `n1` <- 1"
+  diagnostics: []
+- case: "`n1` <- 2 replaces n1 <- 1"
+  diagnostics: []
+- case: "`n1` does not bind n2"
+  diagnostics:
+    - code: RY010
+      line: 1202
+      message: "variable `n2` is not bound in this scope"
+      severity: warning
+- case: "a string \"`n1`\" assignment does not bind n1"
+  diagnostics:
+    - code: RY010
+      line: 1206
+      message: "variable `n1` is not bound in this scope"
+      severity: warning
+- case: "`n\\x31` does not bind n2"
+  diagnostics:
+    - code: RY010
+      line: 1210
+      message: "variable `n2` is not bound in this scope"
+      severity: warning
+- case: a length-2 condition inside abs() keeps its length
+  diagnostics:
+    - code: RY100
+      line: 1214
+      message: comparison directly inside a numeric math function is usually a parenthesization mistake; compare the math result instead
+      severity: warning
+    - code: RY002
+      line: 1214
+      message: "`if` condition has length 2; R requires a length-1 condition"
+      severity: warning
+- case: "1:\"a\" is not typed numeric"
+  diagnostics: []
+- case: "1:s with a character s is not typed numeric"
+  diagnostics: []
+- case: "1:\"Inf\" is not typed numeric"
+  diagnostics: []

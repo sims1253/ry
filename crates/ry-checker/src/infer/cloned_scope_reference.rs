@@ -27,9 +27,14 @@ impl Checker {
                 )
             })
             .collect();
-        self.walk_block(then, &mut then_scope, returns.as_deref_mut());
+        self.walk_if_arm(
+            then,
+            literal_cond == Some(false),
+            &mut then_scope,
+            returns.as_deref_mut(),
+        );
         if let Some(else_) = else_ {
-            self.walk_block(else_, &mut else_scope, returns);
+            self.walk_if_arm(else_, literal_cond == Some(true), &mut else_scope, returns);
         }
         // Same join as `box_imports::join_box_provenance`, over whole branch
         // scopes instead of journal deltas.

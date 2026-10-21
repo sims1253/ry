@@ -409,9 +409,10 @@ fn every_rule_has_a_probe_or_documented_exclusion() {
     }
 }
 
-/// Visibility no-op: print the matrix as a table for `cargo test probes_table
-/// -- --nocapture` while iterating, mirroring the corpus summary helper.
+/// Print the probe matrix as a table. Run with
+/// `cargo test probes_table -- --ignored --nocapture`.
 #[test]
+#[ignore = "report"]
 fn probes_table() {
     println!("{:<6} {:<48} positive fires?", "code", "note");
     println!("{}", "-".repeat(70));

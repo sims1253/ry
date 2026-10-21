@@ -1,4 +1,5 @@
 use super::*;
+use crate::resolve::SpecialCallProvenance;
 
 impl Checker {
     /// `switch` is a special form: selection precedes evaluation of alternatives.
@@ -23,66 +24,20 @@ impl Checker {
                 unknown(scope)
             }
         };
-        if original != semantic || (matches!(callee, Expr::String(_, _)) && semantic.contains("::"))
-        {
-            return unknown(scope);
-        }
-        if let Some((package, _)) = semantic.rsplit_once("::") {
-            if self.literal_bindings_may_be_shadowed(
-                ["::", "`::`", ":::", "`:::`"],
-                &HashSet::new(),
-                scope,
-            ) || scope.uncertainty.effects
-            {
+        match self.special_call_provenance_after_effects(
+            original,
+            callee,
+            semantic,
+            "switch",
+            "base",
+            scope,
+            scope.uncertainty.effects,
+        ) {
+            SpecialCallProvenance::Proven => {}
+            SpecialCallProvenance::Ordinary => return None,
+            SpecialCallProvenance::AmbientUncertainty | SpecialCallProvenance::Unknown => {
                 return unknown(scope);
             }
-            let package = package.trim_end_matches(':');
-            if package != "base" {
-                return if self
-                    .package_typeshed(package)
-                    .is_some_and(|db| db.functions.contains_key("switch"))
-                {
-                    None
-                } else {
-                    unknown(scope)
-                };
-            }
-        } else {
-            if scope.is_parameter(semantic) {
-                return unknown(scope);
-            }
-            if self.fn_table.functions.binds(semantic)
-                || scope.get(semantic).is_some_and(|ty| ty.fn_sig.is_some())
-            {
-                return None;
-            }
-            if let Some(package) = self.imported_from.get(semantic)
-                && package != "base"
-            {
-                return if self
-                    .package_typeshed(package)
-                    .is_some_and(|db| db.functions.contains_key("switch"))
-                {
-                    None
-                } else {
-                    unknown(scope)
-                };
-            }
-            if scope.uncertainty.effects
-                || scope.data_mask_unknown
-                || self.literal_bindings_may_be_shadowed(
-                    ["switch", "`switch`"],
-                    &HashSet::new(),
-                    scope,
-                )
-                || (!self.imported_from.contains_key(semantic)
-                    && self.search_path_may_mask_base(scope))
-            {
-                return unknown(scope);
-            }
-        }
-        if self.user_stubs.contains_key("base") {
-            return None;
         }
         let Some(first) = args.first() else {
             return unknown(scope);

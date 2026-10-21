@@ -1,28 +1,22 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
 
+use ry_testkit::{CliOutput, ry};
 use serde_json::{Value, json};
 
-fn invoke(directory: &Path, references: bool) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ry"));
-    command
-        .current_dir(directory)
-        .args(["dump-facts", "case.R"]);
+fn invoke(directory: &Path, references: bool) -> CliOutput {
+    let process = ry!().cwd(directory).args(["dump-facts", "case.R"]);
     if references {
-        command.arg("--references");
+        process.arg("--references").run()
+    } else {
+        process.run()
     }
-    command.output().unwrap()
 }
 
-fn parse(output: &Output) -> Value {
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
+fn parse(output: &CliOutput) -> Value {
+    assert!(output.success(), "{output:?}");
+    output.json()
 }
 
 fn analyze(source: &str) -> Value {
@@ -167,29 +161,48 @@ fn function_locals_are_supported_but_outer_captures_and_early_reads_are_not() {
 }
 
 #[test]
-fn dynamic_import_control_flow_and_ordinary_calls_fail_closed() {
-    for source in [
-        "x <- 1L\nassign(\"x\", \"later\")\ny <- x\n",
-        "x <- 1L\nlibrary(stats)\ny <- x\n",
-        "x <- 1L\nif (flag) x <- \"later\"\ny <- x\n",
-        "x <- 1L\nbase::identity(1L)\ny <- x\n",
-        "x <- 1L\ny <- x + 1L\n",
-    ] {
+fn reads_the_analysis_cannot_prove_lexical_fail_closed() {
+    // (source, fragment, read token inside the fragment)
+    let cases = [
+        // Dynamic writes, imports, control flow, and ordinary calls.
+        ("x <- 1L\nassign(\"x\", \"later\")\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\nlibrary(stats)\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\nif (flag) x <- \"later\"\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\nbase::identity(1L)\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\ny <- x + 1L\n", "y <- x", "x"),
+        // Wrappers that make a nested function's reads non-lexical.
+        ("quoted <- quote(function(x) x)\n", " x)", "x"),
+        ("masked <- with(data, function(x) x)\n", " x)", "x"),
+        ("piped <- data |> identity(function(x) x)\n", " x)", "x"),
+        ("wrapped <- identity(function(x) x)\n", " x)", "x"),
+        // Nonlocal and special assignment operators define no ordinary local.
+        ("f <- function() { 1L ->> x; y <- x }\n", "y <- x", "x"),
+        ("f <- function() { x <<- 1L; y <- x }\n", "y <- x", "x"),
+        ("x := 1L\ny <- x\n", "y <- x", "x"),
+        // An outer active-binding getter can mutate the current frame while read.
+        (
+            "f <- function() { local <- 1L; copy <- outer; result <- local }\n",
+            "copy <- outer",
+            "outer",
+        ),
+        (
+            "f <- function() { local <- 1L; copy <- outer; result <- local }\n",
+            "result <- local",
+            "local",
+        ),
+        // Equivalent identifier spellings and syntax rebinding.
+        ("x <- 1L\n`x` <- \"later\"\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\n`\\x78` <- \"later\"\ny <- x\n", "y <- x", "x"),
+        ("x <- 1L\nbase::x <- 2L\ny <- x\n", "y <- x", "x"),
+        (
+            "`<-` <- function(...) NULL\nx <- 1L\ny <- x\n",
+            "y <- x",
+            "x",
+        ),
+    ];
+    for (source, fragment, token) in cases {
         let output = analyze(source);
-        assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
-    }
-}
-
-#[test]
-fn unsafe_wrappers_do_not_make_nested_function_reads_look_lexical() {
-    for source in [
-        "quoted <- quote(function(x) x)\n",
-        "masked <- with(data, function(x) x)\n",
-        "piped <- data |> identity(function(x) x)\n",
-        "wrapped <- identity(function(x) x)\n",
-    ] {
-        let output = analyze(source);
-        assert_uncertain(&reference_at(&output, source, " x)", "x"));
+        assert_uncertain(&reference_at(&output, source, fragment, token));
     }
 }
 
@@ -236,8 +249,8 @@ fn reference_capture_is_deterministic_opt_in_and_does_not_execute_source() {
     let current = parse(&first);
     parse(&second);
     parse(&legacy_after);
-    assert_eq!(first.stdout, second.stdout);
-    assert_eq!(legacy_before.stdout, legacy_after.stdout);
+    assert_eq!(first.stdout(), second.stdout());
+    assert_eq!(legacy_before.stdout(), legacy_after.stdout());
     assert_eq!(legacy["schema_version"], 1);
     assert!(legacy["files"][0].get("references").is_none());
     assert!(legacy["files"][0].get("definitions").is_none());
@@ -281,40 +294,6 @@ fn forcing_a_default_can_change_a_previous_local_binding() {
     let source = "f <- function(p) { y <- p; x <- 1L; z <- x }\n";
     let output = analyze(source);
     assert_uncertain(&reference_at(&output, source, "z <- x", "x"));
-}
-
-#[test]
-fn nonlocal_and_special_assignment_operators_do_not_define_ordinary_locals() {
-    for source in [
-        "f <- function() { 1L ->> x; y <- x }\n",
-        "f <- function() { x <<- 1L; y <- x }\n",
-        "x := 1L\ny <- x\n",
-    ] {
-        let output = analyze(source);
-        assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
-    }
-}
-
-#[test]
-fn unsupported_outer_reads_cannot_preserve_later_local_type_certainty() {
-    // An outer active-binding getter can mutate the current frame while read.
-    let source = "f <- function() { local <- 1L; copy <- outer; result <- local }\n";
-    let output = analyze(source);
-    assert_uncertain(&reference_at(&output, source, "copy <- outer", "outer"));
-    assert_uncertain(&reference_at(&output, source, "result <- local", "local"));
-}
-
-#[test]
-fn equivalent_identifier_spellings_and_syntax_rebinding_fail_closed() {
-    for source in [
-        "x <- 1L\n`x` <- \"later\"\ny <- x\n",
-        "x <- 1L\n`\\x78` <- \"later\"\ny <- x\n",
-        "x <- 1L\nbase::x <- 2L\ny <- x\n",
-        "`<-` <- function(...) NULL\nx <- 1L\ny <- x\n",
-    ] {
-        let output = analyze(source);
-        assert_uncertain(&reference_at(&output, source, "y <- x", "x"));
-    }
 }
 
 #[test]

@@ -255,9 +255,8 @@ while IFS= read -r line; do
   all_names+=("$slug")
 done < "$packages_file"
 
-seen_names=()
 # Read the raw line first so we can honour the manifest's tier marker (a
-# `# === full tier` comment) and detect collisions before cloning anything.
+# `# === full tier` comment).
 while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
   case "$raw" in
     *"=== full tier"*)
@@ -283,9 +282,6 @@ while IFS= read -r raw || [[ -n "${raw:-}" ]]; do
     echo "ecosystem: manifest entry for '$name' pins '$pinned_ref'; a corpus entry needs a full 40-character commit ID, not a branch or tag" >&2
     exit 1
   fi
-  # Collision check is now in the pre-validation loop above.
-  seen_names+=("$name")
-
   if $local_only; then
     if [[ "$name" != "glue" ]]; then
       continue
@@ -406,13 +402,9 @@ fi
 
 # Each ledger pins every diagnostic identity in the audited packages' hermetic
 # root reports rather than an aggregate count, so removing one finding cannot
-# be mistaken for removing another. `reconciliation: hermetic` (the default)
-# makes missing and unowned identities fail; `audit-transcript` exists only for
-# historical installed-library ledgers whose environment cannot be reproduced.
-# In both modes findings labelled `true_positive` are checked explicitly so a
-# real bug disappearing is always surfaced. The gating logic lives in
-# ecosystem/reconcile.R — the single copy, unit-tested by
-# test-reconciliation.R — sourced here with the manifest's report prefix (#164).
+# be mistaken for removing another. Missing and unowned identities fail. The
+# gating logic lives in ecosystem/reconcile.R, unit-tested by
+# test-reconciliation.R.
 if ! $local_only; then
   [[ -f "$audit_corpus" ]] || {
     echo "ecosystem: audit corpus not found: $audit_corpus" >&2
@@ -462,24 +454,11 @@ if ! $check; then
 fi
 
 drift=0
-for report_stem in "${processed_reports[@]}"; do
-  expected="$reports_dir/$report_stem.txt"
-  actual="$generated_dir/$report_stem.txt"
+for report_name in "${processed_reports[@]/%/.txt}" "${summary_names[@]}"; do
+  expected="$reports_dir/$report_name"
+  actual="$generated_dir/$report_name"
   if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
-    echo "ecosystem: report drift for $report_stem" >&2
-    if [[ -f "$expected" ]]; then
-      diff -u "$expected" "$actual" || true
-    else
-      diff -u /dev/null "$actual" || true
-    fi
-    drift=1
-  fi
-done
-for summary_name in "${summary_names[@]}"; do
-  expected="$reports_dir/$summary_name"
-  actual="$generated_dir/$summary_name"
-  if [[ ! -f "$expected" ]] || ! cmp -s "$expected" "$actual"; then
-    echo "ecosystem: report drift for $summary_name" >&2
+    echo "ecosystem: report drift for $report_name" >&2
     if [[ -f "$expected" ]]; then
       diff -u "$expected" "$actual" || true
     else

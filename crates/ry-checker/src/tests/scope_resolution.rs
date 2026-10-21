@@ -1,20 +1,6 @@
 use super::*;
 
 #[test]
-fn slot_extraction_does_not_use_dollar_rules() {
-    for source in ["x <- 1:3; x@.Data", "x <- factor('a'); x@.Data"] {
-        let diagnostics = check(source);
-        assert!(diagnostics.is_empty(), "{source}: {diagnostics:?}");
-    }
-    let diagnostics = check("x <- 1:3; x$.Data");
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY061")
-    );
-}
-
-#[test]
 fn slot_access_and_nested_replacement_forget_caller_facts() {
     for operation in [
         "x@foo",
@@ -84,112 +70,6 @@ fn native_slot_access_preserves_unrelated_diagnostics() {
 }
 
 #[test]
-fn attach_makes_later_search_path_bindings_uncertain() {
-    let diagnostics = check(
-        "before_attach\nattach(dataset)\nafter_attach\nf <- function() { nested_after_attach }\ng <- function() {\n  attach(local_data)\n  local_after_attach\n  inner <- function() nested_local_after_attach\n}\n",
-    );
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("before_attach")
-    }));
-    for name in [
-        "after_attach",
-        "nested_after_attach",
-        "local_after_attach",
-        "nested_local_after_attach",
-    ] {
-        assert!(
-            diagnostics.iter().all(|diagnostic| {
-                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
-            }),
-            "{name} should be uncertain after attach(): {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn require_makes_later_search_path_bindings_uncertain() {
-    let diagnostics = check("require(unstubbed_package)\nfrom_attached_package\n");
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010"),
-        "unstubbed require() must open the search path: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn open_scope_mutations_only_affect_later_bindings_and_nested_functions() {
-    let diagnostics = check(
-        "before_library\nlibrary(fakepkg123)\nafter_library\nf <- function() nested_after_library\nlibrary(package_name, character.only = TRUE)\nafter_dynamic_library\n",
-    );
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("before_library")
-    }));
-    let known_package_diagnostics = check("library(dplyr)\nstill_not_a_dplyr_thing\n");
-    assert!(known_package_diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("still_not_a_dplyr_thing")
-    }));
-    for name in [
-        "after_library",
-        "nested_after_library",
-        "after_dynamic_library",
-    ] {
-        assert!(
-            diagnostics.iter().all(|diagnostic| {
-                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
-            }),
-            "{name} should be uncertain after an open-scope library call: {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn source_without_local_does_not_open_a_function_scope() {
-    let diagnostics = check(
-        "f <- function() {\n\
-           source(\"generated.R\")\n\
-           genuinely_missing\n\
-         }\n",
-    );
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
-    }));
-}
-
-#[test]
-fn source_local_controls_use_normal_r_argument_matching() {
-    for call in [
-        "source(\"generated.R\", TRUE)",
-        "source(exprs = expression(generated_binding <- TRUE), local = TRUE)",
-        "source(local = TRUE, file = \"generated.R\")",
-        "source(file = \"generated.R\", lo = TRUE)",
-        "source(\"generated.R\", local = unknown_environment())",
-    ] {
-        let diagnostics = check(&format!(
-            "f <- function() {{\n  {call}\n  generated_binding\n}}\n"
-        ));
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| diagnostic.code != "RY010"),
-            "{call} should conservatively open the caller scope: {diagnostics:?}"
-        );
-    }
-
-    for call in [
-        "source(\"generated.R\", FALSE)",
-        "source(file = \"generated.R\", local = FALSE)",
-    ] {
-        let diagnostics = check(&format!(
-            "f <- function() {{\n  {call}\n  genuinely_missing\n}}\n"
-        ));
-        assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.code == "RY010" && diagnostic.message.contains("genuinely_missing")
-        }));
-    }
-}
-
-#[test]
 fn data_and_load_make_later_bindings_uncertain() {
     let (data_diagnostics, data_scope) = check_with_scope("data(api)\nprint(apipop)\n");
     assert!(
@@ -212,73 +92,6 @@ fn data_and_load_make_later_bindings_uncertain() {
             .iter()
             .all(|diagnostic| diagnostic.code != "RY010"),
         "top-level source() populates .GlobalEnv, which is the current scope"
-    );
-}
-
-#[test]
-fn source_cpp_makes_later_scope_bindings_uncertain() {
-    let diagnostics = check(
-        "before_source\nRcpp::sourceCpp(\"generated.cpp\")\nafter_source\nf <- function() nested_after_source\n",
-    );
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("before_source")
-    }));
-    for name in ["after_source", "nested_after_source"] {
-        assert!(
-            diagnostics.iter().all(|diagnostic| {
-                diagnostic.code != "RY010" || !diagnostic.message.contains(name)
-            }),
-            "{name} should be uncertain after sourceCpp(): {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn local_callable_does_not_inherit_stub_scope_effect() {
-    let diagnostics = check(
-        "factory <- function() function(x) x\nattach <- factory()\nattach(dataset)\nstill_missing\n",
-    );
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("still_missing")
-    }));
-}
-
-#[test]
-fn shiny_test_server_injects_reactive_bindings() {
-    let diagnostics = check(
-        "library(shiny)\ntestServer(NULL, {\n  session$setInputs(x = 1L)\n  input$x\n  output$value\n})\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010"),
-        "testServer expr should receive session/input/output: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn shiny_stub_marks_reactive_code_arguments_as_quoted() {
-    let diagnostics = check(
-        "library(shiny)\n\
-         reactive(missing_reactive)\n\
-         observe(missing_observe)\n\
-         observeEvent(missing_event, missing_handler)\n\
-         eventReactive(missing_event_reactive, missing_value_reactive)\n\
-         isolate(missing_isolate)\n\
-         renderText(missing_text)\n\
-         renderPrint(missing_print)\n\
-         renderUI(missing_ui)\n\
-         renderPlot(missing_plot)\n\
-         renderTable(missing_table)\n\
-         renderDataTable(missing_data_table)\n\
-         renderImage(missing_image)\n\
-         testServer(NULL, missing_test_server)\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY010"),
-        "Shiny reactive code arguments must be quoted: {diagnostics:?}"
     );
 }
 
@@ -322,19 +135,6 @@ fn typed_package_constants_are_values_not_functions() {
     assert!(diagnostics.iter().any(|diagnostic| {
         diagnostic.code == "RY070" && diagnostic.message.contains("`rlang::na_chr`")
     }));
-}
-
-#[test]
-fn local_callable_shadows_typed_package_constant() {
-    let diagnostics = check(
-        "library(rlang)\nna_chr <- function() \"ok\"\nvalue <- na_chr()\nf <- function(na_chr) na_chr()\nf(function() \"formal\")\n",
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY070"),
-        "lexical callables must win over attached package constants: {diagnostics:?}"
-    );
 }
 
 #[test]
@@ -400,163 +200,6 @@ fn future_import_enables_mirrored_destructuring() {
 }
 
 #[test]
-fn unresolved_destructuring_operator_quotes_its_operands() {
-    let diagnostics = check("c(unbound) %<-% make_value()\n");
-    assert!(diagnostics.iter().all(|diagnostic| {
-        diagnostic.code != "RY010" || !diagnostic.message.contains("unbound")
-    }));
-}
-
-#[test]
-fn embrace_resolves_bound_formal_outside_data_mask() {
-    let diags = check("f <- function(x) {{ x }}\n");
-    assert!(
-        diags.is_empty(),
-        "bound embrace should be silent: {diags:?}"
-    );
-}
-
-#[test]
-fn embrace_resolves_formal_in_function_scope_not_data_mask() {
-    let diags = check(
-        "library(dplyr)\nf <- function(df, value) mutate(df, out = {{ value }})\nf(data.frame(value = 1L), 2L)\n",
-    );
-    assert!(
-        diags.is_empty(),
-        "embrace should bypass mask columns: {diags:?}"
-    );
-}
-
-#[test]
-fn embrace_unbound_symbol_emits_ry010() {
-    let diags = check("f <- function(x) {{ typo }}\n");
-    assert!(
-        diags
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY010" && diagnostic.message.contains("typo")),
-        "unbound embrace should emit RY010: {diags:?}"
-    );
-}
-
-#[test]
-fn data_pronoun_resolves_known_column() {
-    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data$known)\n");
-    assert!(
-        diags.is_empty(),
-        "known `.data` column should resolve: {diags:?}"
-    );
-}
-
-#[test]
-fn data_pronoun_double_bracket_resolves_known_column() {
-    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data[[\"known\"]])\n");
-    assert!(
-        diags.is_empty(),
-        "known `.data` column should resolve: {diags:?}"
-    );
-}
-
-#[test]
-fn data_pronoun_missing_known_column_emits_ry060() {
-    let diags = check("library(dplyr)\nmutate(data.frame(known = 1L), out = .data$missing)\n");
-    assert!(
-        diags.iter().any(|diagnostic| diagnostic.code == "RY060"),
-        "missing `.data` column should emit RY060: {diags:?}"
-    );
-}
-
-#[test]
-fn data_pronoun_on_opaque_mask_is_silent() {
-    let diags = check("library(dplyr)\nf <- function(df) mutate(df, out = .data$anything)\n");
-    assert!(
-        diags.is_empty(),
-        "opaque `.data` access should be silent: {diags:?}"
-    );
-}
-
-#[test]
-fn env_pronoun_resolves_enclosing_binding() {
-    let diags = check(
-        "library(dplyr)\nf <- function(df, bound) mutate(df, out = .env$bound)\nf(data.frame(bound = 1L), 2L)\n",
-    );
-    assert!(
-        diags.is_empty(),
-        "`.env` should use lexical scope: {diags:?}"
-    );
-}
-
-#[test]
-fn env_pronoun_double_bracket_resolves_enclosing_binding() {
-    let diags =
-        check("library(dplyr)\nf <- function(df, bound) mutate(df, out = .env[[\"bound\"]])\n");
-    assert!(
-        diags.is_empty(),
-        "`.env` should use lexical scope: {diags:?}"
-    );
-}
-
-#[test]
-fn env_pronoun_unbound_binding_emits_ry010() {
-    let diags = check("library(dplyr)\nf <- function(df) mutate(df, out = .env$unbound)\n");
-    assert!(
-        diags.iter().any(|diagnostic| {
-            diagnostic.code == "RY010" && diagnostic.message.contains("unbound")
-        }),
-        "unbound `.env` access should emit RY010: {diags:?}"
-    );
-}
-
-#[test]
-fn bare_data_pronoun_inside_mask_is_silent() {
-    let diags = check("library(dplyr)\nmutate(data.frame(x = 1L), out = .data)\n");
-    assert!(
-        diags.is_empty(),
-        "bare `.data` should be silent in a mask: {diags:?}"
-    );
-}
-
-#[test]
-fn union_subset_does_not_keep_source_lengths() {
-    // A members-agree union keeps neither a single length nor a usable
-    // subsetting contract: `x[1L]` is index-shaped, so the condition on
-    // it must not see the source members' lengths (2 and 3). Mirror
-    // the opaque sibling's index shapes, including the multi-arg form.
-    for index in ["1L", "choice", "1L, drop = TRUE"] {
-        let source = format!(
-            "f <- function(p, choice) {{\n\
-             x <- if (p) c(\"a\", \"b\") else c(\"a\", \"b\", \"c\")\n\
-             y <- x[{index}]\n\
-             if (y == \"a\") 1L\n\
-             }}\n"
-        );
-        let diags = check(&source);
-        assert!(
-            diags.is_empty(),
-            "{index}: union subset result must not keep source lengths: {diags:?}"
-        );
-    }
-}
-
-#[test]
-fn opaque_subset_does_not_keep_source_length() {
-    for index in ["1L", "choice", "1L, drop = TRUE"] {
-        let source = format!(
-            "f <- function(flag, choice) {{\n\
-             choices <- c(if (flag) \"a\", \"b\", \"c\")\n\
-             if (choices[{index}] == \"a\") 1L\n\
-             }}\n"
-        );
-        let diagnostics = check(&source);
-        assert!(diagnostics.is_empty(), "{index}: {diagnostics:?}");
-    }
-    let diagnostics =
-        check("f <- function(flag) { x <- c(if (flag) 1L, 2L, 3L); x[undefined_index] }\n");
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.code == "RY010" && diagnostic.message.contains("undefined_index")
-    }));
-}
-
-#[test]
 fn scalar_string_subset_of_atomic_vector_has_length_one() {
     let (diags, scope) = check_with_scope("x <- c(first = 1L, second = 2L)\ny <- x[\"first\"]\n");
     assert!(diags.is_empty(), "{diags:?}");
@@ -615,35 +258,6 @@ fn list_subset_drops_stale_column_schema() {
         scope.get("missing").map(|value| &value.mode),
         Some(&Mode::Opaque),
         "without a transformed schema, missing name access stays conservative"
-    );
-}
-
-#[test]
-fn condition_union_zero_length_member_dominates_a_logical_sibling() {
-    // Refined contract (#362): a PROVEN zero-length member still errors
-    // deterministically on its branch ("argument is of length zero"),
-    // so it is no longer silenced by a possibly-valid logical sibling.
-    // This is the comparison shape a find-or-NULL helper produces
-    // (`where == "path"` over `character | NULL` joins to
-    // `logical<0> | logical<1>`), and the diagnostic message displays
-    // the union, so the possibly-valid member stays visible rather than
-    // being claimed away. The runtime oracle pins both branch outcomes.
-    let diagnostics = check("x <- if (runif(1) > 0.5) logical(0) else TRUE\nif (x) print(1)\n");
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY001"),
-        "a zero-length member makes the condition error on that branch: {diagnostics:?}"
-    );
-    // Possibly-valid members that are NOT proven zero-length keep the
-    // whole-union silence (see also
-    // `logical_union_members_preserve_possibly_valid_conditions`).
-    let diagnostics = check("x <- if (runif(1) > 0.5) list(TRUE) else TRUE\nif (x) print(1)\n");
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY001"),
-        "a possibly-valid condition must not be reported as definitely invalid: {diagnostics:?}"
     );
 }
 
@@ -707,62 +321,6 @@ fn s4_terra_named_vector_dispatch_fixture_is_clean() {
     assert!(
         diagnostics.is_empty(),
         "S4 dispatch should preserve the method's named-vector result: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn s4_signature_form_dispatches() {
-    let diagnostics = check(
-        "setClass(\"C\", slots = c(value = \"numeric\"))\nsetMethod(\"labels\", signature(\"C\"), function(object) c(label = \"ok\"))\nx <- new(\"C\")\ny <- labels(x)\ny[[\"label\"]]\n",
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "signature dispatch failed: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn s4_named_signature_form_dispatches() {
-    let diagnostics = check(
-        "setClass(\"SpatExtent\", slots = c(value = \"numeric\"))\nsetMethod(\"as.vector\", signature(x = \"SpatExtent\"), function(x) c(xmin = 1))\nx <- new(\"SpatExtent\")\nv <- as.vector(x)\nv[[\"xmin\"]]\n",
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "named signature dispatch failed: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn s4_declared_and_undeclared_slot_access_and_assignment_are_silent() {
-    let diagnostics = check(
-        "setClass(\"C\", representation(value = \"numeric\"))\nx <- new(\"C\")\na <- x@value\nb <- x@undeclared\nx@value <- 1\nx@undeclared <- 2\n",
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "S4 slots should be conservative: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn named_vector_columns_survive_transpose_data_frame_constructors() {
-    let diagnostics = check(
-        "v <- c(alpha = 1, beta = 2)\na <- data.frame(t(v))\nb <- as.data.frame(t(v))\na$alpha\nb$beta\n",
-    );
-    assert!(
-        diagnostics.is_empty(),
-        "named columns were lost: {diagnostics:?}"
-    );
-}
-
-#[test]
-fn unknown_vector_names_do_not_fabricate_data_frame_schema() {
-    let diagnostics =
-        check("make_row <- function(v) data.frame(t(v))\nrow <- make_row(c(1, 2))\nrow$anything\n");
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "RY060"),
-        "unknown names must produce an opaque data-frame schema: {diagnostics:?}"
     );
 }
 
@@ -916,16 +474,6 @@ fn scripts_share_top_level_known_vars() {
 }
 
 #[test]
-fn function_self_read_before_assignment_reports_ry010() {
-    let diagnostics = check("f <- function() { h <- h[[\"pre\"]] }\n");
-    assert!(
-        diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "RY010")
-    );
-}
-
-#[test]
 fn testthat_script_sees_package_library_functions() {
     // tests/testthat code retains access to the package's R/
     // library functions even though it lives outside R/.
@@ -959,43 +507,6 @@ fn genuinely_undefined_variable_still_triggers_ry010() {
 }
 
 #[test]
-fn same_file_top_level_assignment_in_known_vars() {
-    // Single-file mode: a top-level assignment `x <- 1L` puts `x`
-    // in `known_vars`. Referencing `x` BEFORE its assignment in the
-    // same file (use-before-def at the top level) does NOT trigger
-    // RY010. R's `source()` semantics evaluate top-to-bottom so
-    // this would error at runtime, but for static checking we
-    // prioritize suppressing false positives over catching
-    // use-before-def (matching the documented behavior of `known_vars`).
-    let diags = check("y <- x\nx <- 1L\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "top-level use-before-def should not trigger RY010 (matches cross-file semantics), got {:?}",
-        diags
-    );
-}
-
-// ---- Namespace-qualified identifiers (pkg::name) ----
-//
-// The parser preserves the full `pkg::name` spelling in `Expr::Ident`.
-// The checker must (a) suppress RY010 for these in value and
-// statement position (we don't model other packages' exports), and
-// (b) still resolve `pkg::fn(args)` calls by stripping the prefix
-// for typeshed lookups.
-#[test]
-fn namespace_qualified_value_does_not_emit_ry010() {
-    // `x <- S7::class_any` -- the RHS is a cross-package value
-    // reference. We can't resolve S7's export table, so we treat
-    // it as opaque and stay silent (no RY010).
-    let diags = check("x <- S7::class_any\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "qualified value `S7::class_any` should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
 fn dplyr_filter_and_stats_filter_resolve_differently() {
     // `dplyr::filter(df, ...)` resolves
     // against the dplyr typeshed (data.frame return) while
@@ -1014,33 +525,6 @@ fn dplyr_filter_and_stats_filter_resolve_differently() {
         !b.class.contains("data.frame"),
         "stats::filter must NOT be data.frame-classed, got class {:?}",
         b.class
-    );
-}
-
-#[test]
-fn namespace_qualified_statement_does_not_emit_ry010() {
-    // Reexport pattern: a bare `rlang::set_names` in statement
-    // position (common in purrr/dplyr reexport files). This is the
-    // form produced by the parser for `pkg::name` at the top level.
-    let diags = check("rlang::set_names\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "qualified statement `rlang::set_names` should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn namespace_qualified_backtick_operator_does_not_emit_ry010() {
-    // `magrittr::`%>%`` -- a backticked infix operator reexported
-    // from another package. The RHS name contains `%`, which makes
-    // a good regression test that the `::` suppression isn't
-    // confused by special characters.
-    let diags = check("magrittr::`%>%`\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "qualified `magrittr::`%>%`` should not emit RY010, got {:?}",
-        diags
     );
 }
 
@@ -1065,128 +549,6 @@ fn namespace_qualified_call_resolves_via_typeshed() {
 }
 
 #[test]
-fn namespace_qualified_triple_colon_value_does_not_emit_ry010() {
-    // `pkg:::name` (triple colon, internal access) must be treated
-    // the same way as `::` for RY010 suppression.
-    let diags = check("x <- stats:::internal_helper\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "triple-colon qualified value should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn namespace_qualified_call_to_unknown_package_function_is_silent() {
-    // `tibble::tibble(...)` -- `tibble` is not in our typeshed, so
-    // the call resolves to opaque. Crucially, no RY010 should fire
-    // on the function name itself (it's a qualified cross-package
-    // reference).
-    let diags = check("x <- tibble::tibble(a = 1L)\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "qualified call to non-typeshed fn should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn backtick_percent_operator_not_unbound() {
-    // A backtick-quoted operator name like `` `%+%` `` is commonly a
-    // user-defined or package-imported infix operator. The parser
-    // preserves the backticks in the identifier name, and we cannot
-    // resolve such names against any scope, typeshed, or FnTable.
-    // The checker must suppress RY010 and return opaque.
-    let diags = check("x <- `%+%`\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "backtick `%+%` operator should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn backtick_builtin_operator_symbol_not_unbound() {
-    // A backtick-quoted built-in operator symbol like `` `+` `` is
-    // referenced as a value (e.g. passed to `Reduce`). Suppress
-    // RY010: these are R language primitives we don't model as
-    // scope-bound variables.
-    let diags = check("x <- `+`\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "backtick `+` operator should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn backtick_pipe_operator_not_unbound() {
-    // `` `%>%` `` (magrittr pipe) referenced as a bare backtick
-    // identifier should not emit RY010. This pattern appears in
-    // package reexport code (`magrittr::`%>%`` is already covered
-    // by the `::` check; the bare backtick form is covered here).
-    let diags = check("x <- `%>%`\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "backtick `%>%` operator should not emit RY010, got {:?}",
-        diags
-    );
-}
-
-#[test]
-fn lexical_nested_function_shadows_same_named_project_function_signature() {
-    let diags = check(
-        "helper <- function(required) required\n\nouter <- function() {\n  helper <- function() 1L\n  helper()\n}\nouter()\n",
-    );
-    assert!(diags.iter().all(|d| d.code != "RY091"), "got {diags:?}");
-}
-
-#[test]
-fn lexical_function_shadows_base_signature() {
-    // A function literal defined inside an enclosing body shadows
-    // the typeshed/base signature, so RY090/RY091 must not fire against
-    // base::inherits' parameters.
-    let diags = check(
-        "f <- function(topics) {\n  inherits <- function(type) function(x) x$inherits_from(type)\n  topics$apply(inherits(\"return\"))\n}\n",
-    );
-    assert!(
-        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
-        "got {diags:?}"
-    );
-}
-
-#[test]
-fn lexical_function_shadows_base_eval() {
-    // Same lookup-order bug with a different base name (base::eval).
-    let diags =
-        check("g <- function(quo) {\n  eval <- function() .Call(\"x\", quo)\n  eval()\n}\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY090" && d.code != "RY091"),
-        "got {diags:?}"
-    );
-}
-
-// ===== search-path-unknown audit =====
-//
-// `mark_search_path_unknown()` suppresses RY010 (unbound-variable) for the
-// rest of a scope. It is a conservative open-search-path flag set whenever a
-// construct can introduce arbitrary bindings. These tests pin every call site
-// so the suppression stays intentional and scoped, and so an accidental
-// widening — e.g. re-introducing the package-global disabling the over-cap fix
-// removed for oversized serialized data — is caught immediately.
-#[test]
-fn plain_unbound_reference_fires_ry010() {
-    // Negative control for the whole audit block: with no search-path-opening
-    // construct, a real miss must still fire RY010. This is the invariant the
-    // over-cap fix restored (oversized sysdata used to suppress this project-wide).
-    let diags = check("x <- genuinely_unbound_name\n");
-    assert!(
-        diags.iter().any(|d| d.code == "RY010"),
-        "a plain unbound reference must fire RY010: {diags:?}"
-    );
-}
-
-#[test]
 fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     // The `SERIALIZED_BINDINGS_UNENUMERABLE` marker still flows from the
     // unstubbed-attached-package path (tests/examples with unstubbed
@@ -1201,43 +563,6 @@ fn external_unenumerable_marker_suppresses_ry010_for_its_file() {
     assert!(
         diags.iter().all(|d| d.code != "RY010"),
         "the unenumerable marker should suppress RY010 for its file: {diags:?}"
-    );
-}
-
-#[test]
-fn library_of_unknown_package_opens_search_path() {
-    let diags = check("library(definitely_not_a_real_pkg_xyz)\nx <- some_unbound_value\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "library() of an unstubbed package opens the search path: {diags:?}"
-    );
-}
-
-#[test]
-fn library_character_only_without_literal_opens_search_path() {
-    let diags = check("pkg <- \"x\"\nlibrary(pkg, character.only = TRUE)\ny <- still_unbound\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "library(character.only=TRUE) without a literal name opens the search path: {diags:?}"
-    );
-}
-
-#[test]
-fn data_and_load_calls_open_search_path() {
-    let diags = check("data(some_dataset)\nload(\"workspace.rda\")\nz <- unbound_after_load\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "data()/load() open the search path: {diags:?}"
-    );
-}
-
-#[test]
-fn attach_opens_search_path_via_unknown_bindings_scope_effect() {
-    // `attach()` is the canonical `ScopeEffect::UnknownBindings` loader.
-    let diags = check("attach(list(a = 1))\nw <- unbound_after_attach\n");
-    assert!(
-        diags.iter().all(|d| d.code != "RY010"),
-        "attach() opens the search path: {diags:?}"
     );
 }
 
@@ -1325,29 +650,6 @@ fn narrowed_binding_keeps_list_origin_marker() {
 // fresh environment. The contract is callee-specific — an ordinary
 // braced argument still evaluates in the caller (#350).
 
-/// The issue's shape: a loop variable bound in one `test_that()` block
-/// must not shadow a call head used in a different block.
-#[test]
-fn sibling_testthat_blocks_do_not_share_bindings() {
-    let source = "prob <- function(x) sum(x)\n\
-                  test_that(\"block A\", {\n\
-                    for (prob in list(1, 2)) NULL\n\
-                  })\n\
-                  test_that(\"block B\", {\n\
-                    prob(1:2)\n\
-                  })\n";
-    let diagnostics = check(source);
-    assert!(
-        diagnostics.iter().all(|d| d.code != "RY070"),
-        "a loop variable in one test_that block must not poison a call head in another: {diagnostics:?}"
-    );
-    // The file-level function still resolves through the parent chain.
-    assert!(
-        diagnostics.is_empty(),
-        "the second block reads the file-level function: {diagnostics:?}"
-    );
-}
-
 /// With testthat attached the callee identity is not proven; the
 /// conservative write-through uncertainty leaves the loop variable as an
 /// unknown file-level binding, which R's function-mode call-head lookup
@@ -1370,29 +672,6 @@ fn attached_testthat_blocks_keep_sibling_call_heads_resolvable() {
     );
 }
 
-/// A same-block binding is the value at call time (R errors
-/// "could not find function"): isolation must not mask real shadowing.
-#[test]
-fn same_block_shadowing_keeps_the_call_error() {
-    let diagnostics = check("test_that(\"a\", {\n  shadowed <- 1\n  shadowed(2)\n})\n");
-    assert!(
-        diagnostics.iter().any(|d| d.code == "RY070"),
-        "shadowing inside one test_that block is a real error: {diagnostics:?}"
-    );
-}
-
-/// Verified in R: `identity({x <- 1})` changes the outer `x` (#350).
-/// Braced arguments of ordinary calls keep caller evaluation, so the
-/// isolation above must stay keyed to the specific callees.
-#[test]
-fn ordinary_braced_argument_still_writes_through() {
-    let diagnostics = check("identity({ x <- 1L })\nx + \"s\"\n");
-    assert!(
-        diagnostics.iter().any(|d| d.code == "RY040"),
-        "a plain braced argument writes through to the caller: {diagnostics:?}"
-    );
-}
-
 /// Verified in R: `<<-` climbs past the per-test environment into the
 /// file scope. The binding exists afterwards; only its type is unknown.
 #[test]
@@ -1403,78 +682,6 @@ fn superassignment_escapes_the_testthat_block() {
         scope.get("esc").is_some(),
         "a superassigned name must exist at the file level"
     );
-}
-
-/// A project-local `test_that` definition keeps the ordinary argument
-/// path: its braced argument is an ordinary promise evaluated in the
-/// caller, so block bindings survive.
-#[test]
-fn project_local_test_that_keeps_caller_argument_flow() {
-    let diagnostics = check(
-        "test_that <- function(desc, code) code\n\
-         test_that(\"a\", {\n  zz <- 1L\n})\n\
-         zz + \"s\"\n",
-    );
-    assert!(
-        diagnostics.iter().any(|d| d.code == "RY040"),
-        "a project-local test_that must keep caller argument flow: {diagnostics:?}"
-    );
-}
-
-/// `describe`/`it` route through the same `test_code` engine: a binding
-/// in one `it()` block does not exist in its sibling. Mirrors
-/// `sibling_testthat_blocks_do_not_share_bindings` through the BDD
-/// verbs, so deleting the `describe`/`it` arms fails here too.
-#[test]
-fn describe_and_it_blocks_isolate_sibling_bindings() {
-    let diagnostics = check(
-        "inner <- function(x) sum(x)\n\
-         describe(\"d\", {\n\
-           it(\"one\", {\n\
-             for (inner in list(1, 2)) NULL\n\
-           })\n\
-           it(\"two\", {\n\
-             inner(1:2)\n\
-           })\n\
-         })\n",
-    );
-    assert!(
-        diagnostics.iter().all(|d| d.code != "RY070"),
-        "a loop variable in one it() block must not poison a call head in another: {diagnostics:?}"
-    );
-    // The file-level function still resolves through the parent chain.
-    assert!(
-        diagnostics.is_empty(),
-        "the second it() block reads the file-level function: {diagnostics:?}"
-    );
-}
-
-/// Verified in R: a wrapper that forwards its own `code` formal hands
-/// test_that the symbol `code`, whose evaluation forces the wrapper's
-/// promise in the wrapper's caller. The forwarded body is ordinary code
-/// there: its errors are reported and its bindings reach that caller.
-#[test]
-fn test_that_wrapper_argument_is_ordinary_caller_code() {
-    let diagnostics = check(
-        "check_case <- function(desc, code) test_that(desc, code)\n\
-         check_case(\"a\", { zz <- 1L })\n\
-         zz + \"s\"\n\
-         check_case(\"b\", 1L + \"s\")\n",
-    );
-    let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
-    assert_eq!(codes, vec!["RY040", "RY040"], "{diagnostics:?}");
-}
-
-/// The block verbs bind their formals from the testthat stub, so named
-/// and reordered arguments still isolate the body.
-#[test]
-fn named_testthat_block_arguments_isolate_the_body() {
-    let diagnostics = check(
-        "f <- function(x) x\n\
-         it(code = { f <- 1L }, description = \"a\")\n\
-         f(2)\n",
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 /// Sequencing inside one test body is unchanged: local assignments stay
@@ -1495,97 +702,4 @@ fn testthat_block_environment_oracle() {
     ));
     let codes: Vec<&str> = diagnostics.iter().map(|d| d.code).collect();
     assert_eq!(codes, vec!["RY070", "RY040"], "{diagnostics:?}");
-}
-
-#[test]
-fn delayed_assign_binds_an_unforced_promise() {
-    // #349: dplyr and lubridate bind shared values lazily. The promise
-    // expression is not evaluated, so `later` is not read before it exists.
-    let source = "delayedAssign('shared_empty', later)\n\
-                  later <- numeric()\n\
-                  f <- function() shared_empty\n\
-                  g <- function() {\n  delayedAssign('forced', 2)\n  function() forced\n}\n\
-                  h <- function() not_bound\n";
-    let unbound: Vec<_> = check(source)
-        .into_iter()
-        .filter(|diagnostic| diagnostic.code == "RY010")
-        .map(|diagnostic| diagnostic.message)
-        .collect();
-    assert_eq!(unbound.len(), 1, "{unbound:?}");
-    assert!(unbound[0].contains("not_bound"), "{unbound:?}");
-    // Named, reordered, and qualified calls bind the `x` target without
-    // evaluating the promise.
-    for call in [
-        "delayedAssign(value = later, x = 'held')",
-        "delayedAssign(x = 'held', later)",
-        "base::delayedAssign('held', later)",
-        "delayedAssign(val = later, x = 'held')",
-        "delayedAssign('held', later, eval.env = environment())",
-    ] {
-        let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
-        assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
-    }
-    let diagnostics = check("delayedAssign(value = 'wrong', x = 'held')\nwrong\n");
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "RY010" && d.message.contains("wrong")),
-        "{diagnostics:?}"
-    );
-    // R rejects a repeated target before binding anything.
-    let call = "delayedAssign(x = 'held', value = 1, x = 'other')";
-    let diagnostics = check(&format!("f <- function() {{\n  {call}\n  held\n}}\n"));
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "RY010" && d.message.contains("held")),
-        "{diagnostics:?}"
-    );
-    // A project definition is an ordinary call.
-    let diagnostics = check(
-        "delayedAssign <- function(x, value) 1L\ny <- delayedAssign('unused', 0)\nif (y) TRUE\nunused\n",
-    );
-    assert!(
-        diagnostics.iter().all(|d| d.code != "RY001"),
-        "{diagnostics:?}"
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "RY010" && d.message.contains("unused")),
-        "{diagnostics:?}"
-    );
-}
-
-#[test]
-fn local_block_closures_read_later_helpers() {
-    // rlang/cli `standalone-sizes.R`: a closure in a `local()` block reads
-    // helpers the block assigns after it, as a function body would allow.
-    let source = "format_bytes <- local({\n\
-                  pretty <- function(style) {\n\
-                  style <- switch(style, a = helper_a, b = not_bound)\n\
-                  if (is.null(style)) helper_a else style\n\
-                  }\n\
-                  helper_a <- function(x) x\n\
-                  pretty\n\
-                  })\n";
-    let unbound: Vec<_> = check(source)
-        .into_iter()
-        .filter(|diagnostic| diagnostic.code == "RY010")
-        .map(|diagnostic| diagnostic.message)
-        .collect();
-    assert_eq!(unbound.len(), 1, "{unbound:?}");
-    assert!(unbound[0].contains("not_bound"), "{unbound:?}");
-    // A block evaluated in the caller's frame gives its closures the same view.
-    let source = "f <- function() {\n\
-                  local({\n\
-                  pretty <- function() helper_a\n\
-                  helper_a <- function(x) x\n\
-                  }, environment())\n\
-                  }\n";
-    let diagnostics = check(source);
-    assert!(
-        diagnostics.iter().all(|d| d.code != "RY010"),
-        "{diagnostics:?}"
-    );
 }

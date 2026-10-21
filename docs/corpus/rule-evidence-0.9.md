@@ -4,8 +4,9 @@ This records the rule audit at commit
 `ec702b587f2ab5a78f64182654d2b1865b44adb0`: 709 Posit findings, including
 43 true-positive records and 666 false-positive records. Two TP identities
 appear twice; see the [snapshot counting notes](0.9-release-evidence.md#final-precision-and-tp-retention).
-The tables preserve that audit;
-use the live corpus ledgers and oracle tests for current results.
+The tables preserve that audit. Rows and notes marked as added after the
+original 0.9 audit cover later rules. Use the live corpus ledgers and oracle
+tests for current results.
 
 The audit combined the corpus, semantic-claim oracle, probes, literal-to-parameter
 lifting tests, and a mutation pilot for RY032, RY040, RY093, and RY103.
@@ -111,7 +112,7 @@ determines the verdict.
 | `RY110` vacuous-all-guard | 0/0 | yes | `vacuous_all_guard_claim.R` | consistent | - | yes | keep | Valid claim; 0 corpus findings. The founding hms shape (tidyverse/hms#231) is interprocedural -- the guard sits in the `is_numeric_or_na` helper, the demand in `hms()`'s `vec_cast` -- outside the rule's same-function scope; every corpus `all(is.na())` site is an intentionally permissive shape (no mode-predicate operand: rlang `R/bytes.R:199`, scales `R/colour-mapping.R:54`; bare skip-logic guards; or the hms helper itself), so the downstream-demand gate keeps the corpus silent. |
 | `RY111` constant-argument-shadowing | 28/3 | yes | `constant_argument_shadowing_claim.R` | n/a (syntactic) | - | - | keep | Valid claim; 28 TP / 3 FP across the corpora (11 TP tidyverse + 17 TP posit, the ledger-row sum RY109's entry uses; the ten dbplyr identities are the same sites in both manifests at the same pin). Tidyverse: haven `R/labelled.R:111`, the founding defect itself (issue #361: median.haven_labelled hardcodes `na.rm = TRUE`, so `median(labelled(c(1:4, NA)), na.rm = FALSE)` returns 2.5 where base `median` returns NA) plus the dbplyr `sql_render.*_query` family whose own `subquery` formal is never read while the generic forwards the caller's flag into the method. Posit true positives: the same dbplyr family; reticulate's `r_to_py.POSIXt` (the method POSIXct/POSIXlt dispatch to) and `r_convert_dataframe_column` dropping their `convert` contract parameter; shiny's `observeEvent` pinning `autoDestroy = TRUE` while forwarding every sibling formal; torch's `nnf_rrelu_` forcing `training = TRUE` against its own `training = FALSE` default. Posit false positives: gt's testthat helpers exposing testthat-compat `all = TRUE` signatures and sparklyr's `stream_read_socket` generic-family `columns` compat. The dead-formal gate keeps every deliberate idiom silent: dbplyr's forwarded `subquery` wrapper, stringr's guarded `ignore_case`, tibble's forwarded `quiet`, dplyr's guarded `recursive`, rvest's `env_has(inherit = inherit)` -- a body (or signature default) that reads the formal anywhere handles the caller's value, so per-site constants are chosen child semantics. |
 | `RY118` missing-box-export | 0/0 | yes | `box_missing_export.R` | n/a (structural) | - | - | keep | Added after the original 0.9 audit. The pinned box 1.2.3 fixture proves that a complete local module rejects a selected missing export; missing and dynamic inventories remain silent. The corpus row records no finding from the pinned package snapshots. |
-| `RY119` integer-coercion-range-loss | 0/0 | yes | `integer_range_loss_claim.R` | lift-reachable | - | yes | keep | Added after the original 0.9 audit. Actual R confirms that a proven out-of-range base `as.integer()` cast creates `NA_integer_` and emits the range warning; the rule and quiet controls run in the normal probe and oracle gates. An exact-pin 94-entry/77-tree differential against the reviewed #601 base found no changed package/root report. The pinned readxl and haven functions reproduce the runtime failure with `1e10`, but their original source parameters have no proven call-site value in the checker, so the original package diagnostics remain unchanged. See [the range evidence](integer-range-evidence.md). |
+| `RY119` integer-coercion-range-loss | 0/0 | yes | `integer_range_loss_claim.R` | lift-reachable | - | yes | keep | Added after the original 0.9 audit. Actual R confirms that a proven out-of-range base `as.integer()` cast creates `NA_integer_` and emits the range warning; the rule and quiet controls run in the normal probe and oracle gates. An exact-pin 94-entry/77-tree differential against the reviewed #601 base found no changed package/root report. The pinned readxl and haven functions reproduce the runtime failure with `1e10`, but their original source parameters have no proven call-site value in the checker, so the original package diagnostics remain unchanged. |
 
 The historical corpus above predates RY114–117. These opt-in declaration
 rules retain a `keep` verdict in the executable matrix. Their positive and
@@ -123,14 +124,16 @@ literal-lift experiment because that experiment installs no authored records.
 
 Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 
-- **RY003 (default-off)**: `enabled_by_default("RY003")` returns `false`. The
-  test `reverting_ry003_default_off_fails` gates this: changing the registry
-  to enable RY003 fails the test.
+- **RY003 and RY113 (default-off)**: `enabled_by_default` returns `false`
+  for both. RY113 postdates the table above, so its verdict lives only in
+  the executable matrix. The tests `reverting_default_off_rules_fails` and
+  `default_off_verdicts_match_the_registry` gate this: enabling either rule
+  in the registry fails one of them.
 - **RY095 (retired)**: absent from `RULES`. The test
   `retired_rules_are_absent_from_the_registry` gates this: re-adding RY095
   fails the test.
 - **All other rules (keep)**: `enabled_by_default` returns `true` for every
-  rule except RY003. The test `default_off_verdicts_match_the_registry`
+  other rule. The test `default_off_verdicts_match_the_registry`
   verifies the registry matches the verdict table.
 - **Every rule has a verdict**: the test `every_rule_has_an_executed_verdict`
   verifies the verdict table covers exactly the `RULES` registry.
@@ -145,4 +148,4 @@ Code-level verdicts are enforced by `crates/ry-checker/tests/rule_evidence.rs`:
 - Mutation pilot: 4 rule families piloted (RY032, RY040, RY093, RY103).
 - Corpus values count finding records in the archived hermetic ledger.
 - Historical 0.9 verdicts: 35 keep, 1 default-off (RY003), 0 retire
-  (RY095 retired during the audit response); RY114–117 add four `keep` verdicts.
+  (RY095 retired during the audit response); RY114–117 add four `keep` verdicts and RY113 a `default-off` one.

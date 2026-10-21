@@ -98,7 +98,7 @@ use ry_typeshed::{
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
     InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
     ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
-    load_base_cached, load_package, package_has_injects, package_has_s3_methods,
+    load_base_cached, package_has_injects, package_has_s3_methods, package_stub,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -1362,6 +1362,11 @@ pub struct Checker {
     // walk: pass 2 runs the identical `infer` with `discarding = true`,
     // pass 3 with `false`.
     discarding: bool,
+    // When true, `emit` is a no-op while the walk itself is unchanged:
+    // set while walking the arm a literal `if (TRUE)` / `if (FALSE)`
+    // never takes (issue #703). Unlike `discarding`, it keeps reference
+    // and scope capture, so navigation over dead code is unaffected.
+    in_dead_arm: bool,
     // User-defined functions collected in pass 1. Stored behind an `Arc`
     // so the multi-file `Project` can share the refined tables across
     // per-file pass-3 emitters without deep-cloning them.
@@ -1626,6 +1631,7 @@ impl Checker {
             escaped_operator_bindings: false,
             escaped_slot_bindings: false,
             discarding: false,
+            in_dead_arm: false,
             fn_table,
             known_vars: Arc::new(HashSet::new()),
             return_slots,
@@ -2025,9 +2031,7 @@ impl Checker {
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {
-        self.user_stubs
-            .get(package)
-            .or_else(|| load_package(package))
+        package_stub(&self.user_stubs, package)
     }
 
     /// Conservative gate for cross-package injection scans (see

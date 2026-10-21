@@ -16,14 +16,13 @@ const MAX_MODULE_BYTES: u64 = 1_048_576;
 /// this check does not read, whose disk copy may be stale.
 pub(crate) type BoxSources = HashMap<PathBuf, Option<Arc<SourceFile>>>;
 
-/// Relative module state shared by every checker of one run, including the
-/// checkers of nested modules, so a module is usually analysed once per run.
-/// The lock does not span analysis: concurrent misses may analyse a module
-/// twice, with identical results.
+/// Relative module state shared by every checker of one run, nested modules
+/// included. The lock does not span analysis, so concurrent misses may
+/// analyse a module twice, with identical results.
 #[derive(Default)]
 pub(crate) struct BoxModules {
-    /// Editor/project buffers, which take precedence over a module's disk
-    /// copy. Keys use the existing ancestor's identity.
+    /// Editor and project buffers, which take precedence over disk. Keys
+    /// use the existing ancestor's identity.
     sources: BoxSources,
     /// `None` marks a module that reaches an import cycle. Its inventory
     /// would depend on which module was loaded first, so it stays opaque.
@@ -200,9 +199,8 @@ fn parse_import(argument: &Arg) -> Option<Import> {
     let target = match segments.as_slice() {
         [package] if package != "." && package != ".." => Target::Package(package.clone()),
         [first, ..] if first == "." || first == ".." => Target::Module(segments),
-        // Non-relative modules use box's configured search path. We do not
-        // model that lookup, but their static aliases and selections still
-        // bind opaque values through the ordinary import path.
+        // Non-relative modules use box's search path, which is not
+        // modeled. Their aliases and selections still bind opaque values.
         _ => Target::UnresolvedModule,
     };
     Some(Import {
@@ -214,9 +212,7 @@ fn parse_import(argument: &Arg) -> Option<Import> {
     })
 }
 
-/// Project invalidation needs to know whether an unchanged file may import
-/// an edited module. Search parsed calls, not arbitrary `box` text in
-/// comments, identifiers such as `boxplot`, or string literals.
+/// Whether `file` calls `box::use`, so it may import an edited module.
 pub(crate) fn has_box_use(file: &SourceFile) -> bool {
     if !file.source.contains("box") {
         return false;
@@ -231,9 +227,17 @@ pub(crate) fn has_box_use(file: &SourceFile) -> bool {
     .is_break()
 }
 
-/// Physical identity of a module path, which may name an unsaved file. It
-/// lets a module opened in an editor match its on-disk caller even with a
-/// symlinked root.
+/// Whether R's parser rejects `file`. Such source is never evidence: its
+/// recovered AST may invent definitions.
+pub(crate) fn rejected_by_r(file: &SourceFile) -> bool {
+    file.leading_bom
+        || !file.invalid_utf8.is_empty()
+        || !file.parse_errors.is_empty()
+        || !file.syntax_violations.is_empty()
+}
+
+/// Physical identity of a module path, which may name an unsaved file, so
+/// an open module matches its on-disk caller under a symlinked root.
 pub(crate) use ry_config::scoped_path_identity as path_identity;
 
 fn module_candidates(caller: &Path, segments: &[String]) -> Option<[PathBuf; 4]> {
@@ -275,9 +279,8 @@ struct ModuleLoad {
     assigned: HashSet<String>,
     /// Targets of direct `name <- function` statements.
     function_literals: Vec<String>,
-    /// Calls may create caller-frame bindings, including through qualified
-    /// writers and sourced files. We do not execute them, so a missing
-    /// syntactic assignment is not proof that a name is absent.
+    /// Calls may create caller-frame bindings, so a missing assignment does
+    /// not prove a name absent.
     unmodeled_effects: bool,
     /// box's quoted imports change the lexical environment of functions.
     imports: bool,
@@ -464,12 +467,10 @@ impl ModuleLoad {
                 value,
                 span,
             } => {
-                // The parser wraps a direct `foo <<- value` or `value ->> foo`
-                // statement in Stmt::Assign with a SuperAssign expression
-                // spanning the whole statement. It writes through the module
-                // environment, not to an own binding, and box rejects a tag on
-                // it at load time. An ordinary `foo <- (bar <<- value)` has a
-                // smaller inner span.
+                // The parser wraps a statement `foo <<- value` in
+                // Stmt::Assign with a SuperAssign spanning the whole
+                // statement. It writes no own binding, and box rejects a tag
+                // on it. `foo <- (bar <<- value)` has a smaller inner span.
                 let direct_superassignment = matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, lhs, span: marker, .. }
                     if marker == span && static_name(lhs) == static_name(target));
                 let Some(name) = static_name(target).filter(|_| !direct_superassignment) else {
@@ -528,12 +529,9 @@ impl ModuleLoad {
         (names, complete && !self.legacy_open)
     }
 
-    /// The collector indexes literal functions by spelling. A later wrapper
-    /// assignment can leave the final value callable while the indexed
-    /// literal is no longer its definition. Retain the collected signature
-    /// only for a single direct literal binding with no other module-load
-    /// assignment to the same name. Control-flow bindings are counted;
-    /// nested function bodies have their own lexical scope and are excluded.
+    /// Whether the collected signature describes `name`'s final value: a
+    /// single direct literal binding with no other load-time assignment to
+    /// the name. Control-flow bindings count. Nested function bodies do not.
     fn stable_functions(&self) -> HashSet<&str> {
         if self.unmodeled_effects {
             return HashSet::new();
@@ -637,10 +635,9 @@ impl Scope {
     }
 }
 
-/// Branch joins compare binding types, which cannot tell two opaque module
-/// objects or callables apart. For each name with a box object on some
-/// path, return the object every reaching path agrees on, or `OpaqueCall`
-/// when they differ. A `None` path is the pre-branch scope.
+/// For each name with a box object on some path, the object every path
+/// agrees on, or `OpaqueCall`. Binding types cannot tell two opaque module
+/// objects apart. A `None` path is the pre-branch scope.
 pub(crate) fn join_box_provenance(
     scope: &Scope,
     paths: &[Option<&BranchDelta>],
@@ -776,13 +773,7 @@ impl Checker {
                     Err(_) => return None,
                 },
             };
-            // Source that R's parser rejects cannot provide a
-            // trustworthy inventory, whether read from disk or a buffer.
-            if file.leading_bom
-                || !file.invalid_utf8.is_empty()
-                || !file.parse_errors.is_empty()
-                || !file.syntax_violations.is_empty()
-            {
+            if rejected_by_r(&file) {
                 return None;
             }
             // box loads a module from its canonical path, so its own
@@ -890,9 +881,8 @@ impl Checker {
                 Target::UnresolvedModule => (None, None),
             };
             if let Some(object_name) = import.object_name {
-                // box module objects are environments, not lists. Their
-                // exact export lookup lives in `BoxObject`; an opaque type
-                // avoids inventing list schema or length facts elsewhere.
+                // box module objects are environments, not lists. An opaque
+                // type avoids inventing list schema or length facts.
                 scope.insert(object_name.clone(), RType::unknown());
                 if let Some(object) = &object {
                     scope.set_box_object(object_name, object.clone());
@@ -974,53 +964,46 @@ impl Checker {
         environment_known_before_call: bool,
     ) -> Option<RType> {
         if let Some((base, object, member)) = box_member(func, scope) {
-            match object {
+            let resolved = match object {
                 BoxObject::Package(package) => {
                     self.infer(base, scope);
-                    if self
+                    let exported = self
                         .box_package_inventory(&package)
                         .exports
-                        .contains_key(&member)
-                    {
-                        let callable = BoxCallable::Package(format!("{package}::{member}"));
-                        return Some(self.infer_box_callable(
-                            &member,
-                            &callable,
-                            args,
-                            scope,
-                            span,
-                            environment_known_before_call,
-                        ));
-                    }
-                    self.infer_args_for_diagnostics(args, scope);
-                    return Some(RType::unknown());
+                        .contains_key(&member);
+                    Some((
+                        exported.then(|| BoxCallable::Package(format!("{package}::{member}"))),
+                        RType::unknown(),
+                    ))
                 }
                 BoxObject::Module(inventory) => {
                     // Infer the member itself for its RY118.
                     let member_type = self.infer(func, scope);
+                    let fallback = member_type
+                        .fn_sig
+                        .map(|signature| (*signature.return_type).clone())
+                        .unwrap_or_else(RType::unknown);
                     let callable = inventory
                         .exports
                         .get(&member)
                         .and_then(|export| export.callable.clone());
-                    if let Some(callable) = callable {
-                        return Some(self.infer_box_callable(
-                            &member,
-                            &callable,
-                            args,
-                            scope,
-                            span,
-                            environment_known_before_call,
-                        ));
-                    }
-                    self.infer_args_for_diagnostics(args, scope);
-                    return Some(
-                        member_type
-                            .fn_sig
-                            .map(|signature| (*signature.return_type).clone())
-                            .unwrap_or_else(RType::unknown),
-                    );
+                    Some((callable, fallback))
                 }
-                BoxObject::Attached(_) | BoxObject::OpaqueCall => {}
+                BoxObject::Attached(_) | BoxObject::OpaqueCall => None,
+            };
+            if let Some((callable, fallback)) = resolved {
+                if let Some(callable) = callable {
+                    return Some(self.infer_box_callable(
+                        &member,
+                        &callable,
+                        args,
+                        scope,
+                        span,
+                        environment_known_before_call,
+                    ));
+                }
+                self.infer_args_for_diagnostics(args, scope);
+                return Some(fallback);
             }
         }
         let name = binding_name(func)?;

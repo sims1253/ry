@@ -223,7 +223,6 @@ impl FolderAnalysisContext {
             repo_root: self.anchor(),
         };
         let mut diagnostics = post.pre_demotion(diagnostics, path, Some(file));
-        post.demote_non_source_paths(&mut diagnostics);
         post.post_demotion(&mut diagnostics);
         diagnostics
             .iter()

@@ -11,6 +11,7 @@ use ry_core::walk::{AstNode, Descend, Walk, walk_stmts};
 use ry_core::{RType, Span};
 
 use crate::infer::span_of;
+use crate::infer::vacuous::stmt_span;
 use crate::{Checker, Scope, whole_file_span};
 
 /// File-local identity, valid only within one returned facts snapshot.
@@ -334,7 +335,7 @@ impl ReferenceCapture {
                 let blocker = ReferenceBlocker {
                     kind: "containing_statement",
                     cause: "unsupported_statement",
-                    span: Some(statement_span(statement)),
+                    span: Some(stmt_span(statement)),
                     scope_span: owner,
                 };
                 prefix_blocker = Some(blocker);
@@ -399,7 +400,7 @@ impl ReferenceCapture {
             let blocker = ReferenceBlocker {
                 kind: "default_expression",
                 cause: "lazy_default",
-                span: Some(statement_span(&default)),
+                span: Some(stmt_span(&default)),
                 scope_span: owner,
             };
             self.inventory_scope(
@@ -440,18 +441,6 @@ impl ReferenceCapture {
             definitions,
             references,
         }
-    }
-}
-
-fn statement_span(statement: &Stmt) -> Span {
-    match statement {
-        Stmt::Expr(expression) => span_of(expression),
-        Stmt::Assign { span, .. }
-        | Stmt::If { span, .. }
-        | Stmt::For { span, .. }
-        | Stmt::While { span, .. }
-        | Stmt::FunctionDef { span, .. }
-        | Stmt::Return { span, .. } => *span,
     }
 }
 

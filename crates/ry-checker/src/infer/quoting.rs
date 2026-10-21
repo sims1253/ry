@@ -82,7 +82,7 @@ pub(crate) fn may_rebind_source_before(body: &[Stmt], source: &str, call_start: 
                 AstNode::Stmt(Stmt::For { name, iter, .. }) if span_of(iter).end <= call_start => Some(semantic_argument_name(name)),
                 AstNode::Expr(Expr::Call { func, args, span }) if span.end <= call_start
                     && matches!(func.as_ref(), Expr::Ident { name, .. } if matches!(crate::semantic_lists::bare_name(name), "assign" | "delayedAssign")) => {
-                    args.iter().find(|arg| arg.name.as_deref().map(semantic_argument_name) == Some("x"))
+                    crate::nse::named_arg(args, "x")
                         .or_else(|| args.iter().find(|arg| arg.name.is_none()))
                         .and_then(|arg| match &arg.value { Expr::String(name, _) => Some(name.as_str()), _ => None })
                 }
@@ -137,19 +137,14 @@ impl Checker {
             };
 
             // A formal promise shadows every enclosing binding of the same
-            // name, so a default that references its own formal can only
-            // resolve to the promise itself: triggering it errors in R
-            // ("promise already under evaluation: recursive default
-            // argument reference") while a supplied argument skips the
-            // default entirely. When the body provably forces the promise,
-            // RY098 carries the diagnosis with its forcing proof; RY109
-            // warns on the rest, because such a default can never evaluate
-            // successfully whether or not this particular body forces it
-            // (dtplyr shipped exactly that shape, parent commit bffe46e,
-            // fixed in dbe32a6). A body that defuses the promise with a
-            // reviewed capture helper (enquo()/substitute()/...) uses the
-            // shape deliberately, so RY109 stays quiet there and keeps the
-            // diagnostic a warning everywhere else.
+            // name, so a default that references its own formal resolves to
+            // the promise itself. Forcing it errors in R ("promise already
+            // under evaluation: recursive default argument reference"),
+            // while a supplied argument skips the default. RY098 reports
+            // when the body provably forces the promise, and RY109 warns on
+            // the rest. A body that defuses the promise with a reviewed
+            // capture helper (enquo()/substitute()/...) uses the shape on
+            // purpose, so RY109 stays quiet there.
             if let Some(span) = first_executed_identifier(self, default, &param.name) {
                 let forced_in_body = guaranteed_force_before_replacement(self, body, &param.name);
                 if forced_in_body {
@@ -163,12 +158,8 @@ impl Checker {
                         ),
                     );
                 } else if !body_defuses_formal(self, body, &param.name) {
-                    // The wording separates what is always true (the default
-                    // can never evaluate) from what depends on the body:
-                    // a never-forced formal (dplyr's distinct helpers,
-                    // ggplot2's densitybin) makes the call run when the
-                    // argument is missing, and only consuming the promise
-                    // would raise R's recursive-default error.
+                    // The default can never evaluate, but a never-forced
+                    // formal lets the call run when the argument is missing.
                     self.emit(
                         Severity::Warning,
                         span,
@@ -223,17 +214,11 @@ impl Checker {
     }
 }
 
-// The force/identifier family below (`guaranteed_force_before_replacement`,
-// `definitely_forced_identifier{,_in_stmt}`, `first_executed_identifier{,_in_stmt}`)
-// is deliberately NOT expressed through the shared walker in
-// `ry_core::walk`: its rules select individual children of a node —
-// call arguments are skipped unless the callee has a reviewed forcing
-// contract, an `if` with a literal condition visits only the taken
-// branch, subscript promises are skipped while the dispatch object
-// is kept — and the walk must stop at the first identifier forced in
-// evaluation order. That is an evaluation-order analysis with
-// per-child laziness rules, not a subtree-skip policy, so it keeps its
-// hand-rolled recursion.
+// The force and identifier functions below do not use `ry_core::walk`.
+// They pick individual children of a node by laziness rules (call
+// arguments only under a reviewed forcing contract, only the taken branch
+// of a literal `if`, the dispatch object but not subscripts) and stop at
+// the first identifier forced in evaluation order.
 fn guaranteed_force_before_replacement(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
     for statement in body {
         if definitely_forced_identifier_in_stmt(checker, statement, wanted).is_some() {
@@ -789,37 +774,21 @@ enum DefaultCapture {
 
 /// Whether any statement of this frame hands the formal's promise to a
 /// reviewed capture helper (enquo()/enexpr()/substitute()/quote()/...) or
-/// to tidy injection (`{{ x }}`). Bodies built around
-/// `function(x = x) enquo(x)` or `mutate(..., col = f({{ x }}))` use the
-/// self-reference deliberately — the defuser receives the unevaluated
-/// default — so the self-referential default rules stay quiet for them.
-/// A qualified callee carries exact provenance; a bare callee is trusted
-/// only when it resolves through an attached or NAMESPACE-imported
-/// package AND the project does not define the same name itself (a local
-/// `quote <-` replacement is not a defuser until proven; this is also why
-/// rlang's own defusing tests warn: their bare enexpr/enquo are defined
-/// in-project). `{{ x }}` is tidy-eval syntax: as an eager argument it
-/// would be a forced `x` in pointless braces, which nobody writes. Only
-/// this frame's statements count: a nested function's own formals shadow
-/// the promise, and a nested defusing closure says nothing about this
-/// body's other reads.
+/// to tidy injection (`{{ x }}`). `function(x = x) enquo(x)` uses the
+/// self-reference on purpose, because the defuser receives the
+/// unevaluated default. A bare callee counts only when it resolves
+/// through an attached or NAMESPACE-imported package and the project does
+/// not define the same name. Nested functions do not count: their own
+/// formals shadow the promise.
 ///
-/// Known misses (under-warning; both pinned as `oracle: known-gap`
-/// fixtures and acceptable because the rule is a warning):
+/// Known misses, pinned as `oracle: known-gap` fixtures:
 ///
 /// - Defuse-then-force: `q <- rlang::enquo(x); rlang::eval_tidy(q)`
-///   errors in R (the captured default is evaluated later) but contains
-///   no bare read of `x`, so the credit applies.
-/// - Divergent branches: `if (flag) rlang::enquo(x) else x` errors in R
-///   on the else path but is credited for the defusing branch. Refusing
-///   the credit whenever the formal also appears in a non-capture
-///   position does NOT fall out cleanly: after `x <- enquo(x)`, later
-///   bare reads see the replacement quosure, not the promise (corrr's
-///   `stretch_unique` reads `as_label(y)` after `y <- enquo(y)`), and
-///   formula-quoted references (`stats::xtabs(val ~ x + y, data)` in
-///   corrr's `retract`) are bare only without a data-mask/formula
-///   context. A sound version needs stop-at-reassignment flow analysis
-///   plus quoting-context tracking, so the gap is pinned instead.
+///   errors in R but has no bare read of `x`.
+/// - Divergent branches: `if (flag) rlang::enquo(x) else x` errors on the
+///   else path. Refusing credit for any other read is wrong after
+///   `x <- enquo(x)`, where later reads see the quosure, so a sound
+///   version needs flow analysis.
 fn body_defuses_formal(checker: &Checker, body: &[Stmt], wanted: &str) -> bool {
     // `{{ wanted }}` parses as a block whose single statement is another
     // block whose single expression is the identifier.

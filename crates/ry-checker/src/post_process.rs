@@ -1,30 +1,20 @@
 //! Shared diagnostic post-processing for `ry check` and the LSP server.
 //!
-//! `subtract_baseline` consumes counts per `(path, code, message)` key in
-//! vector order, so the order of the post-processing stages is
-//! observable: a diagnostic that a later stage would drop — an
-//! inline-suppressed one, or one below the confidence threshold — must
-//! not consume a baseline count that an identical unsuppressed twin
-//! still needs. The pipeline below is the single order both frontends
-//! apply (the order `ry check` has always used):
+//! Both frontends apply the stages in this order:
 //!
 //!   1. inline suppression comments (`# ry: ignore`, `# noqa`, ...)
 //!   2. severity filter (select/ignore/error/warn)
-//!   3. path-based confidence demotion — the seam between the two
-//!      phases; both frontends demote non-source paths here through
-//!      [`PostProcess::demote_non_source_paths`] (#492)
+//!   3. confidence demotion of package non-source paths
 //!   4. baseline subtraction
 //!   5. min-confidence threshold
 //!
-//! The pipeline is split at the demotion seam on purpose: the CLI runs
-//! [`PostProcess::pre_demotion`] per file, demotes the aggregated
-//! result, then finishes with [`PostProcess::post_demotion`], while the
-//! LSP runs the same three stages per published file. Both frontends
-//! call the demotion stage itself, so a finding from a package's
-//! `tests/` tree lands below the threshold in the editor exactly when
-//! it does on the command line. This crate is the natural home because
-//! it already owns the suppression and severity filters and already
-//! depends on ry-config (the reverse dependency would be a cycle).
+//! The order is observable because `subtract_baseline` consumes counts
+//! per `(path, code, message)` key in vector order. Suppression and the
+//! severity filter run first so a dropped diagnostic never consumes a
+//! count its identical twin needs. The threshold runs after, so a
+//! below-threshold diagnostic does consume one.
+//! [`PostProcess::pre_demotion`] runs steps 1-2 per file, and
+//! [`PostProcess::post_demotion`] runs steps 3-5 on the collected result.
 
 use std::collections::HashSet;
 use std::ops::ControlFlow;
@@ -39,10 +29,9 @@ use crate::diagnostics::{
     Confidence, Diagnostic, SeverityFilter, Suppression, SuppressionKind, SuppressionOrigin,
 };
 
-/// The initial audit covers only rules whose premise is recognized from
-/// local syntax. For inference-dependent rules, absence of a diagnostic can
-/// mean that analysis lacked a type, signature, or package fact; that is not
-/// evidence that an ignore is unused.
+/// The unused-ignore audit covers only rules whose premise is local syntax.
+/// For an inference-dependent rule, a missing diagnostic can mean the
+/// analysis lacked a fact, which does not prove the ignore unused.
 const UNUSED_IGNORE_AUDITABLE_CODES: &[&str] = &["RY034", "RY102"];
 
 fn unchecked_audit_regions(file: &SourceFile) -> Vec<Span> {
@@ -92,11 +81,7 @@ pub struct PostProcess<'a> {
 
 impl PostProcess<'_> {
     /// Steps 1-2: drop inline-suppressed diagnostics, then apply the
-    /// severity filter. Suppression runs FIRST so a suppressed
-    /// occurrence never reaches baseline subtraction (step 4) to
-    /// consume a count its unsuppressed twin — the same
-    /// `(path, code, message)` key — needs. Diagnostics with no source
-    /// `file` simply skip the suppression step.
+    /// severity filter. Without a source `file`, suppression is skipped.
     pub fn pre_demotion(
         &self,
         diagnostics: Vec<Diagnostic>,
@@ -205,22 +190,12 @@ impl PostProcess<'_> {
         audit
     }
 
-    /// Step 3: demote diagnostics from a package's non-source trees
-    /// (`tests/`, `data-raw/`, `demo/`, `vignettes/`, `inst/`) one
-    /// confidence tier, between the severity filter and the baseline.
-    /// Both frontends run this stage at the seam so the editor and
-    /// `ry check` demote identically before the threshold (and before
-    /// baseline subtraction, which never reads confidence) sees the
-    /// finding.
-    pub fn demote_non_source_paths(&self, diagnostics: &mut [Diagnostic]) {
-        demote_non_source_paths(diagnostics, self.repo_root);
-    }
-
-    /// Steps 4-5: subtract the baseline, then apply the min-confidence
-    /// threshold. The threshold runs AFTER subtraction so a
-    /// below-threshold diagnostic still consumes its baseline count,
-    /// exactly like `ry check`.
+    /// Steps 3-5: demote non-source paths, subtract the baseline, then
+    /// apply the min-confidence threshold. The threshold runs after
+    /// subtraction so a below-threshold diagnostic still consumes its
+    /// baseline count.
     pub fn post_demotion(&self, diagnostics: &mut Vec<Diagnostic>) {
+        demote_non_source_paths(diagnostics, self.repo_root);
         if let Some(baseline) = self.baseline {
             ry_config::subtract_baseline(diagnostics, baseline, self.repo_root);
         }
@@ -229,15 +204,11 @@ impl PostProcess<'_> {
 }
 
 /// Demote diagnostics from a package's non-source trees (`tests/`,
-/// `data-raw/`, `demo/`, `vignettes/`, `inst/`) one confidence tier:
-/// code there is not what CRAN ships or checks first.
-///
-/// The nearest ancestor holding a `DESCRIPTION` is the package root,
-/// so a nested package demotes against its own root rather than the
-/// enclosing one, and a path with no package root above it — a bare
-/// directory merely named `tests` — is left alone. Relative diagnostic
-/// paths resolve against `repo_root` (or the working directory when
-/// it is `None`). Only confidence moves; severity is a separate axis.
+/// `data-raw/`, `demo/`, `vignettes/`, `inst/`) one confidence tier,
+/// because CRAN does not ship or check that code first. The package root
+/// is the nearest ancestor holding a `DESCRIPTION`. A path with no package
+/// root above it is left alone. Relative paths resolve against
+/// `repo_root`, or the working directory when it is `None`.
 fn demote_non_source_paths(diagnostics: &mut [Diagnostic], repo_root: Option<&Path>) {
     const DEMOTED: [&str; 5] = ["tests", "data-raw", "demo", "vignettes", "inst"];
     for diagnostic in diagnostics {
@@ -288,10 +259,8 @@ mod tests {
         }
     }
 
-    /// A diagnostic with every field set explicitly, so tests can vary
-    /// the confidence within one `(path, code, message)` key — something
-    /// the checker's own output cannot do (confidence is derived from
-    /// the code) but the ordering contract must still cover.
+    /// A diagnostic with an explicit confidence, so tests can vary it
+    /// within one `(path, code, message)` key.
     fn diag(path: &str, confidence: Confidence, line: usize) -> Diagnostic {
         Diagnostic {
             severity: crate::Severity::Warning,
@@ -489,13 +458,9 @@ mod tests {
         assert!(run(raw, src, &pipeline(&disabled, None, Confidence::Low)).is_empty());
     }
 
-    /// The #491 scenario: two identical `(path, code, message)`
-    /// diagnostics where the first carries `# ry: ignore[...]`, with a
-    /// baseline count of 1. Suppression must drop the first occurrence
-    /// BEFORE the baseline subtracts, so the count absorbs the
-    /// unsuppressed twin and the pipeline goes quiet. Filtering the
-    /// other way around would consume the count on the suppressed
-    /// occurrence and leave the twin visible.
+    /// Two identical diagnostics, the first suppressed inline, and a
+    /// baseline count of 1. Suppression runs before subtraction, so the
+    /// count absorbs the unsuppressed twin.
     #[test]
     fn suppressed_occurrence_does_not_consume_the_baseline_budget() {
         let src = "bad_one  # ry: ignore[RY010]\nbad_two\n";
@@ -513,10 +478,9 @@ mod tests {
         );
     }
 
-    /// The second parity break from #491: a below-threshold occurrence
-    /// still consumes baseline budget (threshold AFTER subtraction).
-    /// With a Medium and a High diagnostic on one key and a count of 1,
-    /// the Medium occurrence eats the count, so the High one survives.
+    /// A below-threshold occurrence still consumes a baseline count. With
+    /// a Medium and a High diagnostic on one key and a count of 1, the
+    /// Medium one takes the count and the High one survives.
     #[test]
     fn below_threshold_occurrence_still_consumes_the_baseline_budget() {
         let filter = SeverityFilter::default();
@@ -533,14 +497,7 @@ mod tests {
         assert_eq!(kept[0].confidence, Confidence::High);
     }
 
-    /// The demotion seam: confidence demoted between the two phases
-    /// lands before the min-confidence threshold — the CLI's documented
-    /// position. No baseline here: subtraction never reads confidence,
-    /// so demotion-versus-subtraction order is unobservable by
-    /// construction, and only the threshold can tell where demotion
-    /// happened. Demoting the `High` diagnostic to `Medium` between the
-    /// phases makes the `High` threshold drop it; demotion after
-    /// `post_demotion` (or none at all) leaves the survivor visible.
+    /// Confidence lowered between the two phases reaches the threshold.
     #[test]
     fn demotion_between_the_phases_happens_before_the_threshold() {
         let filter = SeverityFilter::default();
@@ -557,9 +514,8 @@ mod tests {
         );
     }
 
-    /// Straight-line sanity: each stage filtering on its own —
-    /// file-level suppression, an ignored rule, baseline subtraction,
-    /// and the confidence threshold.
+    /// Each stage filters on its own: file-level suppression, an ignored
+    /// rule, baseline subtraction, and the confidence threshold.
     #[test]
     fn each_stage_filters_independently() {
         let src = "# ry: ignore-file\nbad\n";
@@ -617,13 +573,7 @@ mod tests {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Path-based confidence demotion (#492)
-    // ─────────────────────────────────────────────────────────────────
-
-    /// A diagnostic whose confidence comes from its rule code, the way
-    /// the checker produces them — demotion must move the code-derived
-    /// tier, not just a hand-set field.
+    /// A diagnostic whose confidence comes from its rule code.
     fn coded(path: &std::path::Path, code: &'static str) -> Diagnostic {
         Diagnostic::new(
             crate::Severity::Warning,
@@ -634,10 +584,8 @@ mod tests {
         )
     }
 
-    /// An empty package root: a tempdir holding a `DESCRIPTION`, with
-    /// `tree` created beneath it. Returns the path of a (fictional)
-    /// file inside that tree — demotion only stats `DESCRIPTION`, it
-    /// never reads the diagnostic's file.
+    /// A package root with `tree` beneath it. Returns a path inside `tree`
+    /// that need not exist, because demotion only stats `DESCRIPTION`.
     fn package_tree(temp: &tempfile::TempDir, tree: &str) -> std::path::PathBuf {
         std::fs::write(temp.path().join("DESCRIPTION"), "Package: example\n").unwrap();
         let dir = temp.path().join(tree);
@@ -646,7 +594,7 @@ mod tests {
     }
 
     /// The demoted confidence of a diagnostic on `path`, run through
-    /// the seam method with `root` as the pipeline's repo root.
+    /// `post_demotion` with `root` as the pipeline's repo root.
     fn demoted_at(path: &std::path::Path, root: &std::path::Path) -> Confidence {
         let filter = SeverityFilter::default();
         let post = PostProcess {
@@ -657,12 +605,10 @@ mod tests {
         };
         let mut diagnostics = vec![coded(path, "RY030")];
         assert_eq!(diagnostics[0].confidence, Confidence::High);
-        post.demote_non_source_paths(&mut diagnostics);
+        post.post_demotion(&mut diagnostics);
         diagnostics[0].confidence
     }
 
-    /// The CLI's original pin, moved with the function: a package
-    /// `tests/` path demotes one tier.
     #[test]
     fn package_tests_path_demotes_confidence_one_tier() {
         let temp = tempfile::tempdir().unwrap();
@@ -670,8 +616,7 @@ mod tests {
         assert_eq!(demoted_at(&path, temp.path()), Confidence::Medium);
     }
 
-    /// All five support trees demote; `R/` — the tree CRAN ships and
-    /// checks first — does not.
+    /// All five support trees demote. `R/` does not.
     #[test]
     fn every_support_tree_demotes_and_r_source_does_not() {
         for tree in ["tests", "data-raw", "demo", "vignettes", "inst"] {
@@ -691,10 +636,7 @@ mod tests {
         );
     }
 
-    /// Nested packages demote against the NEAREST `DESCRIPTION` root:
-    /// a nested package's `tests/` demotes, while its `R/` tree stays
-    /// put even when the file also sits under the outer package's
-    /// `tests/` directory.
+    /// Nested packages demote against the nearest `DESCRIPTION` root.
     #[test]
     fn nested_packages_demote_against_their_own_root() {
         let temp = tempfile::tempdir().unwrap();
@@ -706,14 +648,12 @@ mod tests {
 
         let nested_tests = nested.join("tests/code.R");
         assert_eq!(demoted_at(&nested_tests, temp.path()), Confidence::Medium);
-        // Under the outer package's `tests/`, but inside the nested
-        // package's `R/`: the nearest root wins, no demotion.
+        // Under the outer `tests/` but inside the nested `R/`.
         let nested_r = nested.join("R/code.R");
         assert_eq!(demoted_at(&nested_r, temp.path()), Confidence::High);
     }
 
-    /// A directory merely named `tests` with no `DESCRIPTION` anywhere
-    /// above it is not a package support tree: no demotion.
+    /// A `tests` directory with no `DESCRIPTION` above it does not demote.
     #[test]
     fn plain_tests_directory_without_a_package_root_stays_undemoted() {
         let temp = tempfile::tempdir().unwrap();
@@ -723,8 +663,7 @@ mod tests {
         assert_eq!(demoted_at(&path, temp.path()), Confidence::High);
     }
 
-    /// Demotion moves only confidence. Severity — the error/warning
-    /// axis users filter separately — must survive the stage untouched.
+    /// Demotion moves only confidence, never severity.
     #[test]
     fn demotion_leaves_severity_alone() {
         let temp = tempfile::tempdir().unwrap();
@@ -736,17 +675,14 @@ mod tests {
             repo_root: Some(temp.path()),
         };
         let path = package_tree(&temp, "tests");
-        let mut diagnostic = coded(&path, "RY030");
-        diagnostic.severity = crate::Severity::Error;
-        post.demote_non_source_paths(std::slice::from_mut(&mut diagnostic));
-        assert_eq!(diagnostic.severity, crate::Severity::Error);
-        assert_eq!(diagnostic.confidence, Confidence::Medium);
+        let mut diagnostics = vec![coded(&path, "RY030")];
+        diagnostics[0].severity = crate::Severity::Error;
+        post.post_demotion(&mut diagnostics);
+        assert_eq!(diagnostics[0].severity, crate::Severity::Error);
+        assert_eq!(diagnostics[0].confidence, Confidence::Medium);
     }
 
-    /// Relative diagnostic paths resolve against the pipeline's repo
-    /// root, matching how the CLI feeds discovery output through the
-    /// seam: the same `tests/` finding demotes with a root set and
-    /// would not resolve to a package without one.
+    /// Relative diagnostic paths resolve against the repo root.
     #[test]
     fn relative_paths_demote_through_the_repo_root() {
         let temp = tempfile::tempdir().unwrap();

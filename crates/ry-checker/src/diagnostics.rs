@@ -1,8 +1,5 @@
 //! Diagnostic data types, severity overrides, and inline-suppression
-//! parsing/filtering.
-//!
-//! This module is self-contained: it depends only on `ry_core::Span`,
-//! `ry_core::ast::Comment`, and the rule registry (`crate::rules`).
+//! parsing and filtering.
 
 use std::borrow::Cow;
 
@@ -10,17 +7,10 @@ use ry_core::Span;
 
 use crate::rules;
 
-// ============================================================================
-// Severity + Diagnostic
-// ============================================================================
-
-// Severity and Confidence are defined in ry-core and re-exported here
-// for backward compatibility.
 pub use ry_core::{Confidence, Severity};
 
-/// Determine the default confidence level for a rule code.
-/// This is checker-specific and cannot live on the ry-core enum.
-pub fn default_confidence_for(code: &str) -> Confidence {
+/// The default confidence for a rule code.
+pub(crate) fn default_confidence_for(code: &str) -> Confidence {
     match code {
         "RY097" => Confidence::Low,
         "RY030" | "RY033" | "RY050" | "RY070" | "RY092" | "RY093" | "RY094" | "RY096" | "RY101"
@@ -117,35 +107,26 @@ impl Diagnostic {
     }
 }
 
-// ============================================================================
-// Inline suppression comments (`# ry: ignore`, `# noqa`)
-// ============================================================================
+// Inline suppression comments:
 //
-// Users can suppress false-positive diagnostics inline, mirroring the
-// `# ruff: ignore` / `# noqa` conventions from the Python ecosystem:
-//
-//     x <- bad  # ry: ignore                 # suppress ALL rules on this line
-//     x <- bad  # ry: ignore[RY010]          # suppress a specific rule
-//     x <- bad  # ry: ignore[RY010, RY040]   # suppress multiple rules
+//     x <- bad  # ry: ignore                 # every rule on this line
+//     x <- bad  # ry: ignore[RY010, RY040]   # the listed rules
 //     x <- bad  # noqa: RY010                # flake8/ruff-compatible alias
 //
-//     # ry: ignore                           # standalone: suppresses the
-//     x <- bad                               #   next non-comment, non-blank line
+//     # ry: ignore                           # standalone: the next code line
+//     x <- bad
 //
-//     # ry: ignore-file                      # file-level: suppresses everything
+//     # ry: ignore-file                      # the whole file
 //
-// The parser is tolerant of whitespace and case, but distinguishes a bare
-// ignore from an invalid or foreign-only explicit list. An invalid native
-// directive reports RY112 and never hides another diagnostic.
+// An invalid native directive reports RY112 and never hides another
+// diagnostic.
 
 /// A suppression directive parsed from a `# ry: ignore` or `# noqa`
 /// comment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suppression {
-    /// Line number (0-indexed) of the code line the suppression applies
-    /// to. For trailing comments this is the line they sit on; for
-    /// standalone comments this is the next non-comment, non-blank
-    /// line.
+    /// 0-indexed code line the suppression applies to: the comment's own
+    /// line when trailing, the next code line when standalone.
     pub line: usize,
     /// The comment's source span, retained for directive diagnostics and audits.
     pub span: Span,
@@ -189,21 +170,10 @@ impl Suppression {
     }
 }
 
-/// Scan the parser's collected `Comment` list (see
-/// `SourceFile::comments`) for `# ry: ignore` / `# noqa` directives and
-/// return one [`Suppression`] per directive found. Working from the
-/// comment list rather than scanning source lines for `#` means a `#`
-/// appearing INSIDE a string literal is not mistaken for a suppression
-/// directive (so `x <- "# noqa"` does not suppress anything).
-///
-/// Standalone-vs-trailing is decided by the comment's column: a comment
-/// at column 0 (no code before it on the line) defers to the next code
-/// line; a comment at column > 0 applies to its own line.
-///
-/// Resolving a standalone directive to "the next code line" requires the
-/// source text: blank lines and comment-only lines in between must be
-/// skipped, which cannot be determined from the comment list alone. Pass
-/// the full source so the resolution can find the target line.
+/// One [`Suppression`] per `# ry: ignore` or `# noqa` directive in the
+/// parser's comment list. Reading comments, not source lines, keeps
+/// `x <- "# noqa"` from suppressing anything. `src` is needed to find
+/// the next code line for a standalone directive.
 pub fn parse_suppressions_from_comments(
     comments: &[ry_core::ast::Comment],
     src: &str,
@@ -215,64 +185,37 @@ pub fn parse_suppressions_from_comments(
         let Some(ParsedDirective::Line(kind, origin)) = parse_ignore_comment_body(&c.body) else {
             continue;
         };
-        let span = comment_span(c, src, &line_starts);
-        if c.col == 0 || is_whitespace_only_prefix(&src_lines, c) {
-            // Standalone: applies to the next non-comment, non-blank
-            // line after this comment. If there is no such line (e.g.
-            // the directive is the last thing in the file) there is
-            // nothing to suppress, so the directive is dropped.
-            if let Some(line) = next_code_line(&src_lines, c.line) {
-                suppressions.push(Suppression {
-                    line,
-                    span,
-                    origin,
-                    kind,
-                });
-            } else if matches!(kind, SuppressionKind::Invalid(_)) {
-                suppressions.push(Suppression {
-                    line: c.line,
-                    span,
-                    origin,
-                    kind,
-                });
-            }
-        } else {
-            // Trailing: applies to this line.
-            suppressions.push(Suppression {
-                line: c.line,
-                span,
-                origin,
-                kind,
-            });
-        }
+        let standalone = c.col == 0 || is_whitespace_only_prefix(&src_lines, c);
+        // A standalone directive applies to the next code line. With no
+        // such line there is nothing to suppress, so only an invalid
+        // directive stays, for its RY112 report.
+        let line = match standalone.then(|| next_code_line(&src_lines, c.line)) {
+            None => c.line,
+            Some(Some(line)) => line,
+            Some(None) if matches!(kind, SuppressionKind::Invalid(_)) => c.line,
+            Some(None) => continue,
+        };
+        suppressions.push(Suppression {
+            line,
+            span: comment_span(c, src, &line_starts),
+            origin,
+            kind,
+        });
     }
     suppressions
 }
 
-/// Whether everything on the comment's line before the `#` is
-/// whitespace. A comment whose line is entirely whitespace up to the
-/// `#` is standalone even when indented (`    # ry: ignore`), as opposed
-/// to a trailing comment that follows code (`x <- 1  # ry: ignore`).
+/// Whether only whitespace precedes the comment on its line, so an
+/// indented comment is standalone too.
 fn is_whitespace_only_prefix(src_lines: &[&str], c: &ry_core::ast::Comment) -> bool {
     src_lines
         .get(c.line)
-        .and_then(|line| {
-            // `c.col` is a BYTE column; only slice when it is within the
-            // line's byte length.
-            if c.col <= line.len() {
-                Some(&line[..c.col])
-            } else {
-                None
-            }
-        })
+        .and_then(|line| line.get(..c.col))
         .map(|prefix| prefix.trim().is_empty())
         .unwrap_or(false)
 }
 
-/// Find the first line after `start` that is neither blank nor a
-/// comment-only line (a line whose first non-whitespace character is
-/// `#`). Used to resolve standalone `# ry: ignore` directives to their
-/// target code line.
+/// The first line after `start` that is neither blank nor comment-only.
 fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
     let mut line = start + 1;
     while line < lines.len() {
@@ -285,23 +228,11 @@ fn next_code_line(lines: &[&str], start: usize) -> Option<usize> {
     None
 }
 
-/// Parse a comment body into a line or file directive. An explicit list
-/// with no valid ry codes is distinct from a bare ignore.
-///
-/// The body is the comment text AFTER the leading `#`; leading
-/// whitespace is trimmed here. The marker must START the body, which
-/// prevents false matches on prose like `# See docs for ry: ignore` or
-/// `# TODO: add ry: ignore`.
-///
-/// Recognized forms (case-insensitive on the `ry:` / `noqa` markers):
-///   - `# ry: ignore[]` (all codes, with optional trailing prose)
-///   - `# ry: ignore`
-///   - `# ry:ignore`
-///   - `# ry: ignore[RY040]`
-///   - `# ry: ignore[RY040, RY010]`
-///   - `# noqa`
-///   - `# noqa: RY040`
-///   - `# noqa[RY040]`
+/// A comment body parsed into a line or file directive. The marker must
+/// start the body, so prose like `# TODO: add ry: ignore` does not match.
+/// Markers are case-insensitive. Forms: `ry: ignore`, `ry:ignore`,
+/// `ry: ignore[]` (all codes), `ry: ignore[RY040, RY010]`, `noqa`,
+/// `noqa: RY040`, and `noqa[RY040]`.
 #[derive(Debug)]
 enum ParsedDirective {
     Line(SuppressionKind, SuppressionOrigin),
@@ -366,12 +297,10 @@ fn parse_native_codes(text: &str) -> SuppressionKind {
     } else if let Some(after) = text.strip_prefix(':') {
         Cow::Borrowed(after.trim())
     } else {
-        // Historic bare ignores may carry prose. A code-like first word
-        // indicates an intended selective list, including a misspelling.
-        // Continue through adjacent code-like groups and comma separators
-        // (including a comma with whitespace on either side), then retain
-        // the explanation after the first ordinary word. That prose can
-        // itself mention a rule code without starting another entry.
+        // A bare ignore may carry prose. A code-like first word starts a
+        // selective list, even when misspelled. Code-like groups and comma
+        // separators continue it. The first ordinary word starts prose,
+        // which may mention a rule code without adding an entry.
         let first_group = text.split_whitespace().next().unwrap_or("");
         let first = first_group.split(',').next().unwrap_or("");
         if first_group.starts_with(',') {
@@ -522,11 +451,7 @@ pub fn invalid_suppression_diagnostics(
         .collect()
 }
 
-/// Returns `true` if any collected comment is a file-level suppression
-/// directive (`# ry: ignore-file`). When true, every diagnostic in the
-/// file should be suppressed. Working from the parser's collected
-/// comments avoids mistaking a `#` inside a string literal for a
-/// comment.
+/// Whether any comment is a `# ry: ignore-file` directive.
 pub fn has_file_suppression_from_comments(comments: &[ry_core::ast::Comment]) -> bool {
     for c in comments {
         if matches!(
@@ -539,24 +464,16 @@ pub fn has_file_suppression_from_comments(comments: &[ry_core::ast::Comment]) ->
     false
 }
 
-/// Returns `true` if `diag` is covered by one of the given per-line
-/// [`Suppression`] directives.
-///
-/// A suppression matches when its target line and valid kind cover the
-/// diagnostic. Directive audit codes are always exempt.
+/// Whether one of the per-line [`Suppression`] directives covers `diag`.
+/// Directive audit codes are always exempt.
 pub fn is_suppressed(diag: &Diagnostic, suppressions: &[Suppression]) -> bool {
     suppressions
         .iter()
         .any(|s| s.line == diag.span.line && s.suppresses(diag.code))
 }
 
-/// Convenience: drop every diagnostic that is suppressed, either by a
-/// per-line `# ry: ignore` / `# noqa` directive or by a file-level
-/// `# ry: ignore-file`. This is the filter the CLI and LSP call after
-/// running the checker. Uses the parser's collected comments so a `#`
-/// inside a string literal is not mistaken for a suppression directive.
-/// The source text is required to resolve standalone `# ry: ignore`
-/// directives to their target code line.
+/// Drop every diagnostic suppressed by a per-line directive or by
+/// `# ry: ignore-file`.
 pub fn filter_suppressed_with_comments(
     diags: Vec<Diagnostic>,
     comments: &[ry_core::ast::Comment],
@@ -572,13 +489,9 @@ pub fn filter_suppressed_with_comments(
         .collect()
 }
 
-/// Severity overrides that a caller (typically the CLI) wants to apply.
-/// Matches ty's `--error` / `--warn` / `--ignore` semantics.
-///
-/// The `expanded_*` fields are private precomputed caches: each `add_*`
-/// expands its token (rule name, code, or "all") into the concrete code
-/// list once, so `effective` is O(codes) per diagnostic instead of
-/// re-examining every token against the rule table on every call.
+/// Severity overrides with ty's `--error`, `--warn`, and `--ignore`
+/// semantics. Each `add_*` expands its token into codes once, in the
+/// private `expanded_*` caches.
 #[derive(Debug, Clone, Default)]
 pub struct SeverityFilter {
     expanded_errors: Vec<&'static str>,
@@ -602,8 +515,7 @@ impl SeverityFilter {
         }
     }
 
-    /// Add a token (code / name / "all") to one of the buckets,
-    /// pre-expanding it into the cached code list.
+    /// Add a token (code, name, or "all") to one of the buckets.
     pub fn add_error(&mut self, token: &str) {
         self.expanded_errors.extend(Self::expand(token));
     }
@@ -659,9 +571,7 @@ impl SeverityFilter {
     }
 }
 
-/// Apply a [`SeverityFilter`] to a vec of diagnostics in place:
-/// re-severity each according to the filter, and drop the ones whose
-/// effective severity is `None` (ignored).
+/// Apply a [`SeverityFilter`] in place, dropping ignored diagnostics.
 pub fn apply_filter_to_diagnostics(diagnostics: &mut Vec<Diagnostic>, filter: &SeverityFilter) {
     let mut out: Vec<Diagnostic> = Vec::with_capacity(diagnostics.len());
     for d in diagnostics.drain(..) {

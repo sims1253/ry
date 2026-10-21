@@ -113,7 +113,7 @@ pub(crate) struct TargetDecision {
 pub(crate) struct DeclarationSet {
     records: Vec<DeclarationRecord>,
     targets: BTreeMap<TargetKey, TargetDecision>,
-    /// Whether any target selected a contract; checked on hot paths.
+    /// Whether any target selected a contract. Hot paths check it.
     has_contracts: bool,
 }
 
@@ -172,7 +172,6 @@ impl DeclarationSet {
 fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
     let mut exact = HashMap::<String, DeclaredSignature>::new();
     let mut reports = Vec::new();
-    let mut blocked = false;
     for record in records {
         if record.evidence != EvidenceUse::AdoptedContract {
             continue;
@@ -188,7 +187,6 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                                 EvaluationSemantics::Promise | EvaluationSemantics::Value
                             )
                     }) {
-                        blocked = true;
                         reports.push((
                             DeclarationFindingKind::Unsupported,
                             format!(
@@ -207,7 +205,6 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                     }
                 }
                 Ok(_) => {
-                    blocked = true;
                     reports.push((
                         DeclarationFindingKind::Unsupported,
                         format!(
@@ -216,7 +213,6 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                     ));
                 }
                 Err(error) => {
-                    blocked = true;
                     reports.push((
                         DeclarationFindingKind::InvalidSyntax,
                         format!("adopted {provider} declaration is invalid: {error}"),
@@ -224,7 +220,6 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                 }
             },
             Translation::Partial { residuals, .. } => {
-                blocked = true;
                 reports.push((
                     DeclarationFindingKind::Partial,
                     format!(
@@ -234,7 +229,6 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                 ));
             }
             Translation::Unsupported { residuals } => {
-                blocked = true;
                 reports.push((
                     DeclarationFindingKind::Unsupported,
                     format!(
@@ -244,14 +238,12 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
                 ));
             }
             Translation::InvalidSyntax(reason) => {
-                blocked = true;
                 reports.push((
                     DeclarationFindingKind::InvalidSyntax,
                     format!("adopted {provider} declaration has invalid syntax: {reason}"),
                 ));
             }
             Translation::AmbiguousAttachment(reason) => {
-                blocked = true;
                 reports.push((
                     DeclarationFindingKind::AmbiguousAttachment,
                     format!("adopted {provider} declaration has ambiguous attachment: {reason}"),
@@ -259,6 +251,7 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
             }
         }
     }
+    let blocked = !reports.is_empty();
     if exact.len() > 1 || (blocked && !exact.is_empty()) {
         reports.push((
             DeclarationFindingKind::Conflict,
@@ -279,9 +272,9 @@ fn decide_target(span: Span, records: &[&DeclarationRecord]) -> TargetDecision {
 }
 
 /// Validates only metadata that is independently known from the R formals.
-/// A signature may constrain an ordered subset of formals; an empty list
+/// A signature may constrain an ordered subset of formals. An empty list
 /// never means the function has zero arguments.
-pub(crate) fn matches_formals<'a>(
+fn matches_formals<'a>(
     signature: &DeclaredSignature,
     formals: impl Iterator<Item = (&'a str, bool)>,
 ) -> Result<(), String> {
@@ -333,15 +326,15 @@ pub(crate) fn matches_formals<'a>(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Evidence {
+enum Evidence {
     Compatible,
     Incompatible,
     Insufficient,
 }
 
-/// This is a comparison of independently inferred facts with an authored
-/// predicate. A mixed union or an unknown fact is never a proven violation.
-pub(crate) fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
+/// Compare an independently inferred type with an authored predicate. A
+/// mixed union or an unknown fact is never a proven violation.
+fn compare(ty: &RType, constraint: &TypeExpr) -> Evidence {
     if ty.mode == Mode::Union {
         let Some(members) = &ty.members else {
             return Evidence::Insufficient;
@@ -521,6 +514,16 @@ pub(crate) fn body_entry_type(constraint: &TypeExpr) -> Option<RType> {
 }
 
 impl crate::Checker {
+    fn push_declaration_finding(
+        &mut self,
+        kind: DeclarationFindingKind,
+        span: Span,
+        message: impl Into<String>,
+    ) {
+        let finding = DeclarationFinding::new(kind, &self.path, span, message);
+        self.declaration_findings.push(finding);
+    }
+
     pub(crate) fn declaration_for_body(
         &mut self,
         span: Span,
@@ -540,23 +543,21 @@ impl crate::Checker {
                 .iter()
                 .map(|parameter| (parameter.name.as_str(), parameter.default.is_some())),
         ) {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::AmbiguousAttachment,
-                &self.path,
                 span,
                 reason,
-            ));
+            );
             return None;
         }
         if signature.parameters.iter().any(|parameter| {
             parameter.form == ParameterForm::Variadic && parameter.constraint.is_some()
         }) {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Partial,
-                &self.path,
                 span,
                 "variadic value constraints are retained but not checked",
-            ));
+            );
         }
         Some(signature)
     }
@@ -578,9 +579,8 @@ impl crate::Checker {
                 compare_actual(independent_default, default, declared) == Evidence::Incompatible
             })
         {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Mismatch,
-                &self.path,
                 parameter.span,
                 format!(
                     "default for `{}` conflicts with adopted parameter constraint `{}`",
@@ -589,24 +589,23 @@ impl crate::Checker {
                         .canonical()
                         .expect("selected declaration is canonical")
                 ),
-            ));
+            );
         }
         // A supplied-only constraint and an effective-class predicate never
-        // establish a body type; that is their meaning, not a checking gap.
+        // establish a body type. That is their meaning, not a checking gap.
         if supplied_only || matches!(declared, TypeExpr::ExactClass(_)) {
             return None;
         }
         let entry = body_entry_type(declared);
         if entry.is_none() {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Partial,
-                &self.path,
                 parameter.span,
                 format!(
                     "constraint for `{}` cannot be represented by body inference; no entry type is assumed",
                     parameter.name
                 ),
-            ));
+            );
         }
         entry
     }
@@ -623,12 +622,11 @@ impl crate::Checker {
         };
         let id = FunctionId::new(&self.path, span);
         let Some(function) = self.fn_table.functions.get(&id).cloned() else {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Partial,
-                &self.path,
                 span,
                 "independent return evidence for this definition is unavailable; return constraint was not checked",
-            ));
+            );
             return;
         };
         let inferred = if self.fn_table.functions.is_live(&id) {
@@ -636,7 +634,7 @@ impl crate::Checker {
         } else {
             // Pass 2 only refines the last function assigned to each name.
             // An adopted earlier literal still has independently checkable
-            // body evidence; infer it without seeding its declared entry or
+            // body evidence. Infer it without seeding its declared entry or
             // altering the caller-visible last-definition table.
             let was_discarding = self.discarding;
             self.discarding = true;
@@ -647,16 +645,15 @@ impl crate::Checker {
             inferred
         };
         if compare(&inferred, declared) == Evidence::Incompatible {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Mismatch,
-                &self.path,
                 span,
                 format!(
                     "independently inferred return of `{}` conflicts with adopted return constraint `{}`",
                     function_name.unwrap_or("<function>"),
                     declared.canonical().expect("selected declaration is canonical")
                 ),
-            ));
+            );
         }
     }
 
@@ -710,8 +707,8 @@ impl crate::Checker {
             let Some(formal) =
                 bindings.param_for_arg[index].and_then(|formal| function.params.get(formal))
             else {
-                // Dots have provider-specific element semantics; preserve
-                // them without guessing an entry type for `...`.
+                // Dots have provider-specific element semantics. Do not guess
+                // an entry type for `...`.
                 continue;
             };
             let Some(constraint) = signature
@@ -727,15 +724,14 @@ impl crate::Checker {
             }
         }
         for (span, formal, constraint) in mismatches {
-            self.declaration_findings.push(DeclarationFinding::new(
+            self.push_declaration_finding(
                 DeclarationFindingKind::Mismatch,
-                &self.path,
                 span,
                 format!(
                     "argument for `{lookup_name}` formal `{formal}` conflicts with adopted constraint `{}`",
                     constraint.canonical().expect("selected declaration is canonical")
                 ),
-            ));
+            );
         }
     }
 }

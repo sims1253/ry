@@ -764,7 +764,12 @@ impl Checker {
                         scope.mark_loop_vector(name);
                     }
                     if let Expr::Function { span, .. } = value {
-                        if self.enclosing_formals.is_empty() {
+                        // Only the file frame resolves calls through the
+                        // collected function table. A literal bound in any
+                        // child frame shadows a same-named stub for later
+                        // calls there, even when no enclosing formals were
+                        // pushed (`local()`, R6 members; issue #718).
+                        if self.enclosing_formals.is_empty() && scope.is_file_frame() {
                             scope.mark_bound_function_definition(binding.to_string(), *span);
                         } else {
                             scope.mark_lexical_function(binding.to_string(), *span);

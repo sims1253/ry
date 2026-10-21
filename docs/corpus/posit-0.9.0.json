@@ -3,8 +3,8 @@
   "corpus": "posit",
   "ry_version": "0.9.0-dev",
   "source": "ecosystem/reports/posit.*.root.txt",
-  "source_sha256": "16a94182701eb75dbe5bd09768c262f1f21ecac76c5b778e80f5eb53f48da3a4",
-  "ry_commit": "9acf3bcbad2f7ed5b7bfae4407ca9948e1fb6085",
+  "source_sha256": "7095bf616bfde58b8f520f1bd8fa839d8036d3af254860014ba5f2732e2d7732",
+  "ry_commit": "a2c210479d57dada4d588c7c49ee4ed1a74dc3d5",
   "reconciliation": "hermetic",
   "packages": [
     {
@@ -26,7 +26,7 @@
       "repo": "tidyverse/dplyr",
       "stars": 5054,
       "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f",
-      "diagnostics": 18
+      "diagnostics": 15
     },
     {
       "name": "gt",
@@ -721,33 +721,6 @@
       "column": 30,
       "label": "false_positive",
       "audit_group": "type-narrowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 112,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "function-shadowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 117,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "function-shadowing"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 131,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "function-shadowing"
     },
     {
       "package": "dplyr",
@@ -3937,7 +3910,7 @@
     }
   ],
   "classification": {
-    "false_positive": 299,
+    "false_positive": 296,
     "true_positive": 89
   },
   "audit_group_counts": {
@@ -3949,7 +3922,7 @@
     "test-fixture": 80,
     "s3-method-dispatch": 1,
     "delayed-assign": 1,
-    "function-shadowing": 3,
+    "function-shadowing": 0,
     "upstream-package": 26,
     "ifelse-mode": 3,
     "numeric-if-idiom": 3,
@@ -3996,6 +3969,7 @@
     "local() deferred captures and package base lookup (#568, PR stacked on #628): 19 reviewed false positives disappear: 18 of the 19 local-closure-forward-ref entries (cli R/defer.R and R/errors.R, pak R/compat-vctrs.R, R/config.R and R/errors.R) and the type-narrowing entry rlang R/import-standalone-defer.R:91:23. pak R/pak-sitrep-data.R:27:20 remains in the group. Each removed closure is defined inside a local() block and reads a helper the block assigns later; local() blocks now give their assignments to nested closures as deferred captures, as function bodies do. Resolving base switch() in import-free package R/ code adds no identity. Every true positive remains.",
     "Project-defined call validation (PR #659): RY090/RY091 now check calls whose callee is the project's own single reachable definition. Ten true positives are added. Four are upstream-package bugs in two packages: keras3 R/applications.R:4055:34 and 4085:36 call not_found_errors() without its forced model argument, so users see a missing-argument error instead of the intended message; gt tests/testthat/test-fmt.R:549:41 and 551:52 pass x_right to paste_left(x, x_left), and their expect_error() passes on that unused-argument error, not the length check the test describes. The remaining six are test-fixture calls inside error-expecting tests that R rejects: ggplot2 tests/testthat/test-utilities.R:108:25, infer tests/testthat/test-hypothesize.R:164:53 and 219:59 (no mean formal), lintr tests/testthat/test-methods.R:27:21 (no linter formal) and test-with.R:3:5, and recipes tests/testthat/test-roles.R:254:40. No identity is removed; every true positive remains.",
     "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and a non-character value compare the formatted strings, so RY033 now fires only for `<`, `>`, `<=`, `>=`. 11 RY033 identities disappear and none is added. Five are false positives (type-narrowing): broom R/deprecated-0-7-0.R:290:11, R/utilities.R:108:11 and sparklyr R/tidiers_utils.R:74:11 (`rownames(x) == seq_len(nrow(x))`), cli R/onload.R:44:22 (`Sys.getenv(\"RSTUDIO\") == 1`), flexdashboard R/flex_dashboard.R:173:7 (`resize_reload == 'no'`). Six were labelled true_positive (upstream-package) and are removed as equality comparisons R evaluates as intended: plumber R/plumber.R:474:82 (`endCount == 1` with `endCount <- as.character(...)`), torch R/install.R:699:4 (`toupper(x) == TRUE`), R/package.R:42:37 (`Sys.getenv(\"TORCH_INSTALL\", unset = 2) != 0`) and 88:15 (`Sys.getenv(\"TORCH_LOAD\", unset = 1) != 0`), tests/testthat.R:4:5 (`Sys.getenv(\"TORCH_TEST\", unset = 0) == 1`, the shape the cli entry already labels false_positive), and shiny-r R/bookmark-state.R:138:18 (`length(inputVals != 0)`), whose misplaced parenthesis stays reported as the true_positive RY093 at the same span. Every other true positive remains.",
-    "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both s3-method-dispatch false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains."
+    "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both s3-method-dispatch false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains.",
+    "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr function-shadowing (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the tidyverse ledger drops the same three identities (P4a)."
   ]
 }

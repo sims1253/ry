@@ -17,7 +17,7 @@
     {
       "name": "dplyr",
       "commit": "d5e94e7fa8fd4a5f79c1a707d1842216bb4c691f",
-      "diagnostics": 18
+      "diagnostics": 15
     },
     {
       "name": "tidyr",
@@ -224,33 +224,6 @@
       "column": 30,
       "label": "false_positive",
       "audit_group": "P7b"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 112,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "P4a"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 117,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "P4a"
-    },
-    {
-      "package": "dplyr",
-      "code": "RY091",
-      "path": "R/data-mask.R",
-      "line": 131,
-      "column": 7,
-      "label": "false_positive",
-      "audit_group": "P4a"
     },
     {
       "package": "dplyr",
@@ -921,14 +894,14 @@
   ],
   "classification": {
     "true_positive": 37,
-    "false_positive": 33,
+    "false_positive": 30,
     "unowned": 18
   },
   "audit_group_counts": {
     "upstream-ggplot2": 4,
     "P7a": 0,
     "P4b": 0,
-    "P4a": 3,
+    "P4a": 0,
     "P4c": 1,
     "P2": 26,
     "P8": 0,
@@ -969,8 +942,9 @@
     "Package-aware call-head selection (PR #668) removes exactly 13 unowned identities from both production-only and root reports, with no additions or changes to reviewed findings or labels. At testthat@50a99ec76fed8140a9211ed862289e877e86614d, R/import-standalone-types-check.R:125:7, :295:9, :320:9, :345:9, :370:9, :395:9, :420:9, :445:9, :473:9, :498:9, and :523:9 lose RY031: rlang::is_null returns a scalar logical, not testthat's same-named function-valued expectation factory in R/old-school.R. R/reporter-debug.R:61:7 loses RY001 for the corresponding rlang::is_false predicate versus testthat's is_false factory. The executable predicate-factory oracle verifies the R behavior. At jsonlite@0134cba18366b1c51c6497f4f97273a8423d8d86, R/stop.R:2:27 loses RY111: base::stop selects base's variadic contract rather than the 'call.' formal of jsonlite's own wrapper; this is the deliberate wrapper already explained in the #361 note. All 11 reviewed RY111 true positives in haven and dbplyr remain. The source digest covers the complete 32-package default-manifest regeneration.",
     "RY091 must-force walk (#685): the only identity removed is googledrive tests/testthat/test-drive_create.R:21:19 (true_positive, test-fixture), drive_create() with `name` omitted. R does error there, but through rlang::check_required(name) inside the `type` guard at R/drive_create.R:82-85, which ry does not model; ry's only evidence that `name` is forced was the member name in `name <- tmp$name` at R/drive_create.R:95, the `$` field-name misread #685 removes (rewriting that line to tmp[[\"name\"]] silences the pre-fix binary too). The finding was right for the wrong reason, so it is dropped rather than kept by restoring the misread. No identity is added; every other reviewed finding and label remains, and the Posit ledger is unchanged.",
     "RY033 limited to ordering comparisons (#699): `==`/`!=` between a character value and a non-character value compare the formatted strings, so RY033 now fires only for `<`, `>`, `<=`, `>=`. One reviewed false positive disappears: duckplyr R/fallback.R:75:21 (P8, `Sys.getenv(\"DUCKPLYR_FALLBACK_INFO\") == TRUE`). No identity is added; every true positive remains.",
-    "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both P7a false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains, and the P7a group stays at zero."
+    "RY040 literal NULL beside a dispatchable operand (#707): a literal NULL arithmetic operand now reports only when the other operand is NULL or a known atomic without a class attribute. The two identities removed are both P7a false positives: ggplot2 tests/testthat/test-geom-curve.R:17:8, a ggplot(df) + geom_curve(...) chain ending in `+ NULL` (line 46) that ggplot2's S7 `+` methods (R/plot-construction.R:66-74) accept, and glue tests/testthat/test-glue.R:595:20, as_glue(\"hello\") + NULL, which dispatches to +.glue (R/glue.R:387) and is expected to return character(). No identity is added; every true positive remains, and the P7a group stays at zero.",
+    "Block-frame closures shadow base stubs (#718): a `name <- function(...)` bound inside an R6Class() member list, a local() block or a testthat block is now a lexical callable, as in a plain function body. Three reviewed false positives disappear, all dplyr P4a (the #350 sites): R/data-mask.R:112:7, R/data-mask.R:117:7 and R/data-mask.R:131:7, RY091 `eval()` missing `expr` where the R6 method calls its own local `eval` closure. No identity is added and every true positive remains; the Posit ledger drops the same three identities (function-shadowing)."
   ],
-  "ry_commit": "9acf3bcbad2f7ed5b7bfae4407ca9948e1fb6085",
-  "source_sha256": "57aacf93c2fbcbaf4cfaf678cc1e5cf825b328c644ddb8ad6864c4a069cdbd6d"
+  "ry_commit": "a2c210479d57dada4d588c7c49ee4ed1a74dc3d5",
+  "source_sha256": "41e4f3dc146266cc437b68e959213c052011972d639c4b7c57257730941b2d7f"
 }

@@ -546,6 +546,16 @@ impl Scope {
         scope
     }
 
+    /// Whether this is the file's own frame. Every child frame -- a function
+    /// body, or a block a callee evaluates in a fresh environment (`local()`,
+    /// testthat blocks, injected `R6Class()` members) -- is entered through
+    /// `function_execution_scope`, which records the outward frame. Speculative
+    /// same-frame walks via `independent_execution_scope` clone the parent and
+    /// intentionally keep the caller's frame identity.
+    pub(crate) fn is_file_frame(&self) -> bool {
+        self.outward_functions.is_none()
+    }
+
     pub(crate) fn has_possible_outward_function(&self, name: &str) -> bool {
         let name = infer::semantic_argument_name(name);
         let mut frame = self.outward_functions.as_deref();

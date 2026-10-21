@@ -61,3 +61,42 @@ library(magrittr)
 result <- c(1, 2, 3) %>%
   mean() %>%
   round(2)
+
+## case: a merge() result column takes arithmetic
+# no-diag
+# The base stub types merge() as a class-less list, but merge() returns
+# a data frame, so `m[, 1]` is a column vector (#709, caret's rfe.R).
+f <- function(a, b) {
+  m <- merge(a, b, by = 1)
+  m[, 1] - 1
+}
+
+## case: a read.csv() column selection takes arithmetic
+# no-diag
+# A multi-column data-frame selection dispatches to Ops.data.frame
+# (#709, parameters' methods_epi2x2.R).
+g <- function(path) {
+  m <- read.csv(path)
+  100 * m[, c("x", "y")]
+}
+
+## case: a gc() matrix column takes arithmetic
+# no-diag
+# gc() returns a double matrix (#709, lobstr's mem.R).
+h <- function() sum(gc()[, 1] * c(56, 8))
+
+## case: a one-index subset of a plain list stays a list
+# expect: RY040
+# Only matrix indexing on a list turns opaque; `lst[1]` is still a
+# list, and list arithmetic still errors.
+k <- function() {
+  lst <- list(1, 2)
+  lst[1] + 1
+}
+
+## case: a data frame's character column still rejects arithmetic
+# expect: RY040
+k <- function() {
+  df <- data.frame(x = 1, y = "a")
+  df[, "y"] + 1
+}

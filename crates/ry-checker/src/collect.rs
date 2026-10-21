@@ -50,7 +50,19 @@ fn identifier_name(name: &str) -> Option<&str> {
 /// The binding `node` makes in the frame it runs in, with the assigned
 /// value. Statement `<<-` is an assignment whose value repeats the
 /// operation; only that inner operation writes, and it writes outward.
+/// `a <- b <- value` assigns `value` to `a` as well as to `b`.
 fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
+    fn chain_value(mut value: &Expr) -> &Expr {
+        while let Expr::BinOp {
+            op: BinOpKind::Assign,
+            rhs,
+            ..
+        } = value
+        {
+            value = rhs;
+        }
+        value
+    }
     match node {
         AstNode::Stmt(Stmt::Assign {
             target,
@@ -59,14 +71,14 @@ fn frame_binding(node: AstNode<'_>) -> Option<(Option<&str>, Option<&Expr>)> {
         }) if binding_name(target).is_some()
             && !matches!(value, Expr::BinOp { op: BinOpKind::SuperAssign, span: operation, .. } if operation == span) =>
         {
-            Some((target_name(target), Some(value)))
+            Some((target_name(target), Some(chain_value(value))))
         }
         AstNode::Expr(Expr::BinOp {
             op: BinOpKind::Assign,
             lhs,
             rhs,
             ..
-        }) if binding_name(lhs).is_some() => Some((target_name(lhs), Some(rhs))),
+        }) if binding_name(lhs).is_some() => Some((target_name(lhs), Some(chain_value(rhs)))),
         AstNode::Stmt(Stmt::For { name, .. }) => Some((identifier_name(name), None)),
         _ => None,
     }
@@ -384,7 +396,25 @@ impl Checker {
                 };
                 self.collect_declared_globals_stmt(statement);
                 if let Stmt::Assign { target, value, .. } = statement {
-                    self.collect_fns_assign(target, value);
+                    // `a <- b <- value` (also `=`, and `->` once lowered)
+                    // binds every target to the innermost value. R binds
+                    // `b` first; record the outer target last so it names
+                    // a literal bound twice, as before.
+                    let mut targets = vec![target];
+                    let mut value = value;
+                    while let Expr::BinOp {
+                        op: BinOpKind::Assign,
+                        lhs,
+                        rhs,
+                        ..
+                    } = value
+                    {
+                        targets.push(lhs);
+                        value = rhs;
+                    }
+                    for target in targets.into_iter().rev() {
+                        self.collect_fns_assign(target, value);
+                    }
                 }
                 ControlFlow::Continue(match statement {
                     Stmt::If { .. } | Stmt::For { .. } | Stmt::While { .. } => Descend::Into,

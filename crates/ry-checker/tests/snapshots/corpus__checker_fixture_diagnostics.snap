@@ -118,7 +118,17 @@ expression: snapshots
   fixture: err_colon_unknown_endpoint.R
 - diagnostics:
     - code: RY033
-      message: "comparing `character` with `double`; R coerces the numeric value to character and compares lexicographically, which is rarely intended"
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
+      severity: warning
+      span:
+        column: 28
+        end: 649
+        line: 16
+        start: 627
+  fixture: err_compare_mode_equality_vs_ordering.R
+- diagnostics:
+    - code: RY033
+      message: "comparing `character` with `double`; R coerces the `double` value to character and compares lexicographically, which is rarely intended"
       severity: warning
       span:
         column: 7
@@ -126,6 +136,40 @@ expression: snapshots
         line: 2
         start: 83
   fixture: err_compare_mode_mismatch.R
+- diagnostics:
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_real`"
+      severity: warning
+      span:
+        column: 73
+        end: 1654
+        line: 55
+        start: 1643
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_eager`"
+      severity: warning
+      span:
+        column: 86
+        end: 1668
+        line: 55
+        start: 1656
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_vector`"
+      severity: warning
+      span:
+        column: 29
+        end: 1714
+        line: 57
+        start: 1701
+    - code: RY091
+      message: "missing required argument `robust` in call to `fit_late`"
+      severity: warning
+      span:
+        column: 44
+        end: 1727
+        line: 57
+        start: 1716
+  fixture: err_compound_missing_guard.R
 - diagnostics:
     - code: RY111
       message: "argument `na.rm = TRUE` to `median` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `na.rm` value is silently ignored; forward it as `na.rm = na.rm` instead"
@@ -736,6 +780,16 @@ expression: snapshots
         line: 6
         start: 334
   fixture: err_metadata_forces_recursive_default.R
+- diagnostics:
+    - code: RY091
+      message: "missing required argument `tt` in call to `fit_real`"
+      severity: warning
+      span:
+        column: 81
+        end: 1004
+        line: 33
+        start: 993
+  fixture: err_missing_formal_member_and_chain_targets.R
 - diagnostics:
     - code: RY091
       message: "missing required argument `x` in call to `length`"
@@ -2654,6 +2708,48 @@ expression: snapshots
         line: 2
         start: 84
   fixture: ry040_arith.R
+- diagnostics:
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 21
+        end: 803
+        line: 18
+        start: 795
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 10
+        end: 838
+        line: 20
+        start: 830
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 8
+        end: 858
+        line: 21
+        start: 847
+    - code: RY040
+      message: "cannot apply arithmetic op to `list` and `NULL`"
+      severity: error
+      span:
+        column: 18
+        end: 891
+        line: 22
+        start: 877
+    - code: RY040
+      message: "arithmetic with `NULL` produces `numeric(0)`; the operand is known to be NULL"
+      severity: error
+      span:
+        column: 2
+        end: 1071
+        line: 28
+        start: 1061
+  fixture: ry040_null_dispatched_operand.R
 - diagnostics:
     - code: RY040
       message: "cannot apply arithmetic op to `raw` and `raw`"

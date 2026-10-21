@@ -1,4 +1,3 @@
-R/fallback.R:75:21 RY033
 tests/testthat/test-dplyr-conditions.R:13:29 RY040
 tests/testthat/test-dplyr-conditions.R:14:32 RY040
 tests/testthat/test-dplyr-conditions.R:15:32 RY040

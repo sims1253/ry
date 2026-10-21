@@ -630,9 +630,11 @@ fn reverting_default_off_rules_fails() {
 
 #[test]
 fn retired_rules_are_absent_from_the_registry() {
-    let codes: BTreeSet<&str> = RULES.iter().map(|r| r.code).collect();
-    assert!(
-        !codes.contains("RY095"),
-        "RY095 is retired and must not be in RULES"
-    );
+    const RETIRED: &[(&str, &str)] = &[("RY095", "negation-comparison-precedence")];
+    for (code, name) in RETIRED {
+        assert!(
+            RULES.iter().all(|r| r.code != *code && r.name != *name),
+            "{code} ({name}) is retired and must not be in RULES"
+        );
+    }
 }

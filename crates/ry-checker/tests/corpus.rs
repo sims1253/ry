@@ -6,8 +6,11 @@
 //!
 //! This catches both regressions (a fixture that used to fire stops firing)
 //! and false-positive leaks (a fixture that should be silent starts firing).
+//!
+//! `testdata/cases/<topic>.R` holds many small cases per file. Each case is
+//! a `## case: <name>` line, a marker line, and R source, checked alone.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use ry_checker::{Checker, Severity};
@@ -125,6 +128,22 @@ fn run_diagnostics(name: &str, src: &str) -> Vec<ry_checker::Diagnostic> {
     ry_checker::filter_suppressed_with_comments(c.take_diagnostics(), &file.comments, src)
 }
 
+fn code_counts<'a>(codes: impl IntoIterator<Item = &'a str>) -> BTreeMap<&'a str, usize> {
+    let mut counts = BTreeMap::new();
+    for code in codes {
+        *counts.entry(code).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn expectation_holds(expected: &Expectation, got: &BTreeMap<&str, usize>) -> bool {
+    match expected {
+        Expectation::None => got.is_empty(),
+        Expectation::ParseError => got.contains_key("RY000"),
+        Expectation::Codes(codes) => code_counts(codes.iter().map(String::as_str)) == *got,
+    }
+}
+
 fn run(name: &str, src: &str) -> Vec<(String, Severity)> {
     run_diagnostics(name, src)
         .into_iter()
@@ -172,22 +191,8 @@ fn corpus_check_each_fixture() {
     for fx in &fixtures {
         total += 1;
         let got = run(&fx.name, &fx.src);
-        let mut got_codes: BTreeMap<&str, usize> = BTreeMap::new();
-        for (code, _) in &got {
-            *got_codes.entry(code.as_str()).or_insert(0) += 1;
-        }
-        let ok = match &fx.expected {
-            Expectation::None => got.is_empty(),
-            Expectation::ParseError => got_codes.contains_key("RY000"),
-            Expectation::Codes(expected) => {
-                let mut want: BTreeMap<&str, usize> = BTreeMap::new();
-                for c in expected {
-                    *want.entry(c.as_str()).or_insert(0) += 1;
-                }
-                want == got_codes
-            }
-        };
-        if ok {
+        let got_codes = code_counts(got.iter().map(|(code, _)| code.as_str()));
+        if expectation_holds(&fx.expected, &got_codes) {
             passing += 1;
         } else {
             failures.push(format!(
@@ -261,4 +266,130 @@ fn corpus_summary() {
         };
         println!("{:<32} {:<10} {}", fx.name, expected_str, result);
     }
+}
+
+/// One `## case:` block of a `testdata/cases/<topic>.R` file.
+struct Case {
+    name: String,
+    /// 1-based file line of the first source line after the marker.
+    first_line: usize,
+    src: String,
+    expected: Expectation,
+}
+
+/// Split a case file into cases. A case is a `## case: <name>` line, a
+/// marker line in the fixture grammar, and the R source up to the next
+/// `## case:` line.
+fn load_cases(path: &std::path::Path) -> Vec<Case> {
+    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let lines: Vec<&str> = text.lines().collect();
+    let mut cases = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let Some(name) = lines[i].strip_prefix("## case:") else {
+            assert!(
+                lines[i].is_empty() || lines[i].starts_with('#'),
+                "{}:{}: code before the first `## case:` line",
+                path.display(),
+                i + 1
+            );
+            i += 1;
+            continue;
+        };
+        let name = name.trim().to_string();
+        let expected = lines
+            .get(i + 1)
+            .and_then(|line| parse_marker(line))
+            .unwrap_or_else(|| panic!("{}: case `{name}` has no marker line", path.display()));
+        let start = i + 2;
+        let mut end = start;
+        while end < lines.len() && !lines[end].starts_with("## case:") {
+            end += 1;
+        }
+        i = end;
+        while end > start && lines[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+        cases.push(Case {
+            name,
+            first_line: start + 1,
+            src: lines[start..end].join("\n") + "\n",
+            expected,
+        });
+    }
+    cases
+}
+
+/// Checks every case in `testdata/cases/*.R` on its own, like a fixture
+/// file, and snapshots each file's diagnostics so a diff names the case.
+#[test]
+fn case_files_match_their_expectations() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/cases");
+    let mut paths: Vec<_> = fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("R"))
+        .collect();
+    paths.sort();
+    assert!(!paths.is_empty(), "no case files in {}", dir.display());
+    let mut failures = Vec::new();
+    let mut snapshots = Vec::new();
+    for path in &paths {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let cases = load_cases(path);
+        if cases.is_empty() {
+            failures.push(format!("{file}: no `## case:` blocks"));
+        }
+        let mut rows = Vec::new();
+        for case in cases {
+            let diagnostics = run_diagnostics("test.R", &case.src);
+            let got = code_counts(diagnostics.iter().map(|d| d.code));
+            if !expectation_holds(&case.expected, &got) {
+                failures.push(format!(
+                    "{file}: case `{}`: expected {:?}, got {got:?}",
+                    case.name, case.expected
+                ));
+            }
+            let diagnostics = diagnostics
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "code": d.code,
+                        "severity": d.severity.as_str(),
+                        "line": case.first_line + d.span.line,
+                        "message": d.message,
+                    })
+                })
+                .collect::<Vec<_>>();
+            rows.push(serde_json::json!({"case": case.name, "diagnostics": diagnostics}));
+        }
+        snapshots.push((file.trim_end_matches(".R").to_string(), rows));
+    }
+    assert!(
+        failures.is_empty(),
+        "{} case(s) failed:\n  - {}",
+        failures.len(),
+        failures.join("\n  - ")
+    );
+    let topics: BTreeSet<String> = snapshots.iter().map(|(topic, _)| topic.clone()).collect();
+    for (topic, rows) in snapshots {
+        insta::assert_yaml_snapshot!(format!("cases_{topic}"), rows);
+    }
+    // A deleted case file must take its snapshot with it.
+    let snapshot_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+    let snapshot_topics: BTreeSet<String> = fs::read_dir(&snapshot_dir)
+        .unwrap_or_else(|e| panic!("{}: {e}", snapshot_dir.display()))
+        .filter_map(|entry| {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            Some(
+                name.strip_prefix("corpus__cases_")?
+                    .strip_suffix(".snap")?
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        snapshot_topics, topics,
+        "corpus__cases_*.snap files must match testdata/cases/*.R"
+    );
 }

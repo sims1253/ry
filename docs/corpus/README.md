@@ -79,7 +79,7 @@ The tidyverse ledger's `source_sha256` uses the same recipe over every
 non-`posit` `*.root.txt` report, one for each of the 32 entries in
 `ecosystem/packages.txt`. The table's 24 packages count only the ledger's
 `packages` entries. Eight manifest packages have no entry: the reports for
-cli, rlang, and testthat hold 24 unowned findings, and those for curl, fs,
+cli, rlang, and testthat hold 23 unowned findings, and those for curl, fs,
 jsonlite, scales, and withr are empty.
 
 ## Running the corpora

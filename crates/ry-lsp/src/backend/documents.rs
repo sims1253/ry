@@ -169,6 +169,7 @@ fn range_byte_span(old_text: &str, range: Range) -> Option<(usize, usize)> {
 
 /// The tree-sitter edit for replacing `old_text[start_byte..old_end_byte]`
 /// with `new_text`, so the next parse reuses unchanged subtrees.
+/// Tree-sitter points count bytes, not the UTF-16 units LSP positions use.
 fn input_edit(
     old_text: &str,
     start_byte: usize,

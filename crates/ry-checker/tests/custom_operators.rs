@@ -136,7 +136,7 @@ fn project_refinement_carries_escaped_operator_formals_and_resets_after_edits() 
     project.add_file(
         "use.R".into(),
         parser
-            .parse("use.R", "out <- f(function(...) 'ok') == 'ok'")
+            .parse("use.R", "out <- f(function(...) 'ok') < 'ok'")
             .unwrap(),
     );
     let diagnostics = project.check_incremental();
@@ -168,8 +168,8 @@ fn escaped_operator_environment_changes_refresh_unrelated_files_and_returns() {
     let sources = [
         ("mask.R", "f <- function(z) 0L"),
         ("helper.R", "g <- function() 1L + 2L"),
-        ("use.R", "out <- g() == 'ok'"),
-        ("direct.R", "direct <- 1L == 'ok'"),
+        ("use.R", "out <- g() < 'ok'"),
+        ("direct.R", "direct <- 1L < 'ok'"),
         ("condition.R", "if (g()) 1L"),
     ];
     let make_project = |mask: &str| {
@@ -291,7 +291,7 @@ fn unrelated_escaped_names_do_not_mask_operators() {
         r"f <- function(`foo\``) 1L;",
         r"globalVariables('foo\\bar');",
     ] {
-        let source = format!("{prefix} out <- 'bad' + 1L; comparison <- 1L == 'ok'");
+        let source = format!("{prefix} out <- 'bad' + 1L; comparison <- 1L < 'ok'");
         let file = RParser::new().unwrap().parse("escaped.R", &source).unwrap();
         let mut checker = Checker::new("escaped.R");
         let diagnostics = checker.check(&file);

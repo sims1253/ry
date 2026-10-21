@@ -3,11 +3,9 @@
 use std::fs;
 use std::path::Path;
 
-use ry_testkit::{CliProcess, ry};
+use ry_testkit::ry;
 
-fn ry_check() -> CliProcess {
-    ry!().arg("check").env("RY_NO_INSTALLED_LIBRARIES", "1")
-}
+use crate::support::check as ry_check;
 
 fn check(root: &Path) -> Vec<serde_json::Value> {
     match ry_check()

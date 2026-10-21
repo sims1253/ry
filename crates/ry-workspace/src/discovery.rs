@@ -945,8 +945,7 @@ mod shared_tests {
 
     /// Exclude matching reads the workspace entry name, not a
     /// canonicalized symlink target: an explicit exclude for `linked.R`
-    /// excludes that entry regardless of where it points (pins this
-    /// on the shared policy, not the retired excludes-only wrapper).
+    /// excludes that entry regardless of where it points.
     #[cfg(unix)]
     #[test]
     fn shared_policy_matches_a_symlink_entry_name_not_its_target() {

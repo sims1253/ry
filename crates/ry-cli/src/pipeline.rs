@@ -141,20 +141,11 @@ pub(crate) enum FailureAction {
     Abort,
 }
 
-/// Size rayon's global pool before the first parallel work starts
-/// (all CLI parallelism funnels through [`parse_files`]). The check
-/// pipeline alternates parallel phases (parsing, diagnostic emission)
-/// with serial ones (workspace resolution, fixpoint refinement), so a
-/// worker per core spends the serial phases spinning and waking: on a
-/// 24-core machine the default pool burns ~4x the system time of a
-/// 12-worker pool for the same wall time. Capping at 12 keeps
-/// throughput flat while cutting CPU and system time on large machines;
-/// an explicit `RAYON_NUM_THREADS` still wins.
-///
-/// Called lazily so subcommands that never touch rayon (`--version`,
-/// `--help`, completions) do not pay for spawning workers. Idempotent:
-/// rayon's global registry is process-wide and `build_global` fails on
-/// a second attempt, so a `Once` guards the (warning-free) first call.
+/// Cap rayon's global pool at 12 workers unless `RAYON_NUM_THREADS` is set.
+/// The check alternates parallel and serial phases, and on a 24-core machine
+/// a worker per core burns about 4x the system time of 12 workers for the
+/// same wall time. Called from [`parse_files`], so subcommands without
+/// parallel work spawn no workers.
 fn size_rayon_pool() {
     use rayon::ThreadPoolBuilder;
     use std::sync::Once;
@@ -172,17 +163,12 @@ fn size_rayon_pool() {
     });
 }
 
-/// Parse every path in parallel on rayon's pool, in input order.
-///
-/// Every failure is passed to `on_failure` as it happens; the callback
-/// reports it and picks the action. `Skip`ped files are dropped from
-/// the result. The first failure (in input order) whose action is
-/// `Abort` is returned in `Err` — and is the only one the caller must
-/// report, because the callback stays silent for files it aborts on.
-///
-/// Each file's native path is on
-/// [`ry_core::SourceFile::native_or_display_path`]; `overlay` substitutes one
+/// Parse every path in parallel, in input order. `overlay` substitutes one
 /// in-memory source.
+///
+/// `on_failure` reports each failure and picks the action. `Skip`ped files
+/// are dropped. The first `Abort` in input order comes back in `Err`, and
+/// the caller reports it.
 pub(crate) fn parse_files(
     paths: &[PathBuf],
     overlay: Option<&SourceOverlay>,
@@ -218,15 +204,13 @@ pub(crate) struct SourceOverlay {
     pub bytes: Vec<u8>,
 }
 
-/// Resolve parsed files into per-package checker inputs, shared by
-/// `ry check` and `ry dump-types` so the two commands can never disagree
-/// about library scoping or resolution roots.
+/// Resolve parsed files into per-package checker inputs for `ry check` and
+/// `ry dump-types`.
 ///
 /// Each DESCRIPTION root becomes its own group (see
-/// [`ry_workspace::resolve_grouped`]). A group without a package root resolves
-/// against the first entry of `fallback_roots` that is set — `ry check`
-/// passes the config root, `dump-types` passes `--project-root` and then
-/// the config root — and finally against the working directory.
+/// [`ry_workspace::resolve_grouped`]). A group without a package root
+/// resolves against the first set entry of `fallback_roots`, else the
+/// working directory.
 pub(crate) fn resolve_groups(
     parsed: &[Arc<ry_core::SourceFile>],
     cfg: &config::Config,

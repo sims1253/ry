@@ -785,6 +785,17 @@ both <- function(from = NULL, to = NULL) {
 weigh()
 both()
 
+## case: the else arm of a negated predicate on an omitted NULL default does not keep length 0
+# no-diag
+label <- function(m = NULL) {
+  if (!is.character(m)) {
+    "none"
+  } else {
+    if (m == "a") "first" else "other"
+  }
+}
+label()
+
 ## case: a value computed in a predicate arm on an omitted NULL default does not inherit length 0
 # no-diag
 parse_method <- function(method = NULL) {

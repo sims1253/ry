@@ -234,6 +234,11 @@ impl RParser {
     }
 
     fn lower_if(&self, n: Node, src: &str) -> Option<Stmt> {
+        // An `else if` chain recurses here once per arm.
+        crate::stack::grow(|| self.lower_if_inner(n, src))
+    }
+
+    fn lower_if_inner(&self, n: Node, src: &str) -> Option<Stmt> {
         let cond = self.lower_expr(n.child_by_field_name("condition")?, src)?;
         let consequence = n.child_by_field_name("consequence")?;
         let then = self.lower_block(consequence, src);
@@ -260,6 +265,10 @@ impl RParser {
     /// use the statement form. The type inference is correct regardless
     /// (the branch type is the last expression's type).
     fn lower_if_expr(&self, n: Node, src: &str) -> Option<Expr> {
+        crate::stack::grow(|| self.lower_if_expr_inner(n, src))
+    }
+
+    fn lower_if_expr_inner(&self, n: Node, src: &str) -> Option<Expr> {
         let cond = self.lower_expr(n.child_by_field_name("condition")?, src)?;
         let consequence = n.child_by_field_name("consequence")?;
         let then = self.lower_expr(consequence, src)?;
@@ -1012,6 +1021,11 @@ fn process_r_escapes(s: &str) -> String {
 // Keep recursive lowering within an ordinary 2 MiB Rust worker stack.
 const MAX_SYNTAX_DEPTH: usize = 128;
 
+// `else if` arms do not count toward `MAX_SYNTAX_DEPTH`. The walks that
+// recurse once per arm and use the most stack grow it on demand
+// (`crate::stack`); this cap bounds the lighter ones.
+const MAX_ELSE_IF_ARMS: usize = 1024;
+
 /// Comments, special-operator spans, and function ranges from one CST walk.
 struct LexicalNodes {
     comments: Vec<crate::ast::Comment>,
@@ -1019,8 +1033,9 @@ struct LexicalNodes {
     function_bodies: Vec<FunctionBody>,
 }
 
-/// Reject trees deeper than `MAX_SYNTAX_DEPTH` before recursive AST
-/// lowering, and collect lexical nodes in the same walk.
+/// Reject trees deeper than `MAX_SYNTAX_DEPTH`, or with an `else if` chain
+/// longer than `MAX_ELSE_IF_ARMS`, before recursive AST lowering, and
+/// collect lexical nodes in the same walk.
 ///
 /// Every `comment` node is collected in source order; its body is the text
 /// AFTER the leading `#` (untrimmed). These are the ONLY lexically-real
@@ -1041,8 +1056,8 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
     let mut out = Vec::new();
     let mut special = Vec::new();
     let mut bodies = Vec::new();
-    let mut stack = vec![(root, 0_usize)];
-    while let Some((node, depth)) = stack.pop() {
+    let mut stack = vec![(root, 0_usize, 0_usize)];
+    while let Some((node, depth, arms)) = stack.pop() {
         if depth > MAX_SYNTAX_DEPTH {
             let position = node.start_position();
             return Err(ParseError::TreeSitter {
@@ -1072,9 +1087,29 @@ fn collect_lexical(root: tree_sitter::Node, src: &str) -> Result<LexicalNodes, P
                     .map(self_span),
             });
         }
+        // An `else if` arm is the `alternative` child of the previous
+        // `if_statement`, but R code writes the chain flat, so the arm
+        // keeps its parent's depth and counts toward the chain cap instead.
+        let else_if = (node.kind() == "if_statement")
+            .then(|| node.child_by_field_name("alternative"))
+            .flatten()
+            .filter(|alt| alt.kind() == "if_statement");
         let mut child_cursor = node.walk();
         for child in node.children(&mut child_cursor) {
-            stack.push((child, depth + 1));
+            if Some(child) != else_if {
+                stack.push((child, depth + 1, 0));
+            } else if arms < MAX_ELSE_IF_ARMS {
+                stack.push((child, depth, arms + 1));
+            } else {
+                let position = child.start_position();
+                return Err(ParseError::TreeSitter {
+                    line: position.row + 1,
+                    col: position.column + 1,
+                    message: format!(
+                        "source exceeds ry's limit of {MAX_ELSE_IF_ARMS} `else if` arms in one chain"
+                    ),
+                });
+            }
         }
     }
     out.sort_by_key(|c| c.line);
@@ -1452,6 +1487,9 @@ mod tests {
                     format!("{}1", "if (TRUE) ".repeat(40)),
                     format!("{}1", "function() ".repeat(40)),
                     format!("f({})", vec!["1"; 10_000].join(",")),
+                    // A flat `else if` chain, in statement and value position (#696).
+                    else_if_chain(1025),
+                    format!("x <- {}", else_if_chain(1000)),
                 ] {
                     let file = parser.parse("ordinary.R", &source).unwrap();
                     assert!(file.parse_errors.is_empty());
@@ -1481,10 +1519,25 @@ mod tests {
                     assert_eq!(recovered.stmts.len(), 1);
                     assert_eq!(recovered.comments.len(), 2);
                 }
+                let error = parser.parse("chain.R", &else_if_chain(1026)).unwrap_err();
+                let super::ParseError::TreeSitter { col, message, .. } = error;
+                // The error points at the 1025th `else if` arm.
+                assert_eq!(col, else_if_chain(1025).len() + " else ".len() + 1);
+                assert_eq!(
+                    message,
+                    "source exceeds ry's limit of 1024 `else if` arms in one chain"
+                );
             })
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    /// `if (x == 0) 0 else if (x == 1) 1 ...` with `arms` arms.
+    fn else_if_chain(arms: usize) -> String {
+        (1..arms).fold("if (x == 0) 0".to_string(), |chain, arm| {
+            format!("{chain} else if (x == {arm}) {arm}")
+        })
     }
 
     #[test]

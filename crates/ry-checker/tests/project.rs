@@ -2117,3 +2117,45 @@ fn binding_installer_toggle_matches_cold() {
         );
     }
 }
+
+/// #696: a flat `else if` chain nests one level per arm in the syntax tree,
+/// but it neither trips the nesting limit nor overflows a 2 MiB worker stack
+/// in the walks that recurse once per arm (statement, value, and trailing
+/// return positions).
+#[test]
+fn long_else_if_chain_is_checked_on_a_small_stack() {
+    let chain = |indent: &str| {
+        let mut chain = format!("if (what == \"a0\") {{\n{indent}  0L\n");
+        for arm in 1..1000 {
+            chain.push_str(&format!(
+                "{indent}}} else if (what == \"a{arm}\") {{\n{indent}  {arm}L\n"
+            ));
+        }
+        chain + &format!("{indent}}}\n")
+    };
+    let source = format!(
+        "statement <- function(what) {{\n  {}  NULL\n}}\n\
+         trailing <- function(what) {{\n  {}}}\n\
+         value <- function(what) {{\n  x <- {}  x\n}}\n\
+         later <- function() undefined_thing + 1\n",
+        chain("  "),
+        chain("  "),
+        chain("  "),
+    );
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            let mut project = Project::new();
+            project.add_file("chain.R".to_string(), parse("chain.R", &source));
+            let codes: Vec<_> = project
+                .check()
+                .into_iter()
+                .flat_map(|(_, diagnostics)| diagnostics)
+                .map(|diagnostic| diagnostic.code)
+                .collect();
+            assert_eq!(codes, ["RY010"]);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

@@ -1587,6 +1587,21 @@ impl Checker {
         literal_cond: Option<bool>,
         then: IfArm<'_>,
         else_: Option<IfArm<'_>>,
+        walk: IfWalk<'_>,
+    ) -> RType {
+        // An `else if` chain recurses here once per arm.
+        ry_core::stack::grow(|| {
+            self.walk_journal_if_inner(scope, narrowing, literal_cond, then, else_, walk)
+        })
+    }
+
+    fn walk_journal_if_inner(
+        &mut self,
+        scope: &mut Scope,
+        narrowing: &Narrowing,
+        literal_cond: Option<bool>,
+        then: IfArm<'_>,
+        else_: Option<IfArm<'_>>,
         mut walk: IfWalk<'_>,
     ) -> RType {
         let mut narrowed = HashSet::new();
@@ -2256,8 +2271,11 @@ impl Checker {
                 // return value: the join of its branches' tail types.
                 // Without an `else`, R returns NULL on the FALSE arm.
                 let then_t = self.trailing_return_type(then, &mut scope.clone(), depth);
+                // An `else if` chain recurses here once per arm.
                 let else_t = match else_ {
-                    Some(block) => self.trailing_return_type(block, &mut scope.clone(), depth),
+                    Some(block) => ry_core::stack::grow(|| {
+                        self.trailing_return_type(block, &mut scope.clone(), depth)
+                    }),
                     None => Some(RType::new(Mode::Null, Length::Zero)),
                 };
                 match (then_t, else_t) {

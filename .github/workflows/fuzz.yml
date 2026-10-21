@@ -30,10 +30,16 @@ jobs:
           workspaces: |
             .
             fuzz
+      # libFuzzer writes new inputs to the first corpus directory and reads
+      # the checker fixtures as extra seeds.
       - name: Fuzz parse (5 min)
-        run: cargo +nightly fuzz run parse -- -max_total_time=300 -max_len=4096
+        run: |
+          mkdir -p fuzz/corpus/parse
+          cargo +nightly fuzz run parse fuzz/corpus/parse crates/ry-checker/testdata -- -max_total_time=300 -max_len=4096
       - name: Fuzz parse-and-check (5 min)
-        run: cargo +nightly fuzz run parse-and-check -- -max_total_time=300 -max_len=4096
+        run: |
+          mkdir -p fuzz/corpus/parse-and-check
+          cargo +nightly fuzz run parse-and-check fuzz/corpus/parse-and-check crates/ry-checker/testdata -- -max_total_time=300 -max_len=4096
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

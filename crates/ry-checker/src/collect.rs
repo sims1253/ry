@@ -1758,6 +1758,13 @@ fn is_dispatch_call(expression: &Expr) -> bool {
 }
 
 /// `Some(true)` for `missing(name)`, `Some(false)` for `!missing(name)`.
+/// With `name` missing, a disjunction is TRUE once one disjunct is
+/// (`missing(x) || is.null(x)`) and a conjunction is FALSE once one
+/// conjunct is (`!missing(x) && ...`), provided nothing evaluated alongside
+/// that test can touch the missing argument: `||`/`&&` skip their rhs, but
+/// their lhs and both sides of `|`/`&` always run, and `is.null(x)` there
+/// errors. Such an operand must itself be a missingness test or not
+/// mention `name` (`missing(xlim) | missing(ylim)`).
 fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
     match condition {
         Expr::UnaryOp {
@@ -1765,6 +1772,21 @@ fn missing_test(condition: &Expr, name: &str) -> Option<bool> {
             expr,
             ..
         } => missing_test(expr, name).map(|missing| !missing),
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            let decided = match op {
+                BinOpKind::OrOr | BinOpKind::Or => true,
+                BinOpKind::AndAnd | BinOpKind::And => false,
+                _ => return None,
+            };
+            let short_circuits = matches!(op, BinOpKind::OrOr | BinOpKind::AndAnd);
+            let (left, right) = (missing_test(lhs, name), missing_test(rhs, name));
+            let safe = |test: Option<bool>, operand: &Expr| {
+                test.is_some() || !expr_mentions(operand, name)
+            };
+            ((left == Some(decided) && (short_circuits || safe(right, rhs)))
+                || (right == Some(decided) && safe(left, lhs)))
+            .then_some(decided)
+        }
         Expr::Call { func, args, .. } => {
             let [argument] = args.as_slice() else {
                 return None;
@@ -1852,17 +1874,38 @@ fn expression_must_force(expression: &Expr, name: &str) -> bool {
         Expr::Ident {
             name: identifier, ..
         } => identifier == name,
+        // The inner target of `a <- b <- v` is written, not read: R
+        // evaluates only `v` before binding `b`. A replacement target
+        // (`names(x) <- v`) does read `x`, so it falls through below.
+        Expr::BinOp {
+            op: BinOpKind::Assign | BinOpKind::SuperAssign,
+            lhs,
+            rhs,
+            ..
+        } if binding_name(lhs).is_some() => expression_must_force(rhs, name),
         Expr::BinOp { op, lhs, rhs, .. } => {
             expression_must_force(lhs, name)
                 || (!matches!(op, BinOpKind::AndAnd | BinOpKind::OrOr)
                     && expression_must_force(rhs, name))
         }
         Expr::UnaryOp { expr, .. } => expression_must_force(expr, name),
-        Expr::Index { base, args, .. } => {
+        // `x$tt` and `x@tt` name a member; `tt` is never evaluated.
+        Expr::Index {
+            base,
+            kind: IndexKind::Dollar | IndexKind::Slot,
+            ..
+        } => expression_must_force(base, name),
+        // A missing formal passed bare to `[` is the empty subscript
+        // (`x[i, j]` with `i` missing selects every row); `[[` has no
+        // empty subscript and errors instead.
+        Expr::Index {
+            base, args, kind, ..
+        } => {
             expression_must_force(base, name)
-                || args
-                    .iter()
-                    .any(|argument| expression_must_force(&argument.value, name))
+                || args.iter().any(|argument| {
+                    !(*kind == IndexKind::Single && matches!(argument.value, Expr::Ident { .. }))
+                        && expression_must_force(&argument.value, name)
+                })
         }
         Expr::Call { func, .. } => expression_must_force(func, name),
         Expr::Block { body, .. } => block_force_flow(body, name).0,

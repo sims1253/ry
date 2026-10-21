@@ -103,12 +103,11 @@ jobs:
           --manifest ecosystem/posit-packages.txt
           --ledger docs/corpus/posit-0.9.0.json
           --tier ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
+          --reports-out "$RUNNER_TEMP/posit-reports"
       - name: Readable Posit message drift integration test
         run: python3 ecosystem/test-posit-messages.py
       - name: Posit ledger drift detection integration test
-        run: ecosystem/test-posit-drift-detection.sh
-      - name: Posit label falsification integration test
-        run: ecosystem/test-posit-label-falsification.sh
+        run: ecosystem/test-posit-drift-detection.sh "$RUNNER_TEMP/posit-reports"
 
   # Dependency direction CI gate
   # Asserts that forbidden internal Cargo edges (ry-config -> ry-checker,

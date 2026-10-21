@@ -1,5 +1,4 @@
 R/distinct.R:81:16 RY109
-R/summarise.R:342:34 RY010
 tests/testthat/test-conditions.R:10:20 RY040
 tests/testthat/test-conditions.R:11:19 RY040
 tests/testthat/test-conditions.R:21:21 RY040

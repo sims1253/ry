@@ -10,24 +10,6 @@
     "column"
   ],
   "findings": {
-    "blogdown::RY010::R/serve.R:164:22": {
-      "package": "blogdown",
-      "code": "RY010",
-      "path": "R/serve.R",
-      "line": 164,
-      "column": 22,
-      "severity": "warning",
-      "message": "variable `proc` is not bound in this scope"
-    },
-    "blogdown::RY010::R/serve.R:166:38": {
-      "package": "blogdown",
-      "code": "RY010",
-      "path": "R/serve.R",
-      "line": 166,
-      "column": 38,
-      "severity": "warning",
-      "message": "variable `proc` is not bound in this scope"
-    },
     "blogdown::RY032::R/utils.R:618:7": {
       "package": "blogdown",
       "code": "RY032",
@@ -368,15 +350,6 @@
       "column": 53,
       "severity": "warning",
       "message": "argument `subquery = FALSE` to `sql_render` is a constant shadowing the identically-named formal of an enclosing function, so the caller's `subquery` value is silently ignored; forward it as `subquery = subquery` instead"
-    },
-    "dplyr::RY010::R/summarise.R:342:34": {
-      "package": "dplyr",
-      "code": "RY010",
-      "path": "R/summarise.R",
-      "line": 342,
-      "column": 34,
-      "severity": "warning",
-      "message": "variable `group_sizes` is not bound in this scope"
     },
     "dplyr::RY040::tests/testthat/test-conditions.R:10:20": {
       "package": "dplyr",
@@ -3239,15 +3212,6 @@
       "column": 17,
       "severity": "warning",
       "message": "variable `list_of` is not bound in this scope"
-    },
-    "tinytex::RY010::R/install.R:335:31": {
-      "package": "tinytex",
-      "code": "RY010",
-      "path": "R/install.R",
-      "line": 335,
-      "column": 31,
-      "severity": "warning",
-      "message": "variable `tmp` is not bound in this scope"
     },
     "tinytex::RY032::R/install.R:195:7": {
       "package": "tinytex",

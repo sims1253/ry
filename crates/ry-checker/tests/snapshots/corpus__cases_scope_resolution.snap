@@ -282,3 +282,23 @@ expression: rows
       severity: warning
 - case: local block in the caller frame lets closures read later helpers
   diagnostics: []
+- case: bindings made in both arms of an if value are visible afterwards
+  diagnostics: []
+- case: an if ending a braced call argument binds after the call
+  diagnostics: []
+- case: an if ending a bare block binds after the block
+  diagnostics: []
+- case: a binding made in one arm of an if value is silent like the statement form
+  diagnostics: []
+- case: an if value joins the types its arms bind
+  diagnostics:
+    - code: RY040
+      line: 643
+      message: "cannot apply arithmetic op to `character` and `double`"
+      severity: error
+- case: a name no arm of an if value binds stays unbound
+  diagnostics:
+    - code: RY010
+      line: 651
+      message: "variable `hidden` is not bound in this scope"
+      severity: warning

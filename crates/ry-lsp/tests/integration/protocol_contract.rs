@@ -1038,8 +1038,9 @@ async fn baseline_reload_converges_to_new_value() {
 }
 
 /// Publication and inlay hints use the baseline loaded with the folder
-/// context. Emptying the file afterwards must not bring back the finding
-/// it suppresses.
+/// context at initialize. Emptying the file afterwards, with no
+/// didChangeWatchedFiles to trigger a reload, must not bring back the
+/// finding it suppresses.
 #[tokio::test]
 async fn publish_uses_the_baseline_loaded_at_initialize() {
     use ry_testkit::LspSession;

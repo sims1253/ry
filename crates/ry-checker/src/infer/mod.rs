@@ -1418,8 +1418,12 @@ impl Checker {
         for (index, statement) in body.iter().enumerate() {
             if index + 1 < body.len()
                 && let Stmt::If {
-                    then, else_: None, ..
+                    cond,
+                    then,
+                    else_: None,
+                    ..
                 } = statement
+                && !matches!(cond, Expr::Logical(false, _))
                 && let [Stmt::Expr(expression)] = then.as_slice()
                 && discarded_value_expression(expression)
             {
@@ -1431,9 +1435,16 @@ impl Checker {
                 );
             }
             match statement {
-                Stmt::If { then, else_, .. } => {
-                    self.check_discarded_branch_results(then);
-                    if let Some(else_) = else_ {
+                // R never evaluates the arm a literal condition skips.
+                Stmt::If {
+                    cond, then, else_, ..
+                } => {
+                    if !matches!(cond, Expr::Logical(false, _)) {
+                        self.check_discarded_branch_results(then);
+                    }
+                    if let Some(else_) = else_
+                        && !matches!(cond, Expr::Logical(true, _))
+                    {
                         self.check_discarded_branch_results(else_);
                     }
                 }
@@ -1502,8 +1513,25 @@ impl Checker {
         }
     }
 
+    /// Walk one `if` arm. A `dead` arm is the one a literal condition never
+    /// takes: it is walked as usual, so its bindings still reach the
+    /// continuation, but emits nothing because R never evaluates it.
+    pub(super) fn walk_if_arm(
+        &mut self,
+        statements: &[Stmt],
+        dead: bool,
+        scope: &mut Scope,
+        returns: Option<&mut Vec<RType>>,
+    ) {
+        let outer = self.in_dead_arm;
+        self.in_dead_arm |= dead;
+        self.walk_block(statements, scope, returns);
+        self.in_dead_arm = outer;
+    }
+
     /// `literal_cond` is the value of a literal `TRUE`/`FALSE` condition;
-    /// the arm it never takes contributes no loop-vector alternative.
+    /// the arm it never takes contributes no loop-vector alternative and
+    /// is walked without diagnostics.
     fn walk_journal_if(
         &mut self,
         scope: &mut Scope,
@@ -1518,7 +1546,12 @@ impl Checker {
         for name in apply_narrowing_branch(scope, narrowing, NarrowingBranch::Then) {
             narrowed.insert(name.to_string());
         }
-        self.walk_block(then, scope, returns.as_deref_mut());
+        self.walk_if_arm(
+            then,
+            literal_cond == Some(false),
+            scope,
+            returns.as_deref_mut(),
+        );
         let mut then_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));
         let mark = scope.begin_snapshot();
@@ -1526,7 +1559,7 @@ impl Checker {
             narrowed.insert(name.to_string());
         }
         if let Some(statements) = else_ {
-            self.walk_block(statements, scope, returns);
+            self.walk_if_arm(statements, literal_cond == Some(true), scope, returns);
         }
         let mut else_delta =
             scope.finish_snapshot(mark, std::mem::take(&mut self.journal_delta_cache));

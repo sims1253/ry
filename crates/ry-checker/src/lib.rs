@@ -98,7 +98,7 @@ use ry_typeshed::{
     DefaultCurrentScope, EvalMode, FunctionSig, Globals, HigherOrderResultKind, HigherOrderSpec,
     InjectionMode, JsonLength, JsonMode, JsonRType, ParamSpec, ReturnLengthSpec, ReturnSlot,
     ReturnSpec, SchemaEffect, ScopeEffect, Typeshed, is_known_package, known_packages,
-    load_base_cached, load_package, package_has_injects, package_has_s3_methods,
+    load_base_cached, package_has_injects, package_has_s3_methods, package_stub,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -2031,9 +2031,7 @@ impl Checker {
     }
 
     pub(crate) fn package_typeshed(&self, package: &str) -> Option<&Typeshed> {
-        self.user_stubs
-            .get(package)
-            .or_else(|| load_package(package))
+        package_stub(&self.user_stubs, package)
     }
 
     /// Conservative gate for cross-package injection scans (see

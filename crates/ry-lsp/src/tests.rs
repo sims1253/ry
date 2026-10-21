@@ -925,7 +925,7 @@ fn codes_for_file<'a>(diags: &'a [(String, Vec<Diagnostic>)], path: &str) -> Vec
 
 /// A content change re-checks a cached file under the same stubs.
 #[test]
-fn changing_stubs_invalidates_cached_diagnostics() {
+fn content_change_rechecks_the_cached_file() {
     use std::collections::BTreeMap;
 
     let mut cache = ProjectCache::default();

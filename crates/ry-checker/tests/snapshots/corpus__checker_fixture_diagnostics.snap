@@ -2652,9 +2652,41 @@ expression: snapshots
       severity: warning
       span:
         column: 12
-        end: 500
-        line: 10
-        start: 490
+        end: 635
+        line: 12
+        start: 625
+    - code: RY090
+      message: "unknown argument `bogus` to `fit`"
+      severity: warning
+      span:
+        column: 14
+        end: 826
+        line: 23
+        start: 817
+    - code: RY091
+      message: "missing required argument `vi` in call to `fit`"
+      severity: warning
+      span:
+        column: 4
+        end: 839
+        line: 24
+        start: 833
+    - code: RY090
+      message: "unknown argument `bogus` to `fit.default`"
+      severity: warning
+      span:
+        column: 22
+        end: 872
+        line: 25
+        start: 863
+    - code: RY091
+      message: "missing required argument `vi` in call to `fit.default`"
+      severity: warning
+      span:
+        column: 4
+        end: 893
+        line: 26
+        start: 879
   fixture: ry010_chained_assignment_targets.R
 - diagnostics:
     - code: RY010

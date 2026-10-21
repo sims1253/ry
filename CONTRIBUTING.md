@@ -100,8 +100,8 @@ runs the auditing and stub generation.
 `crates/ry-typeshed/vendor` and validates it with `ry typeshed validate`.
 Change stubs upstream, not in `vendor/`: `scripts/test_sync_typeshed.py`
 checks the vendored tree against the hash recorded in `vendor/SOURCE`.
-Register new packages in `crates/ry-typeshed/packages.txt`; its order controls
-signature lookup.
+`crates/ry-typeshed/build.rs` embeds every vendored stub. Signature lookup
+follows package-name order.
 
 ## Editor extensions
 

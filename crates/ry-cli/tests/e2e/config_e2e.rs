@@ -1,18 +1,13 @@
-//! End-to-end tests for `ry.toml` project configuration.
-//!
-//! These tests invoke the `ry` binary against temporary project trees
-//! to exercise the full pipeline: discovery, parsing, merging with CLI
-//! flags, and applying the merged settings to diagnostics. They
-//! complement the unit tests in `ry-config`'s `src/config.rs`, which
-//! cover the individual pieces in isolation.
+//! End-to-end tests for `ry.toml` discovery, merging with CLI flags, and
+//! its effect on diagnostics.
 
 use std::fs;
 use std::path::Path;
-use std::process::Output;
 
-use ry_testkit::ry;
+use ry_testkit::{CliOutput, ry};
+use serde_json::json;
 
-use crate::support::{install_namespace, unbound_names};
+use crate::support::{Files, check, install_namespace, unbound_names, write};
 
 fn stub(package: &str, function: &str, mode: &str) -> String {
     format!(
@@ -31,92 +26,63 @@ fn stub(package: &str, function: &str, mode: &str) -> String {
 }
 
 /// `ry check <args>` from `cwd`.
-fn check(cwd: &Path, args: &[&str]) -> Output {
-    ry!().cwd(cwd).arg("check").args(args).run().0
+fn check_in(cwd: &Path, args: &[&str]) -> CliOutput {
+    check().cwd(cwd).args(args).run()
 }
 
 /// `ry check <path>` with the path spelled absolutely.
-fn ry_check(path: &Path) -> Output {
-    ry!().arg("check").arg(path).run().0
+fn ry_check(path: &Path) -> CliOutput {
+    check().arg(path).run()
 }
 
+/// User stubs load from config-relative `typeshed` dirs, a `--typeshed` dir
+/// wins over the config's, and a malformed stub warns without hiding a
+/// valid sibling. Each case only resolves `bar()` through the integer stub.
 #[test]
-fn ry_toml_typeshed_path_is_relative_to_config() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir(tmp.path().join("stubs")).unwrap();
-    fs::write(
-        tmp.path().join("stubs/foo.json"),
-        stub("foo", "bar", "integer"),
-    )
-    .unwrap();
-    fs::write(tmp.path().join("ry.toml"), "typeshed = [\"stubs\"]\n").unwrap();
-    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
-
-    let output = check(tmp.path(), &["use.R"]);
-    assert!(
-        String::from_utf8_lossy(&output.stdout).is_empty(),
-        "config-relative user stub should resolve bar(): {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-}
-
-#[test]
-fn cli_typeshed_directory_overrides_config_directory() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir(tmp.path().join("config-stubs")).unwrap();
-    fs::create_dir(tmp.path().join("cli-stubs")).unwrap();
-    fs::write(
-        tmp.path().join("config-stubs/foo.json"),
-        stub("foo", "bar", "character"),
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("cli-stubs/foo.json"),
-        stub("foo", "bar", "integer"),
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        "typeshed = [\"config-stubs\"]\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
-    let output = ry!()
-        .cwd(tmp.path())
-        .args(["check", "--typeshed", "cli-stubs", "use.R"])
-        .run()
-        .0;
-    assert!(
-        String::from_utf8_lossy(&output.stdout).is_empty(),
-        "CLI directory must win over config package: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-}
-
-#[test]
-fn malformed_user_stub_warns_and_valid_sibling_still_loads() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir(tmp.path().join("stubs")).unwrap();
-    fs::write(tmp.path().join("stubs/bad.json"), "not json").unwrap();
-    fs::write(
-        tmp.path().join("stubs/foo.json"),
-        stub("foo", "bar", "integer"),
-    )
-    .unwrap();
-    fs::write(tmp.path().join("ry.toml"), "typeshed = [\"stubs\"]\n").unwrap();
-    fs::write(tmp.path().join("use.R"), "library(foo)\nx <- bar() + 1L\n").unwrap();
-
-    let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("bad.json"),
-        "warning must name bad file: {stderr}"
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).is_empty(),
-        "valid sibling stub must still be active: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+fn user_stub_dirs_resolve_relative_to_config_and_cli_wins() {
+    let integer = stub("foo", "bar", "integer");
+    let character = stub("foo", "bar", "character");
+    // (files besides use.R, extra args, stub warning naming a file)
+    let cases: [(Files, &[&str], Option<&str>); 3] = [
+        (
+            &[
+                ("ry.toml", b"typeshed = [\"stubs\"]\n"),
+                ("stubs/foo.json", integer.as_bytes()),
+            ],
+            &[],
+            None,
+        ),
+        (
+            &[
+                ("ry.toml", b"typeshed = [\"config-stubs\"]\n"),
+                ("config-stubs/foo.json", character.as_bytes()),
+                ("cli-stubs/foo.json", integer.as_bytes()),
+            ],
+            &["--typeshed", "cli-stubs"],
+            None,
+        ),
+        (
+            &[
+                ("ry.toml", b"typeshed = [\"stubs\"]\n"),
+                ("stubs/bad.json", b"not json"),
+                ("stubs/foo.json", integer.as_bytes()),
+            ],
+            &[],
+            Some("bad.json"),
+        ),
+    ];
+    for (files, args, warning) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), files);
+        write(tmp.path(), &[("use.R", b"library(foo)\nx <- bar() + 1L\n")]);
+        let output = check_in(tmp.path(), &[args, &["use.R"]].concat());
+        assert!(output.stdout().is_empty(), "{args:?}: {output:?}");
+        let warned = output.stderr().contains("ry: warning:");
+        assert_eq!(warned, warning.is_some(), "{args:?}: {output:?}");
+        if let Some(file) = warning {
+            assert!(output.stderr().contains(file), "{args:?}: {output:?}");
+        }
+    }
 }
 
 /// A scoped rule override selects files by their native path: a Unix
@@ -166,7 +132,7 @@ fn scoped_severity_matches_native_filenames() {
             ),
         )
         .unwrap();
-        let mut process = ry!().args(["check", "--output-format", "json"]);
+        let mut process = check().args(["--output-format", "json"]);
         for (file, (source, _), _) in &files {
             let path = temp.path().join(file);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -191,26 +157,20 @@ fn scoped_severity_matches_native_filenames() {
 #[test]
 fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
     let temp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(temp.path().join("R/scratch")).unwrap();
-    fs::create_dir_all(temp.path().join("scripts")).unwrap();
-    fs::write(
-        temp.path().join("DESCRIPTION"),
-        "Package: scoped\nVersion: 0.1\n",
-    )
-    .unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
-    )
-    .unwrap();
-    fs::write(temp.path().join("R/defs.R"), "shared <- 1L\n\"x\" + 1L\n").unwrap();
-    fs::write(temp.path().join("R/scratch/try.R"), "\"x\" + 1L\n").unwrap();
-    fs::write(temp.path().join("scripts/use.R"), "shared\n\"x\" + 1L\n").unwrap();
+    write(
+        temp.path(),
+        &[
+            ("DESCRIPTION", b"Package: scoped\nVersion: 0.1\n"),
+            ("ry.toml", b"warn = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n"),
+            ("R/defs.R", b"shared <- 1L\n\"x\" + 1L\n"),
+            ("R/scratch/try.R", b"\"x\" + 1L\n"),
+            ("scripts/use.R", b"shared\n\"x\" + 1L\n"),
+        ],
+    );
 
     let run = |args: &[&str]| {
-        let output = ry!()
+        let output = check()
             .cwd(temp.path())
-            .arg("check")
             .args(args)
             .args([".", "--output-format", "json"])
             .run();
@@ -240,10 +200,10 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
 
     // A direct file input from a different working directory must resolve
     // the same owning ry.toml and report the same scoped severity.
-    let direct = ry!()
-        .cwd(temp.path().join("scripts"))
-        .args(["check", "../R/defs.R", "--output-format", "json"])
-        .run();
+    let direct = check_in(
+        &temp.path().join("scripts"),
+        &["../R/defs.R", "--output-format", "json"],
+    );
     assert_eq!(ry040(&direct.findings()), [["../R/defs.R", "error"]]);
 
     let cli = run(&["--error", "RY040"]);
@@ -258,11 +218,8 @@ fn path_rule_overrides_keep_all_files_in_inference_and_respect_cli_choice() {
         "scoped errors must retain their original medium confidence: {high:?}"
     );
 
-    let snapshot = check(temp.path(), &[".", "--write-baseline", "baseline.json"]);
-    assert!(
-        matches!(snapshot.status.code(), Some(0 | 1)),
-        "{snapshot:?}"
-    );
+    let snapshot = check_in(temp.path(), &[".", "--write-baseline", "baseline.json"]);
+    assert!(matches!(snapshot.code(), Some(0 | 1)), "{snapshot:?}");
     fs::write(
         temp.path().join("ry.toml"),
         "warn = [\"RY040\"]\nbaseline = \"baseline.json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n[[rule-overrides]]\npaths = [\"R/scratch/**\"]\nwarn = [\"RY040\"]\n",
@@ -297,13 +254,14 @@ fn path_rule_overrides_normalize_equivalent_in_root_operands() {
     let temp = tempfile::tempdir().unwrap();
     fs::create_dir_all(temp.path().join("R/sub")).unwrap();
     fs::create_dir_all(temp.path().join("scripts")).unwrap();
-    fs::write(temp.path().join("anchor.R"), "x <- 1L\n").unwrap();
-    fs::write(temp.path().join("R/a.R"), "\"bad\" + 1L\n").unwrap();
-    fs::write(
-        temp.path().join("ry.toml"),
-        "warn = [\"RY040\"]\noutput-format = \"json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n",
-    )
-    .unwrap();
+    write(
+        temp.path(),
+        &[
+            ("anchor.R", b"x <- 1L\n"),
+            ("R/a.R", b"\"bad\" + 1L\n"),
+            ("ry.toml", b"warn = [\"RY040\"]\noutput-format = \"json\"\n[[rule-overrides]]\npaths = [\"R/**\"]\nerror = [\"RY040\"]\n"),
+        ],
+    );
 
     let root = temp.path().to_str().unwrap();
     let scripts = temp.path().join("scripts");
@@ -335,9 +293,9 @@ fn path_rule_overrides_normalize_equivalent_in_root_operands() {
         ),
     ];
     for (cwd, args) in cases {
-        let output = ry!().cwd(cwd).arg("check").args(&args).run().0;
-        assert_eq!(output.status.code(), Some(1), "{root} {args:?}: {output:?}");
-        let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let output = check().cwd(cwd).args(&args).run();
+        assert_eq!(output.code(), Some(1), "{root} {args:?}: {output:?}");
+        let findings = output.json();
         assert!(
             findings
                 .as_array()
@@ -349,8 +307,12 @@ fn path_rule_overrides_normalize_equivalent_in_root_operands() {
     }
 }
 
-fn ry_check_with_r_lib(arg: &Path, r_lib: &Path) -> Output {
-    ry!().arg("check").arg(arg).env("R_LIBS", r_lib).run().0
+fn ry_check_with_r_lib(arg: &Path, r_lib: &Path) -> CliOutput {
+    check()
+        .arg(arg)
+        .env_remove("RY_NO_INSTALLED_LIBRARIES")
+        .env("R_LIBS", r_lib)
+        .run()
 }
 
 fn install_fixture_package(r_lib: &Path) {
@@ -358,79 +320,66 @@ fn install_fixture_package(r_lib: &Path) {
 }
 
 fn install_fixture_r_home(r_home: &Path, version: &str) {
-    fs::create_dir_all(r_home.join("library/base")).unwrap();
-    fs::write(r_home.join("library/base/NAMESPACE"), "export(baseenv)\n").unwrap();
-    fs::write(
-        r_home.join("library/base/DESCRIPTION"),
-        format!("Package: base\nVersion: {version}\n"),
-    )
-    .unwrap();
-}
-
-#[test]
-fn ry_toml_applies_severity_overrides() {
-    // RY002 (`if` on length-2 logical) defaults to a warning, so a
-    // check against this file alone exits 0. Promoting RY002 to an
-    // error via `ry.toml` must flip the exit code to failure and
-    // surface the diagnostic as an error.
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"error = ["RY002"]
-"#,
-    )
-    .unwrap();
-    // `if (c(TRUE, FALSE))` triggers RY002 (length-2 logical).
-    fs::write(
-        tmp.path().join("bad.R"),
-        r#"if (c(TRUE, FALSE)) print(1)
-"#,
-    )
-    .unwrap();
-
-    let output = ry_check(tmp.path());
-    assert!(
-        !output.status.success(),
-        "expected non-zero exit code (RY002 promoted to error), got {:?}; stdout={}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("RY002"),
-        "expected RY002 in output: {}",
-        stdout
-    );
-    assert!(
-        stdout.contains("error"),
-        "expected RY002 to be reported as an error, got: {}",
-        stdout
+    write(
+        r_home,
+        &[
+            ("library/base/NAMESPACE", b"export(baseenv)\n"),
+            (
+                "library/base/DESCRIPTION",
+                format!("Package: base\nVersion: {version}\n").as_bytes(),
+            ),
+        ],
     );
 }
 
+/// `ry.toml` severities apply to files below the config, found by walking
+/// up from a subdirectory, and `--error` adds to them. RY002 (`if` on a
+/// length-2 logical) and RY010 default to warnings.
 #[test]
-fn ry_toml_without_error_override_keeps_warning_non_fatal() {
-    // Sanity counterpart to the above: with no severity override, the
-    // same file produces only a warning and the exit code is 0.
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("bad.R"),
-        r#"if (c(TRUE, FALSE)) print(1)
-"#,
-    )
-    .unwrap();
-    let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("RY002"),
-        "expected RY002 warning even without config: {}",
-        stdout
-    );
-    assert!(
-        output.status.success(),
-        "warnings must not fail the run without error-on-warning, got {:?}",
-        output.status
-    );
+fn severity_overrides_from_config_and_cli() {
+    // (ry.toml, extra args, exit code, [code, severity] findings)
+    type Case<'a> = (&'a str, &'a [&'a str], i32, [[&'a str; 2]; 2]);
+    let cases: [Case; 3] = [
+        ("", &[], 0, [["RY002", "warning"], ["RY010", "warning"]]),
+        (
+            "error = [\"RY002\"]\n",
+            &[],
+            1,
+            [["RY002", "error"], ["RY010", "warning"]],
+        ),
+        (
+            "error = [\"RY002\"]\n",
+            &["--error", "RY010"],
+            1,
+            [["RY002", "error"], ["RY010", "error"]],
+        ),
+    ];
+    for (config, args, code, expected) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        write(
+            tmp.path(),
+            &[
+                ("ry.toml", config.as_bytes()),
+                (
+                    "src/deep/bad.R",
+                    b"if (c(TRUE, FALSE)) print(undefined_thing)\n",
+                ),
+            ],
+        );
+        let output = check()
+            .cwd(tmp.path().join("src/deep"))
+            .args([".", "--output-format", "json"])
+            .args(args)
+            .run();
+        assert_eq!(output.code(), Some(code), "{config:?} {args:?}: {output:?}");
+        let mut findings: Vec<_> = output
+            .findings()
+            .into_iter()
+            .map(|[_, code, severity]| [code, severity])
+            .collect();
+        findings.sort();
+        assert_eq!(findings, expected, "{config:?} {args:?}");
+    }
 }
 
 #[test]
@@ -439,11 +388,11 @@ fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
     let path = tmp.path().join("example.R");
     fs::write(&path, "1L == 1L # ry: ignore[RY034]\n").unwrap();
     let default = ry_check(&path);
-    assert!(!String::from_utf8_lossy(&default.stdout).contains("RY113"));
+    assert!(!default.stdout().contains("RY113"));
 
     fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
     let audited = ry_check(&path);
-    let output = String::from_utf8_lossy(&audited.stdout);
+    let output = audited.stdout();
     assert!(
         output.contains("RY113") && output.contains("RY034"),
         "{output}"
@@ -455,76 +404,29 @@ fn unused_ignore_audit_is_opt_in_and_updates_after_a_fix() {
     )
     .unwrap();
     let excluded = ry_check(tmp.path());
-    assert!(!String::from_utf8_lossy(&excluded.stdout).contains("RY113"));
+    assert!(!excluded.stdout().contains("RY113"));
 
     fs::write(tmp.path().join("ry.toml"), "warn = [\"RY113\"]\n").unwrap();
     fs::write(&path, "1L == 1L\n").unwrap();
-    let fixed = ry!()
-        .args(["check", "--output-format", "json"])
-        .arg(&path)
-        .run();
-    assert_eq!(fixed.json(), serde_json::json!([]), "{fixed:?}");
-}
-
-#[test]
-fn ry_toml_exclude_patterns_skip_matched_files() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"exclude = ["fixtures/**"]
-"#,
-    )
-    .unwrap();
-    // A `fixtures/` file that WOULD trigger an error if checked.
-    fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
-    fs::write(
-        tmp.path().join("fixtures/bad.R"),
-        // RY040 is a default-error rule; if the exclude fails, this
-        // surfaces as an error and fails the run.
-        r#"x <- "a" + 1L
-"#,
-    )
-    .unwrap();
-    // A clean file outside the exclude so the run has something to do.
-    fs::write(
-        tmp.path().join("good.R"),
-        r#"x <- 1L + 2L
-"#,
-    )
-    .unwrap();
-
-    let output = ry!()
-        .args(["check", "--output-format", "json"])
-        .arg(tmp.path())
-        .run();
-    assert_eq!(output.json(), serde_json::json!([]), "{output:?}");
-    assert!(output.success(), "{output:?}");
+    let fixed = check().args(["--output-format", "json"]).arg(&path).run();
+    assert_eq!(fixed.json(), json!([]), "{fixed:?}");
 }
 
 #[test]
 fn package_test_fixtures_are_skipped_by_default() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
-    )
-    .unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
-    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
-    fs::write(
-        tmp.path().join("tests/testthat/test-live.R"),
-        "live_missing_name\n",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("tests/testthat/fixtures/bad.R"),
-        "fixture_missing_name\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("DESCRIPTION", b"Package: fixturepkg\nVersion: 0.0.0.9000\n"),
+            ("R/good.R", b"value <- 1L\n"),
+            ("tests/testthat/test-live.R", b"live_missing_name\n"),
+            ("tests/testthat/fixtures/bad.R", b"fixture_missing_name\n"),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         stdout.contains("live_missing_name"),
         "test code was skipped: {stdout}"
@@ -538,23 +440,18 @@ fn package_test_fixtures_are_skipped_by_default() {
 #[test]
 fn check_test_fixtures_config_opts_back_in() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: fixturepkg\nVersion: 0.0.0.9000\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("ry.toml"), "check-test-fixtures = true\n").unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::create_dir_all(tmp.path().join("tests/testthat/fixtures")).unwrap();
-    fs::write(tmp.path().join("R/good.R"), "value <- 1L\n").unwrap();
-    fs::write(
-        tmp.path().join("tests/testthat/fixtures/bad.R"),
-        "fixture_missing_name\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("DESCRIPTION", b"Package: fixturepkg\nVersion: 0.0.0.9000\n"),
+            ("ry.toml", b"check-test-fixtures = true\n"),
+            ("R/good.R", b"value <- 1L\n"),
+            ("tests/testthat/fixtures/bad.R", b"fixture_missing_name\n"),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         stdout.contains("fixture_missing_name"),
         "configured fixture data must be checked: {stdout}"
@@ -564,21 +461,24 @@ fn check_test_fixtures_config_opts_back_in() {
 #[test]
 fn ry_toml_output_format_json() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"output-format = "json"
+    write(
+        tmp.path(),
+        &[
+            (
+                "ry.toml",
+                br#"output-format = "json"
 "#,
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("bad.R"),
-        r#"x <- "a" + 1L
+            ),
+            (
+                "bad.R",
+                br#"x <- "a" + 1L
 "#,
-    )
-    .unwrap();
+            ),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     // JSON output lands on stdout (per check.rs's routing) and must
     // parse as a JSON array containing the RY040 diagnostic.
     assert!(
@@ -599,60 +499,31 @@ fn ry_toml_output_format_json() {
 }
 
 #[test]
-fn ry_toml_discovered_from_subdirectory() {
-    // ry.toml lives at the project root; `ry check` is invoked from a
-    // nested subdirectory. Discovery must walk up and find it.
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"error = ["RY002"]
-"#,
-    )
-    .unwrap();
-    let sub = tmp.path().join("src").join("deep");
-    fs::create_dir_all(&sub).unwrap();
-    fs::write(
-        sub.join("bad.R"),
-        r#"if (c(TRUE, FALSE)) print(1)
-"#,
-    )
-    .unwrap();
-
-    // Run `ry check .` from the deep subdirectory.
-    let output = check(&sub, &["."]);
-    assert!(
-        !output.status.success(),
-        "expected config discovery from subdir to promote RY002 to error, got {:?}; stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
 fn ry_toml_cli_flag_overrides_config_output_format() {
     // The config sets json; the CLI flag --output-format concise must
     // win (CLI overrides config for scalars).
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"output-format = "json"
+    write(
+        tmp.path(),
+        &[
+            (
+                "ry.toml",
+                br#"output-format = "json"
 "#,
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("bad.R"),
-        r#"x <- "a" + 1L
+            ),
+            (
+                "bad.R",
+                br#"x <- "a" + 1L
 "#,
-    )
-    .unwrap();
-    let output = ry!()
-        .arg("check")
+            ),
+        ],
+    );
+    let output = check()
         .arg(tmp.path())
         .arg("--output-format")
         .arg("concise")
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+        .run();
+    let stdout = output.stdout();
     // concise format goes to stdout and is NOT a
     // JSON array.
     assert!(
@@ -668,54 +539,23 @@ fn ry_toml_cli_flag_overrides_config_output_format() {
 }
 
 #[test]
-fn ry_toml_cli_error_appends_to_config_errors() {
-    // Config promotes RY002 to error; CLI additionally promotes RY010.
-    // A file triggering BOTH must surface both as errors and fail.
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        r#"error = ["RY002"]
-"#,
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("bad.R"),
-        // RY002 from the if-condition; RY010 from the unbound ref.
-        r#"if (c(TRUE, FALSE)) print(undefined_thing)
-"#,
-    )
-    .unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(tmp.path())
-        .arg("--error")
-        .arg("RY010")
-        .run()
-        .0;
-    assert!(
-        !output.status.success(),
-        "expected failure with appended error rules, got {:?}",
-        output.status
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("RY002"), "missing RY002: {}", stdout);
-    assert!(stdout.contains("RY010"), "missing RY010: {}", stdout);
-}
-
-#[test]
 fn ry_toml_malformed_aborts_with_error() {
     // A syntactically broken ry.toml must surface an error and abort
     // rather than silently running with defaults.
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("ry.toml"), "this is not = = valid toml\n").unwrap();
-    fs::write(tmp.path().join("ok.R"), "x <- 1\n").unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("ry.toml", b"this is not = = valid toml\n"),
+            ("ok.R", b"x <- 1\n"),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = output.stderr();
     assert!(
-        !output.status.success(),
-        "malformed config must abort with non-zero exit, got {:?}",
-        output.status
+        !output.success(),
+        "malformed config must abort with non-zero exit: {output:?}"
     );
     assert!(
         stderr.contains("ry.toml") && stderr.to_lowercase().contains("pars"),
@@ -742,99 +582,66 @@ fn closed_stdout_does_not_panic() {
             .spawn()
             .unwrap();
         drop(child.stdout.take());
-        let output = child.wait_with_output().unwrap();
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let output = CliOutput(child.wait_with_output().unwrap());
+        let stderr = output.stderr();
         assert!(!stderr.contains("panicked"), "{format}: {stderr}");
-        assert_ne!(output.status.code(), Some(101), "{format}: {stderr}");
+        assert_ne!(output.code(), Some(101), "{format}: {stderr}");
     }
 }
 
 #[test]
-fn color_flag_is_advertised() {
-    let output = ry!().arg("check").arg("--help").run().0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--color"), "{stdout}");
-}
-
-#[test]
-fn color_always_styles_human_diagnostics() {
+fn color_flag_styles_human_output_only() {
+    assert!(check().arg("--help").run().stdout().contains("--color"));
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
-    for format in ["concise", "full"] {
-        let output = ry!()
-            .arg("check")
+    write(tmp.path(), &[("bad.R", b"x <- genuinely_missing\n")]);
+    // (output format, --color, whether stdout carries ANSI escapes)
+    for (format, color, styled) in [
+        ("concise", "always", true),
+        ("full", "always", true),
+        ("full", "never", false),
+        ("json", "always", false),
+    ] {
+        let output = check()
             .arg(tmp.path())
-            .arg("--output-format")
-            .arg(format)
-            .arg("--color")
-            .arg("always")
-            .run()
-            .0;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains("\x1b["), "expected ANSI styling: {stdout}");
-        assert!(
-            stdout.contains("RY010"),
-            "diagnostic content changed: {stdout}"
+            .args(["--output-format", format, "--color", color])
+            .run();
+        let stdout = output.stdout();
+        assert_eq!(
+            stdout.contains("\x1b["),
+            styled,
+            "{format} {color}: {stdout}"
         );
+        assert!(stdout.contains("RY010"), "{format} {color}: {stdout}");
+        if format == "json" {
+            output.json();
+        }
     }
-}
-
-#[test]
-fn color_never_keeps_human_diagnostics_plain() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(tmp.path())
-        .arg("--color")
-        .arg("never")
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("\x1b["), "ANSI must be disabled: {stdout}");
-}
-
-#[test]
-fn color_always_leaves_json_machine_readable() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("bad.R"), "x <- genuinely_missing\n").unwrap();
-    let output = ry!()
-        .arg("check")
-        .arg(tmp.path())
-        .arg("--output-format")
-        .arg("json")
-        .arg("--color")
-        .arg("always")
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("\x1b["), "ANSI leaked into JSON: {stdout}");
-    serde_json::from_str::<serde_json::Value>(&stdout).expect("color must not corrupt JSON");
 }
 
 #[test]
 fn package_namespace_imports_activate_nse_and_pipe_models() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr, magrittr\n",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("NAMESPACE"),
-        "import(dplyr)\nimportFrom(magrittr,\"%>%\")\n",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("R/use.R"),
-        "filter_rows <- function(df) filter(df, column > 0)\n\
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr, magrittr\n",
+            ),
+            (
+                "NAMESPACE",
+                b"import(dplyr)\nimportFrom(magrittr,\"%>%\")\n",
+            ),
+            (
+                "R/use.R",
+                b"filter_rows <- function(df) filter(df, column > 0)\n\
          pull_column <- function(df) df %>% .$column\n",
-    )
-    .unwrap();
+            ),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("RY010"),
         "NAMESPACE imports must activate package NSE and pipe semantics: {stdout}"
@@ -844,24 +651,26 @@ fn package_namespace_imports_activate_nse_and_pipe_models() {
 #[test]
 fn data_mask_column_shadows_same_named_base_function() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("NAMESPACE"), "import(dplyr)\n").unwrap();
-    fs::write(
-        tmp.path().join("R/use.R"),
-        "keep_class <- function() {\n\
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: namespacefixture\nVersion: 0.0.0.9000\nImports: dplyr\n",
+            ),
+            ("NAMESPACE", b"import(dplyr)\n"),
+            (
+                "R/use.R",
+                b"keep_class <- function() {\n\
            df <- data.frame(class = \"wanted\")\n\
            filter(df, class == \"wanted\")\n\
          }\n",
-    )
-    .unwrap();
+            ),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("RY030"),
         "the data-mask column must shadow base::class: {stdout}"
@@ -871,20 +680,22 @@ fn data_mask_column_shadows_same_named_base_function() {
 #[test]
 fn description_depends_activate_nse_without_namespace() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: dependsfixture\nVersion: 0.0.0.9000\nDepends: dplyr\n",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("R/use.R"),
-        "top <- function(df) count(df, service_request_type)\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: dependsfixture\nVersion: 0.0.0.9000\nDepends: dplyr\n",
+            ),
+            (
+                "R/use.R",
+                b"top <- function(df) count(df, service_request_type)\n",
+            ),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("RY010"),
         "DESCRIPTION Depends must activate package NSE semantics: {stdout}"
@@ -894,21 +705,20 @@ fn description_depends_activate_nse_without_namespace() {
 #[test]
 fn package_namespace_import_from_binds_imported_value() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: namespacefixture\nVersion: 0.0.0.9000\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("NAMESPACE"), "importFrom(shiny,tags)\n").unwrap();
-    fs::write(
-        tmp.path().join("R/use.R"),
-        "page <- tags\noops <- genuinely_missing\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: namespacefixture\nVersion: 0.0.0.9000\n",
+            ),
+            ("NAMESPACE", b"importFrom(shiny,tags)\n"),
+            ("R/use.R", b"page <- tags\noops <- genuinely_missing\n"),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         stdout.contains("variable `genuinely_missing` is not bound"),
         "control diagnostic must still fire: {stdout}"
@@ -924,23 +734,27 @@ fn package_namespace_bindings_do_not_leak_across_checked_roots() {
     let tmp = tempfile::tempdir().unwrap();
     for package in ["with_import", "without_import"] {
         let root = tmp.path().join(package);
-        fs::create_dir_all(root.join("R")).unwrap();
-        fs::write(
-            root.join("DESCRIPTION"),
-            format!("Package: {package}\nVersion: 0.0.0.9000\n"),
-        )
-        .unwrap();
-        fs::write(root.join("R/use.R"), "page <- tags\n").unwrap();
+        write(
+            &root,
+            &[
+                (
+                    "DESCRIPTION",
+                    format!("Package: {package}\nVersion: 0.0.0.9000\n").as_bytes(),
+                ),
+                ("R/use.R", b"page <- tags\n"),
+            ],
+        );
     }
-    fs::write(
-        tmp.path().join("with_import/NAMESPACE"),
-        "importFrom(shiny,tags)\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("without_import/NAMESPACE"), "").unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("with_import/NAMESPACE", b"importFrom(shiny,tags)\n"),
+            ("without_import/NAMESPACE", b""),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert_eq!(
         stdout
             .matches("variable `tags` is not bound in this scope")
@@ -957,27 +771,25 @@ fn package_namespace_bindings_do_not_leak_across_checked_roots() {
 #[test]
 fn package_test_context_supplies_suggests_and_namespace_imports() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: contextfixture\nVersion: 0.0.0.9000\nSuggests: mirai\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("NAMESPACE"), "import(rlang)\n").unwrap();
-    fs::write(tmp.path().join("R/use.R"), "enquo\n").unwrap();
-    fs::write(
-        tmp.path().join("tests/testthat/test-context.R"),
-        "daemons\nenquo\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: contextfixture\nVersion: 0.0.0.9000\nSuggests: mirai\n",
+            ),
+            ("NAMESPACE", b"import(rlang)\n"),
+            ("R/use.R", b"enquo\n"),
+            ("tests/testthat/test-context.R", b"daemons\nenquo\n"),
+        ],
+    );
     // R CMD check executes `tests/` root scripts in the global environment
     // after `library(package)`: the namespace's wholesale imports stay
     // internal there, so the same bare name is genuinely unbound.
     fs::write(tmp.path().join("tests/spellcheck.R"), "enquo\n").unwrap();
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("variable `daemons` is not bound"),
         "stubbed Suggests must supply their names in tests: {stdout}"
@@ -995,27 +807,21 @@ fn package_test_context_supplies_suggests_and_namespace_imports() {
 #[test]
 fn imported_rlang_capture_helper_is_recognized_globally() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join("R")).unwrap();
-    fs::create_dir_all(tmp.path().join("tests/testthat")).unwrap();
-    fs::write(
-        tmp.path().join("DESCRIPTION"),
-        "Package: capturefixture\nVersion: 0.0.0.9000\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("NAMESPACE"), "importFrom(rlang,enquos)\n").unwrap();
-    fs::write(
-        tmp.path().join("R/lst.R"),
-        "lst <- function(...) enquos(...)\n",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join("tests/testthat/test-lst.R"),
-        "lst(a = 1, b = a)\n",
-    )
-    .unwrap();
+    write(
+        tmp.path(),
+        &[
+            (
+                "DESCRIPTION",
+                b"Package: capturefixture\nVersion: 0.0.0.9000\n",
+            ),
+            ("NAMESPACE", b"importFrom(rlang,enquos)\n"),
+            ("R/lst.R", b"lst <- function(...) enquos(...)\n"),
+            ("tests/testthat/test-lst.R", b"lst(a = 1, b = a)\n"),
+        ],
+    );
 
     let output = ry_check(tmp.path());
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("variable `a` is not bound"),
         "global promise-capture metadata must quote lst's dots: {stdout}"
@@ -1047,12 +853,13 @@ fn library_environment_selects_the_installed_namespace() {
         install_fixture_r_home(&path(&format!("r-home-{version}")), &format!("{version}.1"));
     }
     fs::create_dir_all(package.join("R")).unwrap();
-    fs::write(
-        package.join("DESCRIPTION"),
-        "Package: consumer\nVersion: 0.1\n",
-    )
-    .unwrap();
-    fs::write(package.join("NAMESPACE"), "import(fixturepkg)\n").unwrap();
+    write(
+        &package,
+        &[
+            ("DESCRIPTION", b"Package: consumer\nVersion: 0.1\n"),
+            ("NAMESPACE", b"import(fixturepkg)\n"),
+        ],
+    );
     let source: String = libraries
         .iter()
         .map(|(_, name)| format!("x <- {name}\n"))
@@ -1130,8 +937,8 @@ fn library_environment_selects_the_installed_namespace() {
             fs::rename(from, to).unwrap();
         }
         // Only the child's environment is isolated, and only to these roots.
-        let mut process = ry!()
-            .args(["check", "--output-format", "json"])
+        let mut process = check()
+            .args(["--output-format", "json"])
             .arg(&package)
             .env("HOME", &missing)
             .env("USERPROFILE", &missing);
@@ -1176,7 +983,7 @@ fn require_namespace_does_not_bind_installed_exports() {
     .unwrap();
 
     let output = ry_check_with_r_lib(&tmp.path().join("script.R"), &r_lib);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         stdout.contains("variable `exported_value` is not bound"),
         "requireNamespace must not attach package exports: {stdout}"
@@ -1188,17 +995,20 @@ fn package_namespace_whole_import_binds_installed_exports() {
     let tmp = tempfile::tempdir().unwrap();
     let r_lib = tmp.path().join("library");
     install_fixture_package(&r_lib);
-    fs::create_dir_all(tmp.path().join("package/R")).unwrap();
-    fs::write(
-        tmp.path().join("package/DESCRIPTION"),
-        "Package: namespacefixture\nVersion: 0.0.0.9000\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("package/NAMESPACE"), "import(fixturepkg)\n").unwrap();
-    fs::write(tmp.path().join("package/R/use.R"), "x <- exported_value\n").unwrap();
+    write(
+        tmp.path(),
+        &[
+            (
+                "package/DESCRIPTION",
+                b"Package: namespacefixture\nVersion: 0.0.0.9000\n",
+            ),
+            ("package/NAMESPACE", b"import(fixturepkg)\n"),
+            ("package/R/use.R", b"x <- exported_value\n"),
+        ],
+    );
 
     let output = ry_check_with_r_lib(&tmp.path().join("package"), &r_lib);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout();
     assert!(
         !stdout.contains("RY010"),
         "import(fixturepkg) must bind dependency exports: {stdout}"
@@ -1227,28 +1037,30 @@ fn bundled_set6_imports_bind_exports_without_hiding_misspellings() {
         ),
     ] {
         let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir(tmp.path().join("R")).unwrap();
-        fs::write(
-            tmp.path().join("DESCRIPTION"),
-            "Package: inventoryfixture\nVersion: 0.0.1\nImports: set6, dictionar6\n",
-        )
-        .unwrap();
-        fs::write(tmp.path().join("NAMESPACE"), namespace).unwrap();
-        fs::write(
-            tmp.path().join("R/use.R"),
-            "values <- list(Set, Reals, Interval, Dictionary, as.Set, dct, Reaals)\n",
-        )
-        .unwrap();
+        write(
+            tmp.path(),
+            &[
+                (
+                    "DESCRIPTION",
+                    b"Package: inventoryfixture\nVersion: 0.0.1\nImports: set6, dictionar6\n",
+                ),
+                ("NAMESPACE", namespace.as_bytes()),
+                (
+                    "R/use.R",
+                    b"values <- list(Set, Reals, Interval, Dictionary, as.Set, dct, Reaals)\n",
+                ),
+            ],
+        );
 
-        let output = ry!()
-            .args(["check", "--output-format", "json"])
+        let output = check()
+            .args(["--output-format", "json"])
             .arg(tmp.path())
-            .env("RY_NO_INSTALLED_LIBRARIES", "1")
-            .run()
-            .0;
-        assert!(output.status.success(), "{output:?}");
-        let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+            .run();
+        assert!(output.success(), "{output:?}");
+        let diagnostics = output.json();
         let messages: Vec<_> = diagnostics
+            .as_array()
+            .unwrap()
             .iter()
             .map(|diagnostic| {
                 assert_eq!(diagnostic["code"], "RY010", "{diagnostic}");
@@ -1282,8 +1094,8 @@ fn ry_toml_packages_enables_dplyr_nse() {
         if let Some(config) = config {
             fs::write(tmp.path().join("ry.toml"), config).unwrap();
         }
-        let output = ry!()
-            .args(["check", "--output-format", "json"])
+        let output = check()
+            .args(["--output-format", "json"])
             .arg(tmp.path())
             .run();
         assert_eq!(
@@ -1298,13 +1110,12 @@ fn ry_toml_packages_enables_dplyr_nse() {
 fn full_output_reports_argument_type_mismatch_with_types() {
     let tmp = tempfile::tempdir().unwrap();
     fs::write(tmp.path().join("mismatch.R"), "mean(\"text\")\n").unwrap();
-    let output = ry!()
+    let output = check()
         .cwd(tmp.path())
-        .args(["check", "--output-format", "full", "mismatch.R"])
-        .run()
-        .0;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!output.status.success(), "{stdout}");
+        .args(["--output-format", "full", "mismatch.R"])
+        .run();
+    let stdout = output.stdout();
+    assert!(!output.success(), "{stdout}");
     assert!(stdout.contains("[RY092]"), "{stdout}");
     assert!(
         stdout.contains("argument `x` to `mean` is `character`, expected numeric"),
@@ -1323,37 +1134,28 @@ fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
     // save(x, y, file = "cyclic-pairlists.rda", version = 2, compress = FALSE)
     let tmp = tempfile::tempdir().unwrap();
     let pkg = tmp.path();
-    fs::write(
-        pkg.join("DESCRIPTION"),
-        "Package: cycleprobe\nLazyData: true\n",
-    )
-    .unwrap();
-    fs::create_dir(pkg.join("R")).unwrap();
-    fs::create_dir(pkg.join("data")).unwrap();
-    fs::write(pkg.join("R/probe.R"), "x\ny\nnot_a_bound_cycle_symbol\n").unwrap();
-    fs::write(
-        pkg.join("data/cyclic-pairlists.rda"),
-        include_bytes!("fixtures/cyclic-pairlists.rda"),
-    )
-    .unwrap();
-    let output = ry!()
+    write(
+        pkg,
+        &[
+            ("DESCRIPTION", b"Package: cycleprobe\nLazyData: true\n"),
+            ("R/probe.R", b"x\ny\nnot_a_bound_cycle_symbol\n"),
+            (
+                "data/cyclic-pairlists.rda",
+                include_bytes!("fixtures/cyclic-pairlists.rda"),
+            ),
+        ],
+    );
+    let output = check()
         .args([
-            "check",
             pkg.to_str().unwrap(),
             "--output-format",
             "json",
             "--exit-zero",
         ])
-        .env("RY_NO_INSTALLED_LIBRARIES", "1")
-        .run()
-        .0;
-    assert!(
-        output.status.success(),
-        "checker failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        .run();
+    assert!(output.success(), "checker failed: {}", output.stderr());
+    let diagnostics = output.json();
+    assert_eq!(diagnostics.as_array().unwrap().len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0]["code"], "RY010");
     assert_eq!(diagnostics[0]["line"], 3);
     assert!(
@@ -1362,110 +1164,65 @@ fn cyclic_serialized_data_keeps_bindings_and_unbound_diagnostics() {
             .unwrap()
             .contains("not_a_bound_cycle_symbol")
     );
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("degraded scope"));
+    assert!(!output.stderr().contains("degraded scope"));
 }
 
-#[test]
-fn oversized_sysdata_surfaces_degraded_scope_without_global_ry010_disable() {
-    // Over-cap end-to-end: an over-cap serialized data file must (1) fall
-    // back to its file-stem binding instead of disabling RY010 project-wide,
-    // (2) keep RY010 live for genuinely unbound names, and (3) surface the
-    // degraded scope on stderr (never stdout) so the JSON diagnostic stream
-    // consumed by the ecosystem harness stays stable. We shrink the byte cap
-    // via `ry.toml` so a tiny `sysdata.rda` triggers the cap without writing
-    // a real 2 MB serialization.
-    let tmp = tempfile::tempdir().unwrap();
-    let pkg = tmp.path();
-    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
-    fs::create_dir_all(pkg.join("R")).unwrap();
-    // `sysdata` resolves via the file-stem fallback; `genuinely_missing` is
-    // a real miss that must fire RY010.
-    fs::write(
-        pkg.join("R/use.R"),
-        "ok <- sysdata\nbad <- genuinely_missing\n",
-    )
-    .unwrap();
-    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
-
-    // Human format: degraded note on stderr, RY010 on stdout.
-    let human = ry!().args(["check", pkg.to_str().unwrap()]).run().0;
-    let human_stdout = String::from_utf8_lossy(&human.stdout);
-    let human_stderr = String::from_utf8_lossy(&human.stderr);
-    assert!(
-        human_stdout.contains("RY010") && human_stdout.contains("genuinely_missing"),
-        "RY010 must stay live for the real miss (no global disable): {human_stdout}"
-    );
-    // The previous form of this assertion was
-    // `!contains("sysdata") || contains("RY010")`, which is vacuous: the
-    // `genuinely_missing` diagnostic above guarantees "RY010" is present, so
-    // the second disjunct always held. Match the specific message instead.
-    assert!(
-        !human_stdout.contains("variable `sysdata` is not bound in this scope"),
-        "the file-stem binding must not itself fire RY010: {human_stdout}"
-    );
-    assert!(
-        human_stderr.contains("degraded scope"),
-        "the degraded scope must be reported on stderr: {human_stderr}"
-    );
-    assert!(
-        human_stderr.contains("sysdata.rda"),
-        "the degraded report must name the offending file: {human_stderr}"
-    );
-    assert!(
-        !human_stdout.contains("degraded scope"),
-        "the degraded note must never reach the stdout diagnostic stream: {human_stdout}"
-    );
-
-    // Machine format: degraded note suppressed, JSON stays clean.
-    let json = ry!()
-        .args([
-            "check",
-            pkg.to_str().unwrap(),
-            "--output-format",
-            "json",
-            "--exit-zero",
-        ])
-        .run()
-        .0;
-    let json_stdout = String::from_utf8_lossy(&json.stdout);
-    let json_stderr = String::from_utf8_lossy(&json.stderr);
-    assert!(
-        json_stdout.contains("RY010"),
-        "JSON must still carry the RY010 finding: {json_stdout}"
-    );
-    assert!(
-        json_stderr.is_empty(),
-        "JSON output must not emit the human degraded note on stderr: {json_stderr}"
-    );
-    assert!(
-        !json_stdout.contains("degraded"),
-        "the degraded note must not leak into JSON diagnostics: {json_stdout}"
-    );
-}
-
+/// Serialized data that cannot be enumerated degrades only its own scope:
+/// the file-stem binding stands in and RY010 stays live elsewhere. The
+/// notice names each offending file once, on stderr, and only for human
+/// output or `--statistics`, so the JSON stream stays stable.
 #[test]
 fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
-    let tmp = tempfile::tempdir().unwrap();
-    let pkg = tmp.path();
-    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    fs::create_dir_all(pkg.join("R")).unwrap();
-    fs::write(
-        pkg.join("R/use.R"),
-        "ok <- sysdata\nbad <- genuinely_missing\n",
-    )
-    .unwrap();
-    // (sysdata.rda, degraded reason, names reported unbound)
-    let cases: [(&[u8], Option<&str>, &[&str]); 3] = [
-        // Over the parser limit: the file-stem binding stands in.
+    const USE: (&str, &[u8]) = ("R/use.R", b"ok <- sysdata\nbad <- genuinely_missing\n");
+    const CAP: &str = "max-serialized-bytes = 1\n";
+    // (ry.toml, files, degraded file and reason, names reported unbound)
+    type Case<'a> = (
+        &'a str,
+        Files<'a>,
+        Option<(&'a str, &'a str)>,
+        &'a [&'a str],
+    );
+    let cases: [Case; 6] = [
         (
-            include_bytes!("../../../../testdata/serialized/nested-limit.rda"),
-            Some("serialized parser resource limit exceeded"),
+            CAP,
+            &[USE, ("R/sysdata.rda", b"over-cap-bytes")],
+            Some(("sysdata.rda", "decoded-byte limit exceeded")),
+            &["genuinely_missing"],
+        ),
+        // Every file in the package reads the scope, one notice in total.
+        (
+            CAP,
+            &[
+                ("R/sysdata.rda", b"over-cap-bytes"),
+                ("R/a.R", b"x <- sysdata\n"),
+                ("R/b.R", b"x <- sysdata\n"),
+                ("R/c.R", b"x <- sysdata\n"),
+            ],
+            Some(("sysdata.rda", "decoded-byte limit exceeded")),
+            &[],
+        ),
+        (
+            "",
+            &[
+                USE,
+                (
+                    "R/sysdata.rda",
+                    include_bytes!("../../../../testdata/serialized/nested-limit.rda"),
+                ),
+            ],
+            Some(("sysdata.rda", "serialized parser resource limit exceeded")),
             &["genuinely_missing"],
         ),
         // A repaired, known empty inventory binds nothing.
         (
-            include_bytes!("../../../../testdata/serialized/empty.rda"),
+            "",
+            &[
+                USE,
+                (
+                    "R/sysdata.rda",
+                    include_bytes!("../../../../testdata/serialized/empty.rda"),
+                ),
+            ],
             None,
             &["sysdata", "genuinely_missing"],
         ),
@@ -1473,105 +1230,79 @@ fn serialized_inventory_failures_are_reported_and_repair_restores_bindings() {
         // XDR inventory cannot read it, but its valid envelope must not be
         // mislabeled as corrupt.
         (
-            include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
-            Some("unsupported serialized input"),
+            "",
+            &[
+                USE,
+                (
+                    "R/sysdata.rda",
+                    include_bytes!("../../../../testdata/serialized/empty-ascii.rda"),
+                ),
+            ],
+            Some(("sysdata.rda", "unsupported serialized input")),
             &["sysdata", "genuinely_missing"],
         ),
+        // A missing `load()` target is unreadable. An absent optional
+        // `sysdata.rda` is normal.
+        (
+            "",
+            &[
+                ("R/use.R", b"load('missing.rda')\n"),
+                ("R/other.R", b"genuinely_missing\n"),
+            ],
+            Some(("missing.rda", "serialized input could not be read")),
+            &["genuinely_missing"],
+        ),
     ];
-    for (bytes, degraded, unbound) in cases {
-        fs::write(pkg.join("R/sysdata.rda"), bytes).unwrap();
-        // `--statistics` keeps the degraded-scope note beside JSON output.
-        let checked = ry!()
-            .cwd(pkg)
-            .args([
-                "check",
-                "R/use.R",
-                "--output-format",
-                "json",
-                "--statistics",
-            ])
-            .run();
+    for (config, files, degraded, unbound) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let pkg = tmp.path();
+        write(
+            pkg,
+            &[
+                ("DESCRIPTION", b"Package: fixture\n"),
+                ("ry.toml", config.as_bytes()),
+            ],
+        );
+        write(pkg, files);
+        let assert_notice = |stderr: &str| match degraded {
+            Some((file, reason)) => {
+                assert!(stderr.contains("1 degraded scope(s)"), "{stderr}");
+                let notes: Vec<_> = stderr
+                    .lines()
+                    .filter(|line| line.starts_with("  - "))
+                    .collect();
+                assert_eq!(notes.len(), 1, "{stderr}");
+                assert!(
+                    notes[0].ends_with(&format!("{file} ({reason})")),
+                    "{stderr}"
+                );
+            }
+            None => assert!(!stderr.contains("degraded"), "{stderr}"),
+        };
+        let json = check_in(pkg, &["R", "--output-format", "json", "--exit-zero"]);
         assert_eq!(
-            unbound_names(checked.json().as_array().unwrap()),
+            unbound_names(json.json().as_array().unwrap()),
             unbound,
             "{degraded:?}"
         );
-        let notice = checked.stderr();
-        let facts = ry!().cwd(pkg).args(["dump-facts", "R/use.R"]).run().json();
+        assert!(json.stderr().is_empty(), "{json:?}");
+        let statistics = check_in(pkg, &["R", "--output-format", "json", "--statistics"]);
+        assert_notice(&statistics.stderr());
+        let human = check_in(pkg, &["R"]);
+        assert_notice(&human.stderr());
+        assert!(!human.stdout().contains("degraded"), "{human:?}");
+        let facts = ry!().cwd(pkg).args(["dump-facts", "R"]).run().json();
+        // Every file shares the one package context.
+        assert_eq!(facts["contexts"].as_array().unwrap().len(), 1, "{facts}");
         let scopes = &facts["contexts"][0]["inputs"]["degraded_scopes"];
         match degraded {
-            Some(reason) => {
-                assert!(
-                    notice.contains(&format!("sysdata.rda ({reason})")),
-                    "{notice}"
-                );
+            Some((_, reason)) => {
                 assert_eq!(scopes.as_array().unwrap().len(), 1, "{scopes}");
                 assert_eq!(scopes[0][1], reason);
             }
-            None => {
-                assert!(!notice.contains("degraded"), "{notice}");
-                assert_eq!(scopes, &serde_json::json!([]));
-            }
+            None => assert_eq!(scopes, &json!([])),
         }
     }
-}
-
-#[test]
-fn missing_load_target_is_unavailable_but_absent_optional_sysdata_is_normal() {
-    let tmp = tempfile::tempdir().unwrap();
-    let pkg = tmp.path();
-    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    fs::create_dir_all(pkg.join("R")).unwrap();
-    fs::write(pkg.join("R/use.R"), "load('missing.rda')\n").unwrap();
-    fs::write(pkg.join("R/other.R"), "genuinely_missing\n").unwrap();
-
-    let output = ry!().cwd(pkg).args(["check", "R/"]).run().0;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stderr.contains("missing.rda (serialized input could not be read)"),
-        "{stderr}"
-    );
-    assert!(
-        !stderr.contains("sysdata.rda"),
-        "optional absent sysdata is normal: {stderr}"
-    );
-    assert!(
-        stdout.contains("genuinely_missing"),
-        "unrelated RY010 must remain: {stdout}"
-    );
-}
-
-/// A package root is re-resolved once per file in it, so an oversized
-/// dataset used to be pushed onto the degraded list once per file and
-/// printed that many times. The report is per file, not per reader.
-#[test]
-fn degraded_scope_is_reported_once_per_file_not_per_reader() {
-    let tmp = tempfile::tempdir().unwrap();
-    let pkg = tmp.path();
-    fs::write(pkg.join("DESCRIPTION"), "Package: fixture\n").unwrap();
-    fs::write(pkg.join("ry.toml"), "max-serialized-bytes = 1\n").unwrap();
-    fs::create_dir_all(pkg.join("R")).unwrap();
-    fs::write(pkg.join("R/sysdata.rda"), "over-cap-bytes").unwrap();
-    // Three files in the same package: one resolve pass each.
-    for name in ["a", "b", "c"] {
-        fs::write(pkg.join(format!("R/{name}.R")), "x <- sysdata\n").unwrap();
-    }
-
-    let output = ry!().args(["check", pkg.to_str().unwrap()]).run().0;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        stderr
-            .lines()
-            .filter(|line| line.trim_start().starts_with("- "))
-            .count(),
-        1,
-        "one oversized file must produce one degraded line: {stderr}"
-    );
-    assert!(
-        stderr.contains("1 degraded scope(s)"),
-        "the count must match the number of distinct offending files: {stderr}"
-    );
 }
 
 /// `useDynLib(pkg, .registration = TRUE)` binds every routine in
@@ -1584,23 +1315,26 @@ fn degraded_scope_is_reported_once_per_file_not_per_reader() {
 fn registered_native_symbols_resolve_in_value_position() {
     let tmp = tempfile::tempdir().unwrap();
     let pkg = tmp.path();
-    fs::write(pkg.join("DESCRIPTION"), "Package: ffi\n").unwrap();
-    fs::create_dir_all(pkg.join("R")).unwrap();
-    fs::write(
-        pkg.join("R/defuse.R"),
-        "enquo <- function(arg) .Call(ffi_enquo, substitute(arg))\n\
+    write(
+        pkg,
+        &[
+            ("DESCRIPTION", b"Package: ffi\n"),
+            (
+                "R/defuse.R",
+                b"enquo <- function(arg) .Call(ffi_enquo, substitute(arg))\n\
          enquos <- function(...) endots(capture_arg = ffi_enquo)\n\
          bad <- function() genuinely_missing_xyz\n",
-    )
-    .unwrap();
+            ),
+        ],
+    );
 
     fs::write(
         pkg.join("NAMESPACE"),
         "useDynLib(ffi, .registration = TRUE)\n",
     )
     .unwrap();
-    let declared = ry!().args(["check", pkg.to_str().unwrap()]).run().0;
-    let declared_stdout = String::from_utf8_lossy(&declared.stdout);
+    let declared = check().args([pkg.to_str().unwrap()]).run();
+    let declared_stdout = declared.stdout();
     assert!(
         !declared_stdout.contains("ffi_enquo"),
         "a symbol proven native by .Call must resolve in value position too: {declared_stdout}"
@@ -1614,11 +1348,8 @@ fn registered_native_symbols_resolve_in_value_position() {
     // ordinary unbound read again. (The `.Call` entry-point argument stays
     // suppressed either way — that is the long-standing call-position rule.)
     fs::write(pkg.join("NAMESPACE"), "export(enquo)\n").unwrap();
-    let undeclared = ry!()
-        .args(["check", pkg.to_str().unwrap(), "--exit-zero"])
-        .run()
-        .0;
-    let undeclared_stdout = String::from_utf8_lossy(&undeclared.stdout);
+    let undeclared = check().args([pkg.to_str().unwrap(), "--exit-zero"]).run();
+    let undeclared_stdout = undeclared.stdout();
     assert!(
         undeclared_stdout.contains("ffi_enquo"),
         "without .registration the symbol is not proven bound: {undeclared_stdout}"
@@ -1634,27 +1365,24 @@ fn empty_discovery_preserves_output_format_contracts() {
     )
     .unwrap();
     for format in ["json", "gitlab", "junit", "github", "full", "concise"] {
-        let output = ry!()
+        let output = check()
             .cwd(tmp.path())
-            .args(["check", ".", "--output-format", format])
-            .run()
-            .0;
-        assert!(output.status.success(), "{format}: {output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("no .R / .r files found"));
+            .args([".", "--output-format", format])
+            .run();
+        assert!(output.success(), "{format}: {output:?}");
+        assert!(output.stderr().contains("no .R / .r files found"));
         match format {
             "json" | "gitlab" => {
-                let value: serde_json::Value = serde_json::from_slice(&output.stdout)
-                    .unwrap_or_else(|error| panic!("{format}: {error}: {output:?}"));
-                assert_eq!(value, serde_json::json!([]));
+                assert_eq!(output.json(), json!([]), "{format}");
             }
             "junit" => {
-                let stdout = String::from_utf8(output.stdout).unwrap();
+                let stdout = output.stdout();
                 assert!(stdout.contains("<?xml"), "{stdout}");
                 assert!(stdout.contains("tests=\"0\""), "{stdout}");
                 assert!(stdout.contains("failures=\"0\""), "{stdout}");
                 assert!(stdout.contains("</testsuites>"), "{stdout}");
             }
-            _ => assert!(output.stdout.is_empty(), "{format}: {output:?}"),
+            _ => assert!(output.stdout().is_empty(), "{format}: {output:?}"),
         }
     }
 }
@@ -1662,75 +1390,79 @@ fn empty_discovery_preserves_output_format_contracts() {
 #[test]
 fn excluded_sources_still_emit_json_document() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        "exclude = [\"*.R\"]\noutput-format = \"json\"\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("excluded.R"), "1 + 'bad'\n").unwrap();
-    let output = ry!().cwd(tmp.path()).args(["check", "."]).run().0;
-    assert!(output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no .R / .r files found"));
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value, serde_json::json!([]));
+    write(
+        tmp.path(),
+        &[
+            (
+                "ry.toml",
+                b"exclude = [\"*.R\"]\noutput-format = \"json\"\n",
+            ),
+            ("excluded.R", b"1 + 'bad'\n"),
+        ],
+    );
+    let output = check().cwd(tmp.path()).args(["."]).run();
+    assert!(output.success());
+    assert!(output.stderr().contains("no .R / .r files found"));
+    let value = output.json();
+    assert_eq!(value, json!([]));
 }
 
 #[test]
 fn explain_files_keeps_json_valid_and_reports_deliberate_reinclusion() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-    fs::write(root.join(".Rbuildignore"), "^vignettes$\n").unwrap();
-    fs::create_dir(root.join("vignettes")).unwrap();
-    fs::write(root.join("vignettes/broken.R"), "x <- )\n").unwrap();
+    write(
+        root,
+        &[
+            ("DESCRIPTION", b"Package: example\n"),
+            (".Rbuildignore", b"^vignettes$\n"),
+            ("vignettes/broken.R", b"x <- )\n"),
+        ],
+    );
     let run = || {
-        ry!()
+        check()
             .cwd(root)
-            .args(["check", ".", "--explain-files", "--output-format", "json"])
+            .args([".", "--explain-files", "--output-format", "json"])
             .run()
-            .0
     };
     let skipped = run();
-    let json: serde_json::Value = serde_json::from_slice(&skipped.stdout).unwrap();
-    assert_eq!(json, serde_json::json!([]));
-    assert!(String::from_utf8_lossy(&skipped.stderr).contains("(.Rbuildignore)"));
+    let json = skipped.json();
+    assert_eq!(json, json!([]));
+    assert!(skipped.stderr().contains("(.Rbuildignore)"));
     fs::write(
         root.join("ry.toml"),
         "include-build-ignored = ['vignettes/*.R']\n",
     )
     .unwrap();
     let included = run();
-    let json: serde_json::Value = serde_json::from_slice(&included.stdout).unwrap();
+    let json = included.json();
     assert!(
         json.as_array()
             .unwrap()
             .iter()
             .any(|d| d["code"] == "RY000")
     );
-    assert!(String::from_utf8_lossy(&included.stderr).contains("include ./vignettes/broken.R"));
+    assert!(included.stderr().contains("include ./vignettes/broken.R"));
 }
 
 #[test]
 fn explicitly_requested_build_ignored_directory_still_gets_checked() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-    fs::write(root.join(".Rbuildignore"), "^vignettes$\n").unwrap();
-    fs::create_dir(root.join("vignettes")).unwrap();
-    fs::write(root.join("vignettes/doc.R"), "y <- )\n").unwrap();
-    let output = ry!()
+    write(
+        root,
+        &[
+            ("DESCRIPTION", b"Package: example\n"),
+            (".Rbuildignore", b"^vignettes$\n"),
+            ("vignettes/doc.R", b"y <- )\n"),
+        ],
+    );
+    let output = check()
         .cwd(root)
-        .args([
-            "check",
-            "vignettes",
-            "--explain-files",
-            "--output-format",
-            "json",
-        ])
-        .run()
-        .0;
-    assert!(!output.status.success());
-    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        .args(["vignettes", "--explain-files", "--output-format", "json"])
+        .run();
+    assert!(!output.success());
+    let diagnostics = output.json();
     assert!(
         diagnostics
             .as_array()
@@ -1739,198 +1471,100 @@ fn explicitly_requested_build_ignored_directory_still_gets_checked() {
             .any(|d| d["code"] == "RY000"),
         "{diagnostics}"
     );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("include vignettes/doc.R"));
+    assert!(output.stderr().contains("include vignettes/doc.R"));
 }
 
-/// `ry check <missing>` used to exit 0 with an empty report: the
-/// nonexistent path failed `is_file()`, fell into directory discovery,
-/// and the failed `read_dir` was swallowed. It must now fail the way
-/// `ry dump-types` does, with the miss named on stderr and stdout still
-/// a well-formed (empty) report (#485).
+/// Missing and unreadable inputs fail the run, named on stderr, and stdout
+/// stays a well-formed report. A missing input aborts before anything is
+/// checked. An unreadable directory fails the exit code while readable
+/// inputs are still checked. `--exit-zero` defuses both.
 #[test]
-fn check_missing_input_fails_instead_of_succeeding() {
+fn missing_and_unreadable_inputs_fail_the_run() {
     let tmp = tempfile::tempdir().unwrap();
-    for input in [
-        tmp.path().join("nonexistent.R"),
-        tmp.path().join("missing_dir"),
-    ] {
-        let output = ry!()
-            .args(["check", "--output-format", "json"])
-            .arg(&input)
-            .run()
-            .0;
-        assert_eq!(
-            output.status.code(),
-            Some(1),
-            "{}: {output:?}",
-            input.display()
-        );
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains(&format!("{}: no such file or directory", input.display())),
-            "the miss must be named: {stderr}"
-        );
-        assert!(
-            !stderr.contains("no .R / .r files found"),
-            "a missing input is not an empty discovery: {stderr}"
-        );
-        let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(json, serde_json::json!([]));
+    let path = |name: &str| tmp.path().join(name);
+    write(
+        tmp.path(),
+        &[
+            ("valid.R", b"genuinely_missing\n"),
+            ("locked/inside.R", b"also_missing\n"),
+        ],
+    );
+    let missing = |name: &str| format!("{}: no such file or directory", path(name).display());
+    // (inputs, stderr fragments, names reported unbound)
+    let mut cases = vec![
+        (
+            vec![path("nonexistent.R")],
+            vec![missing("nonexistent.R")],
+            vec![],
+        ),
+        (
+            vec![path("missing_dir")],
+            vec![missing("missing_dir")],
+            vec![],
+        ),
+        (
+            vec![path("valid.R"), path("nope1.R"), path("nope2.R")],
+            vec![missing("nope1.R"), missing("nope2.R")],
+            vec![],
+        ),
+    ];
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path("locked"), fs::Permissions::from_mode(0o000)).unwrap();
+        // Root lists mode-0 directories anyway.
+        if fs::read_dir(path("locked")).is_err() {
+            let named = vec![format!("ry: {}", path("locked").display())];
+            cases.push((vec![path("locked")], named.clone(), vec![]));
+            cases.push((
+                vec![path("valid.R"), path("locked")],
+                named,
+                vec!["genuinely_missing"],
+            ));
+        }
     }
-}
-
-/// `ry check valid.R missing.R` used to check only valid.R and never
-/// mention the miss. Every missing input is reported and the run aborts
-/// before checking anything: a partial check must not pose as a clean
-/// one, so the machine stream is a well-formed empty report rather
-/// than valid.R's diagnostics (#485).
-#[test]
-fn check_reports_every_missing_input_and_aborts_the_run() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("valid.R"), "genuinely_missing\n").unwrap();
-    let output = ry!()
-        .args(["check", "--output-format", "json"])
-        .arg(tmp.path().join("valid.R"))
-        .arg(tmp.path().join("nope1.R"))
-        .arg(tmp.path().join("nope2.R"))
-        .run()
-        .0;
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("nope1.R: no such file or directory"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("nope2.R: no such file or directory"),
-        "{stderr}"
-    );
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json, serde_json::json!([]));
-}
-
-/// `--exit-zero` defuses the missing-input failure the same way it
-/// defuses diagnostics and parse failures (#485).
-#[test]
-fn check_exit_zero_defuses_missing_input() {
-    let tmp = tempfile::tempdir().unwrap();
-    let output = ry!()
-        .args(["check", "--exit-zero"])
-        .arg(tmp.path().join("nonexistent.R"))
-        .run()
-        .0;
-    assert!(output.status.success(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no such file or directory"));
-}
-
-/// An input directory that exists but cannot be listed fails the run
-/// instead of reporting a clean, empty check — the discovery walk's
-/// read failure is carried apart from an intentionally empty file set
-/// (#485). Root (or an exotic filesystem) lists mode-0 directories
-/// anyway; without a real read failure there is no path to pin, so the
-/// test skips itself.
-#[cfg(unix)]
-#[test]
-fn check_unreadable_directory_fails_instead_of_checking_clean() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let locked = tmp.path().join("locked");
-    fs::create_dir(&locked).unwrap();
-    fs::write(locked.join("inside.R"), "genuinely_missing\n").unwrap();
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-    if std::fs::read_dir(&locked).is_ok() {
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        return;
+    for (inputs, named, unbound) in cases {
+        for (args, code) in [(&[][..], 1), (&["--exit-zero"][..], 0)] {
+            let output = check()
+                .args(["--output-format", "json"])
+                .args(args)
+                .args(&inputs)
+                .run();
+            assert_eq!(output.code(), Some(code), "{inputs:?} {args:?}: {output:?}");
+            let stderr = output.stderr();
+            for fragment in &named {
+                assert!(stderr.contains(fragment), "{inputs:?}: {stderr}");
+            }
+            assert!(!stderr.contains("no .R / .r files found"), "{stderr}");
+            assert_eq!(unbound_names(output.json().as_array().unwrap()), unbound);
+        }
     }
-
-    let output = ry!()
-        .args(["check", "--output-format", "json"])
-        .arg(&locked)
-        .run()
-        .0;
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!("ry: {}", locked.display())),
-        "the unreadable root must be named: {stderr}"
-    );
-    assert!(
-        !stderr.contains("no .R / .r files found"),
-        "an unreadable root is not an empty discovery: {stderr}"
-    );
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json, serde_json::json!([]));
-}
-
-/// A readable sibling next to an unreadable root is still checked — its
-/// diagnostics reach stdout — while the unreadable root fails the exit
-/// code the way a parse error would. `valid.R`'s only diagnostic is a
-/// warning, so the failure is attributable to the discovery error alone
-/// (#485).
-#[cfg(unix)]
-#[test]
-fn check_unreadable_directory_fails_the_exit_code_but_checks_the_rest() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("valid.R"), "genuinely_missing\n").unwrap();
-    let locked = tmp.path().join("locked");
-    fs::create_dir(&locked).unwrap();
-    fs::write(locked.join("inside.R"), "also_missing\n").unwrap();
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-    if std::fs::read_dir(&locked).is_ok() {
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-        return;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path("locked"), fs::Permissions::from_mode(0o755)).unwrap();
     }
-
-    let output = ry!()
-        .args(["check", "--output-format", "json"])
-        .arg(tmp.path().join("valid.R"))
-        .arg(&locked)
-        .run()
-        .0;
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("genuinely_missing"),
-        "the readable sibling must still be checked: {stdout}"
-    );
-    assert!(
-        !stdout.contains("also_missing"),
-        "the unreadable tree must contribute no diagnostics: {stdout}"
-    );
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!("ry: {}", locked.display())),
-        "the unreadable root must be named: {stderr}"
-    );
 }
 
 #[test]
 fn c_registration_inventory_resolves_wrapper_arguments_and_keeps_typos() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    fs::write(root.join("DESCRIPTION"), "Package: example\n").unwrap();
-    fs::create_dir(root.join("R")).unwrap();
-    fs::create_dir(root.join("src")).unwrap();
-    fs::write(root.join("src/init.c"), r#"
+    write(
+        root,
+        &[
+            ("DESCRIPTION", b"Package: example\n"),
+            ("src/init.c", br#"
 #define CALLDEF(name, n) { #name, (DL_FUNC)&name, n }
 static const R_CallMethodDef calls[] = { CALLDEF(entry, 1), {"native_alias_xyz", (DL_FUNC)&implementation, 0}, {NULL, NULL, 0} };
 void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, NULL); }
-"#).unwrap();
-    fs::write(root.join("R/wrapper.R"), "wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(C_entry); wrapper(C_native_alias_xyz); wrapper(C_typo); wrapper(other_missing) }\n").unwrap();
-    fs::write(
-        root.join("NAMESPACE"),
-        "useDynLib(example, .registration = TRUE, .fixes = 'C_')\n",
-    )
-    .unwrap();
+"#),
+            ("R/wrapper.R", b"wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(C_entry); wrapper(C_native_alias_xyz); wrapper(C_typo); wrapper(other_missing) }\n"),
+            ("NAMESPACE", b"useDynLib(example, .registration = TRUE, .fixes = 'C_')\n"),
+        ],
+    );
     let declared = ry_check(root);
-    let stdout = String::from_utf8_lossy(&declared.stdout);
+    let stdout = declared.stdout();
     assert!(
         !stdout.contains("`C_entry`") && !stdout.contains("`C_native_alias_xyz`"),
         "{stdout}"
@@ -1938,14 +1572,15 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
     // Prefix handling has its own existing fallback; use an unrelated name
     // as the control that wrapper arguments remain ordinary value reads.
     assert!(stdout.contains("other_missing"), "{stdout}");
-    fs::write(
-        root.join("NAMESPACE"),
-        "useDynLib(example, .registration = TRUE)\n",
-    )
-    .unwrap();
-    fs::write(root.join("R/wrapper.R"), "wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(entry); wrapper(native_alias_xyz); wrapper(typo); wrapper(other_missing) }\n").unwrap();
+    write(
+        root,
+        &[
+            ("NAMESPACE", b"useDynLib(example, .registration = TRUE)\n"),
+            ("R/wrapper.R", b"wrapper <- function(ptr, ...) .Call(cleancall_call, pairlist(ptr, ...))\nrun <- function() { wrapper(entry); wrapper(native_alias_xyz); wrapper(typo); wrapper(other_missing) }\n"),
+        ],
+    );
     let declared = ry_check(root);
-    let stdout = String::from_utf8_lossy(&declared.stdout);
+    let stdout = declared.stdout();
     assert!(
         !stdout.contains("`entry`") && !stdout.contains("`native_alias_xyz`"),
         "{stdout}"
@@ -1956,7 +1591,7 @@ void R_init_example(DllInfo *dll) { R_registerRoutines(dll, NULL, calls, NULL, N
     );
     fs::write(root.join("NAMESPACE"), "useDynLib(example)\n").unwrap();
     let undeclared = ry_check(root);
-    let stdout = String::from_utf8_lossy(&undeclared.stdout);
+    let stdout = undeclared.stdout();
     assert!(
         stdout.contains("`entry`") && stdout.contains("`native_alias_xyz`"),
         "{stdout}"
@@ -1971,156 +1606,120 @@ fn read_baseline(path: &Path) -> serde_json::Value {
     serde_json::from_str(&contents).unwrap()
 }
 
-/// With `baseline` set in ry.toml, `ry check --write-baseline` used to
-/// load and subtract the configured baseline before overwriting the
-/// file: on an unchanged project the non-empty baseline became empty
-/// (`"entries": []`) and every accepted finding reappeared on the next
-/// plain check — a silent wipe whose regeneration run still exited 0.
-/// Regeneration must instead snapshot what the run reports, so a second
-/// regeneration on an unchanged project is a no-op (#484).
+/// With `baseline` set in ry.toml, `--write-baseline` snapshots what the run
+/// reports instead of subtracting the old file first. Regenerating an
+/// unchanged project is a no-op, a plain check subtracts recorded counts,
+/// and regeneration drops fixed findings and adds new ones.
 #[test]
-fn write_baseline_with_configured_baseline_is_stable_across_regeneration() {
+fn configured_baseline_regenerates_and_subtracts_counts() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        "baseline = \"ry-baseline.json\"\n",
-    )
-    .unwrap();
-    // RY040 is a default-error rule, so the finding is an error.
-    fs::write(tmp.path().join("bad.R"), "x <- \"a\" + 1L\n").unwrap();
-
-    let regenerate = || check(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+    // RY040's message names only the operand modes, so both lines share
+    // one entry and its count is exercised.
+    write(
+        tmp.path(),
+        &[
+            ("ry.toml", b"baseline = \"ry-baseline.json\"\n"),
+            ("bad.R", b"x <- \"a\" + 1L\ny <- \"a\" + 1L\n"),
+        ],
+    );
+    let regenerate = || {
+        let output = check_in(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
+        // The run reports, and fails on, the error findings it writes.
+        assert_eq!(output.code(), Some(1), "{output:?}");
+        read_baseline(&tmp.path().join("ry-baseline.json"))
+    };
+    let entries = |baseline: &serde_json::Value| {
+        baseline["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["path"].as_str().unwrap().to_owned(),
+                    entry["code"].clone(),
+                    entry["count"].clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
     let first = regenerate();
-    let baseline_path = tmp.path().join("ry-baseline.json");
-    let first_baseline = read_baseline(&baseline_path);
-    assert!(
-        !first_baseline["entries"].as_array().unwrap().is_empty(),
-        "regeneration must keep the accepted finding instead of subtracting it first: {first_baseline}"
-    );
-
-    let second = regenerate();
-    let second_baseline = read_baseline(&baseline_path);
     assert_eq!(
-        first_baseline, second_baseline,
-        "a second regeneration on an unchanged project must be a no-op"
+        entries(&first),
+        [("./bad.R".to_owned(), json!("RY040"), json!(2))],
+        "{first}"
     );
-    // The regeneration run reports (and fails on) the findings it
-    // writes — the same exit code the no-config `--write-baseline`
-    // path has always produced, since the clap conflict keeps
-    // `--baseline` out of a generating run.
-    assert_eq!(first.status.code(), Some(1), "{first:?}");
-    assert_eq!(second.status.code(), Some(1), "{second:?}");
-}
-
-/// Regeneration is also how fixed findings leave the baseline: the
-/// snapshot is rebuilt from the current diagnostics, so a fixed finding
-/// drops out and a newly introduced one enters (#484).
-#[test]
-fn write_baseline_regeneration_drops_fixed_and_adds_new_findings() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        "baseline = \"ry-baseline.json\"\n",
-    )
-    .unwrap();
-    fs::write(tmp.path().join("bad.R"), "x <- \"a\" + 1L\n").unwrap();
-
-    check(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
-    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
-    assert!(
-        baseline["entries"].as_array().unwrap().iter().any(|entry| {
-            entry["path"].as_str().unwrap().ends_with("bad.R") && entry["code"] == "RY040"
-        }),
-        "the initial finding must be snapshotted: {baseline}"
-    );
-
-    // Fix bad.R and introduce the same finding in a new file.
-    fs::write(tmp.path().join("bad.R"), "x <- 1L + 2L\n").unwrap();
-    fs::write(tmp.path().join("new.R"), "y <- \"a\" + 1L\n").unwrap();
-    check(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
-    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
-    let entries = baseline["entries"].as_array().unwrap();
-    assert!(
-        entries
-            .iter()
-            .all(|entry| !entry["path"].as_str().unwrap().ends_with("bad.R")),
-        "the fixed finding must drop out of the regenerated baseline: {baseline}"
-    );
-    assert!(
-        entries
-            .iter()
-            .any(|entry| entry["path"].as_str().unwrap().ends_with("new.R")
-                && entry["code"] == "RY040"),
-        "the new finding must enter the regenerated baseline: {baseline}"
-    );
-}
-
-/// A plain `ry check` must subtract the regenerated file correctly:
-/// nothing remains on an unchanged project, and only the surplus
-/// occurrence survives when a duplicate grows past the recorded count
-/// (#484).
-#[test]
-fn plain_check_subtracts_counts_against_regenerated_baseline() {
-    let tmp = tempfile::tempdir().unwrap();
-    fs::write(
-        tmp.path().join("ry.toml"),
-        "baseline = \"ry-baseline.json\"\n",
-    )
-    .unwrap();
-    // Two occurrences of the same finding (RY040's message names only
-    // the operand modes, so both lines share it): the entry's count is
-    // exercised, not just its presence.
-    fs::write(
-        tmp.path().join("bad.R"),
-        "x <- \"a\" + 1L\ny <- \"a\" + 1L\n",
-    )
-    .unwrap();
-
-    check(tmp.path(), &["--write-baseline", "ry-baseline.json", "."]);
-    let baseline = read_baseline(&tmp.path().join("ry-baseline.json"));
     assert_eq!(
-        baseline["entries"][0]["count"],
-        serde_json::json!(2),
-        "{baseline}"
+        regenerate(),
+        first,
+        "regenerating an unchanged project is a no-op"
     );
 
-    let plain = check(tmp.path(), &["--output-format", "json", "."]);
-    assert!(
-        plain.status.success(),
-        "every recorded occurrence must be subtracted: {:?}",
-        plain
-    );
-    let diagnostics: serde_json::Value = serde_json::from_slice(&plain.stdout).expect("valid JSON");
-    assert_eq!(diagnostics, serde_json::json!([]));
+    let plain = check_in(tmp.path(), &["--output-format", "json", "."]);
+    assert!(plain.success(), "{plain:?}");
+    assert_eq!(plain.json(), json!([]));
 
-    // A third occurrence exceeds the recorded count: exactly one
-    // diagnostic survives and fails the run.
-    fs::write(
-        tmp.path().join("bad.R"),
-        "x <- \"a\" + 1L\ny <- \"a\" + 1L\nz <- \"a\" + 1L\n",
-    )
-    .unwrap();
-    let surplus = check(tmp.path(), &["--output-format", "json", "."]);
-    assert_eq!(surplus.status.code(), Some(1), "{surplus:?}");
-    let diagnostics: Vec<serde_json::Value> =
-        serde_json::from_slice(&surplus.stdout).expect("valid JSON");
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0]["code"], "RY040");
+    // A third occurrence exceeds the recorded count.
+    write(
+        tmp.path(),
+        &[(
+            "bad.R",
+            b"x <- \"a\" + 1L\ny <- \"a\" + 1L\nz <- \"a\" + 1L\n",
+        )],
+    );
+    let surplus = check_in(tmp.path(), &["--output-format", "json", "."]);
+    assert_eq!(surplus.code(), Some(1), "{surplus:?}");
+    assert_eq!(surplus.codes(), ["RY040"]);
+
+    // Fix bad.R and introduce the finding in a new file.
+    write(
+        tmp.path(),
+        &[
+            ("bad.R", b"x <- 1L + 2L\n"),
+            ("new.R", b"y <- \"a\" + 1L\n"),
+        ],
+    );
+    let fixed = regenerate();
+    assert_eq!(
+        entries(&fixed),
+        [("./new.R".to_owned(), json!("RY040"), json!(1))],
+        "{fixed}"
+    );
 }
 
+/// A bare `ry` runs `ry check` in the working directory, global flags
+/// included.
 #[test]
-fn ry_toml_exclude_patterns_apply_to_relative_roots() {
+fn bare_ry_runs_check() {
     let tmp = tempfile::tempdir().unwrap();
-    fs::write(tmp.path().join("ry.toml"), "exclude = [\"fixtures/**\"]\n").unwrap();
-    fs::create_dir_all(tmp.path().join("fixtures")).unwrap();
-    fs::write(tmp.path().join("fixtures/bad.R"), "x <- \"a\" + 1L\n").unwrap();
-    fs::write(tmp.path().join("good.R"), "x <- 1L + 2L\n").unwrap();
-    for root in [".", "./fixtures"] {
-        let output = ry!()
+    write(tmp.path(), &[("bad.R", b"x <- \"a\" + 1L\n")]);
+    let run = |args: &[&str]| ry!().cwd(tmp.path()).args(args).run();
+    let bare = run(&[]);
+    assert_eq!(bare.code(), Some(1), "{bare:?}");
+    assert!(bare.stdout().contains("RY040"), "{bare:?}");
+    assert_eq!(bare, run(&["check"]));
+    assert_eq!(run(&["-q"]), run(&["check", "-q"]));
+}
+
+/// `exclude` skips `fixtures/bad.R`, whose RY040 error would fail the run,
+/// for absolute and relative roots.
+#[test]
+fn ry_toml_exclude_patterns_skip_matched_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(
+        tmp.path(),
+        &[
+            ("ry.toml", b"exclude = [\"fixtures/**\"]\n"),
+            ("fixtures/bad.R", b"x <- \"a\" + 1L\n"),
+            ("good.R", b"x <- 1L + 2L\n"),
+        ],
+    );
+    let absolute = tmp.path().to_str().unwrap();
+    for root in [absolute, ".", "./fixtures"] {
+        let output = check()
             .cwd(tmp.path())
-            .args(["check", "--output-format", "json", root])
+            .args(["--output-format", "json", root])
             .run();
-        assert_eq!(output.json(), serde_json::json!([]), "{root:?}: {output:?}");
+        assert_eq!(output.json(), json!([]), "{root:?}: {output:?}");
         assert!(output.success(), "{root:?}: {output:?}");
     }
 }

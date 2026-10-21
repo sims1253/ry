@@ -1,25 +1,16 @@
 use std::fs;
-use std::process::{Command, Output};
 
+use ry_testkit::{CliOutput, ry};
 use serde_json::{Value, json};
 
-fn invoke(directory: &std::path::Path, command: &str, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ry"))
-        .current_dir(directory)
-        .arg(command)
-        .args(args)
-        .output()
-        .unwrap()
+fn invoke(directory: &std::path::Path, command: &str, args: &[&str]) -> CliOutput {
+    ry!().cwd(directory).arg(command).args(args).run()
 }
 
 fn facts(directory: &std::path::Path, args: &[&str]) -> Value {
     let output = invoke(directory, "dump-facts", args);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
+    assert!(output.success(), "{output:?}");
+    output.json()
 }
 
 fn binding<'a>(scope: &'a Value, name: &str) -> &'a Value {
@@ -64,10 +55,10 @@ fn scope_exit_and_first_assignment_are_not_reference_facts() {
         }
     }
     let rejected = invoke(dir.path(), "dump-facts", &["scope.R", "--position", "2:6"]);
-    assert!(!rejected.status.success());
+    assert!(!rejected.success());
     let old = invoke(dir.path(), "dump-types", &["scope.R", "--position", "2:6"]);
-    assert!(old.status.success());
-    let old: Value = serde_json::from_slice(&old.stdout).unwrap();
+    assert!(old.success());
+    let old = old.json();
     assert!(old.get("schema_version").is_none());
     assert_eq!(
         binding(&old["files"][0]["scopes"][0], "x")["type"],
@@ -173,8 +164,8 @@ fn parse_failures_cannot_silently_omit_requested_facts() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("bad.R"), "function(\n").unwrap();
     let output = invoke(dir.path(), "dump-facts", &["bad.R"]);
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert!(!output.success());
+    assert!(output.stdout().is_empty());
 }
 
 #[test]
@@ -184,9 +175,9 @@ fn file_count_caps_reject_unstable_discovery_subsets() {
     fs::write(dir.path().join("a.R"), "a <- 1L\n").unwrap();
     fs::write(dir.path().join("b.R"), "b <- 2L\n").unwrap();
     let output = invoke(dir.path(), "dump-facts", &["."]);
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("max-files"));
+    assert!(!output.success());
+    assert!(output.stdout().is_empty());
+    assert!(output.stderr().contains("max-files"));
 }
 
 #[test]
@@ -236,11 +227,7 @@ fn relative_package_input_records_import_origin() {
             .all(|entry| entry["name"] != "imported_function")
     );
     let legacy = invoke(dir.path(), "dump-types", &["R/main.R"]);
-    assert!(
-        legacy.status.success(),
-        "{}",
-        String::from_utf8_lossy(&legacy.stderr)
-    );
+    assert!(legacy.success(), "{}", legacy.stderr());
 }
 
 #[cfg(unix)]
@@ -250,9 +237,9 @@ fn duplicate_canonical_file_ids_are_rejected() {
     fs::write(dir.path().join("source.R"), "x <- 1L\n").unwrap();
     std::os::unix::fs::symlink(dir.path().join("source.R"), dir.path().join("alias.R")).unwrap();
     let output = invoke(dir.path(), "dump-facts", &["source.R", "alias.R"]);
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("same physical file"));
+    assert!(!output.success());
+    assert!(output.stdout().is_empty());
+    assert!(output.stderr().contains("same physical file"));
 }
 
 #[test]

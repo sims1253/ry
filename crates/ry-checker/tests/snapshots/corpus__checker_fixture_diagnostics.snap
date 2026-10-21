@@ -792,6 +792,24 @@ expression: snapshots
   fixture: err_missing_formal_member_and_chain_targets.R
 - diagnostics:
     - code: RY091
+      message: "missing required argument `i` in call to `get_elem`"
+      severity: warning
+      span:
+        column: 66
+        end: 688
+        line: 22
+        start: 671
+    - code: RY091
+      message: "missing required argument `i` in call to `drop_neg`"
+      severity: warning
+      span:
+        column: 85
+        end: 703
+        line: 22
+        start: 690
+  fixture: err_missing_formal_single_bracket_subscript.R
+- diagnostics:
+    - code: RY091
       message: "missing required argument `x` in call to `length`"
       severity: warning
       span:
